@@ -221,8 +221,10 @@ test("the records tab reports this execution only, without recovery details", as
     page,
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   const tick = await page.request.post(
     "/__harness__/run-automation-scheduler-tick",
   );
@@ -309,8 +311,10 @@ test("the records page traverses beyond one page and back with its own filters",
     page,
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   // Many real scheduled occurrences are emitted by the production Scheduler, so
   // the records population genuinely exceeds one page instead of being faked.
   const seeded = await page.request.post(

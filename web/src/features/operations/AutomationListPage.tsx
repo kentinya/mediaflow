@@ -183,6 +183,7 @@ let focusCreateEntryOnNextList = false;
 let automationCreatedDefinitionMemory: {
   readonly id: string;
   readonly name: string;
+  readonly enabled: boolean;
   readonly createdAt: number;
 } | null = null;
 
@@ -319,9 +320,12 @@ export function AutomationListPage({
   const [createdDefinition, setCreatedDefinition] = useState<{
     readonly id: string;
     readonly name: string;
+    readonly enabled: boolean;
   } | null>(() => {
     const memory = automationCreatedDefinitionMemory;
-    return memory === null ? null : { id: memory.id, name: memory.name };
+    return memory === null
+      ? null
+      : { id: memory.id, name: memory.name, enabled: memory.enabled };
   });
   const [highlightedDefinitionId, setHighlightedDefinitionId] = useState<
     string | null
@@ -922,9 +926,14 @@ export function AutomationListPage({
     automationCreatedDefinitionMemory = {
       id: definition.id,
       name: definition.name,
+      enabled: definition.enabled,
       createdAt: Date.now(),
     };
-    setCreatedDefinition({ id: definition.id, name: definition.name });
+    setCreatedDefinition({
+      id: definition.id,
+      name: definition.name,
+      enabled: definition.enabled,
+    });
     setHighlightedDefinitionId(definition.id);
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void listQuery.refetch();
@@ -1015,11 +1024,20 @@ export function AutomationListPage({
         </header>
 
         {createdDefinition !== null && (
-          <StatusBanner variant="success" title="创建成功，尚未启用">
+          <StatusBanner
+            variant="success"
+            title={
+              createdDefinition.enabled ? "已创建并启用" : "创建成功，尚未启用"
+            }
+          >
             <p>
               {createdDefinition.name
-                ? `已创建「${createdDefinition.name}」，尚未启用。`
-                : "新任务已创建，尚未启用。"}
+                ? createdDefinition.enabled
+                  ? `已创建「${createdDefinition.name}」并启用；后续将按保存的计划定时运行。`
+                  : `已创建「${createdDefinition.name}」，尚未启用。`
+                : createdDefinition.enabled
+                  ? "新任务已创建并启用。"
+                  : "新任务已创建，尚未启用。"}
               {createdListUnavailable
                 ? "当前任务列表暂不可用；刷新后可查看这条新任务。"
                 : createdVisible === null

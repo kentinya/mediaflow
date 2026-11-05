@@ -80,6 +80,41 @@ class ExecutionIntentTests(unittest.TestCase):
             "admin", audit.after["automationExecutionIntents"]["nightly"]["principalId"]
         )
 
+    def test_created_enabled_definition_supplies_the_same_scoped_scheduler_intent(self):
+        """A definition published enabled by its create command schedules exactly like enable.
+
+        The create-time enablement reuses the shared enabled-publication intent
+        chain: the Scheduler's later due consumption resolves the submitting
+        principal through the recorded intent and the live permission boundary.
+        """
+
+        f = self.fixture
+        status, body = f.request(
+            "POST",
+            lifecycle.BASE,
+            {**f.authority(), "object": lifecycle._definition("created-enabled"), "enabled": True},
+        )
+        self.assertEqual(200, status, body)
+        active = f.managed.active()
+        definition = AutomationTaskDefinition.from_document(
+            next(
+                value
+                for value in active.document["automationTaskDefinitions"]
+                if value["id"] == "created-enabled"
+            )
+        )
+        self.assertEqual((), f.runtime.list_tasks())
+        self.assertEqual((), f.runtime.list_unattended_execution_grants())
+        (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
+        principal = resolve_principal(f.managed, job, definition)
+        self.assertEqual("admin", principal.principal_id)
+        self.assertFalse(principal.trusted_local)
+        self.assertIsNone(f.api._unattended_grants.authorize(job, definition).grant)
+        audit = activation_evidence(f.managed.repository, active)
+        self.assertEqual(
+            "admin", audit.after["automationExecutionIntents"]["created-enabled"]["principalId"]
+        )
+
     def test_disable_and_removal_stop_unperformed_scheduled_effects_on_pinned_work(self):
         active, definition = self.enable()
         f = self.fixture

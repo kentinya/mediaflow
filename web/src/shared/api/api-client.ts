@@ -8235,20 +8235,35 @@ export async function previewAutomationSchedule(
   );
 }
 
-/** One checked create Save; the backend validates and activates atomically. */
+/**
+ * One checked create Save; the backend validates and activates atomically.
+ *
+ * ``enabled`` is the explicit optional enablement choice (V2-AUTO-013): it is
+ * sent only when the operator actually selected enablement, so an omitted
+ * field stays a disabled create and a forged value can never be introduced by
+ * this client.
+ */
 export async function createAutomationDefinitionFocused(
   token: string | null,
   options: {
     readonly object: Record<string, unknown>;
     readonly authority: AutomationDefinitionAuthority;
+    readonly enabled?: boolean;
   },
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  const body: Record<string, unknown> = {
+    object: options.object,
+    ...options.authority,
+  };
+  if (options.enabled === true) {
+    body.enabled = true;
+  }
   return submitAutomationDefinitionCommand(
     token,
     "POST",
     AUTOMATION_DEFINITIONS_BASE,
-    { object: options.object, ...options.authority },
+    body,
     normalizeAutomationPublication,
     fetchImpl,
   );

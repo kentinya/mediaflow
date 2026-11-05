@@ -97,7 +97,7 @@ async function openLifecycle(page: Page, definitionId: string): Promise<void> {
     `/ui-v2/operations/automation/lifecycle/${definitionId}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
 }
 
@@ -263,6 +263,52 @@ test("opening the form and previewing upcoming times create nothing", async ({
   ).toBe(true);
 });
 
+test("one submission with the explicit choice creates and enables the definition", async ({
+  page,
+}) => {
+  // V2-AUTO-013: the create card's enablement choice defaults off; selecting
+  // it once changes the primary action and completes create+enable through the
+  // same checked publication. The durable truth, not the local toggle, is what
+  // the list and the edit card then show.
+  const api = recordApiCalls(page);
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+
+  // Off by default: the primary action is the plain create.
+  await expect(page.getByLabel("启用定时计划")).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "创建任务" })).toBeVisible();
+
+  // The single explicit selection changes the action and the promise it makes.
+  await page.getByLabel("启用定时计划").check();
+  await expect(page.getByText(/保存时将同时启用/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "创建并启用" })).toBeVisible();
+  await page.getByRole("button", { name: "创建并启用" }).click();
+  await expect(
+    page.getByRole("heading", { name: "已创建并启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+
+  // Exactly one create command carried the explicit choice; publication is
+  // durable and enabled, and enabling itself admitted no work.
+  const creates = api.filter(
+    (call) =>
+      call.method === "POST" &&
+      call.path === "/api/v1/operations/automation/definitions",
+  );
+  expect(creates).toHaveLength(1);
+  const state = await harnessState(page);
+  expect(state.definitions).toHaveLength(1);
+  expect(state.definitions[0]?.enabled).toBe(true);
+  expect(state.occurrenceTotal).toBe(0);
+  DEFINITION_ID = state.definitions[0]?.id ?? "";
+
+  // The saved definition's edit card reads the enabled state back from truth.
+  await openLifecycle(page, DEFINITION_ID);
+  await expect(page.getByLabel("启用定时计划")).toBeChecked();
+});
+
 test("edit, enable, copy and removal are separate durable commands", async ({
   page,
 }) => {
@@ -271,32 +317,36 @@ test("edit, enable, copy and removal are separate durable commands", async ({
   await openLifecycle(page, DEFINITION_ID);
 
   // A focused edit republishes the definition without a separate Draft step.
-  await page.getByLabel("Name").fill("Harness automation renamed");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel(/任务名称/).fill("Harness automation renamed");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
   let state = await harnessState(page);
   expect(state.definitions[0]?.name).toBe("Harness automation renamed");
   expect(state.definitions[0]?.enabled).toBe(false);
 
   // Enabling starts no work: it only makes the definition eligible.
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   state = await harnessState(page);
   expect(state.definitions[0]?.enabled).toBe(true);
   expect(state.occurrenceTotal).toBe(0);
 
   // Continue on the same form through another Save and repeated toggles.
-  await page.getByRole("button", { name: "Disable schedule" }).click();
-  await expect(page.getByText(/definition is disabled;/)).toBeVisible();
-  await page.getByLabel("Name").fill("Harness automation saved again");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByRole("button", { name: "停用定时计划" }).click();
+  await expect(page.getByText(/已停用：后续定时准入停止/)).toBeVisible();
+  await page.getByLabel(/任务名称/).fill("Harness automation saved again");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   state = await harnessState(page);
   expect(state.definitions[0]?.name).toBe("Harness automation saved again");
   expect(state.definitions[0]?.enabled).toBe(true);
@@ -304,10 +354,8 @@ test("edit, enable, copy and removal are separate durable commands", async ({
 
   // A copy is published as a new disabled definition with no authority.
   await openLifecycle(page, DEFINITION_ID);
-  await page
-    .getByRole("button", { name: "Copy as disabled definition" })
-    .click();
-  await expect(page.getByText(/new, disabled definition/)).toBeVisible();
+  await page.getByRole("button", { name: "复制为停用定义" }).click();
+  await expect(page.getByText(/副本已发布为新的停用定义/)).toBeVisible();
   state = await harnessState(page);
   expect(state.definitions.map((item) => item.id).sort()).toEqual([
     DEFINITION_ID,
@@ -320,9 +368,9 @@ test("edit, enable, copy and removal are separate durable commands", async ({
 
   // Removal requires an explicit confirmation and then stops the definition.
   await openLifecycle(page, `${DEFINITION_ID}-copy`);
-  const remove = page.getByRole("button", { name: "Remove definition" });
+  const remove = page.getByRole("button", { name: "移除定义" });
   await expect(remove).toBeDisabled();
-  await page.getByLabel(/I confirm removing this definition/).check();
+  await page.getByLabel(/我确认移除此定义/).check();
   await remove.click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
   state = await harnessState(page);
@@ -343,8 +391,10 @@ test("removal stops the enabled definition, revokes historical authority and ret
   // The current scheduling intent is the checked Enabled definition itself: it
   // has no separate grant/authorization step in the normal flow.
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Grant unattended authority" }),
   ).toHaveCount(0);
@@ -366,10 +416,10 @@ test("removal stops the enabled definition, revokes historical authority and ret
 
   await openLifecycle(page, DEFINITION_ID);
   await expect(
-    page.getByRole("button", { name: "Disable schedule" }),
+    page.getByRole("button", { name: "停用定时计划" }),
   ).toBeVisible();
-  await page.getByLabel(/I confirm removing this definition/).check();
-  await page.getByRole("button", { name: "Remove definition" }).click();
+  await page.getByLabel(/我确认移除此定义/).check();
+  await page.getByRole("button", { name: "移除定义" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
 
   state = await harnessState(page, DEFINITION_ID);
@@ -400,8 +450,10 @@ test("retained history stays readable after removal through the detail route", a
   await page.request.post("/__harness__/reset-automation-definitions");
   await publishNewDefinition(page);
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   const tick = await page.request.post(
     `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
   );
@@ -423,8 +475,8 @@ test("retained history stays readable after removal through the detail route", a
   // After removal the exact same history route still resolves the durable
   // occurrence through historical evidence.
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel(/I confirm removing this definition/).check();
-  await page.getByRole("button", { name: "Remove definition" }).click();
+  await page.getByLabel(/我确认移除此定义/).check();
+  await page.getByRole("button", { name: "移除定义" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
   let state = await harnessState(page, DEFINITION_ID);
   expect(state.definitions).toEqual([]);
@@ -464,24 +516,24 @@ test("navigating to the copy route never applies the origin's unsaved input", as
   // Publish a real copy through the explicit Copy command first, so the
   // second route exists.
   await openLifecycle(page, DEFINITION_ID);
-  await page
-    .getByRole("button", { name: "Copy as disabled definition" })
-    .click();
-  await expect(page.getByText(/new, disabled definition/)).toBeVisible();
+  await page.getByRole("button", { name: "复制为停用定义" }).click();
+  await expect(page.getByText(/副本已发布为新的停用定义/)).toBeVisible();
 
   // Open the origin again, change its Name without saving.
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel("Name").fill("Unsaved origin name");
+  await page.getByLabel(/任务名称/).fill("Unsaved origin name");
   // Navigate to the copy route without saving the origin.
   await openLifecycle(page, `${DEFINITION_ID}-copy`);
   // The copy route shows the copy's own loaded values, not the origin's
   // retained name.
-  await expect(page.getByLabel("Name")).toHaveValue(/copy/);
-  await expect(page.getByLabel("Name")).not.toHaveValue("Unsaved origin name");
+  await expect(page.getByLabel(/任务名称/)).toHaveValue(/copy/);
+  await expect(page.getByLabel(/任务名称/)).not.toHaveValue(
+    "Unsaved origin name",
+  );
   // Saving publishes the copy's own values under the copy identity.
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
   const state = await harnessState(page);
   const copy = state.definitions.find(
@@ -510,7 +562,7 @@ test("a retained candidate survives refresh without being silently repinned", as
   await publishNewDefinition(page);
 
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel("Name").fill("Unsaved operator name");
+  await page.getByLabel(/任务名称/).fill("Unsaved operator name");
 
   // A second real tab publishes a legitimate focused edit.
   const second = await browser.newContext();
@@ -520,39 +572,41 @@ test("a retained candidate survives refresh without being silently repinned", as
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
   await expect(
-    peer.getByRole("heading", { name: "Edit Automation definition" }),
+    peer.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
-  await peer.getByLabel("Item limit").fill("9");
-  await peer.getByRole("button", { name: "保存" }).click();
+  await peer.getByLabel("处理上限").fill("9");
+  await peer.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    peer.getByText(/published definition is the Active/),
+    peer.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
   await second.close();
 
   // Back in the first tab, refresh re-reads the newer Active.
-  await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expect(
-    page.getByText(/unsaved edits are based on an older configuration/i),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "刷新" }).first().click();
+  await expect(page.getByText(/未保存的修改基于较旧的配置/)).toBeVisible();
   // The retained input is still shown — no silent value replacement.
-  await expect(page.getByLabel("Name")).toHaveValue("Unsaved operator name");
-  await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
+  await expect(page.getByLabel(/任务名称/)).toHaveValue(
+    "Unsaved operator name",
+  );
+  await expect(
+    page.getByRole("button", { name: "保存", exact: true }),
+  ).toBeDisabled();
   // The deliberate re-adoption re-reads the definition with the authority its
   // values were read against: the peer's durable item limit 9 is loaded with
   // a matching fence, never the stale cached limit 5 paired to the newer
   // identity.
-  await page
-    .getByRole("button", { name: "Review current values and re-adopt them" })
-    .click();
-  await expect(page.getByLabel("Name")).toHaveValue("Harness automation");
-  await expect(page.getByLabel("Item limit")).toHaveValue("9");
-  await expect(page.getByRole("button", { name: "保存" })).toBeEnabled();
+  await page.getByRole("button", { name: "核对当前值并采用" }).click();
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("Harness automation");
+  await expect(page.getByLabel("处理上限")).toHaveValue("9");
+  await expect(
+    page.getByRole("button", { name: "保存", exact: true }),
+  ).toBeEnabled();
   // Saving the re-adopted candidate publishes exactly the reviewed values:
   // the peer's durable item limit 9 survives, never overwritten by the stale
   // cached value.
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
   const state = await harnessState(page);
   expect(state.definitions[0]?.name).toBe("Harness automation");
@@ -618,13 +672,15 @@ test("a committed create with a lost response reconciles after reload without a 
   // each publishing a real successor rather than replaying the reconciled
   // create.
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel("Name").fill("Harness automation reconciled");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel(/任务名称/).fill("Harness automation reconciled");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   state = await harnessState(page);
   expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
   expect(state.definitions[0]?.name).toBe("Harness automation reconciled");
@@ -648,10 +704,8 @@ test("a lost Copy response stays unknown across reload until reconciled", async 
   await page.route("**/copy", (route) => {
     void route.fetch().then(() => route.abort());
   });
-  await page
-    .getByRole("button", { name: "Copy as disabled definition" })
-    .click();
-  await expect(page.getByText(/outcome unknown/i)).toBeVisible();
+  await page.getByRole("button", { name: "复制为停用定义" }).click();
+  await expect(page.getByText("复制结果未知")).toBeVisible();
 
   // A real page reload: the intent survives in session storage (identity +
   // observed authority only), Copy stays blocked, and reconciliation resolves
@@ -662,19 +716,17 @@ test("a lost Copy response stays unknown across reload until reconciled", async 
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
   const copy = page.getByRole("button", {
-    name: "Copy as disabled definition",
+    name: "复制为停用定义",
   });
   await expect(copy).toBeDisabled();
-  await expect(page.getByText(/outcome unknown/i)).toBeVisible();
-  await page
-    .getByRole("button", { name: "Reconcile the submitted Copy" })
-    .click();
-  await expect(page.getByText(/committed durably as/)).toBeVisible();
+  await expect(page.getByText("复制结果未知")).toBeVisible();
+  await page.getByRole("button", { name: "核对已提交的复制" }).click();
+  await expect(page.getByText(/副本已持久发布为/)).toBeVisible();
   // Opening the committed copy clears the intent; no second copy was created.
-  await page.getByRole("button", { name: "Open the committed copy" }).click();
+  await page.getByRole("button", { name: "打开已发布的副本" }).click();
   await expect(page).toHaveURL(/lifecycle\/.+\/?$/);
   const state = await harnessState(page);
   expect(state.definitions.map((item) => item.id).sort()).toEqual([
@@ -701,10 +753,8 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
   await page.route("**/copy", (route) => {
     void route.fetch().then(() => route.abort());
   });
-  await page
-    .getByRole("button", { name: "Copy as disabled definition" })
-    .click();
-  await expect(page.getByText(/outcome unknown/i)).toBeVisible();
+  await page.getByRole("button", { name: "复制为停用定义" }).click();
+  await expect(page.getByText("复制结果未知")).toBeVisible();
 
   // Crowd the durable command trail with real focused publications past a full
   // evidence page. This travels the same production command service the
@@ -729,17 +779,15 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
   const copy = page.getByRole("button", {
-    name: "Copy as disabled definition",
+    name: "复制为停用定义",
   });
   await expect(copy).toBeDisabled();
-  await page
-    .getByRole("button", { name: "Reconcile the submitted Copy" })
-    .click();
-  await expect(page.getByText(/committed durably as/)).toBeVisible();
-  await page.getByRole("button", { name: "Open the committed copy" }).click();
+  await page.getByRole("button", { name: "核对已提交的复制" }).click();
+  await expect(page.getByText(/副本已持久发布为/)).toBeVisible();
+  await page.getByRole("button", { name: "打开已发布的副本" }).click();
   await expect(page).toHaveURL(/lifecycle\/.+\/?$/);
 
   // The original committed identity is the one resolved, and no second copy
@@ -766,8 +814,10 @@ test("retained history shows the published configuration, never an open Draft", 
   await page.request.post("/__harness__/reset-automation-definitions");
   await publishNewDefinition(page);
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByRole("button", { name: "Enable schedule" }).click();
-  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await page.getByRole("button", { name: "启用定时计划" }).click();
+  await expect(
+    page.getByText(/已启用：后续按保存的计划定时运行/),
+  ).toBeVisible();
   const tick = await page.request.post(
     `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
   );
@@ -778,8 +828,8 @@ test("retained history shows the published configuration, never an open Draft", 
   // journey (none is opened here) would not matter — the history resolves
   // from published evidence either way. Verify the removed detail route.
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel(/I confirm removing this definition/).check();
-  await page.getByRole("button", { name: "Remove definition" }).click();
+  await page.getByLabel(/我确认移除此定义/).check();
+  await page.getByRole("button", { name: "移除定义" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
 
   await connectOn(
@@ -817,8 +867,8 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   expect(draftBody.draftName).toBe("NEVER PUBLISHED browser draft");
 
   await openLifecycle(page, DEFINITION_ID);
-  await page.getByLabel(/I confirm removing this definition/).check();
-  await page.getByRole("button", { name: "Remove definition" }).click();
+  await page.getByLabel(/我确认移除此定义/).check();
+  await page.getByRole("button", { name: "移除定义" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
 
   // Intact evidence still resolves the real published history.
@@ -855,16 +905,14 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
     page,
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
+  await expect(page.getByText("无法读取该定义")).toBeVisible();
   await expect(
-    page.getByText("The definition could not be read"),
+    page.getByText(/读取定义失败（configuration_unavailable）/),
   ).toBeVisible();
   await expect(
-    page.getByText(
-      /Reading the definition failed \(configuration_unavailable\)/,
-    ),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "保存" })).toHaveCount(0);
-  await expect(page.getByLabel("Name")).toHaveCount(0);
+    page.getByRole("button", { name: "保存", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel(/任务名称/)).toHaveCount(0);
   await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
 
   // The occurrences route fails closed identically rather than claiming the

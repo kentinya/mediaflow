@@ -7,11 +7,13 @@ import {
   compiledSchedule,
   createFormFromPublication,
   cronExpressionIssue,
+  editFormFromDefinition,
   formatPreviewTime,
   initialCreateForm,
   intervalSecondsFromForm,
   newAutomationDefinitionId,
   publicationFormFromCreateForm,
+  scheduleKindPatch,
   scheduleSummary,
   timeZoneIsValid,
   validateCreateForm,
@@ -63,7 +65,8 @@ const AUTHORITY: AutomationDefinitionFormAuthorityModel = {
   ],
   modes: ["automatic-organization"],
   scheduleTypes: ["interval", "cron"],
-  actions: { create: true },
+  actions: { create: true, enable: true, createEnabled: true },
+  actionReasons: { enable: null, createEnabled: null },
   limits: {
     id: 64,
     name: 120,
@@ -103,6 +106,9 @@ describe("automation create form", () => {
     expect(created.scopeMode).toBe("root");
     expect(created.schedule).toBe("interval");
     expect(created.timezone).toBe("UTC");
+    // The enablement choice defaults off (V2-AUTO-013): an omitted choice is
+    // never an enablement.
+    expect(created.enabled).toBe(false);
     expect(newAutomationDefinitionId()).toMatch(/^automation-[0-9a-f]{24}$/);
   });
 
@@ -222,6 +228,142 @@ describe("automation create form", () => {
       intervalSeconds: null,
       cron: "5 6 * * *",
       timezone: "Asia/Shanghai",
+    });
+  });
+
+  it("carries the explicit enablement choice through the candidate and the retained command", () => {
+    // The candidate mirrors the operator's toggle; the create command's
+    // explicit enablement parameter is what publishes enabled, so the candidate
+    // alone can never enable.
+    expect(buildCreateCandidate(form({ enabled: true }))).toMatchObject({
+      enabled: true,
+    });
+    expect(buildCreateCandidate(form())).toMatchObject({ enabled: false });
+    const submitted = publicationFormFromCreateForm(form({ enabled: true }));
+    expect(submitted.enabled).toBe(true);
+    expect(buildCandidateFromPublicationForm(submitted)).toMatchObject({
+      enabled: true,
+    });
+    expect(
+      createFormFromPublication(
+        {
+          definitionId: "automation-0123456789abcdef",
+          action: "create",
+          form: submitted,
+          authority: {
+            revisionId: "active-1",
+            version: 2,
+            digest: "b".repeat(64),
+          },
+        },
+        "UTC",
+      ),
+    ).toMatchObject({ enabled: true });
+  });
+
+  it("backfills a saved definition exactly without rewriting its schedule", () => {
+    // Arbitrary legal Cron stays advanced Cron verbatim.
+    expect(
+      editFormFromDefinition(
+        {
+          id: "nightly",
+          name: "每晚整理",
+          enabled: true,
+          resourceLibraryId: "source",
+          sourceScope: "电影/华语 4K",
+          itemLimit: 7,
+          scheduleType: "cron",
+          intervalSeconds: null,
+          cron: "*/7 1-5 * * 1-5",
+          timezone: "Asia/Shanghai",
+        },
+        "UTC",
+      ),
+    ).toEqual({
+      id: "nightly",
+      name: "每晚整理",
+      resourceLibraryId: "source",
+      scopeMode: "subdirectory",
+      sourceScope: "电影/华语 4K",
+      itemLimit: "7",
+      schedule: "cron",
+      intervalValue: "1",
+      intervalUnit: "hours",
+      dailyTime: "08:00",
+      weeklyDay: "1",
+      weeklyTime: "08:00",
+      cron: "*/7 1-5 * * 1-5",
+      timezone: "Asia/Shanghai",
+      enabled: true,
+    });
+
+    // A fractional interval keeps its exact stored value in seconds.
+    expect(
+      editFormFromDefinition(
+        {
+          id: "quick",
+          name: "快速整理",
+          enabled: false,
+          resourceLibraryId: "source",
+          sourceScope: null,
+          itemLimit: 100,
+          scheduleType: "interval",
+          intervalSeconds: 1.5,
+          cron: null,
+          timezone: null,
+        },
+        "Asia/Shanghai",
+      ),
+    ).toMatchObject({
+      schedule: "interval",
+      intervalValue: "1.5",
+      intervalUnit: "seconds",
+      scopeMode: "root",
+      sourceScope: "",
+      enabled: false,
+      timezone: "Asia/Shanghai",
+    });
+
+    // Daily/weekly convenience schedules read back into their controls.
+    expect(
+      editFormFromDefinition(
+        {
+          id: "weekly",
+          name: "每周整理",
+          enabled: false,
+          resourceLibraryId: "source",
+          sourceScope: null,
+          itemLimit: 10,
+          scheduleType: "cron",
+          intervalSeconds: null,
+          cron: "15 21 * * 5",
+          timezone: "UTC",
+        },
+        "UTC",
+      ),
+    ).toMatchObject({
+      schedule: "weekly",
+      weeklyDay: "5",
+      weeklyTime: "21:15",
+    });
+  });
+
+  it("compiles the schedule-kind patch without rewriting other values", () => {
+    const base = form({ schedule: "interval", intervalValue: "1.5" });
+    expect(scheduleKindPatch(base, "weekly")).toEqual({ schedule: "weekly" });
+    // Switching to advanced Cron seeds the compiled expression.
+    expect(scheduleKindPatch(base, "cron")).toEqual({
+      schedule: "cron",
+      cron: "0 8 * * *",
+    });
+    // Switching back keeps the existing cron text instead of a default.
+    const advanced = {
+      ...base,
+      schedule: "cron" as const,
+      cron: "*/7 1-5 * * 1-5",
+    };
+    expect(scheduleKindPatch(advanced, "interval")).toEqual({
+      schedule: "interval",
     });
   });
 

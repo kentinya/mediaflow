@@ -35,6 +35,7 @@ BASE = "/api/v1/operations/automation/definitions"
 ADMIN_TOKEN = "automation-lifecycle-admin"
 VIEWER_TOKEN = "automation-lifecycle-viewer"
 MANAGER_TOKEN = "automation-lifecycle-manager"
+CONFIGURATOR_TOKEN = "automation-lifecycle-configurator"
 
 _DIGEST_KEYS = (
     "definitionFingerprint",
@@ -129,6 +130,17 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                     MANAGER_TOKEN,
                     frozenset({ApiPermission.READ, ApiPermission.MANAGE_CONFIGURATION}),
                 ),
+                ResolvedApiPrincipal(
+                    "configurator",
+                    CONFIGURATOR_TOKEN,
+                    frozenset(
+                        {
+                            ApiPermission.READ,
+                            ApiPermission.MANAGE_CONFIGURATION,
+                            ApiPermission.ACTIVATE_CONFIGURATION,
+                        }
+                    ),
+                ),
             ),
             configuration_service=self.managed,
             bootstrap_document=self.document,
@@ -186,6 +198,103 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         # The only retained mode is advertised; removed modes are absent.
         self.assertEqual(body["enums"]["modes"], ["automatic-organization"])
         self.assertEqual(body["actions"]["remove"], True)
+
+    def test_form_authority_projects_connected_principal_commands(self) -> None:
+        """The served form authority projects this principal's real command availability."""
+
+        status, body = self.request("GET", BASE)
+        self.assertEqual(status, 200)
+        self.assertIs(body["actions"]["create"], True)
+        self.assertIs(body["actions"]["createEnabled"], True)
+        self.assertIs(body["actions"]["enable"], True)
+        self.assertIsNone(body["actionReasons"]["createEnabled"])
+
+        # A principal with configuration management but neither activation nor
+        # scheduled execution permission cannot create or enable, and the
+        # bounded reason names the missing permission.
+        status, body = self.request("GET", BASE, token=MANAGER_TOKEN)
+        self.assertEqual(status, 200)
+        self.assertIs(body["actions"]["create"], False)
+        self.assertIs(body["actions"]["createEnabled"], False)
+        self.assertIn("配置激活", body["actionReasons"]["createEnabled"])
+        self.assertIn("定时执行", body["actionReasons"]["createEnabled"])
+
+        # A principal able to publish configuration but without the scheduled
+        # execution permission may create disabled definitions and sees why
+        # enabling is unavailable.
+        status, body = self.request("GET", BASE, token=CONFIGURATOR_TOKEN)
+        self.assertEqual(status, 200)
+        self.assertIs(body["actions"]["create"], True)
+        self.assertIs(body["actions"]["createEnabled"], False)
+        self.assertEqual(
+            body["actionReasons"]["createEnabled"],
+            "当前身份缺少定时执行权限，不能启用定时计划。",
+        )
+
+    def test_create_with_explicit_enablement_publishes_enabled_in_one_command(self) -> None:
+        """One create POST with the explicit choice publishes enabled atomically."""
+
+        before = self.managed.active()
+        status, body = self.request(
+            "POST", BASE, {**self.authority(), "object": _definition(), "enabled": True}
+        )
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["action"], "create")
+        self.assertIs(body["definition"]["enabled"], True)
+        self.assertEqual(self.ids(), ["nightly"])
+        # Exactly one activation published the enabled successor.
+        self.assertEqual(self.managed.active().version, before.version + 1)
+
+    def test_create_enablement_without_scheduled_permission_is_refused(self) -> None:
+        """Forging enablement without the scheduled permission refuses the whole command."""
+
+        before = self.managed.active()
+        status, body = self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition(), "enabled": True},
+            token=CONFIGURATOR_TOKEN,
+        )
+        self.assertEqual(status, 403, body)
+        self.assertEqual(body["error"]["code"], "automation_execution_permission_required")
+        # The prior Active is preserved and no definition was published.
+        self.assertEqual(self.ids(), [])
+        self.assertEqual(self.managed.active().version, before.version)
+
+        # The same principal can still create a disabled definition.
+        status, body = self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition()},
+            token=CONFIGURATOR_TOKEN,
+        )
+        self.assertEqual(status, 200, body)
+        self.assertIs(body["definition"]["enabled"], False)
+
+    def test_create_enablement_rejects_a_non_boolean_choice(self) -> None:
+        before = self.managed.active()
+        status, body = self.request(
+            "POST", BASE, {**self.authority(), "object": _definition(), "enabled": "yes"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(self.ids(), [])
+        self.assertEqual(self.managed.active().version, before.version)
+
+    def test_edit_rejects_an_enablement_key_outside_the_typed_definition(self) -> None:
+        """The edit command publishes enablement through the candidate, not a side key."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        before = self.managed.active()
+        status, _body = self.request(
+            "PUT",
+            f"{BASE}/nightly",
+            {**self.authority(), "object": _definition(name="Renamed"), "enabled": True},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(self.managed.active().version, before.version)
+        stored = self.managed.active().document["automationTaskDefinitions"][0]
+        self.assertEqual(stored["name"], "Automation nightly")
+        self.assertIs(stored["enabled"], False)
 
     def test_form_effects_after_checked_rules_save_use_canonical_operations(self) -> None:
         for library in self.document["mediaLibraries"]:

@@ -48,6 +48,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.cron import CronExpression
+from mediaflow.domain.security import ApiPermission
 from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
 
 MAX_DEFINITION_ID_LENGTH = 64
@@ -276,13 +277,22 @@ class AutomationWorkspaceCommandService:
         active = self._require_active_read("authority")
         return {"active": self._safe_active(active), "sideEffects": "none"}
 
-    def form_authority(self) -> dict[str, object]:
+    def form_authority(self, *, permissions=None) -> dict[str, object]:
         """The bounded typed-form authority derived from the actual domain.
 
         The projection answers "which fields, references and bounds exist here"
         from the same domain constants, configured ResourceLibraries and run
         modes the backend already uses.  It never invents a mode or schedule
         form, and it starts no work.
+
+        When the caller supplies the connected principal's permissions, the
+        projection also answers which commands this principal may actually
+        publish: configuration commands need the configuration management and
+        activation permissions, and publishing an *enabled* definition — at
+        create time or later — additionally needs the scheduled execution
+        permission the shared activation boundary enforces.  The reasons are
+        bounded, operator-facing and secret-free; the backend command paths
+        remain the only authority.
         """
 
         active = self._require_active_read("form authority")
@@ -296,6 +306,54 @@ class AutomationWorkspaceCommandService:
             }
             for item in self._objects._canonical_objects(active.document, "resourceLibraries")
         ]
+        if permissions is None:
+            # Direct service use (tests, internal callers) keeps the historic
+            # permissive projection; the API layer always passes the connected
+            # principal's permissions, so the served document never guesses.
+            actions: dict[str, object] = {
+                "create": True,
+                "edit": True,
+                "copy": True,
+                "toggle": True,
+                "remove": True,
+                "enable": True,
+                "createEnabled": True,
+            }
+            action_reasons: dict[str, object] = {
+                "enable": None,
+                "createEnabled": None,
+            }
+        else:
+            granted = set(permissions)
+            manage = ApiPermission.MANAGE_CONFIGURATION in granted
+            activate = ApiPermission.ACTIVATE_CONFIGURATION in granted
+            scheduled = ApiPermission.GRANT_UNATTENDED_EXECUTION in granted
+            configuration = manage and activate
+            actions = {
+                "create": configuration,
+                "edit": configuration,
+                "copy": configuration,
+                "toggle": configuration,
+                "remove": configuration,
+                "enable": configuration and scheduled,
+                "createEnabled": configuration and scheduled,
+            }
+
+            def _enable_reason() -> str:
+                missing = []
+                if not manage:
+                    missing.append("配置管理")
+                if not activate:
+                    missing.append("配置激活")
+                if not scheduled:
+                    missing.append("定时执行")
+                detail = "、".join(missing)
+                return f"当前身份缺少{detail}权限，不能启用定时计划。"
+
+            action_reasons = {
+                "enable": None if actions["enable"] else _enable_reason(),
+                "createEnabled": (None if actions["createEnabled"] else _enable_reason()),
+            }
         return {
             "active": self._safe_active(active),
             "sideEffects": "none",
@@ -342,13 +400,8 @@ class AutomationWorkspaceCommandService:
                     "maximum": MAX_DEFINITION_INTERVAL_SECONDS,
                 },
             },
-            "actions": {
-                "create": True,
-                "edit": True,
-                "copy": True,
-                "toggle": True,
-                "remove": True,
-            },
+            "actions": actions,
+            "actionReasons": action_reasons,
         }
 
     def edit_projection(self, definition_id: str) -> dict[str, object]:
@@ -1190,6 +1243,7 @@ class AutomationWorkspaceCommandService:
         expected_version: int,
         expected_digest: str,
         object_id: str | None = None,
+        enabled: bool | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> ManagedConfigurationRevision:
         """Validate and atomically activate one focused create/edit successor.
@@ -1199,8 +1253,24 @@ class AutomationWorkspaceCommandService:
         definition whose ID stays immutable.  Inferring that from the body would
         let one filled-in form silently change a definition's identity or
         overwrite an unrelated Active row.
+
+        ``enabled`` is the create command's explicit optional enablement choice
+        (V2-AUTO-013).  Omitting it publishes a disabled definition; ``True``
+        publishes the new definition enabled in the same atomic activation,
+        reusing the exact enabled-publication intent chain (scoped principal,
+        ``GRANT_UNATTENDED_EXECUTION`` at the activation boundary, audit).  It
+        is a strict boolean; an invalid type is rejected before anything is
+        composed.  A candidate that claims ``enabled: true`` on its own is never
+        sufficient: without the explicit command choice the create is refused,
+        so a forged or legacy body cannot enable a publication.
         """
 
+        if enabled is not None and not isinstance(enabled, bool):
+            raise self._invalid(
+                "Automation Task Definition create enabled must be boolean",
+                object_id,
+                "compose",
+            )
         if not isinstance(candidate, Mapping):
             raise self._invalid(
                 "the Automation Task Definition candidate must be an object", object_id, "compose"
@@ -1254,18 +1324,27 @@ class AutomationWorkspaceCommandService:
 
         composed = self._compose(candidate, active, object_id)
         normalized = self._normalize_or_reject(composed, object_id)
-        if not editing_published and normalized.get("enabled") is True:
-            raise AutomationDefinitionSaveError(
-                "automation_definition_enable_requires_command",
-                "a new Automation Task Definition starts disabled; enable it with the separate "
-                "explicit enable command after it is published",
-                status=409,
-                definition_id=str(normalized.get("id")),
-                stage="compose",
-                durable_state="active_unchanged",
-                side_effects="none",
-                next_action="save the definition as disabled, then enable it deliberately",
-            )
+        if not editing_published:
+            # A create publishes enabled only through the same command's
+            # explicit enablement choice; the candidate alone can never enable.
+            if normalized.get("enabled") is True and enabled is not True:
+                raise AutomationDefinitionSaveError(
+                    "automation_definition_enable_requires_command",
+                    "a new Automation Task Definition is published enabled only through "
+                    "the same create command's explicit enablement choice; an enabled "
+                    "candidate alone cannot enable",
+                    status=409,
+                    definition_id=str(normalized.get("id")),
+                    stage="compose",
+                    durable_state="active_unchanged",
+                    side_effects="none",
+                    next_action=(
+                        "submit the create command again with its explicit enablement "
+                        "choice, or save the definition as disabled and enable it "
+                        "deliberately after publication"
+                    ),
+                )
+            normalized["enabled"] = enabled is True
         self._validate_reference(normalized, active.document, object_id)
 
         return self._publish(

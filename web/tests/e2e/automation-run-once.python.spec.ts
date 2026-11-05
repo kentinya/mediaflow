@@ -135,7 +135,7 @@ async function openLifecycleEdit(page: Page): Promise<void> {
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
 }
 
@@ -684,10 +684,10 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
 }) => {
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
   await openLifecycleEdit(page);
-  await page.getByLabel("Item limit").fill("150");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel("处理上限").fill("150");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
   ).toBeVisible();
   const id = await runOnceFromList(page);
   expect((await runOnceState(page, id)).effectivePrimaryLimit).toBe(100);

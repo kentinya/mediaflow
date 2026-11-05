@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.automation_execution_intent import activation_evidence
 from mediaflow.application.automation_workspace_commands import (
     AUTOMATION_DEFINITION_SECTION,
     AutomationWorkspaceCommandService,
@@ -40,10 +41,25 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
 )
+from mediaflow.domain.security import ApiPermission
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
 ADMIN = "operator"
+
+
+class _AllowingAuthority:
+    """Permission authority that grants every checked publication permission."""
+
+    def has_permission(self, actor, permission):
+        return True
+
+
+class _DenyingScheduledAuthority:
+    """Permission authority that refuses only the scheduled execution permission."""
+
+    def has_permission(self, actor, permission):
+        return permission is not ApiPermission.GRANT_UNATTENDED_EXECUTION
 
 
 class RecordingStorage:
@@ -272,6 +288,108 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "automation_definition_enable_requires_command")
         self.assert_active_unchanged(before)
         self.assertEqual(self.repository.activations, self.activations_at_baseline)
+
+    def test_create_with_explicit_enablement_publishes_enabled_atomically(self) -> None:
+        """One create command with the explicit choice publishes enabled once.
+
+        The atomic path reuses the shared enabled-publication intent chain: the
+        activation records the submitting principal's scoped intent, one
+        activation publishes the enabled definition, and nothing starts work.
+        """
+
+        self.managed.bind_automation_publication_authority(_AllowingAuthority())
+        revision = self.save(definition("nightly"), enabled=True)
+        stored = revision.document[AUTOMATION_DEFINITION_SECTION][0]
+        self.assertIs(stored["enabled"], True)
+        self.assertEqual(self.repository.activations, self.activations_at_baseline + 1)
+        intent = activation_evidence(self.repository, revision).after.get(
+            "automationExecutionIntents", {}
+        )["nightly"]
+        self.assertEqual(intent["principalId"], ADMIN)
+        self.assertIsNone(self.grants.get_for_definition("nightly"))
+        self.assertEqual(self.provider_calls, [])
+        self.assertEqual(self.adapters["source-storage"].mutations, [])
+
+    def test_create_enablement_requires_scheduled_execution_permission(self) -> None:
+        """A principal without scheduled execution permission cannot enable at create.
+
+        The refusal is the shared activation-boundary rejection: the prior
+        Active is preserved, nothing is published and no partial state exists.
+        """
+
+        self.managed.bind_automation_publication_authority(_DenyingScheduledAuthority())
+        before = self.managed.active()
+        with self.assertRaises(AutomationDefinitionSaveError) as caught:
+            self.save(definition("nightly"), enabled=True)
+        self.assertEqual(caught.exception.code, "automation_execution_permission_required")
+        self.assert_active_unchanged(before)
+        self.assertEqual(self.definitions(), [])
+        self.assertEqual(self.repository.activations, self.activations_at_baseline)
+
+    def test_create_enablement_refusal_still_allows_a_disabled_create(self) -> None:
+        """The same principal without scheduled permission can still create disabled."""
+
+        self.managed.bind_automation_publication_authority(_DenyingScheduledAuthority())
+        revision = self.save(definition("nightly"))
+        self.assertIs(revision.document[AUTOMATION_DEFINITION_SECTION][0]["enabled"], False)
+
+    def test_create_rejects_a_non_boolean_enablement_choice(self) -> None:
+        before = self.managed.active()
+        for forged in ("yes", 1):
+            with self.assertRaises(AutomationDefinitionSaveError) as caught:
+                self.save(definition("nightly"), enabled=forged)
+            self.assertEqual(caught.exception.code, "automation_definition_invalid_request")
+        self.assert_active_unchanged(before)
+        self.assertEqual(self.definitions(), [])
+
+    def test_form_authority_projects_principal_command_availability(self) -> None:
+        """The typed-form authority projects this principal's real command availability.
+
+        Configuration commands need manage+activation permissions; publishing
+        an enabled definition — at create time or later — additionally needs
+        scheduled execution permission, and the reason names what is missing.
+        """
+
+        document = self.commands.form_authority()
+        # Direct service use keeps the historic permissive projection.
+        self.assertIs(document["actions"]["create"], True)
+        self.assertIsNone(document["actionReasons"]["createEnabled"])
+
+        full = self.commands.form_authority(
+            permissions=frozenset(
+                {
+                    ApiPermission.READ,
+                    ApiPermission.MANAGE_CONFIGURATION,
+                    ApiPermission.ACTIVATE_CONFIGURATION,
+                    ApiPermission.GRANT_UNATTENDED_EXECUTION,
+                }
+            )
+        )
+        self.assertIs(full["actions"]["create"], True)
+        self.assertIs(full["actions"]["createEnabled"], True)
+        self.assertIs(full["actions"]["enable"], True)
+        self.assertIsNone(full["actionReasons"]["createEnabled"])
+
+        without_scheduled = self.commands.form_authority(
+            permissions=frozenset(
+                {
+                    ApiPermission.READ,
+                    ApiPermission.MANAGE_CONFIGURATION,
+                    ApiPermission.ACTIVATE_CONFIGURATION,
+                }
+            )
+        )
+        self.assertIs(without_scheduled["actions"]["create"], True)
+        self.assertIs(without_scheduled["actions"]["createEnabled"], False)
+        self.assertIs(without_scheduled["actions"]["enable"], False)
+        self.assertEqual(
+            without_scheduled["actionReasons"]["createEnabled"],
+            "当前身份缺少定时执行权限，不能启用定时计划。",
+        )
+
+        viewer = self.commands.form_authority(permissions=frozenset({ApiPermission.READ}))
+        self.assertIs(viewer["actions"]["create"], False)
+        self.assertIn("配置管理", viewer["actionReasons"]["createEnabled"])
 
     def test_create_rejects_a_duplicate_id(self) -> None:
         self.save(definition("nightly"))

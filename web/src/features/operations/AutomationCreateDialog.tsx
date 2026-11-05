@@ -1,48 +1,43 @@
 /**
  * The Automation creation dialog.
  *
- * It opens over the existing Automation list, presents one ordinary form and
- * submits the existing checked create command against the exact Active
- * authority read for this dialog. It never creates a Draft, enables a schedule,
- * runs work or mutates Storage. A lost create response is retained as an
- * unknown command identity and may only be reconciled from durable evidence;
- * it is never replayed.
+ * It opens over the existing Automation list and renders the shared Chinese
+ * definition card (V2-AUTO-013/014): one form submission carries the explicit
+ * optional enablement choice — default off — and submits the existing checked
+ * create command against the exact Active authority read for this dialog. It
+ * never creates a Draft, runs work or mutates Storage. A lost create response
+ * is retained as an unknown command identity and may only be reconciled from
+ * durable evidence; it is never replayed.
  */
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   createAutomationDefinitionFocused,
   fetchAutomationFormAuthority,
-  fetchStorageFiles,
-  previewAutomationSchedule,
   reconcileAutomationPublicationFocused,
   type AutomationMutationFailureDetails,
 } from "../../shared/api/api-client";
 import type { AutomationDefinitionDocumentModel } from "../../entities/operations/automation";
 import type { AutomationDefinitionFormAuthorityModel } from "../../entities/operations/automation-lifecycle";
-import type { StorageFilesFailure } from "../../shared/api/api-client";
 import { Button } from "../../shared/ui/Button";
 import { usePrincipalIdentity } from "./principal-identity-query";
+import { AutomationDefinitionFormFields } from "./AutomationDefinitionFormFields";
 import {
   buildCandidateFromPublicationForm,
   buildCreateCandidate,
   browserTimeZone,
-  compiledSchedule,
   createFormFromPublication,
-  enabledResourceLibraries,
-  formatPreviewTime,
   initialCreateForm,
   newAutomationDefinitionId,
   publicationFormFromCreateForm,
-  scheduleSummary,
+  scheduleKindPatch,
   validateCreateForm,
   type AutomationCreateForm,
   type CreateFormIssue,
   type CreateScheduleKind,
-  type IntervalUnit,
 } from "./automation-create-form";
 import {
   readPendingAutomationPublication,
@@ -56,16 +51,6 @@ export interface AutomationCreateDialogProps {
   readonly onCreated: (definition: AutomationDefinitionDocumentModel) => void;
 }
 
-type PreviewState =
-  | { readonly kind: "idle" }
-  | { readonly kind: "loading" }
-  | {
-      readonly kind: "ready";
-      readonly timezone: string | null;
-      readonly upcoming: readonly string[];
-    }
-  | { readonly kind: "error"; readonly code: string };
-
 type CommandError =
   | { readonly kind: "local"; readonly message: string }
   | { readonly kind: "conflict"; readonly code: string }
@@ -76,16 +61,6 @@ type CommandError =
     }
   | { readonly kind: "unknown"; readonly code: string }
   | { readonly kind: "reconcile-unknown"; readonly code: string | null };
-
-const WEEKDAYS = [
-  ["1", "周一"],
-  ["2", "周二"],
-  ["3", "周三"],
-  ["4", "周四"],
-  ["5", "周五"],
-  ["6", "周六"],
-  ["0", "周日"],
-] as const;
 
 const EXIT_MS = 160;
 const COMMAND_ERROR_ID = "automation-create-command-error";
@@ -155,22 +130,24 @@ function commandErrorMessage(error: CommandError): {
         body:
           error.code === "automation_definition_duplicate"
             ? "内部 ID 已存在，配置没有被修改。输入已保留；请在诊断信息中重新生成 ID 后再创建。"
-            : "当前配置已被其他操作更新，创建命令没有生效。输入和创建 ID 已保留；请先重新核对当前配置，再明确创建。",
+            : "当前配置已被其他操作更新，创建命令没有生效。输入、创建 ID 和启用选择已保留；请先重新核对当前配置，再明确创建。",
       };
     case "rejected": {
       const stage = failureStageLabel(error.details?.stage);
       const body =
         error.code === "automation_definition_invalid_field"
           ? "后端在组合候选时拒绝了这次输入，当前 Active 没有被改写。请先检查“运行时间”中的 Cron 表达式与 IANA 时区；如果仍然失败，再检查名称、来源范围与处理上限。输入和内部 ID 已保留；修正后可再次明确创建。"
-          : `${
-              stage === null ? "后端拒绝了这次创建" : `在“${stage}”阶段被拒绝`
-            }，当前 Active 没有被这次命令改写。输入和内部 ID 已保留，请按提示修正后再次明确创建。`;
+          : error.code === "automation_execution_permission_required"
+            ? "当前身份没有定时执行权限，创建并启用没有生效，当前 Active 没有被这次命令改写。输入、内部 ID 和启用选择已保留；可以先创建为停用，或改用有定时执行权限的身份提交。"
+            : `${
+                stage === null ? "后端拒绝了这次创建" : `在“${stage}”阶段被拒绝`
+              }，当前 Active 没有被这次命令改写。输入和内部 ID 已保留，请按提示修正后再次明确创建。`;
       return { title: "创建未生效", body };
     }
     case "unknown":
       return {
         title: "创建结果待核对",
-        body: "响应没有送达或无法解读，创建命令可能已经生效。系统不会自动重发；请使用“核对本次创建”读取真实持久结果。",
+        body: "响应没有送达或无法解读，创建命令可能已经生效（包括启用）。系统不会自动重发；请使用“核对本次创建”读取真实持久结果。",
       };
     case "reconcile-unknown":
       return {
@@ -178,79 +155,6 @@ function commandErrorMessage(error: CommandError): {
         body: "核对没有找到可确认的发布结果，但也不能证明创建未发生。请保留当前页面稍后再次核对，或关闭后重新打开继续核对；不会重新创建。",
       };
   }
-}
-
-function directoryFailureCopy(failure: StorageFilesFailure): {
-  readonly title: string;
-  readonly message: string;
-} {
-  switch (failure.kind) {
-    case "storage_unavailable":
-      return {
-        title: "无法读取此目录",
-        message: "存储暂时不可用或读取超时。请恢复连接后重试同一目录。",
-      };
-    case "configuration_unavailable":
-      return {
-        title: "当前没有可用的配置",
-        message: "请先恢复已生效的运行时配置，再重试读取目录。",
-      };
-    case "storage_not_found":
-    case "resource_library_mismatch":
-      return {
-        title: "资源库的存储不可用",
-        message: "所选资源库没有可读取的存储绑定。请检查资源库配置后重试。",
-      };
-    case "storage_disabled":
-      return {
-        title: "存储已停用",
-        message: "所选资源库的存储已停用。请先启用存储，再重试。",
-      };
-    case "invalid_path":
-      return {
-        title: "目录路径无效",
-        message: "请使用资源库内的相对路径，不能以斜杠开头或包含 ..。",
-      };
-    case "not_found":
-      return {
-        title: "目录不存在",
-        message: "该目录可能已被移动或删除。请返回上级目录重新选择。",
-      };
-    case "not_directory":
-      return {
-        title: "所选位置不是目录",
-        message: "请返回上级目录并选择可遍历的子目录。",
-      };
-    case "invalid_cursor":
-      return {
-        title: "目录列表已过期",
-        message: "请重新打开目录浏览，再继续加载。",
-      };
-    case "resource_library_not_found":
-      return {
-        title: "资源库不可用",
-        message: "所选资源库不存在或已停用。请重新选择资源库。",
-      };
-    case "rejected":
-      return {
-        title: "目录读取被拒绝",
-        message: "当前身份没有读取该目录的权限。请检查权限后重试。",
-      };
-  }
-}
-
-function DirectoryFailure({
-  failure,
-}: {
-  readonly failure: StorageFilesFailure;
-}) {
-  const copy = directoryFailureCopy(failure);
-  return (
-    <div className="mf-automation-create-directory-error" role="alert">
-      <strong>{copy.title}</strong>
-      <p>{copy.message}</p>
-    </div>
-  );
 }
 
 export function AutomationCreateDialog({
@@ -290,13 +194,6 @@ export function AutomationCreateDialog({
   const [discardArmed, setDiscardArmed] = useState(false);
   const [commandError, setCommandError] = useState<CommandError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [previewState, setPreviewState] = useState<{
-    readonly key: string;
-    readonly value: PreviewState;
-  }>({ key: "", value: { kind: "idle" } });
-  const [browserOpen, setBrowserOpen] = useState(false);
-  const [browserPath, setBrowserPath] = useState("");
-  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
 
   // The submitted-but-unconfirmed create command is read during render so a
@@ -424,126 +321,6 @@ export function AutomationCreateDialog({
         : [],
     [form, authorityModel],
   );
-  const previewReady =
-    form !== null &&
-    authorityModel !== null &&
-    form.name.trim().length > 0 &&
-    validationIssues.length === 0;
-
-  const formKey = useMemo(
-    () =>
-      form === null
-        ? ""
-        : JSON.stringify([
-            form.id,
-            form.name,
-            form.resourceLibraryId,
-            form.scopeMode,
-            form.sourceScope,
-            form.itemLimit,
-            form.schedule,
-            form.intervalValue,
-            form.intervalUnit,
-            form.dailyTime,
-            form.weeklyDay,
-            form.weeklyTime,
-            form.cron,
-            form.timezone,
-          ]),
-    [form],
-  );
-
-  // Any candidate change immediately invalidates the displayed result. Only a
-  // response produced for the exact current form and this dialog generation may
-  // replace it, so a late response, a closed-dialog response or a previous
-  // ResourceLibrary response can never overwrite newer state.
-  const preview: PreviewState =
-    previewState.key === formKey ? previewState.value : { kind: "idle" };
-
-  useEffect(() => {
-    const generation = ++previewGeneration.current;
-    if (form === null || authorityModel === null || !previewReady) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      if (previewGeneration.current !== generation) return;
-      const candidate = buildCreateCandidate(form);
-      if (candidate === null) {
-        setPreviewState({
-          key: formKey,
-          value: { kind: "error", code: "invalid_candidate" },
-        });
-        return;
-      }
-      setPreviewState({ key: formKey, value: { kind: "loading" } });
-      void previewAutomationSchedule(token, {
-        candidate,
-        objectId: null,
-      }).then((result) => {
-        if (
-          !mountedRef.current ||
-          previewGeneration.current !== generation ||
-          !previewReady
-        ) {
-          return;
-        }
-        if (result.ok) {
-          setPreviewState({
-            key: formKey,
-            value: {
-              kind: "ready",
-              timezone: result.model.timezone,
-              upcoming: result.model.upcoming,
-            },
-          });
-        } else {
-          setPreviewState({
-            key: formKey,
-            value: { kind: "error", code: result.code },
-          });
-        }
-      });
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [form, formKey, authorityModel, previewReady, token]);
-
-  const directoryQuery = useInfiniteQuery({
-    queryKey: [
-      "operations.automation-create-directory",
-      form?.resourceLibraryId ?? "",
-      browserPath,
-    ],
-    queryFn: ({ pageParam }) =>
-      fetchStorageFiles(token, {
-        resourceLibraryId: form?.resourceLibraryId ?? "",
-        path: browserPath,
-        cursor: pageParam,
-      }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) =>
-      lastPage.ok && lastPage.model.hasNext ? lastPage.model.nextCursor : null,
-    enabled:
-      token !== null &&
-      browserOpen &&
-      form !== null &&
-      form.resourceLibraryId.length > 0,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const directoryPages = directoryQuery.data?.pages ?? [];
-  const directoryModel =
-    directoryPages.length > 0 && directoryPages[0].ok
-      ? directoryPages[0].model
-      : null;
-  const directoryFailure =
-    directoryPages
-      .map((page) => (page.ok ? null : page.failure))
-      .find((failure): failure is StorageFilesFailure => failure !== null) ??
-    null;
-  const directoryEntries = directoryPages.flatMap((page) =>
-    page.ok ? page.model.entries.filter((entry) => entry.isDirectory) : [],
-  );
-
   // A submitted create command blocks route and browser-back navigation until
   // the response arrives, so an in-flight command cannot be silently abandoned
   // by an accidental leave. Unsaved input keeps its own discard choice.
@@ -756,49 +533,7 @@ export function AutomationCreateDialog({
 
   function updateSchedule(schedule: CreateScheduleKind) {
     if (form === null) return;
-    if (schedule === "cron") {
-      const compiled = compiledSchedule(form);
-      updateFields({
-        schedule,
-        cron: form.cron.trim() || compiled?.cron || "0 8 * * *",
-      });
-      return;
-    }
-    updateFields({ schedule });
-  }
-
-  function changeLibrary(value: string) {
-    if (form === null) return;
-    updateFields({
-      resourceLibraryId: value,
-      scopeMode: "root",
-      sourceScope: "",
-    });
-    setBrowserPath("");
-    setLibraryNotice(
-      "已切换资源库；原资源子目录已清空，来源范围现在为整个资源库。",
-    );
-  }
-
-  function openDirectoryBrowser() {
-    if (form === null) return;
-    if (form.resourceLibraryId.length === 0) {
-      setNotice("请先选择资源库，再浏览其中的子目录。");
-      return;
-    }
-    setNotice(null);
-    setBrowserPath(form.sourceScope.trim());
-    setBrowserOpen(true);
-  }
-
-  function chooseDirectory(path: string) {
-    if (form === null) return;
-    updateFields({
-      scopeMode: path === "" ? "root" : "subdirectory",
-      sourceScope: path,
-    });
-    setBrowserOpen(false);
-    setLibraryNotice(null);
+    updateFields(scheduleKindPatch(form, schedule));
   }
 
   function regenerateId() {
@@ -888,6 +623,13 @@ export function AutomationCreateDialog({
       );
       return;
     }
+    if (form.enabled && !authorityModel.actions.createEnabled) {
+      raiseLocalError(
+        authorityModel.actionReasons?.createEnabled ??
+          "当前身份没有定时执行权限，不能创建并启用。没有提交任何配置修改；可以先创建为停用。",
+      );
+      return;
+    }
     if (observedAuthority === null) {
       raiseLocalError("当前 Active 配置尚未读取完成，不能创建。请刷新后重试。");
       return;
@@ -917,6 +659,9 @@ export function AutomationCreateDialog({
         expectedVersion: submittedAuthority.version,
         expectedDigest: submittedAuthority.digest,
       },
+      // The explicit enablement choice rides beside the candidate; omitting
+      // it keeps a disabled create, and only a true selection is ever sent.
+      enabled: form.enabled === true ? true : undefined,
     }).then((result) => {
       if (!mountedRef.current) return;
       submittingRef.current = false;
@@ -927,7 +672,13 @@ export function AutomationCreateDialog({
       if (result.ok) {
         const definition = result.model.definition;
         setPendingPublication(null);
-        setNotice("创建成功，尚未启用。");
+        // The feedback reads the durable publication, never the local toggle:
+        // what was actually published enabled is what this notice says.
+        setNotice(
+          definition !== null && definition.enabled
+            ? "已创建并启用。"
+            : "创建成功，尚未启用。",
+        );
         setDirty(false);
         bypassBlockerRef.current = true;
         if (definition !== null) onCreated(definition);
@@ -1001,7 +752,11 @@ export function AutomationCreateDialog({
       ) {
         const definition = result.model.publication.definition;
         setPendingPublication(null);
-        setNotice("已核对本次创建；结果已持久发布。");
+        setNotice(
+          definition !== null && definition.enabled
+            ? "已核对本次创建；已创建并启用。"
+            : "已核对本次创建；结果已持久发布。",
+        );
         setDirty(false);
         bypassBlockerRef.current = true;
         if (definition !== null) onCreated(definition);
@@ -1024,7 +779,9 @@ export function AutomationCreateDialog({
   }
 
   const libraryOptions =
-    authorityModel === null ? [] : enabledResourceLibraries(authorityModel);
+    authorityModel === null
+      ? []
+      : authorityModel.resourceLibraries.filter((item) => item.enabled);
   const inFlight = submitting || reconciling;
   const createDisabledReason =
     authorityModel === null
@@ -1058,11 +815,6 @@ export function AutomationCreateDialog({
     notice !== null ||
     (showIssues && validationIssues.length > 0);
 
-  const previewMissing = validationIssues
-    .slice(0, 3)
-    .map((issue) => issue.label)
-    .filter((label, index, labels) => labels.indexOf(label) === index);
-
   return (
     <div
       ref={layerRef}
@@ -1095,7 +847,7 @@ export function AutomationCreateDialog({
           <div>
             <h2 id="automation-create-title">新建自动化任务</h2>
             <p>
-              设置来源与运行时间，创建后默认停用；不会扫描、整理或运行媒体文件。
+              设置来源、运行时间与启用状态；创建本身不会扫描、整理或运行媒体文件。
             </p>
           </div>
           <button
@@ -1288,713 +1040,16 @@ export function AutomationCreateDialog({
               noValidate
             >
               <div className="mf-automation-create-scroll">
-                <section
-                  className="mf-automation-create-section"
-                  aria-labelledby="automation-create-basic"
-                >
-                  <h3 id="automation-create-basic">基本信息与来源</h3>
-                  <div className="mf-automation-create-grid">
-                    <div className="mf-automation-create-field mf-automation-create-field-full">
-                      <label htmlFor="automation-create-name">
-                        任务名称 <span aria-hidden="true">*</span>
-                      </label>
-                      <input
-                        id="automation-create-name"
-                        type="text"
-                        value={form.name}
-                        maxLength={authorityModel.limits.name}
-                        autoComplete="off"
-                        aria-required="true"
-                        aria-invalid={
-                          showIssues &&
-                          validationIssues.some(
-                            (issue) =>
-                              issue.fieldId === "automation-create-name",
-                          )
-                        }
-                        aria-describedby={
-                          showIssues &&
-                          validationIssues.some(
-                            (issue) =>
-                              issue.fieldId === "automation-create-name",
-                          )
-                            ? "automation-create-name-error"
-                            : undefined
-                        }
-                        onChange={(event) =>
-                          updateFields({ name: event.target.value })
-                        }
-                      />
-                      <p className="mf-automation-create-hint">
-                        用于在任务列表中识别这次自动整理。
-                      </p>
-                      {showIssues &&
-                        validationIssues
-                          .filter(
-                            (issue) =>
-                              issue.fieldId === "automation-create-name",
-                          )
-                          .map((issue) => (
-                            <p
-                              className="mf-automation-create-field-error"
-                              id="automation-create-name-error"
-                              key={issue.message}
-                            >
-                              {issue.message}
-                            </p>
-                          ))}
-                    </div>
-
-                    <div className="mf-automation-create-field">
-                      <label htmlFor="automation-create-library">
-                        资源库 <span aria-hidden="true">*</span>
-                      </label>
-                      <select
-                        id="automation-create-library"
-                        value={form.resourceLibraryId}
-                        aria-required="true"
-                        aria-invalid={
-                          showIssues &&
-                          validationIssues.some(
-                            (issue) =>
-                              issue.fieldId === "automation-create-library",
-                          )
-                        }
-                        onChange={(event) => changeLibrary(event.target.value)}
-                      >
-                        <option value="">请选择资源库</option>
-                        {authorityModel.resourceLibraries.map((option) => (
-                          <option
-                            key={option.id}
-                            value={option.id}
-                            disabled={!option.enabled}
-                          >
-                            {option.name ?? option.id}
-                            {option.enabled ? "" : "（已停用）"}
-                          </option>
-                        ))}
-                      </select>
-                      {showIssues &&
-                        validationIssues
-                          .filter(
-                            (issue) =>
-                              issue.fieldId === "automation-create-library",
-                          )
-                          .map((issue) => (
-                            <p
-                              className="mf-automation-create-field-error"
-                              key={issue.message}
-                            >
-                              {issue.message}
-                            </p>
-                          ))}
-                    </div>
-
-                    <div className="mf-automation-create-field">
-                      <label htmlFor="automation-create-scope-mode">
-                        来源范围
-                      </label>
-                      <select
-                        id="automation-create-scope-mode"
-                        value={form.scopeMode}
-                        onChange={(event) =>
-                          updateFields({
-                            scopeMode:
-                              event.target.value === "subdirectory"
-                                ? "subdirectory"
-                                : "root",
-                            sourceScope:
-                              event.target.value === "root"
-                                ? ""
-                                : form.sourceScope,
-                          })
-                        }
-                      >
-                        <option value="root">整个资源库</option>
-                        <option value="subdirectory">指定子目录</option>
-                      </select>
-                      <p className="mf-automation-create-hint">
-                        {form.scopeMode === "root"
-                          ? "扫描此资源库的整个已保存范围。"
-                          : "只扫描选定的资源库内子目录。"}
-                      </p>
-                    </div>
-
-                    {libraryNotice !== null && (
-                      <p className="mf-automation-create-notice mf-automation-create-field-full">
-                        {libraryNotice}
-                      </p>
-                    )}
-
-                    {form.scopeMode === "subdirectory" && (
-                      <div className="mf-automation-create-field mf-automation-create-field-full">
-                        <label htmlFor="automation-create-scope">
-                          来源子目录
-                        </label>
-                        <div className="mf-automation-create-inline">
-                          <input
-                            id="automation-create-scope"
-                            type="text"
-                            value={form.sourceScope}
-                            placeholder="例如：电影/华语"
-                            aria-required="true"
-                            aria-invalid={
-                              showIssues &&
-                              validationIssues.some(
-                                (issue) =>
-                                  issue.fieldId === "automation-create-scope",
-                              )
-                            }
-                            onChange={(event) =>
-                              updateFields({ sourceScope: event.target.value })
-                            }
-                          />
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={openDirectoryBrowser}
-                          >
-                            浏览目录
-                          </Button>
-                        </div>
-                        <p className="mf-automation-create-hint">
-                          也可以直接输入资源库内的相对路径；不能以斜杠开头或包含
-                          ..。
-                        </p>
-                        {showIssues &&
-                          validationIssues
-                            .filter(
-                              (issue) =>
-                                issue.fieldId === "automation-create-scope",
-                            )
-                            .map((issue) => (
-                              <p
-                                className="mf-automation-create-field-error"
-                                key={issue.message}
-                              >
-                                {issue.message}
-                              </p>
-                            ))}
-                      </div>
-                    )}
-
-                    {browserOpen && form.scopeMode === "subdirectory" && (
-                      <div className="mf-automation-create-directory mf-automation-create-field-full">
-                        <div className="mf-automation-create-directory-head">
-                          <strong>选择来源子目录</strong>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => setBrowserOpen(false)}
-                          >
-                            收起目录
-                          </Button>
-                        </div>
-                        {directoryModel !== null && (
-                          <nav
-                            className="mf-automation-create-breadcrumbs"
-                            aria-label="目录位置"
-                          >
-                            {directoryModel.breadcrumbs.map((crumb) => (
-                              <button
-                                key={crumb.path}
-                                type="button"
-                                onClick={() => setBrowserPath(crumb.path)}
-                              >
-                                {crumb.isRoot ? "资源库根目录" : crumb.name}
-                              </button>
-                            ))}
-                          </nav>
-                        )}
-                        <p className="mf-automation-create-hint">
-                          当前目录：
-                          {browserPath === "" ? "资源库根目录" : browserPath}
-                        </p>
-                        {directoryQuery.isPending && (
-                          <p
-                            className="mf-automation-create-hint"
-                            role="status"
-                          >
-                            正在读取此目录…
-                          </p>
-                        )}
-                        {directoryFailure !== null && (
-                          <>
-                            <DirectoryFailure failure={directoryFailure} />
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={() => {
-                                void directoryQuery.refetch();
-                              }}
-                              disabled={directoryQuery.isFetching}
-                            >
-                              重试读取此目录
-                            </Button>
-                          </>
-                        )}
-                        {directoryFailure === null &&
-                          !directoryQuery.isPending && (
-                            <>
-                              {directoryEntries.length === 0 ? (
-                                <p className="mf-automation-create-hint">
-                                  此目录没有可遍历的子目录。仍可选择当前目录。
-                                </p>
-                              ) : (
-                                <ul className="mf-automation-create-directory-list">
-                                  {directoryEntries.map((entry) => (
-                                    <li key={entry.path}>
-                                      <span>
-                                        {entry.name}
-                                        {entry.isSymlink ? "（符号链接）" : ""}
-                                      </span>
-                                      {entry.traversable ? (
-                                        <span className="mf-automation-create-directory-actions">
-                                          <Button
-                                            type="button"
-                                            variant="secondary"
-                                            onClick={() =>
-                                              setBrowserPath(entry.path)
-                                            }
-                                          >
-                                            进入
-                                          </Button>
-                                          <Button
-                                            type="button"
-                                            onClick={() =>
-                                              chooseDirectory(entry.path)
-                                            }
-                                          >
-                                            选择此目录
-                                          </Button>
-                                        </span>
-                                      ) : (
-                                        <span className="mf-automation-create-hint">
-                                          不可遍历
-                                        </span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                              {directoryQuery.hasNextPage && (
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  disabled={directoryQuery.isFetchingNextPage}
-                                  onClick={() => {
-                                    void directoryQuery.fetchNextPage();
-                                  }}
-                                >
-                                  {directoryQuery.isFetchingNextPage
-                                    ? "加载中…"
-                                    : "加载更多目录"}
-                                </Button>
-                              )}
-                            </>
-                          )}
-                        <div className="mf-actions">
-                          <Button
-                            type="button"
-                            onClick={() => chooseDirectory("")}
-                          >
-                            选择资源库根目录
-                          </Button>
-                          {browserPath !== "" && (
-                            <Button
-                              type="button"
-                              onClick={() => chooseDirectory(browserPath)}
-                            >
-                              选择当前目录
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section
-                  className="mf-automation-create-section"
-                  id="automation-create-schedule-section"
-                  aria-labelledby="automation-create-schedule"
-                >
-                  <h3 id="automation-create-schedule">运行时间</h3>
-                  {scheduleRejected && (
-                    <div
-                      className="mf-automation-create-schedule-error"
-                      role="alert"
-                    >
-                      <strong>后端拒绝了当前时间计划</strong>
-                      <p>
-                        请检查下面“执行频率”对应的 Cron 表达式与 IANA
-                        时区；输入和内部 ID 已保留，修正后可再次明确创建。
-                      </p>
-                    </div>
-                  )}
-                  <div className="mf-automation-create-grid">
-                    <div className="mf-automation-create-field">
-                      <label htmlFor="automation-create-schedule-kind">
-                        执行频率
-                      </label>
-                      <select
-                        id="automation-create-schedule-kind"
-                        value={form.schedule}
-                        onChange={(event) =>
-                          updateSchedule(
-                            event.target.value as CreateScheduleKind,
-                          )
-                        }
-                      >
-                        <option value="interval">每隔一段时间</option>
-                        <option value="daily">每天固定时间</option>
-                        <option value="weekly">每周固定时间</option>
-                        <option value="cron">高级 Cron</option>
-                      </select>
-                    </div>
-
-                    {form.schedule === "interval" && (
-                      <div className="mf-automation-create-field">
-                        <label htmlFor="automation-create-interval">
-                          执行间隔
-                        </label>
-                        <div className="mf-automation-create-inline">
-                          <input
-                            id="automation-create-interval"
-                            type="text"
-                            inputMode="decimal"
-                            value={form.intervalValue}
-                            aria-required="true"
-                            aria-invalid={
-                              showIssues &&
-                              validationIssues.some(
-                                (issue) =>
-                                  issue.fieldId ===
-                                  "automation-create-interval",
-                              )
-                            }
-                            onChange={(event) =>
-                              updateFields({
-                                intervalValue: event.target.value,
-                              })
-                            }
-                          />
-                          <select
-                            aria-label="间隔单位"
-                            value={form.intervalUnit}
-                            onChange={(event) =>
-                              updateFields({
-                                intervalUnit: event.target
-                                  .value as IntervalUnit,
-                              })
-                            }
-                          >
-                            <option value="seconds">秒</option>
-                            <option value="minutes">分钟</option>
-                            <option value="hours">小时</option>
-                          </select>
-                        </div>
-                        <p className="mf-automation-create-hint">
-                          默认每隔 1 小时；支持小数，例如 1.5 小时会转换为 5400
-                          秒。
-                        </p>
-                        {showIssues &&
-                          validationIssues
-                            .filter(
-                              (issue) =>
-                                issue.fieldId === "automation-create-interval",
-                            )
-                            .map((issue) => (
-                              <p
-                                className="mf-automation-create-field-error"
-                                key={issue.message}
-                              >
-                                {issue.message}
-                              </p>
-                            ))}
-                      </div>
-                    )}
-
-                    {form.schedule === "daily" && (
-                      <div className="mf-automation-create-field">
-                        <label htmlFor="automation-create-daily-time">
-                          每天运行时间
-                        </label>
-                        <input
-                          id="automation-create-daily-time"
-                          type="time"
-                          value={form.dailyTime}
-                          aria-required="true"
-                          onChange={(event) =>
-                            updateFields({ dailyTime: event.target.value })
-                          }
-                        />
-                        {showIssues &&
-                          validationIssues
-                            .filter(
-                              (issue) =>
-                                issue.fieldId ===
-                                "automation-create-daily-time",
-                            )
-                            .map((issue) => (
-                              <p
-                                className="mf-automation-create-field-error"
-                                key={issue.message}
-                              >
-                                {issue.message}
-                              </p>
-                            ))}
-                      </div>
-                    )}
-
-                    {form.schedule === "weekly" && (
-                      <>
-                        <div className="mf-automation-create-field">
-                          <label htmlFor="automation-create-weekly-day">
-                            每周星期
-                          </label>
-                          <select
-                            id="automation-create-weekly-day"
-                            value={form.weeklyDay}
-                            onChange={(event) =>
-                              updateFields({ weeklyDay: event.target.value })
-                            }
-                          >
-                            {WEEKDAYS.map(([value, label]) => (
-                              <option key={value} value={value}>
-                                {label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="mf-automation-create-field">
-                          <label htmlFor="automation-create-weekly-time">
-                            运行时间
-                          </label>
-                          <input
-                            id="automation-create-weekly-time"
-                            type="time"
-                            value={form.weeklyTime}
-                            onChange={(event) =>
-                              updateFields({ weeklyTime: event.target.value })
-                            }
-                          />
-                          {showIssues &&
-                            validationIssues
-                              .filter(
-                                (issue) =>
-                                  issue.fieldId ===
-                                  "automation-create-weekly-time",
-                              )
-                              .map((issue) => (
-                                <p
-                                  className="mf-automation-create-field-error"
-                                  key={issue.message}
-                                >
-                                  {issue.message}
-                                </p>
-                              ))}
-                        </div>
-                      </>
-                    )}
-
-                    {form.schedule === "cron" && (
-                      <div className="mf-automation-create-field mf-automation-create-field-full">
-                        <label htmlFor="automation-create-cron">
-                          Cron 表达式
-                        </label>
-                        <input
-                          id="automation-create-cron"
-                          type="text"
-                          value={form.cron}
-                          placeholder="0 8 * * *"
-                          aria-required="true"
-                          aria-invalid={
-                            scheduleRejected ||
-                            (showIssues &&
-                              validationIssues.some(
-                                (issue) =>
-                                  issue.fieldId === "automation-create-cron",
-                              ))
-                          }
-                          aria-describedby="automation-create-cron-error"
-                          onChange={(event) =>
-                            updateFields({ cron: event.target.value })
-                          }
-                        />
-                        <p className="mf-automation-create-hint">
-                          使用后端支持的五段
-                          Cron；这里只检查格式与取值范围，不会自行计算实际触发时间。
-                        </p>
-                        {showIssues &&
-                          validationIssues
-                            .filter(
-                              (issue) =>
-                                issue.fieldId === "automation-create-cron",
-                            )
-                            .map((issue) => (
-                              <p
-                                className="mf-automation-create-field-error"
-                                id="automation-create-cron-error"
-                                key={issue.message}
-                              >
-                                {issue.message}
-                              </p>
-                            ))}
-                      </div>
-                    )}
-
-                    {form.schedule !== "interval" && (
-                      <div className="mf-automation-create-field">
-                        <label htmlFor="automation-create-timezone">时区</label>
-                        <input
-                          id="automation-create-timezone"
-                          type="text"
-                          value={form.timezone}
-                          placeholder="Asia/Shanghai"
-                          aria-required="true"
-                          onChange={(event) =>
-                            updateFields({ timezone: event.target.value })
-                          }
-                        />
-                        <p className="mf-automation-create-hint">
-                          {browserZone.recognized
-                            ? `已预填本机时区；可改为其他 IANA 时区。`
-                            : "无法识别本机时区，已明确使用 UTC；可填写其他 IANA 时区。"}
-                        </p>
-                        {showIssues &&
-                          validationIssues
-                            .filter(
-                              (issue) =>
-                                issue.fieldId === "automation-create-timezone",
-                            )
-                            .map((issue) => (
-                              <p
-                                className="mf-automation-create-field-error"
-                                key={issue.message}
-                              >
-                                {issue.message}
-                              </p>
-                            ))}
-                      </div>
-                    )}
-
-                    <div className="mf-automation-create-preview mf-automation-create-field-full">
-                      <p className="mf-automation-create-summary">
-                        {scheduleSummary(form)}
-                      </p>
-                      {!previewReady && (
-                        <p className="mf-automation-create-hint">
-                          填写
-                          {previewMissing.length > 0
-                            ? `「${previewMissing.join("、")}」`
-                            : "完整信息"}
-                          后，会按后端规则自动计算即将运行的时间。
-                        </p>
-                      )}
-                      {previewReady && preview.kind === "idle" && (
-                        <p className="mf-automation-create-hint" role="status">
-                          正在准备时间预览…
-                        </p>
-                      )}
-                      {preview.kind === "loading" && (
-                        <p className="mf-automation-create-hint" role="status">
-                          正在按后端规则计算即将运行的时间…
-                        </p>
-                      )}
-                      {preview.kind === "error" && (
-                        <p className="mf-automation-create-hint" role="status">
-                          预览未完成（{preview.code}
-                          ）；这不阻止创建，创建仍由后端校验。
-                        </p>
-                      )}
-                      {preview.kind === "ready" && (
-                        <>
-                          <p className="mf-automation-create-hint">
-                            {preview.timezone === null
-                              ? `按浏览器本地时区（${browserZone.timeZone}）显示`
-                              : `按所选时区 ${preview.timezone} 显示`}
-                          </p>
-                          {preview.upcoming.length === 0 ? (
-                            <p className="mf-automation-create-hint">
-                              后端没有返回即将运行的时间；创建后请核对配置。
-                            </p>
-                          ) : (
-                            <ul className="mf-automation-create-upcoming">
-                              {preview.upcoming.map((value) => (
-                                <li key={value}>
-                                  {formatPreviewTime(value, preview.timezone)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </>
-                      )}
-                      <p className="mf-automation-create-note">
-                        时间计划仅在启用后生效；当前创建为未启用状态，不会自动运行。
-                      </p>
-                    </div>
-                  </div>
-                </section>
-
-                <section
-                  className="mf-automation-create-section"
-                  aria-labelledby="automation-create-limits"
-                >
-                  <h3 id="automation-create-limits">处理限制</h3>
-                  <div className="mf-automation-create-grid">
-                    <div className="mf-automation-create-field">
-                      <label htmlFor="automation-create-limit">处理上限</label>
-                      <input
-                        id="automation-create-limit"
-                        type="text"
-                        inputMode="numeric"
-                        value={form.itemLimit}
-                        aria-required="true"
-                        aria-invalid={
-                          showIssues &&
-                          validationIssues.some(
-                            (issue) =>
-                              issue.fieldId === "automation-create-limit",
-                          )
-                        }
-                        onChange={(event) =>
-                          updateFields({ itemLimit: event.target.value })
-                        }
-                      />
-                      <p className="mf-automation-create-hint">
-                        限制单次来源范围最多处理的数量（
-                        {authorityModel.limits.itemLimitMinimum}–
-                        {authorityModel.limits.itemLimitMaximum}
-                        ）。超过上限时需要缩小来源范围；系统不会自动分批，也不会只处理前
-                        N 个。
-                      </p>
-                      {showIssues &&
-                        validationIssues
-                          .filter(
-                            (issue) =>
-                              issue.fieldId === "automation-create-limit",
-                          )
-                          .map((issue) => (
-                            <p
-                              className="mf-automation-create-field-error"
-                              key={issue.message}
-                            >
-                              {issue.message}
-                            </p>
-                          ))}
-                    </div>
-                    <div className="mf-automation-create-field">
-                      <span className="mf-automation-create-label">
-                        创建后的状态
-                      </span>
-                      <p className="mf-automation-create-status">未启用</p>
-                      <p className="mf-automation-create-hint">
-                        创建后可在任务列表中启用或运行一次；创建本身不会启用、运行或授权。
-                      </p>
-                    </div>
-                  </div>
-                </section>
+                <AutomationDefinitionFormFields
+                  mode="create"
+                  form={form}
+                  authority={authorityModel}
+                  issues={validationIssues}
+                  showIssues={showIssues}
+                  scheduleRejected={scheduleRejected}
+                  onPatch={updateFields}
+                  onScheduleKind={updateSchedule}
+                />
 
                 <details
                   className="mf-automation-create-diagnostics"
@@ -2034,7 +1089,7 @@ export function AutomationCreateDialog({
                     <dt>发布机制</dt>
                     <dd>
                       一次明确创建直接提交经过后端校验的候选并原子发布；不创建
-                      Draft，不单独启用或运行。
+                      Draft，不运行任务。选择“启用定时计划”后，同一次创建会按共享的发布链路完成启用。
                     </dd>
                   </dl>
                 </details>
@@ -2047,7 +1102,11 @@ export function AutomationCreateDialog({
                   )}
                   {createDisabledReason === null &&
                     pendingPublication === null && (
-                      <span>创建后未启用，可在列表中启用或运行一次。</span>
+                      <span>
+                        {form.enabled
+                          ? "将创建并启用：保存后按计划定时运行；运行一次请在任务列表发起。"
+                          : "创建后未启用，可在列表中启用或运行一次。"}
+                      </span>
                     )}
                 </div>
                 <div className="mf-actions">
@@ -2088,7 +1147,7 @@ export function AutomationCreateDialog({
                         createDisabledReason !== null || submitting || closing
                       }
                     >
-                      创建任务
+                      {form.enabled ? "创建并启用" : "创建任务"}
                     </Button>
                   )}
                 </div>

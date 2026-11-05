@@ -38,6 +38,11 @@ export interface AutomationCreateForm {
   readonly weeklyTime: string;
   readonly cron: string;
   readonly timezone: string;
+  /**
+   * The explicit enablement choice (V2-AUTO-013). Creation defaults to off;
+   * editing backfills the saved state and saves the toggled value.
+   */
+  readonly enabled: boolean;
 }
 
 export interface CreateFormIssue {
@@ -107,7 +112,7 @@ export function newAutomationDefinitionId(): string | null {
   }
 }
 
-/** The initial ordinary form: whole ResourceLibrary, hourly, limit 100. */
+/** The initial ordinary form: whole ResourceLibrary, hourly, disabled, limit 100. */
 export function initialCreateForm(input: {
   readonly id: string;
   readonly timeZone: string;
@@ -127,7 +132,87 @@ export function initialCreateForm(input: {
     weeklyTime: "08:00",
     cron: "",
     timezone: input.timeZone,
+    enabled: false,
   };
+}
+
+/**
+ * One exact saved-definition backfill for the shared edit card.
+ *
+ * Arbitrary legal Cron and fractional intervals round-trip without being
+ * rewritten into a convenience default: an unrecognized expression stays
+ * advanced Cron verbatim, and an interval keeps its exact stored value in
+ * seconds. The internal ID is preserved unchanged.
+ */
+export function editFormFromDefinition(
+  definition: {
+    readonly id: string;
+    readonly name: string;
+    readonly enabled: boolean;
+    readonly resourceLibraryId: string;
+    readonly sourceScope: string | null;
+    readonly itemLimit: number;
+    readonly scheduleType: "interval" | "cron";
+    readonly intervalSeconds: number | null;
+    readonly cron: string | null;
+    readonly timezone: string | null;
+  },
+  timeZoneFallback: string,
+): AutomationCreateForm {
+  const sourceScope = definition.sourceScope ?? "";
+  const interval =
+    definition.scheduleType === "interval" &&
+    definition.intervalSeconds !== null;
+  const cron = interval ? "" : (definition.cron ?? "");
+  const convenience = interval
+    ? {
+        schedule: "interval" as CreateScheduleKind,
+        dailyTime: "08:00",
+        weeklyDay: "1",
+        weeklyTime: "08:00",
+      }
+    : convenienceFromCron(cron);
+  return {
+    id: definition.id,
+    name: definition.name,
+    resourceLibraryId: definition.resourceLibraryId,
+    scopeMode: sourceScope.trim().length > 0 ? "subdirectory" : "root",
+    sourceScope,
+    itemLimit: String(definition.itemLimit),
+    schedule: convenience.schedule,
+    intervalValue: interval
+      ? // The exact stored value, losslessly rendered in seconds.
+        String(definition.intervalSeconds)
+      : DEFAULT_INTERVAL_VALUE,
+    intervalUnit: interval ? "seconds" : DEFAULT_INTERVAL_UNIT,
+    dailyTime: convenience.dailyTime,
+    weeklyDay: convenience.weeklyDay,
+    weeklyTime: convenience.weeklyTime,
+    cron,
+    timezone: definition.timezone ?? timeZoneFallback,
+    enabled: definition.enabled,
+  };
+}
+
+/**
+ * The form patch for one schedule-kind selection.
+ *
+ * Switching to advanced Cron from a convenience selection seeds the compiled
+ * expression so the operator edits what they saw; every other selection only
+ * changes which convenience controls are shown and never rewrites values.
+ */
+export function scheduleKindPatch(
+  form: AutomationCreateForm,
+  schedule: CreateScheduleKind,
+): Partial<AutomationCreateForm> {
+  if (schedule === "cron") {
+    const compiled = compiledSchedule(form);
+    return {
+      schedule,
+      cron: form.cron.trim() || compiled?.cron || "0 8 * * *",
+    };
+  }
+  return { schedule };
 }
 
 function decimalMultiply(value: string, factor: number): string | null {
@@ -545,7 +630,7 @@ export function validateCreateForm(
   return issues;
 }
 
-/** Build the exact candidate the existing checked create command submits. */
+/** Build the exact candidate the existing checked create/edit command submits. */
 export function buildCreateCandidate(
   form: AutomationCreateForm,
 ): Record<string, unknown> | null {
@@ -554,7 +639,10 @@ export function buildCreateCandidate(
   return {
     id: form.id.trim(),
     name: form.name.trim(),
-    enabled: false,
+    // The candidate carries the operator's choice; the create command's
+    // explicit enablement parameter decides publication, so a candidate alone
+    // can never enable a new definition (V2-AUTO-013).
+    enabled: form.enabled,
     resourceLibraryId: form.resourceLibraryId,
     mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
     itemLimit: Number(form.itemLimit),
@@ -582,7 +670,7 @@ export function publicationFormFromCreateForm(
   return {
     id: form.id.trim(),
     name: form.name.trim(),
-    enabled: false,
+    enabled: form.enabled,
     resourceLibraryId: form.resourceLibraryId,
     mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
     sourceScope:
@@ -633,6 +721,7 @@ export function createFormFromPublication(
     weeklyTime: convenience.weeklyTime,
     cron: source.scheduleType === "cron" ? source.cron : "",
     timezone: source.timezone || timeZoneFallback,
+    enabled: source.enabled,
   };
 }
 
@@ -674,7 +763,7 @@ export function buildCandidateFromPublicationForm(
   return {
     id: form.id.trim(),
     name: form.name.trim(),
-    enabled: false,
+    enabled: form.enabled,
     resourceLibraryId: form.resourceLibraryId,
     mode: form.mode,
     itemLimit: Number(form.itemLimit),

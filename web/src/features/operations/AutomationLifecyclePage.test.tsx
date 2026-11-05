@@ -113,6 +113,12 @@ function formAuthority() {
       copy: true,
       toggle: true,
       remove: true,
+      enable: true,
+      createEnabled: true,
+    },
+    actionReasons: {
+      enable: null,
+      createEnabled: null,
     },
   };
 }
@@ -227,18 +233,14 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    const name = await screen.findByLabelText("Name");
+    const name = await screen.findByLabelText(/任务名称/);
     await userEvent.clear(name);
     await userEvent.type(name, "Updated");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saved.name).toBe("Updated"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Enable schedule" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "启用定时计划" }));
     await waitFor(() => expect(saved.enabled).toBe(true));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Disable schedule" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "停用定时计划" }));
     await waitFor(() => expect(saved.enabled).toBe(false));
     await userEvent.clear(name);
     await userEvent.type(name, "Updated again");
@@ -283,7 +285,7 @@ describe("AutomationLifecyclePage", () => {
     );
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    const name = await screen.findByLabelText("Name");
+    const name = await screen.findByLabelText(/任务名称/);
     await userEvent.clear(name);
     await userEvent.type(name, "Submitted");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -294,12 +296,10 @@ describe("AutomationLifecyclePage", () => {
     const confirmed = publication("save", saved);
     active = confirmed.active;
     completeSave?.(jsonResponse(confirmed));
-    await screen.findByText(/published definition is the Active/);
+    await screen.findByText(/已保存并保持启用|已保存，当前为停用状态/);
     expect(name).toHaveValue("Later typing");
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
-    expect(
-      screen.queryByText(/unsaved edits are based on an older configuration/i),
-    ).toBeNull();
+    expect(screen.queryByText(/未保存的修改基于较旧的配置/)).toBeNull();
   });
 
   it("reconciles an unknown Save without replay and preserves later input", async () => {
@@ -333,7 +333,7 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    const name = await screen.findByLabelText("Name");
+    const name = await screen.findByLabelText(/任务名称/);
     await userEvent.clear(name);
     await userEvent.type(name, "Submitted once");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -392,12 +392,10 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    await screen.findByText(/0 configuration reference\(s\)/);
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    await screen.findByText(/0 个配置引用/);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Enable schedule" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "启用定时计划" }));
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/nightly/enable"))).toBe(
         true,
@@ -411,7 +409,7 @@ describe("AutomationLifecyclePage", () => {
     });
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Copy as disabled definition" }),
+      screen.getByRole("button", { name: "复制为停用定义" }),
     );
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/nightly/copy"))).toBe(
@@ -447,14 +445,14 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    await screen.findByText(/0 configuration reference\(s\)/);
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    await screen.findByText(/0 个配置引用/);
 
     // Removal requires an explicit confirmation before the destructive command.
-    const remove = screen.getByRole("button", { name: "Remove definition" });
+    const remove = screen.getByRole("button", { name: "移除定义" });
     expect(remove).toBeDisabled();
     expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-    await userEvent.click(screen.getByLabelText("Confirm definition removal"));
+    await userEvent.click(screen.getByLabelText(/我确认移除此定义/));
     await userEvent.click(remove);
     await waitFor(() =>
       expect(
@@ -504,11 +502,11 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    await userEvent.click(
-      screen.getByRole("button", { name: "Preview upcoming times" }),
-    );
-    await screen.findByText("2026-01-01T01:00:00+00:00");
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    // The shared card calculates the backend upcoming times automatically and
+    // renders them in the chosen timezone; the read is zero-mutation and
+    // publishes nothing.
+    await screen.findByText(/2026/);
     expect(
       calls.some(
         (call) =>
@@ -543,7 +541,7 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByText("Automation authority unavailable");
+    await screen.findByText("自动化配置不可用");
     expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
@@ -590,15 +588,13 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByText("The definition could not be read");
+    await screen.findByText("无法读取该定义");
     // The bounded recovery is offered and the unavailable evidence is named.
     expect(
-      screen.getByText(
-        /Reading the definition failed \(configuration_unavailable\)/,
-      ),
+      screen.getByText(/读取定义失败（configuration_unavailable）/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
-    expect(screen.queryByLabelText("Name")).toBeNull();
+    expect(screen.queryByLabelText(/任务名称/)).toBeNull();
     expect(screen.queryByText("draft-only")).toBeNull();
     // No command was published behind the operator's back.
     expect(
@@ -659,9 +655,9 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     const { router } = renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     // Change the origin's name without saving.
-    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    await userEvent.type(screen.getByLabelText(/任务名称/), " retained");
     // Navigate to the copy route the way Copy navigation does.
     await router.navigate({
       to: "/operations/automation/lifecycle/$definitionId",
@@ -743,9 +739,11 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     await screen.findByDisplayValue("incoming");
-    await userEvent.clear(screen.getByLabelText("Relative source scope"));
+    // The card's clear interaction switches the scope to the whole library;
+    // the cleared value is exactly what the save publishes.
+    await userEvent.selectOptions(screen.getByLabelText("来源范围"), "root");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(
@@ -800,7 +798,7 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     await screen.findByDisplayValue("1.5");
     // The form accepts and saves the supported fractional value.
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -851,14 +849,11 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    await userEvent.selectOptions(
-      screen.getByLabelText("Schedule"),
-      "daily at 08:00",
-    );
-    // The daily convenience compiles to the exact Cron expression and keeps
-    // the timezone field.
-    await screen.findByDisplayValue("0 8 * * *");
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    await userEvent.selectOptions(screen.getByLabelText("执行频率"), "daily");
+    // The daily convenience keeps its exact time control and compiles to the
+    // same canonical Cron the backend already consumes.
+    await screen.findByLabelText("每天运行时间");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(
@@ -943,16 +938,16 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     await userEvent.click(
-      screen.getByRole("button", { name: "Copy as disabled definition" }),
+      screen.getByRole("button", { name: "复制为停用定义" }),
     );
-    await screen.findByText(/outcome unknown/i);
+    await screen.findByText("复制结果未知");
     // The blocked state offers reconciliation, not a second Copy.
     await userEvent.click(
-      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.getByRole("button", { name: "核对已提交的复制" }),
     );
-    await screen.findByText(/committed durably as nightly-copy/);
+    await screen.findByText(/副本已持久发布为 nightly-copy/);
     // The reconciliation read carries the submitted intent's fence.
     expect(copyIntentCalls[0]).toContain("expectedRevisionId=");
     expect(copyIntentCalls[0]).toContain(
@@ -960,7 +955,7 @@ describe("AutomationLifecyclePage", () => {
     );
     // Opening the committed copy clears the intent.
     await userEvent.click(
-      screen.getByRole("button", { name: "Open the committed copy" }),
+      screen.getByRole("button", { name: "打开已发布的副本" }),
     );
   });
 
@@ -995,10 +990,10 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     // Change only the Name; the retained candidate is composed against the
     // observed Active revision.
-    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    await userEvent.type(screen.getByLabelText(/任务名称/), " retained");
     // Another writer publishes; every authority read after the original render
     // observes the newer revision.
     let authorityReads = 0;
@@ -1054,16 +1049,12 @@ describe("AutomationLifecyclePage", () => {
       }),
     );
     // Refresh: the page re-reads the current authority.
-    await userEvent.click(
-      screen.getAllByRole("button", { name: "Refresh" })[0],
-    );
+    await userEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
     await waitFor(() => expect(authorityReads).toBeGreaterThanOrEqual(1));
     // The retained input is still visible (no silent value replacement), but
     // the page truthfully reports the stale candidate and blocks Save.
-    expect(screen.getByLabelText("Name")).toHaveValue("Nightly retained");
-    await screen.findByText(
-      /unsaved edits are based on an older configuration/i,
-    );
+    expect(screen.getByLabelText(/任务名称/)).toHaveValue("Nightly retained");
+    await screen.findByText(/未保存的修改基于较旧的配置/);
     const save = screen.getByRole("button", { name: "保存" });
     expect(save).toBeDisabled();
     // No command was published behind the operator's back.
@@ -1075,11 +1066,11 @@ describe("AutomationLifecyclePage", () => {
     // definition with the fresh fence.
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Review current values and re-adopt them",
+        name: "核对当前值并采用",
       }),
     );
     await waitFor(() =>
-      expect(screen.getByLabelText("Name")).toHaveValue("Nightly"),
+      expect(screen.getByLabelText(/任务名称/)).toHaveValue("Nightly"),
     );
     const freshSave = screen.getByRole("button", { name: "保存" });
     expect(freshSave).toBeEnabled();
@@ -1162,20 +1153,16 @@ describe("AutomationLifecyclePage", () => {
     vi.stubGlobal("fetch", dynamicFetch);
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    expect(screen.getByLabelText("Item limit")).toHaveValue("10");
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    expect(screen.getByLabelText("处理上限")).toHaveValue("10");
     // The operator changes only the Name; the candidate is composed against
     // the observed Active revision.
-    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    await userEvent.type(screen.getByLabelText(/任务名称/), " retained");
     // Another legitimate writer publishes item limit 9.
     peerPublished = true;
     // Refresh re-reads the newer Active.
-    await userEvent.click(
-      screen.getAllByRole("button", { name: "Refresh" })[0],
-    );
-    await screen.findByText(
-      /unsaved edits are based on an older configuration/i,
-    );
+    await userEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    await screen.findByText(/未保存的修改基于较旧的配置/);
     await expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     // Deliberate re-adoption re-reads the definition: the current durable
     // values (the peer's limit 9) are loaded with the fence they were read
@@ -1183,17 +1170,17 @@ describe("AutomationLifecyclePage", () => {
     // the values the operator reviews before saving again.
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Review current values and re-adopt them",
+        name: "核对当前值并采用",
       }),
     );
     await waitFor(() =>
-      expect(screen.getByLabelText("Item limit")).toHaveValue("9"),
+      expect(screen.getByLabelText("处理上限")).toHaveValue("9"),
     );
-    await expect(screen.getByLabelText("Name")).toHaveValue("Nightly");
+    await expect(screen.getByLabelText(/任务名称/)).toHaveValue("Nightly");
     const freshSave = screen.getByRole("button", { name: "保存" });
     await waitFor(() => expect(freshSave).toBeEnabled());
     await userEvent.click(freshSave);
-    await screen.findByText(/published definition is the Active/);
+    await screen.findByText(/已保存并保持启用|已保存，当前为停用状态/);
     // The Save submitted the reviewed current values with the matching fence:
     // the peer's durable limit 9 survives; only the Name changed.
     expect(savedBodies).toHaveLength(1);
@@ -1258,7 +1245,7 @@ describe("AutomationLifecyclePage", () => {
     });
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     // Simulate the persisted unknown outcome from a lost response before the
     // reload, exactly as the page writes it.
     sessionStorage.setItem(
@@ -1275,32 +1262,32 @@ describe("AutomationLifecyclePage", () => {
     // A real page reload: fresh modules, fresh component state.
     cleanup();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     // Copy stays blocked without any reconciliation.
     const copy = screen.getByRole("button", {
-      name: "Copy as disabled definition",
+      name: "复制为停用定义",
     });
     expect(copy).toBeDisabled();
-    await screen.findByText(/outcome unknown/i);
+    await screen.findByText("复制结果未知");
     expect(
-      screen.queryByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.queryByRole("button", { name: "核对已提交的复制" }),
     ).toBeEnabled();
     await userEvent.click(
-      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.getByRole("button", { name: "核对已提交的复制" }),
     );
-    await screen.findByText(/genuinely unpublished/);
+    await screen.findByText(/确为未发布/);
     expect(copyIntentCalls[0]).toContain(
       `expectedRevisionId=${encodeURIComponent(ACTIVE_REVISION)}`,
     );
     // Reconciliation resolved the unknown outcome; the block is lifted.
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Reconciled: no copy was published",
+        name: "已核对：未发布副本",
       }),
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy as disabled definition" }),
+        screen.getByRole("button", { name: "复制为停用定义" }),
       ).toBeEnabled(),
     );
     sessionStorage.clear();
@@ -1370,18 +1357,18 @@ describe("AutomationLifecyclePage", () => {
     );
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     await expect(
-      screen.getByRole("button", { name: "Copy as disabled definition" }),
+      screen.getByRole("button", { name: "复制为停用定义" }),
     ).toBeDisabled();
     await userEvent.click(
-      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.getByRole("button", { name: "核对已提交的复制" }),
     );
-    await screen.findByText(/No durable publication evidence/);
+    await screen.findByText(/发布证明/);
     // No release action exists for an unproven outcome.
     expect(
       screen.queryByRole("button", {
-        name: "Reconciled: no copy was published",
+        name: "已核对：未发布副本",
       }),
     ).toBeNull();
     sessionStorage.clear();
@@ -1445,19 +1432,19 @@ describe("AutomationLifecyclePage", () => {
     );
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     const copy = screen.getByRole("button", {
-      name: "Copy as disabled definition",
+      name: "复制为停用定义",
     });
     expect(copy).toBeDisabled();
     await userEvent.click(
-      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.getByRole("button", { name: "核对已提交的复制" }),
     );
-    await screen.findByText(/could not be read completely/i);
+    await screen.findByText(/无法完整读取/);
     // The block holds: an incomplete read proves nothing.
     expect(
       screen.queryByRole("button", {
-        name: "Reconciled: no copy was published",
+        name: "已核对：未发布副本",
       }),
     ).toBeNull();
     expect(copy).toBeDisabled();
@@ -1518,19 +1505,19 @@ describe("AutomationLifecyclePage", () => {
     );
     await connect();
     renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
     await userEvent.click(
-      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+      screen.getByRole("button", { name: "核对已提交的复制" }),
     );
-    await screen.findByText(/genuinely unpublished/);
+    await screen.findByText(/确为未发布/);
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Reconciled: no copy was published",
+        name: "已核对：未发布副本",
       }),
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Copy as disabled definition" }),
+        screen.getByRole("button", { name: "复制为停用定义" }),
       ).toBeEnabled(),
     );
     sessionStorage.clear();

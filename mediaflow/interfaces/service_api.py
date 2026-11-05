@@ -15999,14 +15999,25 @@ class MediaFlowApi:
                 self._require_empty_query(environ, "automation definition form authority")
                 self._require(principal, ApiPermission.READ)
                 return self._automation_definition_document(
-                    start_response, lambda: self._automation_workspace.form_authority()
+                    start_response,
+                    lambda: self._automation_workspace.form_authority(
+                        permissions=principal.permissions
+                    ),
                 )
             if method == "POST":
                 self._require_empty_query(environ, "automation definition create")
                 self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
                 self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
                 document = self._document(environ)
-                value, authority = self._automation_command_envelope(document, None)
+                # The explicit optional enablement choice (V2-AUTO-013) rides
+                # beside the typed candidate: omitting it stays disabled, and
+                # anything but a strict boolean is refused before composition.
+                enabled = document.get("enabled")
+                if "enabled" in document and not isinstance(enabled, bool):
+                    raise ValueError("automation definition create enabled must be boolean")
+                value, authority = self._automation_command_envelope(
+                    document, None, allow_create_enabled=True
+                )
                 return self._automation_definition_publish(
                     start_response,
                     principal,
@@ -16014,6 +16025,7 @@ class MediaFlowApi:
                     value=value,
                     authority=authority,
                     action="create",
+                    enabled=enabled if isinstance(enabled, bool) else None,
                 )
             return self._error(start_response, 405, "method_not_allowed", "GET or POST required")
         if len(parts) == 6 and parts[5] == "schedule-preview":
@@ -16290,6 +16302,7 @@ class MediaFlowApi:
         object_id: str | None,
         *,
         object: bool = True,
+        allow_create_enabled: bool = False,
     ) -> tuple[dict | None, tuple[str, int, str]]:
         """Validate the bounded command envelope before it reaches the application.
 
@@ -16297,13 +16310,19 @@ class MediaFlowApi:
         Save and the observed Active identity for every command.  A missing or
         extra key is rejected rather than ignored, so a stale or partially-built
         browser request can never publish a different successor than the operator
-        reviewed.
+        reviewed.  Only the create command may carry the explicit optional
+        ``enabled`` choice; an edit publishes its enabled state through the
+        typed definition itself.
         """
 
         fields = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
         if object:
             fields.add("object")
-        if set(document) != fields:
+        optional: frozenset[str] = frozenset({"enabled"}) if allow_create_enabled else frozenset()
+        # The create command's ``enabled`` choice is explicitly optional; every
+        # other advertised field must be present and no unadvertised key is
+        # ever accepted.
+        if not fields <= set(document) or not set(document) <= (fields | optional):
             raise ValueError(
                 "automation definition command requires only the typed definition and the "
                 "exact Active identity"
@@ -16352,6 +16371,7 @@ class MediaFlowApi:
         authority: tuple[str, int, str],
         action: str,
         reason: str | None = None,
+        enabled: bool | None = None,
     ):
         """Publish one exact focused successor and echo its durable truth."""
 
@@ -16415,6 +16435,7 @@ class MediaFlowApi:
                         expected_version=authority[1],
                         expected_digest=authority[2],
                         object_id=object_id,
+                        enabled=enabled if action == "create" else None,
                         before_publish=lambda successor: prepared.append(
                             self._prepare_automation_binding_for_revision(successor)
                         ),

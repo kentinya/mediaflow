@@ -1,15 +1,21 @@
 /**
  * Native V2 Automation definition lifecycle page.
  *
- * One typed form and one checked `保存` publish the intended successor: the
- * backend composes it from the exact observed Active, validates the whole
- * document, runs the applicable checks and atomically activates it. The operator
- * never orchestrates Draft/Validate/Activate, and this page never claims a
- * Draft is Active. Enable/disable, copy and removal are separate explicit
- * lifecycle commands with their own durable outcomes; removal evidence and
- * unattended-authority state come from the backend projection. Reads create
- * nothing, and every mutation disables automatic retry so an ambiguous outcome
- * is reconciled by reading durable truth rather than by replaying the request.
+ * Editing a saved definition renders the same shared Chinese card as creation
+ * (V2-AUTO-014): one typed `AutomationCreateForm`, one validator, and one
+ * checked `保存` that publishes the intended successor. The backend composes it
+ * from the exact observed Active, validates the whole document, runs the
+ * applicable checks and atomically activates it. The definition's ID is
+ * immutable and the exact saved values — including arbitrary legal Cron and
+ * fractional intervals — are backfilled without being rewritten into a
+ * convenience default. The enablement choice is part of the same card: saving
+ * publishes the toggled state through the same checked publication boundary.
+ *
+ * Enable/disable, copy and removal remain separate explicit lifecycle commands
+ * with their own durable outcomes; removal evidence and unattended-authority
+ * state come from the backend projection. Reads create nothing, and every
+ * mutation disables automatic retry so an ambiguous outcome is reconciled by
+ * reading durable truth rather than by replaying the request.
  *
  * Form state, retained input and the command target are all bound to the
  * current definition route context, and the candidate carries its own observed
@@ -20,7 +26,7 @@
  * before it can publish again.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -35,13 +41,11 @@ import {
   fetchAutomationEditProjection,
   fetchAutomationFormAuthority,
   fetchAutomationRemovalImpact,
-  previewAutomationSchedule,
   removeAutomationDefinitionFocused,
   saveAutomationDefinitionFocused,
   setAutomationDefinitionEnabledFocused,
 } from "../../shared/api/api-client";
 import { automationListQueryKey } from "./automation-query";
-import { AUTOMATION_AUTOMATIC_ORGANIZATION_MODE } from "../../entities/operations/automation";
 import type {
   AutomationPublicationModel,
   AutomationEditProjectionModel,
@@ -51,14 +55,26 @@ import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import { useAutomationListReturn } from "../../shared/navigation/automation-list-return";
+import { AutomationDefinitionFormFields } from "./AutomationDefinitionFormFields";
+import {
+  buildCandidateFromPublicationForm,
+  buildCreateCandidate,
+  browserTimeZone,
+  createFormFromPublication,
+  editFormFromDefinition,
+  publicationFormFromCreateForm,
+  scheduleKindPatch,
+  validateCreateForm,
+  type AutomationCreateForm,
+  type CreateScheduleKind,
+} from "./automation-create-form";
 import {
   readPendingAutomationPublication,
   writePendingAutomationPublication,
-  type AutomationPublicationFormState,
   type PendingAutomationPublication,
 } from "./automation-publication-session";
 
-type FormState = AutomationPublicationFormState;
+type FormState = AutomationCreateForm;
 
 /**
  * The route context a form instance belongs to. Form state never outlives its
@@ -84,71 +100,6 @@ interface FormEntry {
   readonly key: FormContextKey;
   readonly form: FormState;
   readonly authority: CandidateAuthority;
-}
-
-/**
- * Typed schedule conveniences. Daily/weekly compile to the exact Cron
- * semantics the Scheduler already consumes; advanced Cron remains available.
- */
-type ScheduleConvenience = "interval" | "daily" | "weekly" | "cron";
-
-function convenienceOf(form: FormState): ScheduleConvenience {
-  if (form.scheduleType === "interval") return "interval";
-  if (form.cron.trim() === "0 8 * * *") return "daily";
-  if (form.cron.trim() === "0 8 * * 1") return "weekly";
-  return "cron";
-}
-
-const DAILY_CRON = "0 8 * * *";
-const WEEKLY_CRON = "0 8 * * 1";
-
-function buildCandidate(form: FormState): Record<string, unknown> {
-  return {
-    id: form.id.trim(),
-    name: form.name.trim(),
-    enabled: form.enabled,
-    resourceLibraryId: form.resourceLibraryId,
-    // The intent is fixed: no selector exists, and a recorded removed mode is
-    // only ever published as the retained mode after an explicit confirmation.
-    mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-    itemLimit: Number(form.itemLimit),
-    // The scope field is always submitted: clearing the input publishes the
-    // cleared value (the ResourceLibrary root) instead of silently keeping a
-    // previously stored scope.
-    sourceScope: form.sourceScope.trim(),
-    ...(form.scheduleType === "interval"
-      ? {
-          intervalSeconds: Number(form.intervalSeconds),
-          cron: null,
-          timezone: null,
-        }
-      : {
-          intervalSeconds: null,
-          cron: form.cron.trim(),
-          timezone: form.timezone.trim(),
-        }),
-  };
-}
-
-/** A supported interval value: any finite positive decimal number. */
-const INTERVAL_PATTERN = /^\d+(\.\d+)?$/;
-
-function formIsValid(form: FormState): boolean {
-  const itemLimit = Number(form.itemLimit);
-  const intervalValue = Number(form.intervalSeconds);
-  return (
-    form.id.trim().length > 0 &&
-    form.name.trim().length > 0 &&
-    form.resourceLibraryId.length > 0 &&
-    /^\d+$/.test(form.itemLimit) &&
-    Number.isFinite(itemLimit) &&
-    itemLimit > 0 &&
-    (form.scheduleType === "interval"
-      ? INTERVAL_PATTERN.test(form.intervalSeconds) &&
-        Number.isFinite(intervalValue) &&
-        intervalValue > 0
-      : form.cron.trim().length > 0 && form.timezone.trim().length > 0)
-  );
 }
 
 /**
@@ -254,6 +205,7 @@ export function AutomationLifecyclePage() {
   // The exact workspace list state this page was opened from, so every back
   // link restores the same tab/filters/page instead of the workspace default.
   const listReturn = useAutomationListReturn();
+  const browserZone = useMemo(() => browserTimeZone(), []);
   // The principal identity the backend confirms for this token: the pending
   // Copy intent's session key is scoped to it, so another principal's unknown
   // outcome can never be reconciled as this one's result. The identity is
@@ -307,6 +259,7 @@ export function AutomationLifecyclePage() {
   const [formEntry, setFormEntry] = useState<FormEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showIssues, setShowIssues] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   // One submitted-but-unconfirmed Copy command: while its outcome is unknown,
   // no second Copy is offered until it is reconciled from durable evidence.
@@ -345,7 +298,10 @@ export function AutomationLifecyclePage() {
       ? editQueryResult.model.definition
       : null;
   // A loaded edit projection belongs to this route only when its definition
-  // matches the route identity.
+  // matches the route identity. The backfill is exact: the saved values —
+  // including arbitrary legal Cron and fractional intervals — are restored
+  // without being rewritten into a convenience default, and the ID stays
+  // immutable.
   const loadedForRoute =
     loaded !== null &&
     loaded.id === (definitionId ?? "") &&
@@ -362,22 +318,7 @@ export function AutomationLifecyclePage() {
     retainedForm !== null
       ? retainedForm
       : loadedForRoute !== null
-        ? {
-            id: loadedForRoute.id,
-            name: loadedForRoute.name,
-            enabled: loadedForRoute.enabled,
-            resourceLibraryId: loadedForRoute.resourceLibraryId,
-            mode: loadedForRoute.mode,
-            sourceScope: loadedForRoute.sourceScope ?? "",
-            itemLimit: String(loadedForRoute.itemLimit),
-            scheduleType: loadedForRoute.scheduleType,
-            intervalSeconds:
-              loadedForRoute.intervalSeconds !== null
-                ? String(loadedForRoute.intervalSeconds)
-                : "",
-            cron: loadedForRoute.cron ?? "",
-            timezone: loadedForRoute.timezone ?? "UTC",
-          }
+        ? editFormFromDefinition(loadedForRoute, browserZone.timeZone)
         : null;
 
   const activeIdentity = authorityModel?.active ?? null;
@@ -433,20 +374,10 @@ export function AutomationLifecyclePage() {
       version: model.active.revisionSequence,
       digest: model.active.digest,
     };
-    const published: FormState = {
-      id: saved.id,
-      name: saved.name,
-      enabled: saved.enabled,
-      resourceLibraryId: saved.resourceLibraryId,
-      mode: saved.mode,
-      sourceScope: saved.sourceScope ?? "",
-      itemLimit: String(saved.itemLimit),
-      scheduleType: saved.scheduleType,
-      intervalSeconds:
-        saved.intervalSeconds === null ? "" : String(saved.intervalSeconds),
-      cron: saved.cron ?? "",
-      timezone: saved.timezone ?? "UTC",
-    };
+    const published: FormState = editFormFromDefinition(
+      saved,
+      browserZone.timeZone,
+    );
     setFormEntry((entry) => {
       if (
         entry !== null &&
@@ -488,7 +419,10 @@ export function AutomationLifecyclePage() {
         // form can never retarget a Save at another definition, even after
         // Copy navigation changed the route.
         definitionId: input.targetId,
-        object: buildCandidate({ ...input.form, id: input.targetId }),
+        object: buildCreateCandidate({
+          ...input.form,
+          id: input.targetId,
+        }) as Record<string, unknown>,
         authority: {
           expectedRevisionId: input.authority.revisionId,
           expectedVersion: input.authority.version,
@@ -500,7 +434,10 @@ export function AutomationLifecyclePage() {
       setPendingPublication({
         definitionId: input.targetId,
         action: "edit",
-        form: input.form,
+        form: publicationFormFromCreateForm({
+          ...input.form,
+          id: input.targetId,
+        }),
         authority: input.authority,
       });
       setError(null);
@@ -516,17 +453,11 @@ export function AutomationLifecyclePage() {
           input.targetId,
         );
         setNotice(
-          result.model.action === "remove"
-            ? "The definition was removed and its future unattended authority was revoked."
-            : "The published definition is the Active configuration consumed by runtime.",
+          result.model.definition?.enabled
+            ? "已保存并保持启用：按保存的计划定时运行；没有启动任何任务。"
+            : "已保存，当前为停用状态；不会定时运行。",
         );
         invalidate();
-        if (result.model.definition?.id) {
-          void navigate({
-            to: "/operations/automation/lifecycle/$definitionId",
-            params: { definitionId: result.model.definition.id },
-          });
-        }
         return;
       }
       if (
@@ -540,8 +471,8 @@ export function AutomationLifecyclePage() {
       setPendingPublication(null);
       setError(
         result.status === 409
-          ? "The command was rejected because the Active configuration changed. Refresh and review durable state before submitting again; nothing is retried automatically."
-          : `The command was rejected (${result.code}). Read the current durable state and try again.`,
+          ? "当前配置已被其他操作更新，保存命令没有生效。请先核对当前配置再明确重试；不会自动重试。"
+          : `保存被拒绝（${result.code}）。请核对当前持久状态后修正重试。`,
       );
     },
   });
@@ -567,7 +498,7 @@ export function AutomationLifecyclePage() {
       setPendingPublication({
         definitionId: input.id,
         action: input.enabled ? "enable" : "disable",
-        form: input.form,
+        form: publicationFormFromCreateForm(input.form),
         authority: input.authority,
       });
       setError(null);
@@ -585,8 +516,8 @@ export function AutomationLifecyclePage() {
         );
         setNotice(
           result.model.definition?.enabled
-            ? "The definition is enabled and eligible for future Scheduler evaluation; no work was started."
-            : "The definition is disabled; future scheduled emission stops at the checked boundary and admitted work is unchanged.",
+            ? "已启用：后续按保存的计划定时运行；启用本身没有启动任务。"
+            : "已停用：后续定时准入停止，已受理的工作保持不变。",
         );
         invalidate();
         return;
@@ -600,9 +531,7 @@ export function AutomationLifecyclePage() {
         return;
       }
       setPendingPublication(null);
-      setError(
-        `The state change was rejected (${result.code}). Refresh and review state.`,
-      );
+      setError(`启停命令被拒绝（${result.code}）。请刷新核对当前状态。`);
     },
   });
 
@@ -610,7 +539,7 @@ export function AutomationLifecyclePage() {
     mutationFn: (pending: PendingAutomationPublication) =>
       reconcileAutomationPublicationFocused(token, pending.definitionId, {
         action: pending.action,
-        object: buildCandidate(pending.form),
+        object: buildCandidateFromPublicationForm(pending.form),
         expectedRevisionId: pending.authority.revisionId,
         expectedVersion: pending.authority.version,
         expectedDigest: pending.authority.digest,
@@ -624,7 +553,10 @@ export function AutomationLifecyclePage() {
       ) {
         acceptPublication(
           result.model.publication,
-          pending.form,
+          // The retained submitted form is the exact command identity; the
+          // shared conversion restores it as the operator form so the merge
+          // only replaces fields the operator has not since retyped.
+          createFormFromPublication(pending, browserZone.timeZone),
           pending.authority,
           pending.definitionId,
           pending.action === "enable" || pending.action === "disable",
@@ -660,9 +592,7 @@ export function AutomationLifecyclePage() {
     },
     onSuccess: (result, input) => {
       if (result.ok) {
-        setNotice(
-          "The copy was published as a new, disabled definition without authority.",
-        );
+        setNotice("副本已发布为新的停用定义，不继承任何授权。");
         setPendingCopyIntent(null);
         invalidate();
         if (result.model.definition?.id) {
@@ -683,11 +613,11 @@ export function AutomationLifecyclePage() {
           authority: input.authority,
         });
         setError(
-          "Copying the definition returned no confirmed outcome (transport_unavailable). The copy may or may not have been published; reconcile before submitting Copy again.",
+          "复制命令没有收到确认结果（transport_unavailable）。副本可能已经发布，也可能没有；请先核对，再决定是否再次复制。",
         );
         return;
       }
-      setError(`Copying the definition was rejected (${result.code}).`);
+      setError(`复制命令被拒绝（${result.code}）。`);
     },
   });
 
@@ -738,31 +668,14 @@ export function AutomationLifecyclePage() {
     },
     onSuccess: (result) => {
       if (result.ok) {
-        setNotice(
-          "The definition was removed; future scheduled effects stop at safe boundaries and run history is retained.",
-        );
+        setNotice("定义已移除：后续定时效果在安全边界停止，运行历史保留。");
         invalidate();
         void navigate({ to: "/operations/automation" });
         return;
       }
       setError(
-        `Removal was rejected (${result.code}). The Active definition and its authority state are reported above.`,
+        `移除命令被拒绝（${result.code}）。当前定义与授权状态已在上方显示。`,
       );
-    },
-  });
-
-  const previewMutation = useMutation({
-    mutationFn: (candidate: Record<string, unknown>) =>
-      previewAutomationSchedule(token, {
-        candidate,
-        objectId: definitionId ?? null,
-      }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (!result.ok) {
-        setError(`Schedule preview was rejected (${result.code}).`);
-      }
     },
   });
 
@@ -790,8 +703,6 @@ export function AutomationLifecyclePage() {
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId ?? "";
   const copyBlocked = pendingCopyIntent !== null;
-  const convenience =
-    currentForm === null ? "interval" : convenienceOf(currentForm);
 
   return (
     <AuthorizedReadBoundary
@@ -799,50 +710,13 @@ export function AutomationLifecyclePage() {
       unavailableTitle="Automation lifecycle unavailable"
     >
       {({ data, isFetching, refresh }) => {
-        if (data === undefined || currentForm === null) {
-          if (editing && editFailed) {
-            return (
-              <StatusBanner
-                variant="error"
-                title="The definition could not be read"
-              >
-                <p>
-                  {editQueryResult !== undefined && !editQueryResult.ok
-                    ? editQueryResult.code === "not_found"
-                      ? "This definition is not present in the current Active configuration. Refresh the Automation inventory to find its current identity or history."
-                      : `Reading the definition failed (${editQueryResult.code}). Refresh after the Active configuration is available; no input was lost.`
-                    : "Reading the definition failed. Refresh after the Active configuration is available."}
-                </p>
-                <div className="mf-actions">
-                  <Link
-                    className="mf-button mf-button-secondary"
-                    to="/operations/automation"
-                    search={listReturn.search}
-                  >
-                    Back to Automation
-                  </Link>
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-                </div>
-              </StatusBanner>
-            );
-          }
+        // The authority read's availability comes first: without it no command
+        // can be fenced, so no form is offered even when a definition read.
+        if (data !== undefined && !data.ok) {
           return (
-            <StatusBanner variant="info" title="Loading the definition">
+            <StatusBanner variant="error" title="自动化配置不可用">
               <p>
-                Reading the exact Active Automation authority and typed form.
-              </p>
-            </StatusBanner>
-          );
-        }
-        if (!data.ok) {
-          return (
-            <StatusBanner
-              variant="error"
-              title="Automation authority unavailable"
-            >
-              <p>
-                {data.details?.nextAction ??
-                  "Refresh after the Active configuration is available."}
+                {data.details?.nextAction ?? "请在 Active 配置可用后刷新。"}
               </p>
               <div className="mf-actions">
                 <Link
@@ -850,14 +724,66 @@ export function AutomationLifecyclePage() {
                   to="/operations/automation"
                   search={listReturn.search}
                 >
-                  Back to Automation
+                  返回自动化
                 </Link>
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                <RefreshControl
+                  label="刷新"
+                  refreshingLabel="刷新中…"
+                  onRefresh={refresh}
+                  refreshing={isFetching}
+                />
               </div>
             </StatusBanner>
           );
         }
-        const valid = formIsValid(currentForm);
+        if (
+          data === undefined ||
+          currentForm === null ||
+          authorityModel === null
+        ) {
+          if (editing && editFailed) {
+            return (
+              <StatusBanner variant="error" title="无法读取该定义">
+                <p>
+                  {editQueryResult !== undefined && !editQueryResult.ok
+                    ? editQueryResult.code === "not_found"
+                      ? "该定义不在当前 Active 配置中。请刷新自动化清单查看其当前身份或历史。"
+                      : `读取定义失败（${editQueryResult.code}）。请在 Active 配置可用后刷新；输入没有丢失。`
+                    : "读取定义失败。请在 Active 配置可用后刷新。"}
+                </p>
+                <div className="mf-actions">
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to="/operations/automation"
+                    search={listReturn.search}
+                  >
+                    返回自动化
+                  </Link>
+                  <RefreshControl
+                    label="刷新"
+                    refreshingLabel="刷新中…"
+                    onRefresh={refresh}
+                    refreshing={isFetching}
+                  />
+                </div>
+              </StatusBanner>
+            );
+          }
+          return (
+            <StatusBanner variant="info" title="正在读取定义">
+              <p>正在读取当前的自动化配置与表单授权。</p>
+            </StatusBanner>
+          );
+        }
+        const validationIssues = validateCreateForm(
+          currentForm,
+          authorityModel,
+        );
+        const valid = validationIssues.length === 0;
+        const candidate = buildCreateCandidate(currentForm);
+        const scheduleRejected =
+          error !== null &&
+          error.includes("automation_definition_invalid_field");
         const update = (patch: Partial<FormState>) =>
           setFormEntry({
             key: formContextKey,
@@ -910,25 +836,12 @@ export function AutomationLifecyclePage() {
                 return;
               }
               const projection = fresh.model;
-              const projected = projection.definition;
               setFormEntry({
                 key: formContextKey,
-                form: {
-                  id: projected.id,
-                  name: projected.name,
-                  enabled: projected.enabled,
-                  resourceLibraryId: projected.resourceLibraryId,
-                  mode: projected.mode,
-                  sourceScope: projected.sourceScope ?? "",
-                  itemLimit: String(projected.itemLimit),
-                  scheduleType: projected.scheduleType,
-                  intervalSeconds:
-                    projected.intervalSeconds !== null
-                      ? String(projected.intervalSeconds)
-                      : "",
-                  cron: projected.cron ?? "",
-                  timezone: projected.timezone ?? "UTC",
-                },
+                form: editFormFromDefinition(
+                  projection.definition,
+                  browserZone.timeZone,
+                ),
                 authority: {
                   revisionId: projection.active.revisionId,
                   version: projection.active.revisionSequence,
@@ -937,9 +850,6 @@ export function AutomationLifecyclePage() {
               });
             });
         };
-        const preview = previewMutation.data;
-        const previewModel =
-          preview !== undefined && preview.ok ? preview.model : null;
         const removal =
           removalQuery.data !== undefined && removalQuery.data.ok
             ? removalQuery.data.model
@@ -955,9 +865,9 @@ export function AutomationLifecyclePage() {
         return (
           <div className="mf-dashboard">
             <p className="mf-dashboard-meta">
-              启用后按保存的来源范围与上限定时整理；启用本身不启动任务。运行一次请回到任务列表，对已保存的定义直接发起。
+              编辑已保存的自动化任务：保存发布一次经过校验的后继配置；启用后按保存的来源范围与上限定时整理，启用本身不启动任务。运行一次请回到任务列表，对已保存的定义直接发起。
             </p>
-            {authorityModel?.executionEffects && (
+            {authorityModel.executionEffects && (
               <p className="mf-dashboard-meta">
                 已保存策略的可用效果：
                 {authorityModel.executionEffects.operations.join("、")}。
@@ -993,290 +903,130 @@ export function AutomationLifecyclePage() {
             )}
             <header className="mf-dashboard-head">
               <div>
-                <h2>Edit Automation definition</h2>
+                <h2>编辑自动化任务</h2>
                 <p className="mf-dashboard-meta">
-                  One checked 保存 composes the focused successor from the exact
-                  Active configuration, validates the whole document and
-                  atomically activates it. No separate Draft/Validate/Activate
-                  step is required, and unrelated changes never ride along.
+                  内部 ID <code>{currentForm.id}</code>{" "}
+                  固定不变；一次「保存」从当前读取的 Active
+                  组合出精确后继并原子发布，无需单独的
+                  Draft/验证/激活步骤，无关修改也不会捎带发布。
                 </p>
                 {activeIdentity !== null && (
                   <p className="mf-dashboard-meta">
-                    Active revision {activeIdentity.revisionId} · version{" "}
+                    Active 修订 {activeIdentity.revisionId} · 版本{" "}
                     {activeIdentity.revisionSequence}
                   </p>
                 )}
               </div>
-              <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+              <RefreshControl
+                label="刷新"
+                refreshingLabel="刷新中…"
+                onRefresh={refresh}
+                refreshing={isFetching}
+              />
             </header>
             {candidateIsStale && (
-              <StatusBanner
-                variant="error"
-                title="Your unsaved edits are based on an older configuration"
-              >
+              <StatusBanner variant="error" title="未保存的修改基于较旧的配置">
                 <p>
-                  The Active configuration changed after this form was filled in
-                  (another writer published a change). Saving would use the
-                  older identity and be rejected — the current values are never
-                  silently replaced by this page. Review the current durable
-                  values, then deliberately re-adopt them as your next
-                  candidate, or discard your edits.
+                  在填写此表单后，Active
+                  配置已被其他操作更新。按旧身份提交会被拒绝；本页不会悄悄替换当前值。请先核对当前持久值，再明确采用为下一次候选，或放弃未保存的修改。
                 </p>
                 <div className="mf-actions">
                   <Button type="button" onClick={adoptCurrentValues}>
-                    Review current values and re-adopt them
+                    核对当前值并采用
                   </Button>
                   <Button
                     type="button"
                     variant="secondary"
                     onClick={() => setFormEntry(null)}
                   >
-                    Discard my unsaved edits
+                    放弃未保存的修改
                   </Button>
                 </div>
               </StatusBanner>
             )}
-            <section className="mf-count-section">
-              <h3>Definition</h3>
-              <p className="mf-label">
-                <label htmlFor="lifecycle-name">Name</label>
-              </p>
-              <input
-                id="lifecycle-name"
-                value={currentForm.name}
-                onChange={(event) => update({ name: event.target.value })}
-                maxLength={120}
-              />
-              <p className="mf-label">
-                <label htmlFor="lifecycle-library">ResourceLibrary</label>
-              </p>
-              <select
-                id="lifecycle-library"
-                value={currentForm.resourceLibraryId}
-                onChange={(event) =>
-                  update({ resourceLibraryId: event.target.value })
+            <form
+              className="mf-automation-create-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setShowIssues(true);
+                if (
+                  !valid ||
+                  candidate === null ||
+                  !canManage ||
+                  candidateIsStale ||
+                  candidateAuthority === null
+                ) {
+                  return;
                 }
-              >
-                <option value="">select one ResourceLibrary</option>
-                {authorityModel?.resourceLibraries.map((option) => (
-                  <option
-                    key={option.id}
-                    value={option.id}
-                    disabled={!option.enabled}
-                  >
-                    {option.name ?? option.id}
-                    {option.enabled ? "" : " (disabled)"}
-                  </option>
-                ))}
-              </select>
-              <p className="mf-label">
-                <label htmlFor="lifecycle-scope">Relative source scope</label>
-              </p>
-              <input
-                id="lifecycle-scope"
-                value={currentForm.sourceScope}
-                onChange={(event) =>
-                  update({ sourceScope: event.target.value })
-                }
-                placeholder="empty for the ResourceLibrary root"
-                maxLength={1024}
-              />
-              <p className="mf-dashboard-meta">
-                Clearing this field and saving publishes the cleared scope: the
-                definition then covers the ResourceLibrary root.
-              </p>
-              <p className="mf-label">Run mode</p>
-              <p
-                className="mf-dashboard-meta"
-                data-testid="lifecycle-mode-intent"
-              >
-                {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}（自动整理）是固定意图，
-                这里没有模式选择器。
-              </p>
-              <p className="mf-label">
-                <label htmlFor="lifecycle-limit">Item limit</label>
-              </p>
-              <input
-                id="lifecycle-limit"
-                value={currentForm.itemLimit}
-                onChange={(event) => update({ itemLimit: event.target.value })}
-                inputMode="numeric"
-              />
-              <p className="mf-label">
-                <label htmlFor="lifecycle-enabled">Enabled</label>
-              </p>
-              <select
-                id="lifecycle-enabled"
-                value={currentForm.enabled ? "yes" : "no"}
-                onChange={(event) =>
-                  update({ enabled: event.target.value === "yes" })
-                }
-              >
-                <option value="no">disabled</option>
-                <option value="yes">enabled</option>
-              </select>
-            </section>
-            <section className="mf-count-section">
-              <h3>Schedule</h3>
-              <p className="mf-label">
-                <label htmlFor="lifecycle-schedule-convenience">Schedule</label>
-              </p>
-              <select
-                id="lifecycle-schedule-convenience"
-                value={convenience}
-                onChange={(event) => {
-                  const value = event.target.value as ScheduleConvenience;
-                  if (value === "daily") {
-                    update({
-                      scheduleType: "cron",
-                      cron: DAILY_CRON,
-                    });
-                    return;
+                saveMutation.mutate({
+                  form: currentForm,
+                  authority: candidateAuthority,
+                  targetId: routeTargetId,
+                });
+              }}
+              noValidate
+            >
+              <div className="mf-automation-create-scroll">
+                <AutomationDefinitionFormFields
+                  mode="edit"
+                  form={currentForm}
+                  authority={authorityModel}
+                  issues={validationIssues}
+                  showIssues={showIssues}
+                  scheduleRejected={scheduleRejected}
+                  onPatch={update}
+                  onScheduleKind={(kind: CreateScheduleKind) =>
+                    update(scheduleKindPatch(currentForm, kind))
                   }
-                  if (value === "weekly") {
-                    update({
-                      scheduleType: "cron",
-                      cron: WEEKLY_CRON,
-                    });
-                    return;
-                  }
-                  update({
-                    scheduleType: value === "interval" ? "interval" : "cron",
-                    cron:
-                      value === "cron" &&
-                      currentForm.scheduleType === "interval"
-                        ? ""
-                        : currentForm.cron,
-                  });
-                }}
-              >
-                <option value="interval">interval (seconds)</option>
-                <option value="daily">daily at 08:00</option>
-                <option value="weekly">Mondays at 08:00</option>
-                <option value="cron">advanced Cron with IANA timezone</option>
-              </select>
-              {currentForm.scheduleType === "interval" ? (
-                <>
-                  <p className="mf-label">
-                    <label htmlFor="lifecycle-interval">Interval seconds</label>
-                  </p>
-                  <input
-                    id="lifecycle-interval"
-                    value={currentForm.intervalSeconds}
-                    onChange={(event) =>
-                      update({ intervalSeconds: event.target.value })
-                    }
-                    inputMode="decimal"
-                  />
-                  <p className="mf-dashboard-meta">
-                    Any positive number of seconds, including fractional values
-                    such as 1.5.
-                  </p>
-                </>
-              ) : (
-                <>
-                  {convenience !== "cron" && (
-                    <p className="mf-dashboard-meta">
-                      This convenience schedule compiles to the Cron expression
-                      below; edit it as advanced Cron for exact control.
-                    </p>
-                  )}
-                  <p className="mf-label">
-                    <label htmlFor="lifecycle-cron">Cron expression</label>
-                  </p>
-                  <input
-                    id="lifecycle-cron"
-                    value={currentForm.cron}
-                    onChange={(event) => update({ cron: event.target.value })}
-                    placeholder="0 8 * * *"
-                    maxLength={64}
-                  />
-                  <p className="mf-label">
-                    <label htmlFor="lifecycle-timezone">Timezone</label>
-                  </p>
-                  <input
-                    id="lifecycle-timezone"
-                    value={currentForm.timezone}
-                    onChange={(event) =>
-                      update({ timezone: event.target.value })
-                    }
-                    maxLength={64}
-                  />
-                </>
-              )}
+                />
+              </div>
+
               <div className="mf-actions">
                 <Button
-                  type="button"
-                  disabled={!valid || previewMutation.isPending}
-                  onClick={() =>
-                    previewMutation.mutate(buildCandidate(currentForm))
+                  type="submit"
+                  disabled={
+                    !valid ||
+                    candidate === null ||
+                    !canManage ||
+                    saveMutation.isPending ||
+                    candidateIsStale
                   }
                 >
-                  {previewMutation.isPending
-                    ? "Calculating..."
-                    : "Preview upcoming times"}
+                  {saveMutation.isPending ? "发布中…" : "保存"}
                 </Button>
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/automation"
+                  search={listReturn.search}
+                >
+                  返回自动化
+                </Link>
               </div>
-              {previewModel !== null && (
-                <>
-                  <p className="mf-dashboard-meta">
-                    {previewModel.scheduleType} schedule · zero mutation ·{" "}
-                    {previewModel.timezone ?? "no timezone"}
+              {!canManage && (
+                <StatusBanner variant="info" title="保存暂不可用">
+                  <p>
+                    无法读取确切的 Active 授权，因此暂不提供保存。请在 Active
+                    配置可用后刷新。
                   </p>
-                  {previewModel.upcoming.length > 0 && (
-                    <ul>
-                      {previewModel.upcoming.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {previewModel.notes.map((note) => (
-                    <p className="mf-dashboard-meta" key={note}>
-                      {note}
-                    </p>
-                  ))}
-                </>
+                </StatusBanner>
               )}
-            </section>
-            <div className="mf-actions">
-              <Button
-                type="button"
-                disabled={
-                  !valid ||
-                  !canManage ||
-                  saveMutation.isPending ||
-                  candidateIsStale
-                }
-                onClick={() =>
-                  candidateAuthority !== null &&
-                  saveMutation.mutate({
-                    form: currentForm,
-                    authority: candidateAuthority,
-                    targetId: routeTargetId,
-                  })
-                }
-              >
-                {saveMutation.isPending ? "Publishing..." : "保存"}
-              </Button>
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/automation"
-                search={listReturn.search}
-              >
-                Back to Automation
-              </Link>
-            </div>
-            {!canManage && (
-              <StatusBanner variant="info" title="Save unavailable">
-                <p>
-                  The exact Active authority could not be read, so no Save is
-                  offered. Refresh after Active configuration is available.
-                </p>
-              </StatusBanner>
-            )}
-            {editing && (
+              {showIssues && validationIssues.length > 0 && (
+                <StatusBanner
+                  variant="error"
+                  title={`有 ${validationIssues.length} 处输入需要修正`}
+                >
+                  <ul>
+                    {validationIssues.map((issue) => (
+                      <li key={`${issue.fieldId}:${issue.message}`}>
+                        {issue.label}：{issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                </StatusBanner>
+              )}
+
               <section className="mf-count-section">
-                <h3>Lifecycle actions</h3>
+                <h3>生命周期操作</h3>
                 <div className="mf-actions">
                   <Button
                     type="button"
@@ -1292,10 +1042,10 @@ export function AutomationLifecyclePage() {
                     }
                   >
                     {toggleMutation.isPending
-                      ? "Updating..."
+                      ? "更新中…"
                       : currentForm.enabled
-                        ? "Disable schedule"
-                        : "Enable schedule"}
+                        ? "停用定时计划"
+                        : "启用定时计划"}
                   </Button>
                   <Button
                     type="button"
@@ -1310,24 +1060,20 @@ export function AutomationLifecyclePage() {
                       })
                     }
                   >
-                    {copyMutation.isPending
-                      ? "Copying..."
-                      : "Copy as disabled definition"}
+                    {copyMutation.isPending ? "复制中…" : "复制为停用定义"}
                   </Button>
                 </div>
                 {copyCandidate !== null && (
                   <p className="mf-dashboard-meta">
-                    Copy candidate {copyCandidate.definition.id} (
-                    {copyCandidate.definition.enabled ? "enabled" : "disabled"})
+                    副本候选 {copyCandidate.definition.id}（
+                    {copyCandidate.definition.enabled ? "已启用" : "已停用"}）
                   </p>
                 )}
                 {copyBlocked && (
-                  <StatusBanner variant="error" title="Copy outcome unknown">
+                  <StatusBanner variant="error" title="复制结果未知">
                     <p>
-                      The last Copy command for {pendingCopyIntent?.sourceId}{" "}
-                      returned no confirmed outcome. It may have been published
-                      durably; reconciling allocates no new copy and replays
-                      nothing.
+                      最近一次对 {pendingCopyIntent?.sourceId}{" "}
+                      的复制命令没有确认结果，可能已经持久发布。核对不会创建新副本，也不会重放命令。
                     </p>
                     <div className="mf-actions">
                       {!reconcileCopyFor && (
@@ -1339,7 +1085,7 @@ export function AutomationLifecyclePage() {
                             );
                           }}
                         >
-                          Reconcile the submitted Copy
+                          核对已提交的复制
                         </Button>
                       )}
                       <Link
@@ -1347,20 +1093,20 @@ export function AutomationLifecyclePage() {
                         to="/operations/automation"
                         search={listReturn.search}
                       >
-                        Refresh the Automation inventory
+                        刷新自动化清单
                       </Link>
                     </div>
                     {reconcileCopyFor !== null && (
                       <p className="mf-dashboard-meta">
                         {copyIntent === null
-                          ? "Reading the durable copy evidence..."
+                          ? "正在读取持久复制证据…"
                           : copyIntent.committed
-                            ? `The copy committed durably as ${copyIntent.committedDefinitionId}. Refresh the inventory; no second copy is created.`
+                            ? `副本已持久发布为 ${copyIntent.committedDefinitionId}。请刷新清单；不会创建第二个副本。`
                             : !copyIntent.evidenceComplete
-                              ? "The durable command evidence could not be read completely, so the submitted copy's outcome is still unknown. Reconcile from the current inventory; do not submit another copy for this intent."
+                              ? "持久命令证据无法完整读取，因此已提交副本的结果仍未知。请从当前清单核对；不要为这次意图再提交复制。"
                               : copyIntent.observedCommands > 0
-                                ? "No durable publication evidence exists for the submitted copy; after refreshing the inventory you may deliberately submit the copy again."
-                                : "No submitted copy command was observed in durable evidence; the outcome is genuinely unpublished."}
+                                ? "持久证据中不存在已提交副本的发布证明；刷新清单后可以明确再次提交复制。"
+                                : "持久证据中没有观察到已提交的复制命令；结果确为未发布。"}
                       </p>
                     )}
                     {copyIntent?.committed === true && (
@@ -1382,7 +1128,7 @@ export function AutomationLifecyclePage() {
                             }
                           }}
                         >
-                          Open the committed copy
+                          打开已发布的副本
                         </Button>
                       </div>
                     )}
@@ -1407,25 +1153,23 @@ export function AutomationLifecyclePage() {
                               setError(null);
                             }}
                           >
-                            Reconciled: no copy was published
+                            已核对：未发布副本
                           </Button>
                         </div>
                       )}
                   </StatusBanner>
                 )}
-                <h3>Reference-safe removal</h3>
+                <h3>引用安全的移除</h3>
                 {removal === null ? (
-                  <p className="mf-dashboard-meta">
-                    Reading removal evidence...
-                  </p>
+                  <p className="mf-dashboard-meta">正在读取移除影响证据…</p>
                 ) : (
                   <>
                     <p className="mf-dashboard-meta">
-                      {removal.referenceTotal} configuration reference(s)
+                      {removal.referenceTotal} 个配置引用
                     </p>
                     <p className="mf-label">
                       <label htmlFor="lifecycle-confirm-removal">
-                        Confirm definition removal
+                        确认移除定义
                       </label>
                     </p>
                     <label htmlFor="lifecycle-confirm-removal">
@@ -1437,9 +1181,7 @@ export function AutomationLifecyclePage() {
                           setConfirmRemove(event.target.checked)
                         }
                       />{" "}
-                      I confirm removing this definition; future scheduling and
-                      remaining scheduled effects stop at safe boundaries;
-                      audits and history are retained
+                      我确认移除此定义；后续定时与剩余定时效果在安全边界停止；审计与历史保留
                     </label>
                     <div className="mf-actions">
                       <Button
@@ -1457,25 +1199,23 @@ export function AutomationLifecyclePage() {
                           })
                         }
                       >
-                        {removeMutation.isPending
-                          ? "Removing..."
-                          : "Remove definition"}
+                        {removeMutation.isPending ? "移除中…" : "移除定义"}
                       </Button>
                     </div>
                   </>
                 )}
               </section>
-            )}
-            {notice !== null && (
-              <StatusBanner variant="success" title="Published">
-                <p>{notice}</p>
-              </StatusBanner>
-            )}
-            {error !== null && (
-              <StatusBanner variant="error" title="Command not completed">
-                <p>{error}</p>
-              </StatusBanner>
-            )}
+              {notice !== null && (
+                <StatusBanner variant="success" title="已发布">
+                  <p>{notice}</p>
+                </StatusBanner>
+              )}
+              {error !== null && (
+                <StatusBanner variant="error" title="命令未完成">
+                  <p>{error}</p>
+                </StatusBanner>
+              )}
+            </form>
           </div>
         );
       }}

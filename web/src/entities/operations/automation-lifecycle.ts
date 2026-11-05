@@ -153,7 +153,14 @@ export interface AutomationDefinitionFormAuthorityModel {
   /** The backend-advertised command availability for this principal. */
   readonly actions: {
     readonly create: boolean;
+    readonly enable: boolean;
+    readonly createEnabled: boolean;
   };
+  /** Bounded, secret-free reasons for unavailable enablement commands. */
+  readonly actionReasons: {
+    readonly enable: string | null;
+    readonly createEnabled: string | null;
+  } | null;
   readonly limits: {
     readonly id: number;
     readonly name: number;
@@ -243,10 +250,21 @@ export function normalizeAutomationFormAuthority(
     source["executionEffects"] === undefined
       ? null
       : readRecord(source["executionEffects"], "executionEffects");
-  const actions =
+  const actionsSource =
     source["actions"] === undefined || source["actions"] === null
       ? null
       : readRecord(source["actions"], "actions");
+  const rawReasons =
+    source["actionReasons"] === undefined || source["actionReasons"] === null
+      ? null
+      : readRecord(source["actionReasons"], "actionReasons");
+  const boundedReason = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== "string" || value.length > 400) {
+      return fail("actionReasons");
+    }
+    return value;
+  };
   const operations = effects === null ? [] : effects["operations"];
   if (
     !Array.isArray(operations) ||
@@ -286,8 +304,18 @@ export function normalizeAutomationFormAuthority(
     scheduleTypes,
     actions: {
       // Fail closed: a missing or malformed action never becomes permission.
-      create: actions !== null && actions["create"] === true,
+      create: actionsSource !== null && actionsSource["create"] === true,
+      enable: actionsSource !== null && actionsSource["enable"] === true,
+      createEnabled:
+        actionsSource !== null && actionsSource["createEnabled"] === true,
     },
+    actionReasons:
+      rawReasons === null
+        ? null
+        : {
+            enable: boundedReason(rawReasons["enable"]),
+            createEnabled: boundedReason(rawReasons["createEnabled"]),
+          },
     limits: {
       id: count(limits, "id"),
       name: count(limits, "name"),

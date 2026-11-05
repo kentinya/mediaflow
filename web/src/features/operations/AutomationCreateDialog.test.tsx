@@ -121,6 +121,12 @@ function authority(overrides: Record<string, unknown> = {}) {
       copy: true,
       toggle: true,
       remove: true,
+      enable: true,
+      createEnabled: true,
+    },
+    actionReasons: {
+      enable: null,
+      createEnabled: null,
     },
     ...overrides,
   };
@@ -226,7 +232,7 @@ async function expectReady() {
 }
 
 describe("AutomationCreateDialog", () => {
-  it("presents the grouped form without exposing internal IDs or an enable choice", async () => {
+  it("presents the grouped form with an off-by-default enable choice and no exposed internal ID", async () => {
     const calls = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal")
         return jsonResponse(principal());
@@ -245,12 +251,23 @@ describe("AutomationCreateDialog", () => {
       screen.getByRole("heading", { name: "基本信息与来源" }),
     ).toBeVisible();
     expect(screen.getByRole("heading", { name: "运行时间" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "处理限制" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "处理限制与启用状态" }),
+    ).toBeVisible();
     expect(screen.getByLabelText(/处理上限/)).toHaveValue("100");
     expect(screen.getByLabelText("执行频率")).toHaveValue("interval");
     expect(screen.getByLabelText("间隔单位")).toHaveValue("hours");
     expect(screen.queryByLabelText("Definition ID")).toBeNull();
-    expect(screen.queryByLabelText("Enabled")).toBeNull();
+    // The explicit enablement choice exists, defaults off, and says what it
+    // will do; an unchanged session still submits nothing.
+    const enableChoice = screen.getByLabelText(
+      "启用定时计划",
+    ) as HTMLInputElement;
+    expect(enableChoice.checked).toBe(false);
+    expect(enableChoice).toBeEnabled();
+    expect(
+      screen.getByText("默认停用。创建后可在任务列表或编辑中随时启用。"),
+    ).toBeVisible();
     expect(screen.getByText(/^automation-[0-9a-f]{24}$/)).not.toBeVisible();
     expect(
       screen.getByText("创建后未启用，可在列表中启用或运行一次。"),
@@ -323,6 +340,8 @@ describe("AutomationCreateDialog", () => {
         timezone: null,
       },
     });
+    // An omitted enablement choice is never sent as a truthy value.
+    expect(creates[0].body).not.toHaveProperty("enabled");
     expect(onCreated.mock.calls[0][0]).toMatchObject({
       id: "automation-0123456789abcdef",
       enabled: false,
@@ -749,5 +768,139 @@ describe("AutomationCreateDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "取消" }));
     await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+  it("creates and enables through one submission when the choice is explicit", async () => {
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(authority());
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(publication("create"));
+      }
+      return undefined;
+    });
+    const { onClose, onCreated } = renderDialog();
+    await expectReady();
+
+    await userEvent.type(screen.getByLabelText(/任务名称/), "启用任务");
+    await userEvent.selectOptions(screen.getByLabelText(/资源库/), "source");
+    // The single explicit selection changes the primary action and its note
+    // before anything is submitted.
+    await userEvent.click(screen.getByLabelText("启用定时计划"));
+    expect(
+      screen.getByText(
+        "保存时将同时启用：创建成功后立即按保存的计划定时运行。",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "创建并启用" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "创建并启用" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const creates = calls.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.url === "/api/v1/operations/automation/definitions",
+    );
+    expect(creates).toHaveLength(1);
+    // The explicit choice rides beside the candidate; the candidate itself
+    // can never enable a publication on its own.
+    expect(creates[0].body).toMatchObject({ enabled: true });
+    expect((creates[0].body as Record<string, unknown>).object).toMatchObject({
+      enabled: true,
+    });
+  });
+
+  it("keeps enablement unavailable with its reason when the principal lacks scheduled permission", async () => {
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(
+          authority({
+            actions: {
+              create: true,
+              edit: true,
+              copy: true,
+              toggle: true,
+              remove: true,
+              enable: false,
+              createEnabled: false,
+            },
+            actionReasons: {
+              enable: "当前身份缺少定时执行权限，不能启用定时计划。",
+              createEnabled: "当前身份缺少定时执行权限，不能启用定时计划。",
+            },
+          }),
+        );
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(publication());
+      }
+      return undefined;
+    });
+    const { onClose } = renderDialog();
+    await expectReady();
+
+    const enableChoice = screen.getByLabelText("启用定时计划");
+    expect(enableChoice).toBeDisabled();
+    expect(
+      screen.getByText("当前身份缺少定时执行权限，不能启用定时计划。"),
+    ).toBeVisible();
+    // The disabled create remains available and never carries an enablement.
+    await userEvent.type(screen.getByLabelText(/任务名称/), "停用任务");
+    await userEvent.selectOptions(screen.getByLabelText(/资源库/), "source");
+    await userEvent.click(screen.getByRole("button", { name: "创建任务" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const creates = calls.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.url === "/api/v1/operations/automation/definitions",
+    );
+    expect(creates).toHaveLength(1);
+    expect(creates[0].body).not.toHaveProperty("enabled");
+  });
+
+  it("reports the durable enablement truth instead of the local toggle", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(authority());
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "POST"
+      ) {
+        // The backend published the definition disabled despite the toggle:
+        // the feedback reads the durable truth, never the local choice.
+        return jsonResponse(publication("create"));
+      }
+      return undefined;
+    });
+    renderDialog();
+    await expectReady();
+    await userEvent.type(screen.getByLabelText(/任务名称/), "真实状态任务");
+    await userEvent.selectOptions(screen.getByLabelText(/资源库/), "source");
+    await userEvent.click(screen.getByLabelText("启用定时计划"));
+    await userEvent.click(screen.getByRole("button", { name: "创建并启用" }));
+    await screen.findByText("创建成功，尚未启用。");
   });
 });
