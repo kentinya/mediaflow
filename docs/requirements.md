@@ -29,6 +29,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 
 | Authorized amendment | Superseded V1 meaning / retained boundary |
 |---|---|
+| 2026-11-05, `V2-UX-005–012` — TARGET / Slice50 PLANNED | User-authorized planning for all eight UX requests: Task detail cards/readability; Storage view/add/edit cards and More menu; both library pages' directory-tree removal, library edit/remove presentation and add/edit cards; natural transitions across existing V2 pages with consistent Files/MediaLibrary loading animation. Replace the selected V2 side-detail/drawer/tree presentation constraints, using existing Automation cards as the visual baseline; preserve all fields, existing journeys, checked Active, backend permissions, five-state flow/independent file results, four-type recovery and non-replay. This is planning only, not implemented/accepted CURRENT, and does not change frozen V1 or earlier acceptance facts. Stable one-to-one scope/acceptance is in V2 Requirements and Slice50. |
 | 2026-11-04, `V2-AUTO-013–015` — CURRENT / Slice49 PASS / CLOSED | User-activated scope for correct confined Automation sources, direct one-click Run once in the list and shared Chinese create/edit cards. Creation offers a default-off explicit enable choice and preserves later enable/disable through editing; remove edit Run once and use the list. One form submission may use atomic publication or safe composition of existing checked commands, with truthful partial/unknown feedback and exact reconciliation. This adjusts the V2 disabled-only create journey of V2-AUTO-002/010 and §98.4; copy stays disabled. Current permissions, scoped scheduled intent, pins, audit, unknown-request reconciliation, five-state Task/file separation and non-replay remain. Independent A Final Review accepted original Base 02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e through implementation 9d6b78147d90b950ed2333f9747facc77bf0391a on 2026-11-05. The implementation uses one atomic checked creation publication; stable acceptance is in V2 Requirements and the Slice49 Contract. Frozen V1 and accepted Slices remain historical facts. |
 | 2026-11-03, `V2-TASK-012–014`, `V2-AUTO-012` — CURRENT / Slice48 PASS / CLOSED | Separate five-state Task flow from file outcomes; only Task-level flow failure yields failed. Normal closure and ended file-processing technical failures count as completed even with unknown effects or no formal file Result; actual file results are not completion gates. Preserve known failures/steps, missing-result truth, genuine unfinished work/human waiting, safe cancellation, ownership fences and uncertain non-replay. Task closure itself must be durably saved. Ordinary Copy/Move/Delete Tasks adopt the same rule while operation results remain independent on the original library page. Automation success rate is completed/(completed+failed) over due AND definition Run once Tasks, excluding cancelled/pending/running Tasks, Files/CLI manual organizing and ordinary file work; no completed/failed Tasks yields no percentage. Cancelled records/admitted/ended counts remain independent of the rate denominator; file results/Result presence never gate it. Execution records use the same current Task flow state as Task Center; original times/attempts/effects remain factual. This accepted amendment changes REQ-TASK-002/003's V2 aggregate realization, V2-OPS-016, V2-AUTO-005's rate and V2-AUTO-006's result/filter meaning. Independent A Final Review accepted the original Slice Base through a80015e2f7d46e3ad1b8f7b14c453d1030e62104 on 2026-11-04; frozen V1 remains historical. |
 | 2026-11-03, `V2-TASK-011` — CURRENT / Slice47 PASS / CLOSED | Move the remaining three runtime fields to the existing System Settings page and remove Automation's settings tab/form. Share organizing capacity 1–10000 across manual/due/Run once/continuation; shared Worker idle polling also covers ordinary asynchronous file work, while Scheduler polling checks only Automation due definitions. Delete staleJobAgeSeconds from editable/effective/default contracts; existing immutable documents may retain it and remain readable with it ignored, without digest/pin rewriting. Preserve current heartbeat, per-runner lease/renewal, Provider/Storage call timeouts, atomic authority/source safety and uncertain non-replay; add no no-progress observer, total-runtime timeout, second queue or new settings page. This replaces the Automation-only amendment and intermediate four-setting plan, amending V2-AUTO-001/007/008. Accepted by independent A Final Review on 2026-11-03; frozen V1 and historical closure facts remain unchanged. |
@@ -67,11 +68,16 @@ AC-1–18 见 [Slice46 Contract](https://github.com/kentinya/mediaflow/blob/5144
 `V2-TASK-012–014` / `V2-AUTO-012` 为 CURRENT：Task 流程与文件结果独立，自动化成功率按
 定时/定义运行一次的 completed/(completed+failed) 计算。下方冻结 V1 定义保持历史意义。
 
-当前 [Slice49](../SLICE.md) 已于 2026-11-05 通过独立 A 终审 PASS / CLOSED，原始 Base
+已接受的 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) 已于 2026-11-05 通过独立 A 终审 PASS / CLOSED，原始 Base
 `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`，已审实现
 `9d6b78147d90b950ed2333f9747facc77bf0391a`。`V2-AUTO-013–015` 及对应旅程/架构为
 CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`。
 无活动实施 Task；下方冻结 V1 与既有接受事实不改写。
+
+当前 [Slice50](../SLICE.md) 为 **PLANNED**，仅授权八项体验要求的 Slice/文档规划。
+`V2-UX-005–012` 是 [TARGET 定义](v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)，
+不是已交付状态；本轮不激活或开始实施。旧树/抽屉视觉约束只在所选目标中被替换，不要求
+未来实现同时保留冲突的旧结构，也不借全局切页扩大其他页面的业务范围。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
 `V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
@@ -2516,6 +2522,11 @@ Root：/Media
 
 #### **46.3 V2 媒体库文件管理页面（CURRENT；Slice 38 PASS / CLOSED）**
 
+下述目录树/添加编辑抽屉是已接受的 CURRENT 基线；用户授权的
+[Slice50 TARGET](v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
+明确选择两页去目录树、配置弹卡/菜单和加载/切页优化，尚未实施。未来目标验收以该修订
+替换对应呈现约束，以下业务/权限/文件保留规则不变，原 Slice38 接受事实不改写。
+
 V2 媒体库页以 `docs/pics/媒体库页.png` 为视觉参考，管理已配置 MediaLibrary 根目录中的真实
 文件。资源库文件页使用 `/ui-v2/resourcelib/files`，媒体库页使用
 `/ui-v2/medialib/files`；原 `/ui-v2/library/files` 和 `/ui-v2/library` 弃用，
@@ -3816,6 +3827,10 @@ V2 Files 与共享 Shell 视觉要求（Slice 37 PASS / CLOSED，2026-09-20）�
 嵌入旧 Shell。非 Files 页的 route、认证、数据查询和业务交互保持不变，仅共享外层 chrome 按新
 Shell 更新。Files 页的资源库摘要、目录树、文件表、选择操作栏、常用文件操作和打开状态的
 `添加资源库` 抽屉按 `docs/file-page-visual-spec.md` 验收。
+
+用户于 2026-11-05 规划的 Slice50 TARGET 明确替换上述页内目录树和添加/编辑抽屉的呈现，
+并改善库菜单、加载及所有现有 V2 页面切换；见同一视觉规范的 TARGET 节与
+`V2-UX-005–012`。新目标尚未交付，不要求同时复现冲突的旧几何，不改写 Slice37 的接受事实。
 
 ### **搜索与筛选**
 

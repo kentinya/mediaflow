@@ -11,6 +11,30 @@ Original revision/delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
 Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
+## TARGET — Slice50 弹卡、去目录树与加载体验（PLANNED）
+
+[Slice50](../SLICE.md) / `V2-UX-009–012` 是用户授权的规划目标，尚未实施/验收。
+本节在目标实现/验收中替换下方 CURRENT 的 Directory Pane 和 Add/Edit drawer 呈现约束；
+其他浏览、命令、真实状态及安全规则保留。旧参考图片不可改写，也不要求未来同时保留与
+新目标冲突的树/抽屉布局。
+
+- 文件与媒体库页都删除**页内**左侧目录树及占位，浏览区利用释放宽度；共享 Shell 的
+  全局侧栏保留。文件夹、面包屑、上一级/根目录、搜索、视图、选择、刷新与分页继续可用，
+  错误指引使用仍存在的入口，不新增替代树。
+- 添加/编辑资源库和媒体库均为居中弹卡，遮罩、卡片层级、留白、操作和进出效果以现有
+  自动化新建/编辑为基准。按库业务安排字段/步骤，保留准确回填、全部现有字段/隐藏配置、
+  checked Active Save、输入/错误/未知核对；原三步侧抽屉的几何不再约束目标布局。
+- 两页库编辑/移除菜单及相应确认清楚、美观，含编辑/删除媒体库。普通/危险动作可辨，
+  移除配置说明文件保留，现有确认、权限及引用保护不变；不重做条目文件 Delete 业务。
+- 两种库都区分库信息加载与选库后的目录读取，使用协调的占位/动画和内容接入；加载未
+  返回不显示“未添加/空目录”，真实空/错误/权限/无 Active 可辨。同条件刷新保留内容，
+  快速切库/目录不串响应，尊重 reduced-motion。共享切页范围是所有现有 V2 页面。
+
+目标视觉证据覆盖桌面 `1536×1024`、`390px` 窄屏、卡片开/关、长名称/路径、菜单普通/危险
+状态、键盘/焦点、慢读取/真实空态/失败、快速切换及 reduced-motion；动态效果须实际查看，
+不只检查 CSS/截图。以用户八项结果和自动化基准验收，不增加固定像素/动画时长门槛。
+下方 CURRENT 是尚未替换的已接受基线，不宣称本节已经交付。
+
 ## Current Presentation Boundary — 2026-09-22
 
 The current table presents selection, exact name, type, size and modification time, with applicable

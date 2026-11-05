@@ -35,22 +35,25 @@ only in [the development workflow](development-workflow.md).
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
+| 50 — V2 Dialog, Readability and Navigation Experience | Complete all eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between all existing V2 pages and consistent loading animation on Files/MediaLibrary | PLANNED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization only |
 
 ## Current boundary
 
-No active implementation Task remains. Slice49 — **Automation Task Creation, Editing and Direct
-Run Once** — is **PASS / CLOSED** by independent A Final Review on 2026-11-05. A selects the next
-large Slice separately; no next capability is authorized here. [TASK.md](../TASK.md) points to the
-immutable B Closure Packet and A decision.
+[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **PLANNED**.
+The user authorized planning and related documentation for all eight requests, without expanding or
+narrowing them. Activation, a formal B implementation Task and code implementation are not authorized
+by this planning checkpoint; [TASK.md](../TASK.md) remains NO ACTIVE IMPLEMENTATION TASK.
+All existing V2 page transitions are in scope; other pages' business redesign is not.
 
 ## Accepted boundary references
 
-Latest acceptance is [Slice49's Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review):
+Latest acceptance is [Slice49's Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review):
 original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
-`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes are accepted; no next Slice is
-selected. Prior accepted Base/Head/closure identities, delivered results, deferrals and validation
-limits belong to [Progress](progress.md#closure-ledger) and its immutable review pointers. Earlier
-Slices are not reopened, and Scan/Preview/FileIndex/Job/Pause retirements remain intact.
+`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes remain accepted; Slice50's target
+is not delivered or accepted. Prior accepted Base/Head/closure identities, delivered results,
+deferrals and validation limits belong to [Progress](progress.md#closure-ledger) and its immutable
+review pointers. Earlier Slices are not reopened, and Scan/Preview/FileIndex/Job/Pause retirements
+remain intact.
 
 [Release](release.md) owns release-line facts; [Architecture](architecture.md) and
 [Product Experience](product-experience.md) own CURRENT behavior. This page records large-Slice

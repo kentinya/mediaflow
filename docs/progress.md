@@ -8,14 +8,15 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-No active implementation Task remains. [Slice49](../SLICE.md) is PASS / CLOSED after independent
-A Final Review on 2026-11-05; A selects the next large Slice separately. [TASK.md](../TASK.md) points
-to the accepted implementation and immutable B Closure Packet. No next Slice is selected here.
+[Slice50](../SLICE.md) is **PLANNED** under the user's 2026-11-05 authorization to plan the eight
+requested UX changes and update related documents. No activation, implementation, Task acceptance
+or Slice50 closure is claimed; [TASK.md](../TASK.md) remains NO ACTIVE IMPLEMENTATION TASK.
+Slice49 remains PASS / CLOSED. The accepted closure ledger below is unchanged.
 
 ## Latest accepted closure — Slice49
 
 Original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through accepted implementation
-`9d6b78147d90b950ed2333f9747facc77bf0391a`. [Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review)
+`9d6b78147d90b950ed2333f9747facc77bf0391a`. [Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review)
 records full RO-1–4 / AC-1–16 acceptance. B final packet:
 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`; Task49.1 packet:
 `7b7e9aaa24684ee59552ca95641843706dc7680d:TASK.md`.

@@ -1,5 +1,9 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
+[Slice50 — V2 页面弹卡、可读性与切换体验](SLICE.md) 已规划，状态 **PLANNED**。
+本轮只授权 Slice/相关文档规划；尚未授权激活、B 正式 Task 规划或代码实施。
+八项原始需求及完整映射见 Contract；约四个行为分组仅为建议，不是活动 Task。
+
 最近独立修正 **PATCH-20261105-1：PASS**（B，2026-11-05；Parent Slice NONE，Medium / T4）。
 列表复制、创建/编辑展示与共用启用开关已完成；无下一实施 Task。
 
@@ -10,8 +14,8 @@
 - 当前操作见 [Automation 旅程](docs/product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)；
   生命周期与测试分工以 [Development Workflow](docs/development-workflow.md) 为准。
 
-[Slice49](SLICE.md#final-validation-closure-packet-and-a-final-review) 仍为 **PASS / CLOSED**，
+[Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review) 仍为 **PASS / CLOSED**，
 原始 Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`，已接受 Implementation Head
 `9d6b78147d90b950ed2333f9747facc77bf0391a`；B Closure Packet 为
 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`。
-本独立修正不重开或替代其接受事实，下一大 Slice 由 A 单独选择。
+本独立修正与新 Slice50 规划均不重开或替代其接受事实。

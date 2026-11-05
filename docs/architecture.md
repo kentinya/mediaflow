@@ -10,9 +10,54 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
+
+[Slice50](../SLICE.md) selects `V2-UX-005–012` as a planning-only target. This is not delivered
+CURRENT behavior or implementation authorization. The target changes presentation of Task detail,
+Storage and both library configuration surfaces, removes the two page-local directory trees, and
+coordinates transitions across all existing V2 pages plus Files/MediaLibrary loading. It does not
+introduce a backend capability, schema, task lifecycle, recovery engine or configuration authority.
+
+**Presentation reuse:** use the existing Automation create/edit card as the visual/interaction
+baseline: backdrop, centered card, header/body/footer hierarchy, entry/exit, focus, narrow layout
+and reduced-motion. Extract/reuse feature-independent presentation only as needed; Automation
+fields, saved-definition identity, command sessions and authorization stay with Automation.
+Task detail has its own readable content/size; Storage and library forms keep their own models,
+Provider fields, validation and checked publication. No broad design-system rewrite is required.
+
+**Task detail:** existing authorized Task overview/item/result/plan/log/audit/export and recovery
+reads/commands remain the source of truth. The same selected task and supported deep links render
+the card over the list, retaining bounded list/detail URL/return state. Technical evidence may be
+grouped/collapsed but stays reachable; priority summaries must preserve flow/file separation,
+actual failure/unknown effects and four-type decision/analysis/summary/explicit continuation.
+Closing is presentation only, not cancellation or a fresh command; unconfirmed command identity
+and reconciliation must survive the existing allowed leave/reopen paths.
+
+**Storage and libraries:** replace the selected drawer containers with centered cards and improve
+their action menus/confirmation presentation while using existing exact Active projections,
+provider-specific form models and focused checked commands. Preserve unexposed fields, immutable
+edit IDs, RBAC, references, optimistic concurrency, input/error state and unknown-publication
+reconciliation. Library configuration removal is distinct from physical entry Delete. No UI
+presentation step creates/migrates/deletes a directory, grants authority or replays work.
+
+**Files navigation and loading:** remove both page-local directory-tree render/state dependencies
+that are no longer consumed, while preserving exact library-kind/path identity, breadcrumbs,
+folder/parent/root navigation, selection, search, list/grid, refresh and bounded paging. Do not
+remove state still required by ordinary commands or organizing return paths. Shared Shell global
+navigation remains. Coordinate the existing Router/Query lifecycle with lightweight page/card
+transitions and separate library-list/directory loading states; undefined data is not an empty
+list. Preserve same-query refresh content and authoritative errors, reject stale cross-library/
+path responses, respect reduced-motion, and do not remount/replay business commands for animation.
+
+Other pages participate in navigation motion only; their business bodies are not redesigned.
+Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
+query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
+the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below
+and earlier Base/Head/closure facts remain valid until target implementation/acceptance is recorded.
+
 ## CURRENT — Automation forms and direct Run once (Slice49 PASS / CLOSED)
 
-[Slice49](../SLICE.md) passed independent A Final Review on 2026-11-05, original Base
+[Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) passed independent A Final Review on 2026-11-05, original Base
 `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
 `9d6b78147d90b950ed2333f9747facc77bf0391a`. These `V2-AUTO-013–015` contracts are CURRENT,
 replacing the earlier disabled-only focused create result and navigation-only list Run once.

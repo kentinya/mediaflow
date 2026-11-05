@@ -47,12 +47,15 @@ originating library page; Task Center handles organizing. Live Job, Pause/resume
 runtime settings live in System Settings. Five-state Task flow stays independent of file outcomes;
 completion neither proves file success nor grants replay.
 
-[Slice49](SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
+[Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
 [TASK.md](TASK.md) has no active implementation Task and links the latest independent B review;
 [Progress](docs/progress.md) preserves original large-Slice Base/Head, closure evidence and deferrals.
-A selects the next large Slice separately. This is unreleased V2 development acceptance.
+[Slice50](SLICE.md) is PLANNED for the user's eight dialog/readability/navigation UX requests;
+this checkpoint authorizes planning/documentation only, with no activation or implementation Task.
+Its [TARGET requirements](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
+are not delivered behavior. Earlier acceptance remains unreleased V2 development acceptance.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete

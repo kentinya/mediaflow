@@ -11,6 +11,27 @@ The supplied image defines hierarchy with explicit overrides below: no card stat
 both library selectors share cards with name/selection/menu and selected context with enabled state/
 path only. Reuse the shared shell; this visual specification adds no unrelated Files business scope.
 
+## TARGET — Slice50 弹卡、去目录树与加载体验（PLANNED）
+
+[Slice50](../SLICE.md) / `V2-UX-009–012` 逐项承接用户要求，尚未实施/验收。
+目标删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、
+面包屑、上一级/根目录、文件夹、搜索、视图、选择、刷新与分页，不新增替代树。
+
+添加/编辑媒体库与资源库四个入口都改为与自动化新建/编辑协调的居中弹卡，保留字段/值、
+编辑 ID 不变、隐藏配置、精确 Active/checked Save 和失败/冲突/未知核对。改善两页库配置
+编辑/移除菜单与确认，包含用户点名的编辑/删除媒体库，区分普通/危险操作。引用阻塞、
+权限/确认及物理文件保留含义不变，配置移除不等于条目 Delete。
+
+库信息未返回与后续目录读取使用和资源库一致的协调占位/加载动画，内容就绪后平顺接入；
+加载不显示“未添加媒体库/空目录”。真实空态、无 Active、权限和读失败各自可辨，正常同
+条件刷新保留内容，快速切库/路径不串响应，reduced-motion 保留静态反馈。各现有 V2 页面
+之间都改善切换效果，其他页面业务不重设计。
+
+目标实现与验收以本节替换下表 Directory pane / Add/Edit drawer 及旧图片的对应几何要求；
+其他 CURRENT 业务约束保留，图片/历史验收不改写。桌面 `1536×1024`、`390px` 窄屏、
+键盘/焦点、卡片/菜单、慢读取/真实空/错误和快速切换/reduced-motion 须有实际交互及视觉
+证据；动态体验不能只靠 DOM/CSS 断言。按用户结果与自动化基准验收，无新增像素/时长指标。
+
 ## Required Composition
 
 | Region | Required content and behavior |

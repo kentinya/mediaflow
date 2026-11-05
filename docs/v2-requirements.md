@@ -25,9 +25,34 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
+## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
+
+用户于 2026-11-05 授权规划八项体验要求及相关文档，并明确不得扩大或收窄需求。
+[Slice50](../SLICE.md) 为 **PLANNED**；以下 ID 与用户序号一一对应，全部为目标必需结果，
+尚未实施/验收，不授权激活、正式实施 Task 或代码修改。现有自动化创建/编辑卡片是共同
+视觉和交互基准；其他业务按各自内容设计，不能复制自动化字段或改变其命令。
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-UX-005 | 用户第 1 项：任务中心点击任务名称，以弹出卡片打开任务详情。 | 原列表作为背景且不挤窄；遮罩、卡片层级和进出效果与自动化新建协调，详情按内容设计。既有任务深链、刷新/认证续转、返回及列表条件/页/滚动/焦点保留；打开/关闭不执行工作。 |
+| V2-UX-006 | 用户第 2 项：任务详情人类可读、美观。 | 默认清楚呈现任务、流程状态、阶段/等待、进度、独立文件/附件结果和需处理项；来源/目标与现有动作易找。技术标识/诊断可分层折叠但证据、日志/审计、导出和已有控制/四类处理仍可达。长内容、窄屏、键盘、加载/错误可用；流程完成不冒充文件成功，不增通用技术失败恢复。 |
+| V2-UX-007 | 用户第 3 项：存储查看、添加、编辑都使用与自动化新建/编辑一致的弹出卡片。 | 三个入口均在列表背景打开居中卡片；保留各 Provider 已有字段/值、引用/检查及可读失败。精确 Active、checked Save、权限、并发/未知发布核对、输入保留及关闭/返回语义不变；不把原抽屉几何或步骤当作必须照搬的布局。 |
+| V2-UX-008 | 用户第 4 项：存储列表“更多”美观、操作可读。 | 菜单锚定正确行，边界/行距/图标文字和普通/危险操作层级清楚；复制、启停、只读检查、移除保留。悬浮/焦点/禁用/忙碌及窄屏/边缘不裁切或误操作；权限/确认不变，配置移除不等于物理文件删除。 |
+| V2-UX-009 | 用户第 5 项：删除文件/媒体库页的页内左侧目录树。 | 两页均移除目录树及占位，文件区利用释放宽度；全局导航侧栏保留。现有文件夹、面包屑、上一级/根目录、精确路径、搜索、刷新、视图和分页完成浏览；不新增替代树，错误指引不引用已移除入口。 |
+| V2-UX-010 | 用户第 6 项：改善文件/媒体库页编辑媒体库、删除媒体库的呈现。 | 两页库配置编辑/移除菜单及相应确认协调、清楚、美观，普通/危险操作可辨，覆盖编辑/删除媒体库。现有入口、权限、引用阻塞、取消/确认保留；移除配置保留物理文件，不变成条目 Delete 或强制修改引用。 |
+| V2-UX-011 | 用户第 7 项：添加/编辑资源库、媒体库均为弹出卡片。 | 四个入口使用与自动化/存储协调的居中卡片，保留全部既有字段、准确回填、不可变编辑 ID、隐藏配置、checked Active Save、合法目录返回及禁用恢复。成功/无效输入/冲突/失败/未知状态真实，输入/核对保留；不创建/迁移/删除物理内容。 |
+| V2-UX-012 | 用户第 8 项：各页面切换自然、美观，文件/媒体库未加载时以一致加载动画改善体验。 | 覆盖现有共享 Shell 下各 V2 页面间切换，不限弹卡页面；其他业务内容不重设计。切页/开关卡片协调，无突兀挤压/闪白/旧页残留，刷新/轮询不重复整页入场。两种库的库信息和目录读取分阶段加载、内容平顺接入；未返回不能当空态，真实空/失败/权限/无 Active 可辨。保留同条件刷新内容，快速切库/路径不串响应，尊重 reduced-motion，不人为延时或重放命令。 |
+
+这组目标替换现有任务侧详情、Storage 右抽屉及 Files/MediaLibrary 目录树/添加编辑抽屉的
+所选呈现约束；旧参考图/旧 Slice 原始验收保持历史事实。沿用 `V2-UX-001–004`、当前
+五态 Task/文件结果分离、四类恢复、配置/执行权限和非重放，不新增引擎/状态/恢复或设置。
+完整 [TARGET 旅程](product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
+与 [TARGET 架构](architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
+共同解释目标；CURRENT 段落仍表示已交付基线，不能将本规划记为完成。
+
 ## Automation forms and direct Run once — CURRENT (Slice49 PASS / CLOSED)
 
-[Slice49](../SLICE.md) passed independent A Final Review on 2026-11-05, from original Base
+[Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) passed independent A Final Review on 2026-11-05, from original Base
 `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
 `9d6b78147d90b950ed2333f9747facc77bf0391a`. Correct confined sources, direct list Run once,
 shared creation/editing and optional enabled creation are CURRENT. The implementation uses one
