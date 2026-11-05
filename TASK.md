@@ -115,6 +115,8 @@ Task49.1已接受的PASS、精确Base..Head和完整证据保留于
 
 ### Required Tests / 分工
 
+### Developer — affected tests
+
 **Developer — 新增/修改/直接受影响测试。** 调整旧 disabled-only 断言以覆盖新选择，
 保留默认关闭与权限拒绝覆盖。仓库根执行：
 
@@ -140,6 +142,8 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 现有权限或持久化边界，不手写最终 Active/Task 冒充生产行为。现有 automation harness
 维持单worker，只补旅程确需fixture，不扩建过程工具。Python变更文件ruff format/check、
 Web变更文件Prettier check、governance及 `git diff --check` 通过后交实际结果/风险。
+
+### B — acceptance and full regression
 
 **B — 独立验收及完整回归。** 审查固定 Task Base..candidate 全部文件与AC，从列表
 走完完整旅程；先复现关键阻塞，再跑昂贵门禁。T4执行
