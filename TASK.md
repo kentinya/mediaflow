@@ -8,13 +8,13 @@ Authority: committed [Slice49](SLICE.md) RO-3 / RO-4；生命周期遵循
 Task ID: 49.2
 Task Type: SLICE
 Parent Slice: 49
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: efc628cf62b102f689e779bbee7747d88006598d
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER ACTIVATED TASK49.2; IMPLEMENT ONLY THIS TASK
-Next Action: DEVELOPER IMPLEMENTS TASK49.2; B REVIEWS THE CHECKPOINT
+Next Action: DEVELOPER FIXES B49.2-01/02 IN THIS TASK; B REVIEWS THE NEW CHECKPOINT
 ```
 
 Task49.1已接受的PASS、精确Base..Head和完整证据保留于
@@ -268,3 +268,96 @@ governance预检PASS；激活后核对正式Task元数据、父Slice与Base祖�
 `.git/validation-evidence/7b7e9aaa24684ee59552ca95641843706dc7680d/task49.2-activation/workspace-before.txt`。
 本轮只提交TASK.md，不改Slice/Roadmap/Progress，不读用户数据库、私有配置或生产媒体，
 不push、部署或改写历史。
+
+### B Review Result — 2026-11-05
+
+**FIX REQUIRED**，保留原Task ID、Base、Goal和全部验收；修正留在Task49.2。
+
+- Task Base：`efc628cf62b102f689e779bbee7747d88006598d`。
+- Reviewed Head：`ff7e3f998ecbe48389a79f5fb3c244caf2bfd6ba`。
+- 实现checkpoint：`9eae8f666c50f8bfc488b914336c2c4be8b750b7`；其后两次提交仅修改交接报告。
+- 已审完整Base..Head的19个文件，包括共享字段提取、创建/编辑/列表与API候选、后端权限/
+  发布/核对消费及全部变更测试；未以Developer测试报告替代独立验收。
+
+**交付核对：** 共用字段、中文时间控件和精确回填已落地；创建默认停用与明确选择启用
+通过同一原子发布链，当前权限拒绝保留Active，后端专项106项通过。原生浏览器实际创建
+启用及后续编辑停用成功。但共享字段尚未形成合同要求的共用卡片旅程，且核对旧发布后
+把过去的启用结果当成当前状态，因此不能接受完整RO-3/RO-4。
+
+#### B49.2-01 — P1：补齐列表背景上的编辑卡片、退出与保存返回
+
+实际旅程：“自动化 → 新建 → 创建停用定义 → 行编辑 → 修改名称 → 返回自动化”。
+编辑进入独立长页，无新建卡片/列表背景；返回直接离开，没有继续编辑/放弃修改选择，
+再开编辑恢复原名，刚输入的名称丢失。另一条旅程保存名称后，后端已保存但仍留在编辑页；
+再提交修改并暂缓实际成功响应，点击返回仍能离开，此时保存已生效而界面尚未确认。
+桌面和390px截图均已检查；不是仅根据dialog数量或CSS认定缺陷。
+违反Task AC1/AC3/AC4/AC6及Slice RO-3、AC-7/9；交接所述“保存成功后停留当前页”
+不能替代合同的保存成功返回列表。
+
+开发修正指导：
+
+1. 将列表编辑和已有普通已保存编辑入口接入与新建共用的卡片容器/列表背景，沿用共享
+   字段及命令差异；保留深链、刷新、登录续转、Draft-only/历史和复制/删除的现有边界。
+   普通表单头部收起内部ID/Active修订/发布步骤说明到必要诊断，不继续以技术教程占据主入口。
+2. 复用已有创建卡片的退出/焦点/动画能力：未修改直接关，修改后可见继续编辑/放弃；
+   保存中防重复命令及意外离开，结束未知结果允许保留原命令后离开并重开核对。
+3. 确认保存成功后返回原列表，刷新真实行/统计并恢复合法条件、页、滚动和入口焦点，
+   被筛选掉时解释。再打开同一定义仍可改字段或启停；旧响应不能覆盖后来输入。
+4. 补真实列表→编辑→退出/保存的原生用例，覆盖未改关闭、修改退出选择、提交中返回/
+   浏览器返回、成功回列表再编辑、深链、桌面/390px/键盘/reduced-motion。沿用已有harness，
+   不只把旧长页断言翻译成中文。保留现有重复保存/并发/核对能力的受影响回归。
+
+#### B49.2-02 — P1：核对本次发布时区分当时结果与当前保存状态
+
+实际旅程：“新建并勾选启用 → 后端已创建，浏览器收到503 → 另一会话从列表编辑并保存
+停用 → 原会话刷新、同身份重连 → 核对本次创建”。核对正确找到了原创建，且没有第二次
+创建POST，但随后横幅说“已创建并启用；后续将按保存的计划定时运行”；同页统计已启用0、
+该行停用，持久回读在核对前后均enabled=false。操作者无法据此判断当前是否会定时运行。
+违反Task AC7、Slice RO-4/AC-12和Active真实状态语义；媒体没有被此核对重放。
+
+开发修正指导：
+
+1. 保留原principal/action/candidate/base精确核对，原发布成功证明不能充当当前Active
+   证明。复用既有只读发布/定义证据，在API/application与Web明确区分本次发布仍为当前、
+   本次发布已成功但后来被修改、证据仍未知；不只改横幅词语而继续混用版本/状态。
+2. 上述场景应显示“本次创建曾成功并启用；当前已停用（后续修改）”等准确事实，列表/
+   统计/再编辑依据当前保存定义。读不到当前状态时明确当前状态不可确认，不推断仍启用；
+   核对不能自动再创建、重新启停或把用户原选择悄悄改掉。
+3. 同样检查共享编辑/启停核对后的回填/下一次保存：旧已审候选不能冒充当前已保存值或
+   被配上新的基线。保留后来输入，按实际当前版本明确继续；未知查找缺失仍不允许重发。
+4. 加入真实已提交后503→另一会话发布→刷新/同身份重连→核对的原生测试，断言当前
+   enabled/列表/成功提示一致、原POST只有一次、没有自动启停。后端/组件覆盖current/prior/
+   unknown及现有未决上下文，沿已有入口和发布链验证，不扩建通用恢复系统。
+
+#### B实际验证、限制和下一步
+
+- Python：`.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_v2_automation_lifecycle tests.test_automation_execution_intent` → **106 tests OK，
+  49.390秒**（进程49.731秒）；权限、原子创建启用与调度意图专项通过。
+- Web：`web/`下`npm run build`通过（进程0.640秒），有bundle体积warning，不是验收失败。
+- 原生：本轮build的生产资源、现有`playwright.python.automation.config.ts`、单worker、
+  真实Python API/临时SQLite/合成Storage，经真实列表新建/编辑发命令；B追加三个验收
+  用例，`web/`运行`npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/task49-2-b-review.python.spec.ts` → **3 failed，6.090秒进程用时**。
+  失败分别为编辑非卡片、成功不回列表、核对历史
+  创建误称当前启用；前两用例同时记录无退出确认、输入丢失及提交中可离开。
+- 首次探针因B把正常列表查询参数与普通strong提示当成URL/heading失败，尚未走完验收；
+  修正探针后重新运行取得以上产品失败。首次35.201秒及其日志/trace完整保留，不计作
+  产品阻塞，也没有修改产品代码或放宽目标断言。
+- governance、链接目标及`git diff --check`通过。本轮测试/构建进程累计约91.7秒，包含
+  首轮探针；低于本轮总用时50%。已有P1，按workflow先FIX REQUIRED；完整Python/Web/
+  默认E2E、wheel/source外、容器与最终fresh/同版本重开门禁尚未运行，由B在修正候选上负责，
+  不是要求Developer补全量。
+
+本地证据：`.git/validation-evidence/ff7e3f998ecbe48389a79f5fb3c244caf2bfd6ba/b-task49.2/`，
+含完整diff、workspace起始清单、命令/退出码/用时、探针源码、JSON回读、桌面/390px截图、
+首轮与最终trace；仅本地可取。临时验收spec已从工作树撤出，源码留在该证据目录。
+
+**全部Slice结果重评：** RO-1/RO-2保留Task49.1已接受结果，本Task未修改其来源准入/
+列表运行核心实现；修正后的共享表面仍需最终回归。RO-3尚未完成完整编辑卡片旅程；
+RO-4正常创建启用链已实现，但并发后的核对显示仍未满足。Slice49保持ACTIVE，不提交
+Closure Packet、不规划下一Task、不由B关闭Slice。下一步为 **SAME TASK FIX LOOP**。
+
+审查起点main / Reviewed Head，tracked干净、工作区/Git可写；预存untracked全部保留。
+本轮只提交Task结论/修正指导，不改Slice/Roadmap/Progress，不读用户数据库、私有配置或
+生产媒体，不push、部署或改写历史。
