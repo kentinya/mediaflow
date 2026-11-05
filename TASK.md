@@ -166,8 +166,73 @@ Web变更文件Prettier check、governance及 `git diff --check` 通过后交实
 
 ### Developer Completion Report
 
-Checkpoint: NOT SUBMITTED。正式实施后交固定SHA、READY FOR B REVIEW、变更行为、
-实际受影响测试和剩余风险；不要求全量证据档案。尚无实施交接。
+Checkpoint: `9eae8f66e93f46915c0b16bec2f16f687b3ae86e`（main，Task Base
+`efc628cf62b102f689e779bbee7747d88006598d`..`9eae8f66`）— **READY FOR B REVIEW**。
+实施起点为激活提交 `0d85b48e`；预存 untracked 文件（日志/`15`/output/图片等）全部保留且未入提交。
+本轮实施前 governance PASS，`git diff --check` 通过。
+
+**变更行为（对应 RO-3 / RO-4、AC1–7、AC9）：**
+
+- 后端（`automation_workspace_commands.py`、`service_api.py`）：`save_object`
+  新增 create 命令的显式可选启用参数——省略仍停用，严格布尔 `true`
+  在同一次原子激活内发布启用定义并复用既有共享发布意图链（作用域主体、
+  激活边界的 `GRANT_UNATTENDED_EXECUTION`、审计）；仅凭候选内 `enabled: true`
+  仍被拒绝（409 `automation_definition_enable_requires_command`），非布尔类型
+  400 拒绝；PUT 编辑命令不接受额外 `enabled` 键（启用经类型化候选提交）。
+  `form_authority` 按连接主体权限投影 `create/edit/copy/toggle/remove/enable/
+  createEnabled` 及有界无秘需的中文原因；API 层始终传主体权限，直接服务调用
+  保留宽容投影。创建启用复用 `_publish` 的原子后继发布与
+  `automation_intent_ids`，无分步编排（AC8 原子方案路径，无第二命令/中间态）。
+- Web（新 `AutomationDefinitionFormFields.tsx`）：新建与已保存编辑共用同一张
+  中文卡片（字段、校验展示、有界目录浏览、后端近期时间预览、启用开关），
+  无第二套表单/校验器；`AutomationCreateForm` 增加启用选择（默认关），
+  `editFormFromDefinition` 精确回填（任意合法 Cron/`1.5` 秒等小数间隔原文保留、
+  ID 不变）；创建选中开关后主按钮变「创建并启用」一次提交完成，成功提示
+  「已创建并启用 / 创建成功，尚未启用」依据持久真值（响应定义），列表横幅同步；
+  编辑回填 enabled 并可保存切换；无 `createEnabled`/`enable` 权限时开关禁用
+  并显示后端原因；lifecycle 页移除旧英文长表单与本地预览按钮，共享卡片
+  自动预览；编辑「运行一次」保持不存在；复制/移除及 successor-Draft 编辑器
+  （`/operations/automation/editor/$definitionId`）边界不变。
+
+**实际受影响测试（Developer 范围，均于 Task candidate 上运行）：**
+
+- Python（仓库根，`.venv/bin/python -m unittest`）：
+  - `tests.test_automation_definition_publication tests.test_v2_automation_lifecycle
+    tests.test_automation_execution_intent` → **106 tests OK**（新增：原子创建启用、
+    缺定时权限拒绝+同主体可停用创建、非布尔拒绝、form_authority 主体投影（服务级+API 级）、
+    创建启用定义的 Scheduler 意图链、PUT 拒绝 `enabled` 侧键、非布尔 400）。
+  - `tests.test_v2_automation_run_once tests.test_automation_authorized_execution_matrix`
+    → **48 tests OK**；直接受影响邻域 `tests.test_classification_destination_contract
+    tests.test_automation_run_once tests.test_v2_rules_workspace_commands` → **111 tests OK**；
+    `tests.test_automation_task_admission tests.test_automation_definition_occurrence
+    tests.test_task_scheduling tests.test_task_scheduling_fencing` → **87 tests OK**。
+- Web（`web/`）：任务指定 8 文件清单 → **117 tests OK**；全量 `npm run test`
+  → **92 files / 1321 tests OK**；`npm run typecheck`、`npm run lint`、
+  `npm run build` 通过；Prettier check（含变更 e2e spec）通过。
+- 原生 E2E（`playwright.python.automation.config.ts`，真实 harness，单 worker）：
+  四个指定 spec → **41 passed**；新增旅程用例「一次提交创建并启用」验证
+  默认关→选中变「创建并启用」→恰好一个 POST→持久 enabled→再开编辑卡回填 checked。
+- Python 变更文件 ruff format/check 通过；`git diff --check` 通过；
+  governance PASS。
+- 用时：本轮实施约 85 分钟，测试/验证（含单元、集成、E2E、类型/构建门禁）
+  累计约 15 分钟（<30%）。
+
+**剩余风险 / B 需注意：**
+
+1. 未采用分步 create→enable 编排，AC8 仅适用原子方案的证明（已提供：失败保留
+   原 Active、无第二命令）；AC7 的创建后核对复用现有 `publication-intent`
+   （create action、候选含真实 enabled），组件级/后端级已覆盖，未扩建 harness 主体
+   切换工具——「无 scheduled 权限创建停用并见原因」由 API 级（configurator 主体）
+   与组件级用例覆盖，如 B 需要浏览器级证据需新增 harness 主体 fixture。
+2. e2e 断言从旧英文文案改为共享卡片中文文案/`exact: true`（如 `保存`、启用/停用
+   提示、复制核对文案），B 审查时请按新 UI 文案核对匹配面。
+3. lifecycle 页仅翻译了与本次直接相关的提示（头部/保存/启停/错误横幅）；
+   removal/copy 区块的其余英文说明保留原样，属 Non-goal 范围。
+4. 编辑保存成功后停留在当前页继续编辑（不再导航），旧响应不覆盖后来输入的语义
+   由共享 accept-merge 逻辑保持。
+5. 未执行 B 的全量 T4 门禁（全量 Python/Web、默认 E2E、wheel/source 外消费者、
+   容器安全证明、fresh/同版本重开安装证明）——按分工由 B 执行；`npm run build`
+   已在候选上通过，E2E 使用该构建产物。
 
 ### B 规划核对 / 全部 Slice 结果重评（激活前记录）
 
