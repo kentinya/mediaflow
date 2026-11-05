@@ -3,7 +3,8 @@
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
 再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的保存中遮罩退出
-修正，状态 **READY FOR B REVIEW**（未自审 PASS）；Task Base、范围与验收不变。Developer 本轮只实施本
+修正；B 已复验该问题通过，整体验收仍为 **FIX REQUIRED（存储三卡片缺少退出过渡）**。
+Task Base、范围与验收不变。Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
@@ -12,7 +13,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -287,88 +288,100 @@ Developer 未作出 PASS/FIX REQUIRED 判断，交给 B 独立审查。
 
 ## B Review Result
 
-**Decision: FIX REQUIRED — 2026-11-06，继续同一 Task50.1，不规划下一 Task。**
+**Decision: FIX REQUIRED — 2026-11-06。保存中退出问题已修复；存储三卡片的退出体验仍未完成。**
 
 ```text
 Reviewed Base: f24dce7a0a97e035078879e2a93855de02d74f54
-Reviewed Head: 9c608a4070bc1f164dd88700f5ebd1272ae88fe5
-Implementation checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
+Reviewed Head: 50233ce47bc69b2e0ccddcd95249a6e39764994c
+本轮增量: e5df56ca..50233ce4
+修正源码: 22618d708a68eeb076d9ed42755a69bf996656df
+补充回归: cb3b64362f869c315d782fcefcd5cd813384a9a1
 Branch: main
 ```
 
-审查覆盖完整 Base..Head 的文档、源码、样式和测试变更。工作区原有 `.DS_Store`、日志、
-`15` 和 `output/` 等保持原样；本轮仅修改本 Task 的审查状态和指导，未修改产品实现。
+结合前轮完整差异审查，重新核对整个 Task Base..本候选及本轮全部增量；Task Base 不变。
+原有 `.DS_Store`、日志、`15`、`output/` 等工作区变更均保留。本轮只更新本 Task 的复核结果，
+未改产品实现、Slice 合同、Roadmap 或 Progress。
 
-### 阻塞项：P1 — 保存中点击遮罩仍可关闭存储卡片
+### 上次阻塞：已修复并独立复验通过
 
-**实际用户旅程：** 操作者进入 `/ui-v2/storage` → 添加存储 → 填写 Local 名称、ID、根路径 →
-到确认页点击保存。请求尚未返回时，卡片已显示“保存中…”，取消和关闭按钮均禁用；此时点击
-卡片外灰色遮罩，卡片仍立即消失。请求继续完成，存储实际进入 Active 清单。编辑现有 Source
-名称并保存，同样可以在保存中点遮罩退出，随后真实名称变更仍完成。
+`ModalCardShell` 现以所有者传入的 `closeDisabled` 同时约束遮罩、外沿和关闭按钮，存储仍
+使用原 `saving` 状态。真实 Python 浏览器聚焦用例通过：桌面添加/390px 编辑保存中点遮罩，
+卡片保留、请求只发一次，放行后真实保存并读回；重复 ID 的真实拒绝仍保留表单与输入。
+新增/变更的共享和存储组件用例 52 项通过，包含未知结果核实入口。本次不把旧阻塞继续列为
+未修复，也未发现该修正增加新业务状态或命令。
 
-这使操作者在明确不允许退出的提交阶段失去正在保存的表单和结果反馈位置；关闭并没有取消
-保存。它违反本 Task 的在途保护要求，不能因为主按钮禁用或普通保存测试通过而接受。
+### 当前阻塞：P1 — 存储查看、添加、编辑关闭时直接消失，退出过渡没有接入
 
-**原因与定位：** `web/src/shared/ui/modal-card.tsx` 的层外沿 `onMouseDown`（231–233 行）及
-遮罩 `onMouseDown`（239–242 行）无条件调用 `onRequestClose`；`closeDisabled` 只用于右上角
-关闭按钮。`StorageEditDrawer.tsx`（391–401 行）把未受提交状态约束的 `onClose` 直接传入；
-页面 `closeDrawer` 直接关闭并清理状态。原实现没有这个遮罩关闭入口，原按钮和 Escape 有保存中
-保护。本回归由 `b7636a874d643c36fabc90b51080aa67a1c8c543` 引入
-（提交时间 2026-11-06 01:32:12 +0800）。
+**用户完整操作例子：** 从存储管理点击 Source 的“查看”，读完详情后点击右上角关闭；
+卡片和灰色遮罩立即消失。点击“添加存储”后取消，或打开 Source 的“编辑”后取消，也是
+同样结果。随后进入已有自动化列表，打开“新建自动化任务”再取消，可见卡片与遮罩平顺淡出。
+在正常动效偏好下，存储三个入口没有与该基准协调的退出过程。桌面 1536×1024 和 390px
+均复现；这不是 reduced-motion 下应有的立即关闭。
 
-**独立复现：** 当前生产构建 + 仓库已有 `scripts/operations_inventory_harness.py --port 4183`，
-真实 API、临时 SQLite 与 Local 根，Chromium 1536×1024。从上述已有入口发出 POST/PUT，
-仅在浏览器网络层暂缓已有请求的送达，等到 `aria-busy=true`、取消按钮禁用后点击遮罩，再放行
-原请求；没有伪造保存响应或构造新业务入口。添加/编辑卡片数量均从 1 变为 0，随后真实清单
-读回确认两次保存均完成。复现脚本曾重复添加两个隔离对象，未触及用户数据。
+**为何阻塞：** Goal/验收第一项要求存储三卡片“进出一致”，实施步骤 2/3 要复用共享呈现；
+Slice RO-2、适用产品旅程和架构同时要求与自动化协调的进出体验。当前只完成入场，退出仍
+缺失，因此属于原要求未交付，不是要求新增动效设置、精确时长或可选美化。
 
-本机稳定 ignored 证据目录：
-`.git/validation-evidence/9c608a40/b-review-20261106/`。
-其中 `probe.mjs` 为实际复现脚本，`result.json` 为最终两入口结果，`add-saving.png` /
-`edit-saving.png` 与对应 `*-dismissed-while-pending.png` 为保存中及错误退出后的截图。
-这些为本机证据，不宣称远程可取；脚本再次运行需重新启动隔离 harness 或换用测试 ID。
+**实际原因：** `StorageManagementPage.tsx:842` 的查看卡片、`StorageEditDrawer.tsx:338/393`
+的加载/错误及表单卡片都固定 `closing={false}`。查看关闭直接 `setDetailId(null)`，表单
+`closeDrawer`（1753 行）直接设置 `open:false`，当次渲染就卸载。`styles.css:7548` 已存在
+退出样式，但这些真实入口永远不进入退出状态。该缺口始于初次实现
+`b7636a874d643c36fabc90b51080aa67a1c8c543`（2026-11-06 01:32:12 +0800），
+不是本轮保存保护修正引入；前轮尚未完成这一原生体验验收，本轮继续整体复核时确认。
 
-### 给 Developer 的本轮修正指导
+**独立证据：** 生产构建、仓库已有 Python harness、临时 SQLite/Local 根，正常动效偏好；
+从上述真实按钮操作，同时记录关闭后逐帧实际透明度/动效和截图。两个视口中存储三卡片
+关闭后的首个绘制帧都已完全消失；自动化在相同操作中仍有逐步降低的透明度和退出动效。
+这用于证明可见过程缺失，不把帧数、毫秒、CSS 类名或 DOM 存续时间规定成产品合同。
 
-1. 在现有关闭请求路径应用统一的在途退出规则，使遮罩、卡片外沿、关闭按钮、取消及 Escape
-   都遵守同一存储保存状态。保持业务规则由存储功能所有者决定，共享呈现只执行传入的退出
-   许可；复用当前 `saving` 等既有状态即可，不增加新的确认步骤或命令框架。
-2. 保存未结束时保持当前卡片、输入和结果承接位置；不能通过卸载、清空、取消网络请求或重发
-   保存来修复。请求结束后仍按原成功、已知拒绝、未知结果/显式核实路径处理，正常未保存
-   关闭继续沿用存储现有放弃语义。
-3. 补充从真实添加/编辑入口触发保存、等待期间点击遮罩和外沿的回归。证明请求仍只发一次、
-   卡片不消失、输入保留；结束后分别验证成功返回、已知失败留在表单及未知结果的原核实入口。
-   用可控请求门闩等待明确状态，不靠固定睡眠猜测保存是否开始。至少一个真实 Python 浏览器
-   用例承接该问题，并检查桌面/窄屏的实际遮罩点击；不新增测试服务。
-4. 运行原 Required Tests 中新增/变更及直接受影响测试与静态检查，报告精确新 checkpoint 和
-   实际结果，重新交 READY FOR B REVIEW。B 在修正候选先复验本阻塞，再完成其适用完整 T4
-   和剩余浏览器验收；Developer 不承担全仓回归或 B 的证据工作。
+### 给 Developer 的修正指导
 
-### 本轮实际检查和限制
+1. 为存储三卡片接入现有退出呈现：合法关闭请求先进入退出状态，正常偏好下完成协调的
+   卡片/遮罩退出后再交由各所有者关闭；reduced-motion 按偏好直接或减少动态地完成。
+   可在现有无业务共享呈现内复用必要生命周期，不引入通用命令框架，不依赖自动化业务。
+2. 将关闭按钮、取消、遮罩、外沿、Escape 及读取失败的返回操作接到同一退出路径。
+   保存中继续保持本轮已经修好的退出禁止；结束后成功关闭也应与呈现协调，已知失败/
+   未知结果继续留在原有处理路径，不取消/重发保存，不清掉未决结果来播放动画。
+3. 退出期间保持原背景、焦点约束和滚动锁，结束后准确释放并回到合法入口；连续关闭/
+   重开及慢读取晚返回不能让旧退出结束回调关闭新卡片。使用原有真实状态做最小改动，
+   不新增存储未保存确认、业务字段、后端能力或延迟数据读取。
+4. 补真实入口的退出回归：查看、添加、编辑均检查正常动效下实际退出过程和最终返回；
+   桌面/390px 按风险组合，另验 reduced-motion、快速关闭重开和保存中遮罩保护。
+   检查可见效果及零额外命令，不只断言存在退出 CSS，也不绑定固定毫秒/像素。
+5. Developer 跑新增/变更及直接受影响测试和相关静态检查后提交精确 checkpoint，重新交
+   READY FOR B REVIEW。B 对修正候选先复验阻塞，再执行剩余验收与适用完整 T4。
+   同一 Task 修正，不规划下一 Task，不把全仓回归或 B 证据工作交给 Developer。
 
-- 仓库根 `python3 scripts/check_governance.py` → PASS。
-- 仓库根 `git diff --check f24dce7a..HEAD` → PASS。
-- `web/`：`npm run build` → PASS（既有 chunk 大小提示）；`npm run typecheck` → PASS。
-- `web/`：`npm run test -- run src/shared/ui/modal-card.test.tsx
-  src/features/storage/StorageManagementPage.test.tsx` → **2 files / 47 tests passed**，4.70s；
-  jsdom 输出既有 `Window.scrollTo` 未实现提示，不能用它代替实际滚动验收。
-- 仓库根 `node .git/validation-evidence/9c608a40/b-review-20261106/probe.mjs` → 退出码 0，
-  **成功复现上述阻塞，产品行为不通过**；最终结果两入口 `CancelDisabled=true` 且
-  `DialogsAfterBackdropWhilePending=0`，`realSaveReadback=true`。脚本退出码仅表示调查完成。
-- 已检查上述桌面截图。完整 T4、390px、自动化动态/滚动条、其他失败/恢复组合及包装门禁
-  本轮没有运行/完成；因已证实产品阻塞提前 FIX REQUIRED，不作为 PASS 或豁免。
-- 本轮测试执行仅为短时构建/类型检查、4.70s 定向测试及两次浏览器复现；主要时间用于契约、
-  完整差异和真实入口审查、结果定位与交接。测试执行用时小于本轮总用时 50%。
+### 本轮实际验证与限制
+
+本机稳定 ignored 证据：`.git/validation-evidence/50233ce4/b-review-20261106/`，仅本机可取。
+
+| cwd | 实际命令/操作 | 结果与证据 |
+|---|---|---|
+| 根目录 | `python3 scripts/check_governance.py` | PASS |
+| 根目录 | `git diff --check f24dce7a..50233ce4` | PASS |
+| `web/` | `npm run build` | PASS，既有 chunk 大小提示 |
+| `web/` | `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/storage-dialog.python.spec.ts --grep 'keeps in-flight'` | 1 passed，3.02s 总进程用时；`critical-e2e.log` / `.result.json` |
+| `web/` | `npm run test -- run src/shared/ui/modal-card.test.tsx src/features/storage/StorageManagementPage.test.tsx` | 2 files / 52 tests passed，5.37s 总进程用时；`focused-unit.log`。jsdom 仍有既有 scrollTo 未实现提示，不作为实际滚动证据。 |
+| 根目录 | `.venv/bin/python scripts/operations_inventory_harness.py --port 4183` + `node .git/validation-evidence/50233ce4/b-review-20261106/exit-probe.mjs` | 两视口各完成三种存储卡片和自动化基准的打开/关闭；`exit-frames.json`、`exit-probe.log` 和 `*-open.png` / `*-closing.png`，已检查截图；产品退出体验不通过。 |
+
+初次退出调查脚本把侧栏可见中文当成精确 accessible name，定位超时；这是调查选择器错误，
+非产品失败。改用仓库既有自动化页面入口后完整调查成功，未构造新业务入口。
+本轮测试含这次无效等待仍小于总用时 50%；主要工作为契约、完整差异、根因与开发交接审查。
+已发现确定产品阻塞，按 workflow §6 提前 FIX REQUIRED；完整 Python/Web/默认 E2E、其余
+真实应用/动态滚动条、wheel/安装消费者及适用生产门禁尚未完成，本轮不声明 T4 PASS。
+这些验收仍由 B 承担，不因 Developer 的交接报告标为已完成或豁免。
 
 ### 全 Slice 结果重评
 
 | Required Outcome | 当前判断 |
 |---|---|
 | RO-1 任务详情卡片/可读性 | 本 Task 未实施，仍待后续交付。 |
-| RO-2 存储三卡片/更多菜单 | 候选已实施，保存中遮罩退出阻塞待修正；其他完整验收仍待完成。 |
+| RO-2 存储三卡片/更多菜单 | 候选已实施；保存中退出已修复，三卡片退出过渡仍阻塞，剩余完整验收待完成。 |
 | RO-3 两种库去目录树、库菜单与配置卡片 | 本 Task 未实施，仍待后续交付。 |
 | RO-4 自动化新建/编辑稳定性 | 候选已有修复，B 的完整动态验收尚未完成。 |
 | RO-4 侧栏主页面切换/两种库加载 | 本 Task 未实施，仍待后续交付。 |
 
-Slice50 保持 ACTIVE；本 Task 不 PASS，不提交 Slice Closure Packet，不变更 A 的合同边界、
-Roadmap 或 Progress 接受账本，不启动其他结果的实施。
+Slice50 保持 ACTIVE，Task50.1 保持同一 Base 和范围。下一步修正本 Task 的退出呈现；
+不宣告 Task PASS、Slice ready/closed，不启动其他 Slice 结果。
