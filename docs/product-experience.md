@@ -13,19 +13,20 @@ Detailed superseded delivery notes are retained at
 
 ## Current journey boundary
 
-Current journeys incorporate accepted Slice48 flow/rate amendments `V2-TASK-012–014` /
+Current journeys incorporate accepted Slice49 Automation amendments `V2-AUTO-013–015`, Slice48 flow/rate amendments `V2-TASK-012–014` /
 `V2-AUTO-012`, Slice47 Task-only scheduling/settings/history `V2-TASK-001–011`, and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` and `V2-AUTO-010/011`. Historical43/45/46 acceptance facts and original deferrals
 remain in [Progress](progress.md) and their Git Contracts; they are not additional operator steps.
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Automation forms and direct Run once (Slice49 ACTIVE)
+## CURRENT — Automation forms and direct Run once (Slice49 PASS / CLOSED)
 
-[Slice49](../SLICE.md) is ACTIVE and selects `V2-AUTO-013–015`. The journeys below remain targets;
-the CURRENT creation journey later in this document still describes the accepted disabled-only
-create implementation. Only the formal current Task authorizes implementation; activation does not
-claim new behavior as shipped or run any media work.
+[Slice49](../SLICE.md) passed independent A Final Review on 2026-11-05 through implementation
+`9d6b78147d90b950ed2333f9747facc77bf0391a`, preserving original Base
+`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`. `V2-AUTO-013–015` and these journeys are CURRENT;
+they replace the earlier disabled-only create outcome while preserving copy's disabled state.
+Original Slice43/46 acceptance and all unchanged deferrals remain historical facts.
 
 - **Goal/entry:** from `自动化 → 任务列表`, create or edit an automatic-organization definition
   in one familiar card, explicitly choose whether its schedule is enabled, or click a saved row's
@@ -37,15 +38,15 @@ claim new behavior as shipped or run any media work.
   that enabling schedules future runs; it is distinct from `运行一次`. Missing enable permission
   explains that limit while allowing disabled creation when the operator has configuration rights.
 - **Create success/failure/recovery:** one form submission completes the selected create/enable result
-  in the normal success path; the backend may publish once or safely compose existing checked commands.
+  in the normal success path through one atomic checked publication.
   Feedback reads `已创建，未启用` or `已创建并启用` from durable truth, refreshes the list and returns
   to its exact context. Publishing itself does not admit a Task; the Scheduler later follows the saved
   plan and live authority. Each rejected command preserves its prior Active state and correctable input.
-  If composed steps create the definition but enablement fails or becomes unknown, show that actual
-  state and retain the existing ID, without duplicate creation, false full success or silent downgrade.
-  Unknown responses retain the original choice and each submitted command's principal/candidate/base
-  across reopen/reload. Reconcile the unknown step first; a proved created definition whose enable step
-  was not performed or was rejected can be explicitly enabled under current permission/version checks.
+  There is no separate create-success/enable-failure intermediate state in this implementation.
+  Unknown responses retain the original enable choice and command's principal/candidate/base across
+  reopen/reload. Reconcile that exact publication first. A proved historical publication is distinguished
+  from the current saved definition when a peer later modifies/removes it or current state is unreadable;
+  reconciliation never creates again or reapplies enablement.
 - **Edit state/action:** a row's `编辑` or a supported saved-definition edit deep link opens the same
   card with exact saved values and the current enable state. Preserve arbitrary legal Cron and
   fractional intervals without converting them to convenience defaults. The ID is immutable and
@@ -669,7 +670,7 @@ preparation and do not fabricate execution recovery work.
 
 - **Goal/entry:** save bounded ResourceLibrary/scope/schedule intent in Automation, review its source,
   limits and policy effects, then explicitly enable or save an enabled successor.
-- **State/action:** disabled-first create/copy; checked publication validates current execution and
+- **State/action:** create defaults disabled with explicit optional enablement; copy stays disabled. Checked publication validates current execution and
   configuration permissions. Enabled supplies scheduled intent without an independent grant or
   mandatory pre-analysis. Enablement creates no immediate work; due occurrences need no per-run click.
 - **Success:** Scheduler admits one immutable pinned Task; Worker/TaskItem/Result and OrganizerExecutor
@@ -710,8 +711,10 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   deep links reach the same experience. Enter a name, choose a ResourceLibrary and its whole scope
   or a bounded subdirectory, then set the interval/daily/weekly/advanced Cron schedule and item limit.
   Internal ID is generated automatically. Cron timezone and backend-calculated upcoming times are
-  explicit; preview writes nothing and supplies no execution authority. One `创建任务` publishes the
-  intended disabled definition, without enabling or running it. The limit bounds the complete source
+  explicit; preview writes nothing and supplies no execution authority. The default `创建任务` publishes
+  a disabled definition; explicitly selecting enablement changes the action to `创建并启用` and publishes
+  the enabled definition atomically with checked scheduled intent. Neither starts immediate work.
+  The limit bounds the complete source
   scope; overflow requires narrowing, never automatic batching or first-N execution.
 - **Create feedback/return:** unchanged input closes directly; edited input offers visible
   `继续填写 / 放弃修改`. Cancellation, discard and success preserve the list's filters, page, scroll
@@ -722,7 +725,9 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   principal/ID/candidate/base identity across close/reopen/reload and offers only `核对本次创建`,
   never an automatic repost or a replacement ID. Failures and exit choices stay visible in the card,
   with field correction and keyboard focus; narrow screens and reduced motion retain the journey.
-- **Configure/authorize:** New/copy starts disabled without authority. One focused checked Save
+- **Configure/authorize:** New defaults disabled and can explicitly enable under `V2-AUTO-013`;
+  copy starts disabled without inherited authority. Ordinary editing opens the same Chinese card over
+  the list with exact saved values and returns there on Save. One focused checked Save
   publishes only the intended definition. Checked enable/enabled-successor Save supplies scoped
   scheduled intent with current execution permission and audit; there is no independent grant or
   mandatory grant analysis. Confirmed Save reconciles the same editor's values/publication identity
@@ -731,7 +736,8 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   without reposting; unknown Run once reconciles only its own principal/request identity.
 - **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
   the existing Worker/OrganizerExecutor without another per-run click, with independent item results.
-- **Run once:** use the published definition's saved scope to discover/freeze a complete bounded
+- **Run once:** click the saved row's `运行一次` directly in the list, retaining row feedback and an
+  explicit exact-Task link. The edit card has no Run once button. Use the published definition's saved scope to discover/freeze a complete bounded
   manifest without asking the user to pick files again. One explicit command admits the organizing
   Task before readiness and executes ready items without a second initial confirmation. Four-type
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.

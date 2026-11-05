@@ -10,12 +10,13 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Automation forms and direct Run once (Slice49 ACTIVE)
+## CURRENT — Automation forms and direct Run once (Slice49 PASS / CLOSED)
 
-[Slice49](../SLICE.md) is ACTIVE with targets `V2-AUTO-013–015`. Only the formal current Task
-authorizes implementation within the committed Contract. These remain TARGET rather than a claim of
-delivered CURRENT behavior. The selected target changes the accepted disabled-only focused create
-result; the CURRENT Automation contracts below remain factual until implementation and acceptance.
+[Slice49](../SLICE.md) passed independent A Final Review on 2026-11-05, original Base
+`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
+`9d6b78147d90b950ed2333f9747facc77bf0391a`. These `V2-AUTO-013–015` contracts are CURRENT,
+replacing the earlier disabled-only focused create result and navigation-only list Run once.
+Original accepted Slice boundaries and unchanged execution safety remain.
 
 **Shared form and entries:** reuse the creation card's presentation, field model, directory-browser
 and schedule controls for saved-definition editing. Keep distinct create/edit IDs, exact candidates,
@@ -28,20 +29,23 @@ only after proving its supported consumers are covered; unrelated lifecycle clea
 
 **Optional enablement and later enable/disable:** one ordinary form submission carries the explicit
 create-time enable choice; the default remains disabled. Reuse existing focused publication and
-shared permission/validation/audit/intent authority. The backend may use a single atomic publication
-or safely compose the existing create and enable commands; command count/order is not a user outcome
-or acceptance restriction. Each publication still switches Active and its audit atomically, with
+shared permission/validation/audit/intent authority. The implemented create command carries a strict
+optional top-level boolean `enabled`; omission stays disabled, while true enables the normalized
+candidate in one atomic publication. An enabled candidate alone cannot bypass explicit command choice.
+Each publication switches Active and its audit atomically, with
 whole-document validation and no unrelated Draft changes. Enabled publication requires the same
 real principal's `GRANT_UNATTENDED_EXECUTION` and exact saved effective scope as current enabled edit.
 No implicit enablement from omitted input or invalid truthy values is permitted. Copy stays disabled.
 
-If composed steps are selected, retain the original user choice and the actual submitted action,
-candidate and observed base for each step using bounded existing command/session evidence. A created
-definition with failed/unknown enablement is a truthful configuration outcome, not a new Task status;
-show it without duplicate creation, silent downgrade or false full success. Reconcile unknown steps
-before further effects; a confirmed existing definition may be deliberately enabled/disabled under
-current authority/version checks. Normal later enable/disable always remains available in the edit
-card, independent of its initial state. Publishing performs no Task admission/Storage effects; the
+Retain original user choice, submitted action/candidate and observed base through bounded existing
+principal-scoped publication sessions. Reconcile unknown outcomes against command/activation audit,
+then separately read the current Active: `current`, `modified`, `absent` or `unreadable`. Historical
+publication never substitutes for current saved state or automatically republishes an enabled value.
+There is no composed-step intermediate result in this atomic implementation. Normal later
+enable/disable remains available in the edit card, independent of its initial state. Definition values
+and their publication fence come from the same edit projection. Confirmed Save seeds that exact pair
+for immediate reopen; independently newer form authority cannot repin older cached values. Peer
+changes require explicit reread; later input is preserved. Publishing performs no Task admission/Storage effects; the
 resident Scheduler independently follows the schedule using existing pins and live authority checks.
 
 **Direct list command:** read the backend's exact saved-definition/configuration identity and action
@@ -68,10 +72,9 @@ remain flow failure; ended individual file read/processing failure does not itse
 Complete enumeration, stability, budgets, source history/ownership, claims/fences and
 OrganizerExecutor-only mutation remain unchanged.
 
-No new schema, configuration store, queue, engine, status or recovery product is selected. Fresh
-new work and same-version restart/readback remain required; old-task conversion, cross-version
-upgrade and production external-service validation remain excluded. A required material persistence
-or compatibility expansion returns to A for a checkpointed scope decision before implementation.
+No schema, configuration store, queue, engine, status or recovery product was added. Fresh new work
+and same-version restart/readback are covered; old-task conversion, cross-version upgrade and
+production external-service validation remain excluded. No admitted pins/history are rewritten.
 
 ## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)
 
@@ -1209,7 +1212,7 @@ The Web creation card is a consumer of the existing focused checked-create comma
 `/operations/automation/lifecycle` and former `/operations/automation/new` routes share the same
 list background and form. One stable browser-generated ID and observed Active fence belong to
 the creation session; ordinary time choices compile to the existing interval/Cron fields, while
-the backend owns due-time calculation, validation and disabled-first publication. Directory selection
+the backend owns due-time calculation, validation and default-disabled or explicitly enabled atomic publication under Slice49. Directory selection
 uses the existing bounded ResourceLibrary-scoped read-only Files API. In-flight UI state is distinct
 from an ended unknown response; retained principal-scoped command context permits only exact
 publication reconciliation. List context and focus restoration introduce no configuration or

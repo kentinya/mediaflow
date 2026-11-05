@@ -4,24 +4,25 @@
 Slice ID: 49
 Name: Automation Task Creation, Editing and Direct Run Once
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e
-Implementation Head: NOT SET
+Implementation Head: 9d6b78147d90b950ed2333f9747facc77bf0391a
 Working Branch: main
-Development Authorization: USER ACTIVATED SLICE49; IMPLEMENTATION WITHIN FORMAL CURRENT TASK ONLY
+Development Authorization: COMPLETE; NO ACTIVE IMPLEMENTATION TASK
 Risk: High
 Final Test Level: T4
-Next Action: DEVELOPER IMPLEMENTS FORMAL TASK49.1; B REVIEWS CANDIDATE
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and accepted baseline
 
 用户先要求调查来源范围失败、列表运行一次不可用、编辑体验与新建不一致和新建缺少启用选项，
 随后明确要求规划新 Slice，并确认使用下一编号 **Slice49**。用户进一步明确：删除编辑页
-“运行一次”，创建后仍可启用/停用；创建启用的内部命令顺序不作为用户硬要求。用户现已
-明确要求激活 Slice 和 Task。A 先 checkpoint 本 ACTIVE Contract，B 随后确认既有 Task49.1
-草案并转为正式 PLANNED Task；Developer 仅可实施正式当前 Task。本轮只做激活，尚未写
-产品代码，也不构成 B 验收或 A Final Review。生命周期与测试责任仅遵循
+“运行一次”，创建后仍可启用/停用；创建启用的内部命令顺序不作为用户硬要求。用户随后
+明确要求激活 Slice 和 Task。A 先 checkpoint ACTIVE Contract，B 随后确认既有 Task49.1
+草案并转为正式 PLANNED Task；Developer 仅实施正式当前 Task。原激活轮只调整治理状态，
+没有产品代码、B 验收或 A Final Review；现已完成两项 Task、B
+最终验收和下方独立 A 终审。生命周期与测试责任仅遵循
 [Development Workflow](docs/development-workflow.md)。
 
 Base 是调查时的既有源码基线；纯文档规划/激活提交不重设 Base。Task49.1 原 Task Base
@@ -39,17 +40,17 @@ Base 是调查时的既有源码基线；纯文档规划/激活提交不重设 B
 启用定时运行，创建后也可通过编辑启用或停用。错误说明实际失败阶段、持久状态、已知效果和
 可执行的下一步；提交未知时核对原请求，不能误重复创建或整理。
 
-本 Slice 选择 [V2 Requirements](docs/v2-requirements.md#automation-forms-and-direct-run-once--target-slice49-active)
-的 TARGET `V2-AUTO-013–015`。其中创建可选启用明确调整 `V2-AUTO-002/010` 与
+本 Slice 选择 [V2 Requirements](docs/v2-requirements.md#automation-forms-and-direct-run-once--current-slice49-pass--closed)
+的 CURRENT `V2-AUTO-013–015`。其中创建可选启用明确调整 `V2-AUTO-002/010` 与
 [CURRENT 创建旅程](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
-的“新建始终关闭、另行启用”结果；复制仍默认关闭且不继承授权。
+原有的“新建始终关闭、另行启用”结果；当前旅程已对齐本次接受，复制仍默认关闭且不继承授权。
 其余为 `V2-AUTO-001/002/004/011` 既有结果的入口与正确性修正。
 保持 `UX-001–007/010`、适用的 `REQ-SCHED-001–007`、`REQ-TASK-005–010`、
 `REQ-SAFE-001–009` 和 `V2-TASK-001–014` / `V2-AUTO-012` 的现行 V2 语义。
-新目标尚未交付；CURRENT 描述仍记录已接受产品，冻结 V1 含义不变。
+四项结果已接受为 CURRENT；冻结 V1 和旧 Slice 的原始验收含义不变。
 
-完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-active)，
-技术边界见 [Architecture TARGET](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-active)。
+完整旅程见 [Product Experience CURRENT](docs/product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)，
+技术边界见 [Architecture CURRENT](docs/architecture.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)。
 
 ## Investigated gaps
 
@@ -194,32 +195,87 @@ Classification A 后仍为 C，必须有自动化覆盖。
 | AC-15 | Fresh新工作、同版本重启/重开保留定义的明确启用、发布核对、原请求/Task/结果及合法继续；READ/analysis零媒体变更、C→A身份不变及源/目标约束有自动化证明。 |
 | AC-16 | B 提供匹配候选的适用完整 T4/原生/安装包与容器证据及失败/skip/限度；A 独立审查原 Base..Implementation Head 的全部 RO/表面后才可 PASS / CLOSED，并做 CURRENT 文档对齐。 |
 
-## Implementation planning and validation allocation
+## Implementation and validation allocation
 
-Task49.1“来源范围正确的列表一键运行”是首个选定实施单位，先完成 RO-1 / RO-2。
-其当前状态、原 Base、具体验收及 Developer/B 计划以 [TASK.md](TASK.md) 为准；既有草案
-须由 B 对本已提交 ACTIVE Contract 明确确认后转正式任务。RO-3 / RO-4 保持本 Slice 的
-必需结果，但不扩入 Task49.1。B 后续按完整行为规划，不按字段、层或验收条目拆 Task，
-不固定数量；本次激活不规划或实施下一 Task。
+Task49.1（RO-1/RO-2）与 Task49.2（RO-3/RO-4）均由 B 独立验收 PASS。
+Task49.1完整 B 结论在 `7b7e9aaa24684ee59552ca95641843706dc7680d:TASK.md`；
+Task49.2和最终 Closure Packet 在
+`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`。Task Base 与原 Slice Base 均未重设。
+创建可选启用采用单次原子发布，不存在分步创建成功/启用失败的中间结果；Contract 对
+安全编排的允许不是本实现已交付另一种路径的声明。
 
-最终按 **T4**：范围消费和真实执行入口、Active 发布/权限以及未知响应/并发都受影响。
-Developer 跑新增/修改/直接受影响测试与相关静态检查；B 按
-[workflow §6](docs/development-workflow.md#6-test-levels) 承担完整回归和适用安全/打包/原生门禁。
-聚焦验证至少包括：现有 Automation Run once / definition publication / intent / admission /
-lifecycle / operations / authorized execution matrix，Task engine/源历史/四类恢复，以及 Web
-创建/编辑/列表路由、命令 session、API models 和真实 Python 浏览器生命周期/Run once。
-
-B 使用隔离临时 Storage、SQLite、合成 Provider，以真实 API→Task→Worker 验证来源矩阵，
-通过真实浏览器从列表点击、创建/编辑、失联核对、并发发布、返回列表和桌面/窄屏截图。
-故障注入绑定现有生产边界，不手写最终 Task/Result 冒充执行。适用 source-external wheel/
-container 的 fresh与同版本重启、启用/准入/范围/权限消费证明沿用 workflow 门禁；不借机
-要求生产媒体、真实账号或既有排除的跨版本升级。已知问题先复现再做昂贵门禁。
+风险保持 **T4**。Developer 执行新增/修改/直接受影响测试，B 承担完整回归及适用安全/
+打包/原生门禁；A 独立审查完整 Slice 并核对关键不确定性，没有代替 B 自我验收。
+隔离 Local/SQLite/合成 Provider 经真实 API→Task→Worker/现有浏览器入口证明行为，未手写
+最终 Task/Result 冒充执行，未读取私有配置、用户运行数据库或生产媒体。
 
 ## Final validation, Closure Packet and A Final Review
 
-**已激活，尚未实施或接受。** Implementation Head、B 实现候选/最终验收、Closure Packet
-和 A Final Review 均未产生；正式 Task 状态以根 Task 为准。本轮只检查授权/文档/链接/治理，
-调查探针与文档检查不等于缺陷已修复或本 Slice PASS。不得提前把 TARGET 写成 CURRENT。
+**PASS / CLOSED — 2026-11-05，A 独立终审。**
+
+- Reviewed range：`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` →
+  `9d6b78147d90b950ed2333f9747facc77bf0391a`，42个文件，含全部实现/测试/harness/文档。
+  不只审最后一次修正。B最终验证候选 `6baa0e508658d33a6d44843deea86f0faafca2c6`；
+  后继至本轮起点 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c` 仅 TASK.md 文档，
+  执行输入未变。闭环提交只对齐已审事实，不新增产品行为。
+- B Closure Packet：上述 `edef2b9d:TASK.md`，Required Outcomes/Surfaces COMPLETE，
+  Tasks49.1/49.2 PASS，Decision SLICE READY FOR A REVIEW。A 核对原始日志、失败/重跑、
+  精确产物与执行输入，未把 PASS 标签代替证据。
+
+| 结果 / 验收 | A 完整范围判断 |
+|---|---|
+| RO-1，AC-1–3 | PASS。只规范化已验证来源组成的拼接，准入与严格 Worker 消费一致；实际非空根整体库整理及due对照通过。危险子范围/固定上下文不匹配拒绝，完整遍历、健康空与流程失败/独立文件失败不混淆，无前N执行或历史重写。 |
+| RO-2，AC-4–6 | PASS。真实列表一击提交已保存定义，当前行防重复并保留列表/精确Task入口；停用可运行且不改due。拒绝/未知、连续两次运行及旧编辑未决请求保持独立身份，刷新/重连只核对、不重放；编辑运行按钮退出。 |
+| RO-3，AC-7–9 | PASS。创建/普通编辑与深链共用中文字段和卡片，精确计划/范围/启用回填、目录浏览、取消/放弃/提交保护/返回/连续保存可用。定义与同次读取基线绑定，立即重开不把旧字段配新版本。桌面/390px、键盘、reduced-motion证据可读可用。 |
+| RO-4，AC-10–12 | PASS。默认关闭、明确创建启用、后续启用/停用保存有效。Web投影与后端权限/严格类型/原子拒绝/审计复用既有边界。未知发布原身份可核对，并区分当时成功与当前已修改/移除/不可读，不重复创建或盲目启停。 |
+| 运行及安全，AC-13–15 | PASS。发布/读取/预览不即时准入或变更媒体，后续Scheduler消费真实受限intent；权限丢失/禁用、pins/fences、源所有权、C使用A策略仍为C、四类恢复及成功/不确定不重放有自动化证明。五态/独立文件结果、原时间和统计保留；fresh/同版本重开覆盖。 |
+| 交接与全表面，AC-16 | PASS。Web/API/application/runtime/persistence均纳入；T4、原生、source外安装包/容器和文档证据匹配。原Base、已审实现及既有延期不变，无未解决P0/P1，不另造Task或提前选择下一Slice。 |
+
+### A independently executed
+
+- 仓库根 `.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_automation_execution_intent tests.test_v2_automation_lifecycle
+  tests.test_v2_automation_run_once`：**149 tests OK / 59.167秒**。覆盖真实范围消费、权限/
+  发布、核对、Task/Worker及运行结果边界。
+- `web/` 中用 `playwright.python.automation.config.ts` 跑create-dialog/lifecycle/run-once的
+  9项关键原生用例：**9 passed / 15.5秒**。包括真实Incoming媒体整理、连续运行失联核对、
+  发布后同伴变更、编辑退出/提交未知、启用后立即重开与窄屏/键盘/reduced-motion。
+- 独立复跑 B 的原始慢读取探针，只改本地证据输出目录：**1 passed / 3.3秒**。
+  从现有列表创建→编辑启用保存→暂缓真实定义GET回复→立即重开只改名称→保存；请求和
+  SQLite回读仍为enabled=true，没有伪造定义回复或最终状态。检查本轮桌面/390px截图，
+  临时spec已撤出工作树，探针源码保留。首次探针命令因cwd路径错误未启动用例，修正后执行；
+  首轮日志保留，不算产品失败或隐去命令错误。
+- 核对B manifest全部15项文件SHA256匹配；实际source/wheel/container三模块hash一致，
+  精确wheel `eb244e651dc952d94318dd8ac164974e69b901e86e350e60d0c9f923e14974ca`，
+  镜像 `mediaflow:b-task49-2-6baa0e50` / ID
+  `sha256:3cfac7148ba68a383f8ae422b18be279bc29a8ada372bb3ced6d393f13f29666`。
+  未机械重复B全量/发布矩阵。本轮164个本地Markdown链接/锚点检查通过。文档/治理
+  consumer提交前28项中1项按规则拒绝未checkpoint的Contract（其余通过），提交后复验；
+  两轮实际日志保留于 `documentation.log` / `documentation-after-checkpoint.log`，不伪报首轮通过。
+
+A本地证据：`.git/validation-evidence/edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c/a-slice49/`；
+`focused-python.log`、`native.log`、`reopen-corrected.log`、probe源码/JSON/截图与review manifest
+可核对实际命令及结果。仅本地可取，不宣称远程可用。
+
+### B final evidence and retained limits
+
+B实际全Python **2603 tests / failures=1 / skipped=7**；唯一失败为Task文档测试分工标题，
+`054602e6`仅修文档后同一文档消费者 **8 tests OK**，其他执行输入未变，合法复用其余证据。
+不把原全量命令写成OK。Web **1324 passed / 92文件**，默认E2E **253 passed**；首轮
+252/1的trace输出ENOENT与独立目录完整复跑均保留。原生首轮 **46 passed / 1 failed**，
+重开编辑读取超过期限；当轮collection GET约10.8秒，具体原因未证实。隔离完整复跑
+**47 passed**；A此次关键重开/未知用例亦通过，尚无可重复产品阻塞证据，原失败trace不删除。
+wheel/smoke/container安全通过，source外安装消费者与无网络容器各 **24 tests OK**。
+
+7项skip仍为未配置真实OpenList/SMB/S3及Local/SMB/OpenList/S3耐久性专项，属既有合同排除。
+ResourceWarning与既有构建warning保留。未知响应是实际发布/准入后的浏览器回复注入，不是
+物理网络分区。未核对用户历史Task数据库；无旧任务修复、跨版本升级、生产外部服务验收或
+部署声明。B49.1测试占比未达用户限制；B49.2本轮活动墙钟642.2/1440.9秒=44.6%，累计
+进程1299.0秒不满足低于50%口径，执行偏差保持披露，不用空等或省门禁修饰。
+
+CURRENT要求、旅程、架构、README/release指引及Slice/Roadmap/Progress/Task指针在本次
+闭环一致对齐。复盘已读A/B/Developer经验；新增一条A可复用核对经验，无新增B/Developer
+条目。此前B49.1-01及B49.2-01/02/03的拒绝、原证据和修正留在Git，不改写历史。
 
 ## Planning workspace（原规划记录）
 
@@ -240,3 +296,12 @@ tracked 工作树干净，工作区/Git可写，预存 untracked 文件完整保
 起点的生产代码/测试/harness diff 为空。此次按用户明确指令先由 A 提交 ACTIVE Contract，
 再由用户指定的 B 代行者确认并正式激活 Task49.1；没有 Developer 实施、B 验收或 A 终审。
 只改变治理状态与事实指针，不读用户数据库/私有配置/生产媒体，不 push/部署/改写历史。
+
+## A review workspace
+
+仓库 `/Users/songzhidong/mediaflow`，main，起点
+`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c`，治理预检PASS、tracked起点干净，工作区/Git可写。
+预存untracked清单保存在A证据 `workspace-before.txt`，全部保留且不入提交。过程中另观察到
+tracked `mediaflow/.DS_Store` 变化，同样保留不入提交；不推断其来源、不恢复覆盖。
+本轮只提交A终审/闭环相关文档；临时probe退出后移除，原证据保留。不读用户运行数据库/
+私有配置/生产媒体，不push、部署、改写历史或规划新Task。

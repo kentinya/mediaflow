@@ -53,13 +53,14 @@ Slice48 is PASS / CLOSED: Task flow uses pending/running/completed/failed/cancel
 of file outcomes. A normally closed flow, including ended file technical failures with unknown
 effects or missing Results, is completed; Task-level flow failure remains failed. Required human
 or machine work stays unfinished. Task completion grants no replay and proves no file success.
-[Slice49](SLICE.md) is ACTIVE: correct saved Automation source scope, direct Run once from the
-list, shared create/edit cards and optional explicit enabled creation. The user activated the Slice
-and selected Task49.1 first; [TASK.md](TASK.md) owns its formal status, scoped implementation plan
-and review state. Activation itself changes no product code or acceptance facts.
+[Slice49](SLICE.md) is PASS / CLOSED: saved Automation sources resolve correctly, list Run once
+submits directly, creation/editing share one Chinese card, and creation can explicitly enable the
+schedule. Later editing supports enable/disable with checked authority and exact unknown-result
+reconciliation. [TASK.md](TASK.md) has no active implementation Task; A selects the next large Slice
+separately.
 [Slice48's preserved Contract](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md)
-retains its B Closure Packet pointer and A whole-range acceptance. Current shipped behavior is
-unchanged; the new requirements/journey/architecture sections are TARGET until accepted.
+retains its B Closure Packet pointer and A whole-range acceptance. The Slice49 requirements,
+journey and architecture are CURRENT; this remains unreleased V2 development acceptance.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
@@ -72,9 +73,12 @@ families keeps one local search and state filter. Settings retains configuration
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
-`新建自动化任务` opens a Chinese card over the list for source scope, schedule and processing limit.
-Creation starts disabled and runs nothing; cancellation or success preserves the list context.
-An unknown create result is reconciled with `核对本次创建` before any further creation.
+`新建自动化任务` and a row's `编辑` open the same Chinese card for source, schedule, limit and
+explicit enablement. Creation defaults disabled; choosing `启用定时计划` uses `创建并启用`.
+Editing can later enable/disable and Save; cancellation or success preserves list context. Publishing
+runs no media work. Unknown creation/publication is reconciled before further commands. A row's
+`运行一次` directly submits the saved definition in place; use its `查看任务` link for progress/results.
+An unknown Run once uses `查看提交结果` to reconcile the original request without resubmitting.
 Execution-record rows offer only `查看详情 / 收起详情`;
 details show the current Task flow result, original actual times, independent file outcomes, a concise
 Chinese failure reason when the flow failed, and a short next step. Records and Task Center read the
