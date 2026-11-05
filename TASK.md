@@ -2,8 +2,8 @@
 
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
-再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已实施完成，状态
-**FIX REQUIRED（B 独立审查发现保存中遮罩可关闭卡片）**；Task Base、范围与验收不变。Developer 本轮只实施本
+再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的保存中遮罩退出
+修正，状态 **READY FOR B REVIEW**（未自审 PASS）；Task Base、范围与验收不变。Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
@@ -12,7 +12,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -201,41 +201,46 @@ npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/a
 
 ## Developer Completion Report
 
-状态：**READY FOR B REVIEW**（Developer 交接，未自审 PASS）。
+状态：**READY FOR B REVIEW**（B P1 修正完成，Developer 交接，未自审 PASS）。
 
 ```text
-实现 checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
+本轮修正 checkpoint: 22618d708a68eeb076d9ed42755a69bf996656df
+初次实现 checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
 分支: main
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 B 审查范围: Task Base..本报告提交 HEAD
 ```
 
-B 的审查范围是 Task Base..本报告提交 HEAD；实现源码身份为上述实现 checkpoint。工作区既有的
+B 的审查范围是 Task Base..本报告提交 HEAD；实现源码身份为上述两个 checkpoint。工作区既有的
 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 调查产物均保持原样，
 未纳入本次 checkpoint。
 
-### 实际变更
+### 本轮 P1 修正（B 审查阻塞项）
 
-- 新增 `web/src/shared/ui/modal-card.tsx`：无业务依赖的居中卡片/遮罩/标题/正文/底部结构，
-  以及共享滚动锁定（同时测量 `html`/`body` 实际滚动条占位、嵌套层只补偿一次、卸载准确还原）、
-  inert 背景、Tab 焦点圈与 `preventScroll` 回焦。存储不依赖自动化业务模块。
-- 自动化新建/编辑：打开/返回叠层路由使用 `resetScroll: false`；列表路由重挂载时按之前的
-  可见位置预留高度并在 layout 阶段恢复滚动，避免先回顶再补滚；卡片改为稳定的视口相对高度，
-  权限/定义读取、失败与完整表单共用同一卡片几何；加载态增加静态骨架和明确读取文案；
-  关闭/错误/拒绝时焦点回入口且不滚动背景。未跳过权限/定义读取，未改变命令或字段。
-- 存储查看：改为列表背景上的居中详情卡片；加载、失败、重试都在卡片内；迟到读取在关闭/
-  切换对象后丢弃；保留状态/位置、能力、凭据就绪、引用/截断、检查证据、显式检查与核实。
-  打开/刷新/关闭不触发检查或配置变更。
-- 存储添加/编辑：改为同一共享居中卡片，保留四步 Provider 字段与保存/核对逻辑。添加在
-  authority 读取期间允许无副作用本地输入并保留；保存按钮仅在精确 Active fence 就绪后可用；
-  编辑读取失败/缺失/拒绝在卡片内呈现并可重试。通过 requestId 丢弃关闭/换对象后的迟到读取，
-  编辑值与 fence 始终来自同一次投影并成对更新。保存成功仍按命令返回的权威配置关闭并刷新；
-  失败/并发/未知核对与在途保护保持原归属。
-- 存储“更多”：改为正确行锚定的 fixed 菜单并做视口边界钳制，补充图标、普通/危险层级、
-  键盘焦点与 Escape 回焦；异步启停/复制/移除在飞行中显示“处理中…”并禁止再次打开同一菜单。
-  复制、启停、只读检查、移除配置的业务、权限、确认和未知核对未改。
-- 测试：更新旧抽屉结构断言；新增 `modal-card.test.tsx`、存储慢读取取消/换对象、添加输入保留、
-  菜单焦点与 busy、真实 Python 存储卡片聚焦 spec，并扩展自动化真实 Python 打开中间帧证据。
+- **原因：** `ModalCardShell` 的遮罩与层外沿 `onMouseDown` 无条件调用 `onRequestClose`，
+  `closeDisabled` 只约束右上角关闭按钮。存储保存中取消按钮、关闭按钮与 Escape 已禁止退出，
+  但点击卡片外灰遮罩仍会卸载卡片；保存请求继续完成。
+- **修正：** 共享呈现只执行所有者传入的退出许可。`closeDisabled` 现在同时阻止遮罩、层外沿
+  和关闭按钮的关闭请求；存储所有者继续以同一 `saving`（`saveMutation.isPending`）传入该
+  许可，Escape 沿用既有 `escapeDisabled`。未改变任何存储/自动化业务规则、字段、命令、
+  请求顺序或保存状态处理，也未新增确认步骤。
+- **结果：** 保存未结束时卡片保持挂载，输入与结果承接位置不丢失；请求仍只发送一次，不会
+  因遮罩点击卸载、取消、清空或重发。成功、已知拒绝和未知结果继续走原有返回/核对路径。
+
+### 实际变更（累计 Task 候选）
+
+- 共享呈现：新增 `web/src/shared/ui/modal-card.tsx` 的居中卡片/遮罩/标题/正文/底部结构、
+  滚动锁定与滚动条占位、inert 背景、Tab 焦点圈和 `preventScroll` 回焦；本轮补齐遮罩/层外沿
+  的保存中退出许可。
+- 自动化新建/编辑：叠层路由保留背景滚动，列表按之前可见位置恢复；稳定卡片几何与加载骨架，
+  权限/定义读取、失败和完整表单共用同一布局；关闭/错误/拒绝回焦且不滚动背景。
+- 存储查看/添加/编辑：改为同一共享居中卡片；查看保留详情、引用、检查证据与显式检查；
+  添加/编辑保留四步 Provider 字段、精确投影/fence、迟到读取丢弃和既有 Save/核对逻辑。
+- 存储“更多”：正确行锚定的 fixed 菜单、视口钳制、普通/危险层级、键盘焦点与 busy 状态；
+  复制/启停/检查/移除的业务、权限、确认和未知核对未改。
+- 测试：更新旧抽屉结构断言；新增共享卡片退出许可、存储慢读取/输入保留/菜单焦点、真实
+  Python 存储卡片聚焦 spec 和自动化打开中间帧证据。本轮新增保存中遮罩/外沿回归（真实
+  添加/编辑入口、桌面与 390px、显式请求门闩、单次命令、成功/已知拒绝/未知核对）。
 - 未修改后端、API、Schema、Task 生命周期、发布/权限/媒体执行语义或 CURRENT 产品/架构
   Contract 文本；Slice50 其余 RO-1/RO-3/RO-4 仍未实施，本 Task 不宣告 Slice 完成。
 
@@ -251,22 +256,23 @@ B 的审查范围是 Task Base..本报告提交 HEAD；实现源码身份为上�
   src/shared/api/storage-management-api.test.ts src/features/operations/AutomationCreateDialog.test.tsx
   src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationRouter.test.tsx
   src/features/operations/AutomationListCopy.test.tsx src/features/operations/AutomationListRunOnce.test.tsx
-  src/shared/ui/modal-card.test.tsx` → **10 files / 183 tests passed**。
+  src/shared/ui/modal-card.test.tsx` → **10 files / 188 tests passed**。其中焦点回归 2 文件
+  **52 tests passed**，覆盖保存中 Escape、遮罩/层外沿、单次 POST/PUT、输入保留、已知拒绝与
+  未知核对入口。
 - `web/` 默认 E2E：`npm run test:e2e -- tests/e2e/storage-management.spec.ts
   tests/e2e/automation-presentation.spec.ts` → **31 passed**。
 - `web/` 真实 Python E2E：`npm run test:e2e -- --config=playwright.python.config.ts --workers=1
   tests/e2e/automation-create-dialog.python.spec.ts tests/e2e/storage-dialog.python.spec.ts` →
-  **18 passed**。其中自动化 spec 覆盖新建/编辑打开中间帧、慢 authority/定义读取、强制经典滚动条
-  占位、已滚动列表、reduced-motion 与关闭回焦；新增 storage spec 覆盖真实查看/添加/编辑/重复
-  拒绝/慢读取关闭竞态/菜单键盘与视口边界。
-- 额外人工检查（不属自动门禁）：隔离 harness + 真实 API/SQLite/Local 根，在 1536×1024 与
-  390px 检查存储详情/添加/更多菜单及自动化加载/新建/编辑截图；据此修正窄屏长路径换行。
-  这些截图仅在本机临时路径，不作为远程可取的验收证据。
+  **19 passed**（自动化 14、存储 5）。新增存储用例从真实添加/编辑入口持有请求，在
+  `aria-busy=true` 且取消禁用后分别点击 1536×1024 背景遮罩/卡片外沿与 390px 遮罩，证明卡片
+  不消失、输入在确认摘要中保留、POST/PUT 各一次；放行后真实保存读回成功。其余用例继续覆盖
+  慢读取关闭竞态、重复拒绝、菜单键盘/边界和精确读回。
+- 本轮测试执行约 100 秒，低于本轮实际用时 30%；未执行 B 的完整 T4、wheel/Docker/发布门禁。
 
 ### 已知风险与剩余工作
 
-- B 仍须在精确候选执行适用完整 T4、原生 1536×1024 / 390px 动态与截图验收，并复现本 Task
-  关键行为；Developer 未执行 B 的完整回归、wheel/Docker/发布门禁。
+- B 仍须在精确候选复验本 P1，并执行适用完整 T4、原生 1536×1024 / 390px 动态与截图验收；
+  Developer 未执行 B 的完整回归、wheel/Docker/发布门禁。
 - 自动化卡片的经典滚动条动态证据由测试侧 same-origin 样式强制；真实浏览器占位滚动条和无
   占位滚动条仍应由 B 的原生证据确认。
 - 存储添加 authority 失败时卡片内保存按钮禁用并提供重试；B 应结合慢/拒绝/缺失响应复核。
