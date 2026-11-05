@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -189,7 +189,7 @@ function principalResponse(): Response {
 }
 
 describe("AutomationLifecyclePage", () => {
-  it("uses each confirmed publication for subsequent same-page Save and toggles", async () => {
+  it("publishes each confirmed save, returns to the list and continues after re-opening", async () => {
     let active = ACTIVE;
     let saved = definition();
     const commands: Call[] = [];
@@ -232,20 +232,33 @@ describe("AutomationLifecyclePage", () => {
       return undefined;
     });
     await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
+    const { router } = renderApp("/operations/automation/lifecycle/nightly");
     const name = await screen.findByLabelText(/任务名称/);
     await userEvent.clear(name);
     await userEvent.type(name, "Updated");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    // The confirmed Save returns to the original list: the card closes and
+    // the saved row is what the list presents.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(saved.name).toBe("Updated"));
+    // Re-opening the same definition continues editing against the confirmed
+    // publication: the backfill is the saved value and the next command uses
+    // its fence.
+    await router.navigate({
+      to: "/operations/automation/lifecycle/$definitionId",
+      params: { definitionId: "nightly" },
+    });
+    const reopenedName = await screen.findByLabelText(/任务名称/);
+    await waitFor(() => expect(reopenedName).toHaveValue("Updated"));
     await userEvent.click(screen.getByRole("button", { name: "启用定时计划" }));
     await waitFor(() => expect(saved.enabled).toBe(true));
     await userEvent.click(screen.getByRole("button", { name: "停用定时计划" }));
     await waitFor(() => expect(saved.enabled).toBe(false));
-    await userEvent.clear(name);
-    await userEvent.type(name, "Updated again");
+    await userEvent.clear(reopenedName);
+    await userEvent.type(reopenedName, "Updated again");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saved.name).toBe("Updated again"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(commands.map((call) => call.body?.expectedRevisionId)).toEqual([
       ACTIVE_REVISION,
       "own-1",
@@ -306,6 +319,7 @@ describe("AutomationLifecyclePage", () => {
     let active = ACTIVE;
     let saved = definition();
     let writes = 0;
+    const fences: (string | undefined)[] = [];
     const calls = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
@@ -319,6 +333,7 @@ describe("AutomationLifecyclePage", () => {
         return jsonResponse({ ...editProjection(), definition: saved, active });
       if (call.method === "PUT") {
         writes += 1;
+        fences.push(call.body?.expectedRevisionId as string | undefined);
         saved = definition(call.body?.object as Record<string, unknown>);
         active = publication("save", saved).active;
         // Publication committed; its successful response was lost in transport.
@@ -343,9 +358,25 @@ describe("AutomationLifecyclePage", () => {
     await userEvent.type(name, "Later input");
     await userEvent.click(screen.getByRole("button", { name: "核对本次发布" }));
     await screen.findByText(/已从持久审计核对本次发布/);
+    // The proved publication cannot pose as the current saved state: the
+    // response carries no current-state evidence, so the current state is
+    // reported as unconfirmable, the later input is preserved, and the old
+    // candidate is never handed a new baseline — Save stays blocked until the
+    // operator explicitly re-reads the durable values.
     expect(name).toHaveValue("Later input");
-    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
-    expect(writes).toBe(1);
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    await screen.findByText(/未保存的修改基于较旧的配置/);
+    await userEvent.click(
+      screen.getByRole("button", { name: "核对当前值并采用" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/任务名称/)).toHaveValue("Submitted once"),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(writes).toBe(2));
     const read = calls.find((call) =>
       call.url.endsWith("/nightly/publication-intent"),
     );
@@ -353,6 +384,9 @@ describe("AutomationLifecyclePage", () => {
     expect((read?.body?.object as Record<string, unknown>).name).toBe(
       "Submitted once",
     );
+    // The deliberate next Save targets the current durable fence, never the
+    // reconciled publication's own revision.
+    expect(fences[1]).toBe("revision-active-2");
   });
 
   it("offers enable and a disabled copy for a published definition", async () => {
@@ -658,11 +692,15 @@ describe("AutomationLifecyclePage", () => {
     await screen.findByRole("heading", { name: "编辑自动化任务" });
     // Change the origin's name without saving.
     await userEvent.type(screen.getByLabelText(/任务名称/), " retained");
-    // Navigate to the copy route the way Copy navigation does.
-    await router.navigate({
+    // Navigate to the copy route the way Copy navigation does. Leaving with
+    // unsaved input is blocked until the operator makes the discard choice;
+    // the blocked navigation keeps this route mounted.
+    void router.navigate({
       to: "/operations/automation/lifecycle/$definitionId",
       params: { definitionId: "nightly-copy" },
     });
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
     await waitFor(() =>
       expect(
         calls.some(
@@ -1048,8 +1086,13 @@ describe("AutomationLifecyclePage", () => {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    // Refresh: the page re-reads the current authority.
-    await userEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    // Refresh: the page re-reads the current authority. The card owns its own
+    // refresh control; the list behind the card is inert.
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "刷新",
+      }),
+    );
     await waitFor(() => expect(authorityReads).toBeGreaterThanOrEqual(1));
     // The retained input is still visible (no silent value replacement), but
     // the page truthfully reports the stale candidate and blocks Save.
@@ -1161,7 +1204,11 @@ describe("AutomationLifecyclePage", () => {
     // Another legitimate writer publishes item limit 9.
     peerPublished = true;
     // Refresh re-reads the newer Active.
-    await userEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "刷新",
+      }),
+    );
     await screen.findByText(/未保存的修改基于较旧的配置/);
     await expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     // Deliberate re-adoption re-reads the definition: the current durable
@@ -1180,7 +1227,8 @@ describe("AutomationLifecyclePage", () => {
     const freshSave = screen.getByRole("button", { name: "保存" });
     await waitFor(() => expect(freshSave).toBeEnabled());
     await userEvent.click(freshSave);
-    await screen.findByText(/已保存并保持启用|已保存，当前为停用状态/);
+    // The confirmed Save returns to the list: the card closes.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // The Save submitted the reviewed current values with the matching fence:
     // the peer's durable limit 9 survives; only the Name changed.
     expect(savedBodies).toHaveLength(1);

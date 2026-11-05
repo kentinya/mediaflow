@@ -267,6 +267,138 @@ class ExecutionIntentTests(unittest.TestCase):
         self.assertEqual("unknown", unpublished["state"])
         self.assertEqual((), f.runtime.list_tasks())
 
+    def test_reconciliation_distinguishes_current_from_later_modified_state(self):
+        """A proved publication never poses as the definition's current state.
+
+        After a peer later republishes the definition, the reconciliation still
+        proves the original command from its own durable evidence and reports
+        the current saved state separately: modified, with the current values
+        and the current Active identity.
+        """
+
+        f = self.fixture
+        status, created = f.request(
+            "POST",
+            lifecycle.BASE,
+            {**f.authority(), "object": lifecycle._definition("reconcile-current")},
+        )
+        self.assertEqual(200, status, created)
+        observed = f.managed.active()
+        status, enabled = f.request(
+            "POST", lifecycle.BASE + "/reconcile-current/enable", f.authority()
+        )
+        self.assertEqual(200, status, enabled)
+        peer_candidate = lifecycle._definition(
+            "reconcile-current", enabled=False, name="Renamed by peer"
+        )
+        status, peer_saved = f.request(
+            "PUT",
+            lifecycle.BASE + "/reconcile-current",
+            {**f.authority(), "object": peer_candidate},
+        )
+        self.assertEqual(200, status, peer_saved)
+        body = {
+            "action": "enable",
+            "object": lifecycle._definition("reconcile-current", enabled=True),
+            "expectedRevisionId": observed.revision_id,
+            "expectedVersion": observed.revision_sequence or observed.version,
+            "expectedDigest": observed.digest,
+        }
+        status, result = f.request(
+            "POST", lifecycle.BASE + "/reconcile-current/publication-intent", body
+        )
+        self.assertEqual(200, status, result)
+        self.assertEqual("published", result["state"])
+        # The publication proof names the command's own revision, never today's.
+        self.assertEqual(
+            enabled["active"]["revisionId"], result["publication"]["active"]["revisionId"]
+        )
+        self.assertEqual("modified", result["currentDefinitionState"])
+        self.assertEqual("Renamed by peer", result["currentDefinition"]["name"])
+        self.assertFalse(result["currentDefinition"]["enabled"])
+        self.assertEqual(peer_saved["active"]["revisionId"], result["currentActive"]["revisionId"])
+
+    def test_unchanged_definition_reconciles_as_still_current(self):
+        f = self.fixture
+        observed = f.managed.active()
+        candidate = lifecycle._definition("reconcile-same")
+        status, saved = f.request("POST", lifecycle.BASE, {**f.authority(), "object": candidate})
+        self.assertEqual(200, status, saved)
+        body = {
+            "action": "create",
+            "object": candidate,
+            "expectedRevisionId": observed.revision_id,
+            "expectedVersion": observed.revision_sequence or observed.version,
+            "expectedDigest": observed.digest,
+        }
+        status, result = f.request(
+            "POST", lifecycle.BASE + "/reconcile-same/publication-intent", body
+        )
+        self.assertEqual(200, status, result)
+        self.assertEqual("published", result["state"])
+        self.assertEqual("current", result["currentDefinitionState"])
+        self.assertEqual("Automation reconcile-same", result["currentDefinition"]["name"])
+        self.assertFalse(result["currentDefinition"]["enabled"])
+        self.assertEqual(saved["active"]["revisionId"], result["currentActive"]["revisionId"])
+
+    def test_removed_definition_reconciles_as_absent_from_current_active(self):
+        f = self.fixture
+        observed = f.managed.active()
+        candidate = lifecycle._definition("reconcile-removed")
+        status, saved = f.request("POST", lifecycle.BASE, {**f.authority(), "object": candidate})
+        self.assertEqual(200, status, saved)
+        status, removed = f.request("DELETE", lifecycle.BASE + "/reconcile-removed", f.authority())
+        self.assertEqual(200, status, removed)
+        body = {
+            "action": "create",
+            "object": candidate,
+            "expectedRevisionId": observed.revision_id,
+            "expectedVersion": observed.revision_sequence or observed.version,
+            "expectedDigest": observed.digest,
+        }
+        status, result = f.request(
+            "POST", lifecycle.BASE + "/reconcile-removed/publication-intent", body
+        )
+        self.assertEqual(200, status, result)
+        self.assertEqual("published", result["state"])
+        self.assertEqual("absent", result["currentDefinitionState"])
+        self.assertIsNone(result["currentDefinition"])
+        self.assertIsNotNone(result["currentActive"])
+
+    def test_unreadable_current_active_is_reported_not_substituted(self):
+        from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+
+        f = self.fixture
+        observed = f.managed.active()
+        candidate = lifecycle._definition("reconcile-unreadable")
+        status, saved = f.request("POST", lifecycle.BASE, {**f.authority(), "object": candidate})
+        self.assertEqual(200, status, saved)
+        workspace = f.api._automation_workspace
+        original = workspace._require_active_read
+
+        def failing_read(_surface):
+            raise RuntimeSnapshotUnavailable(
+                "current Active unavailable", reason="managed_active_unavailable"
+            )
+
+        workspace._require_active_read = failing_read
+        self.addCleanup(setattr, workspace, "_require_active_read", original)
+        body = {
+            "action": "create",
+            "object": candidate,
+            "expectedRevisionId": observed.revision_id,
+            "expectedVersion": observed.revision_sequence or observed.version,
+            "expectedDigest": observed.digest,
+        }
+        status, result = f.request(
+            "POST", lifecycle.BASE + "/reconcile-unreadable/publication-intent", body
+        )
+        self.assertEqual(200, status, result)
+        self.assertEqual("published", result["state"])
+        self.assertEqual("unreadable", result["currentDefinitionState"])
+        self.assertIsNone(result["currentDefinition"])
+        self.assertIsNone(result["currentActive"])
+
     def test_local_publication_uses_local_identity_instead_of_actor_text(self):
         import os
 

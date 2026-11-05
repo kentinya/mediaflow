@@ -1731,6 +1731,7 @@ import {
   normalizeAutomationCopyIntent,
   normalizeAutomationEditProjection,
   normalizeAutomationPublication,
+  normalizeAutomationPublicationReconciliation,
   normalizeAutomationRemovalImpact,
   normalizeAutomationSchedulePreview,
   type AutomationDefinitionFormAuthorityModel,
@@ -1738,6 +1739,7 @@ import {
   type AutomationCopyIntentModel,
   type AutomationEditProjectionModel,
   type AutomationPublicationModel,
+  type AutomationPublicationReconciliationModel,
   type AutomationRemovalImpactModel,
   type AutomationSchedulePreviewModel,
 } from "../../entities/operations/automation-lifecycle";
@@ -8173,12 +8175,7 @@ export async function reconcileAutomationPublicationFocused(
   definitionId: string,
   command: Record<string, unknown>,
   fetchImpl: FetchLike = fetch,
-): Promise<
-  AutomationMutationResult<{
-    state: "published" | "unknown";
-    publication: AutomationPublicationModel | null;
-  }>
-> {
+): Promise<AutomationMutationResult<AutomationPublicationReconciliationModel>> {
   if (!isSafeIdentifier(definitionId))
     return { ok: false, status: 400, code: "invalid_request" };
   return submitAutomationDefinitionCommand(
@@ -8186,17 +8183,7 @@ export async function reconcileAutomationPublicationFocused(
     "POST",
     `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/publication-intent`,
     command,
-    (payload) => {
-      const value = readRecord(payload, "publicationIntent");
-      if (value["state"] === "published")
-        return {
-          state: "published" as const,
-          publication: normalizeAutomationPublication(value["publication"]),
-        };
-      if (value["state"] !== "unknown" || value["publication"] !== null)
-        throw new Error("malformed publication reconciliation");
-      return { state: "unknown" as const, publication: null };
-    },
+    normalizeAutomationPublicationReconciliation,
     fetchImpl,
   );
 }

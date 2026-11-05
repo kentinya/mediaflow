@@ -55,7 +55,11 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-import { AutomationCreateDialog } from "./AutomationCreateDialog";
+import {
+  AutomationCreateDialog,
+  type AutomationCreateOutcomeMeta,
+} from "./AutomationCreateDialog";
+import { AutomationEditDialog } from "./AutomationEditDialog";
 import type {
   AutomationDefinitionDocumentModel,
   AutomationDefinitionModel,
@@ -178,6 +182,7 @@ let automationListScrollMemory: {
   readonly search: Record<string, string>;
 } | null = null;
 let focusCreateEntryOnNextList = false;
+let focusEditEntryOnNextList: string | null = null;
 
 /** The last create success this browser completed, across the close remount. */
 let automationCreatedDefinitionMemory: {
@@ -185,6 +190,27 @@ let automationCreatedDefinitionMemory: {
   readonly name: string;
   readonly enabled: boolean;
   readonly createdAt: number;
+} | null = null;
+
+/** The last confirmed Save this browser completed, across the close remount. */
+let automationSavedDefinitionMemory: {
+  readonly id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly savedAt: number;
+} | null = null;
+
+/**
+ * The last proved create reconciliation whose outcome is not the plain create
+ * success: the publication was proved from durable audit while the current
+ * saved state differs, is gone, or cannot be confirmed.
+ */
+let automationReconciledCreateMemory: {
+  readonly publishedEnabled: boolean;
+  readonly currentState: "modified" | "absent" | "unreadable";
+  readonly definitionId: string | null;
+  readonly definitionName: string | null;
+  readonly currentEnabled: boolean | null;
 } | null = null;
 
 function listSearchKey(searchParams: Record<string, unknown>): string {
@@ -210,6 +236,23 @@ function listSearchForClose(
     if (typeof value === "string" && value !== "") search[key] = value;
   }
   return search;
+}
+
+/** Module-memory writes live at module scope; handlers call these helpers. */
+function saveListScrollMemory(memory: {
+  readonly key: string;
+  readonly y: number;
+  readonly search: Record<string, string>;
+}) {
+  automationListScrollMemory = memory;
+}
+
+function markCreateEntryFocus() {
+  focusCreateEntryOnNextList = true;
+}
+
+function markEditEntryFocus(definitionId: string | null) {
+  focusEditEntryOnNextList = definitionId;
 }
 
 type RunOnceFeedback =
@@ -306,9 +349,14 @@ const PENDING_RUN_ONCE_DETAIL = "任务可能已提交，请先查看提交结�
 
 export function AutomationListPage({
   createDialogOpen = false,
+  editDefinitionId,
 }: {
   readonly createDialogOpen?: boolean;
+  /** The saved definition whose shared edit card is open over this list. */
+  readonly editDefinitionId?: string;
 }) {
+  const editDialogOpen =
+    typeof editDefinitionId === "string" && editDefinitionId !== "";
   const token = useAuthToken();
   const navigate = useNavigate();
   // The route search is the single source of truth for the submitted tab,
@@ -327,13 +375,35 @@ export function AutomationListPage({
       ? null
       : { id: memory.id, name: memory.name, enabled: memory.enabled };
   });
+  const [savedDefinition, setSavedDefinition] = useState<{
+    readonly id: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  } | null>(() => {
+    const memory = automationSavedDefinitionMemory;
+    return memory === null
+      ? null
+      : { id: memory.id, name: memory.name, enabled: memory.enabled };
+  });
+  const [reconciledCreate, setReconciledCreate] = useState<{
+    readonly publishedEnabled: boolean;
+    readonly currentState: "modified" | "absent" | "unreadable";
+    readonly definitionId: string | null;
+    readonly definitionName: string | null;
+    readonly currentEnabled: boolean | null;
+  } | null>(() => automationReconciledCreateMemory);
   const [highlightedDefinitionId, setHighlightedDefinitionId] = useState<
     string | null
   >(() => {
-    const memory = automationCreatedDefinitionMemory;
-    return memory !== null && Date.now() - memory.createdAt < 6_000
-      ? memory.id
-      : null;
+    const created = automationCreatedDefinitionMemory;
+    if (created !== null && Date.now() - created.createdAt < 6_000) {
+      return created.id;
+    }
+    const saved = automationSavedDefinitionMemory;
+    if (saved !== null && Date.now() - saved.savedAt < 6_000) {
+      return saved.id;
+    }
+    return null;
   });
   // A Task Center record round trip returns here with the exact `执行记录` list
   // state it left. The marker is consumed once and dropped, so the URL stays
@@ -401,6 +471,23 @@ export function AutomationListPage({
   }
 
   useEffect(() => {
+    if (focusEditEntryOnNextList !== null) {
+      const definitionId = focusEditEntryOnNextList;
+      focusEditEntryOnNextList = null;
+      const timer = window.setTimeout(() => {
+        const entry = document.querySelector<HTMLElement>(
+          `[data-automation-edit-entry="${CSS.escape(definitionId)}"]`,
+        );
+        if (entry !== null) {
+          entry.focus({ preventScroll: true });
+          return;
+        }
+        document
+          .getElementById("automation-create-entry")
+          ?.focus({ preventScroll: true });
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
     if (!focusCreateEntryOnNextList) return;
     focusCreateEntryOnNextList = false;
     const timer = window.setTimeout(() => {
@@ -791,11 +878,11 @@ export function AutomationListPage({
     ),
   );
 
-  // Restore the exact list scroll position saved by the create entry. The
-  // query must have produced its rows first; the restored position is then the
-  // operator's original page, not the top of a loading skeleton.
+  // Restore the exact list scroll position saved by the create or edit entry.
+  // The query must have produced its rows first; the restored position is then
+  // the operator's original page, not the top of a loading skeleton.
   useEffect(() => {
-    if (!listQuery.isFetched || createDialogOpen) return;
+    if (!listQuery.isFetched || createDialogOpen || editDialogOpen) return;
     const memory = automationListScrollMemory;
     if (memory === null || memory.key !== listKey) return;
     automationListScrollMemory = null;
@@ -809,18 +896,21 @@ export function AutomationListPage({
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [createDialogOpen, listKey, listQuery.isFetched]);
+  }, [createDialogOpen, editDialogOpen, listKey, listQuery.isFetched]);
 
-  // The created row is marked briefly. The mount after the close route reads
-  // the same memory, so the success banner and mark survive the remount without
-  // persisting a draft, token or server state.
+  // The created or saved row is marked briefly. The mount after the close
+  // route reads the same memory, so the success banner and mark survive the
+  // remount without persisting a draft, token or server state.
   useEffect(() => {
     if (highlightedDefinitionId === null) return;
-    const memory = automationCreatedDefinitionMemory;
+    const created = automationCreatedDefinitionMemory;
+    const saved = automationSavedDefinitionMemory;
     const createdAt =
-      memory !== null && memory.id === highlightedDefinitionId
-        ? memory.createdAt
-        : Date.now();
+      created !== null && created.id === highlightedDefinitionId
+        ? created.createdAt
+        : saved !== null && saved.id === highlightedDefinitionId
+          ? saved.savedAt
+          : Date.now();
     const remaining = Math.max(0, 6_000 - (Date.now() - createdAt));
     const timer = window.setTimeout(() => {
       setHighlightedDefinitionId(null);
@@ -909,7 +999,17 @@ export function AutomationListPage({
   }
 
   function closeCreateDialog() {
-    focusCreateEntryOnNextList = true;
+    markCreateEntryFocus();
+    navigateBackToList();
+  }
+
+  /** The edit card's close returns to the list and its own row entry. */
+  function closeEditDialog() {
+    markEditEntryFocus(editDialogOpen ? (editDefinitionId ?? null) : null);
+    navigateBackToList();
+  }
+
+  function navigateBackToList() {
     const memory = automationListScrollMemory;
     const search =
       memory !== null && memory.key === listKey
@@ -922,7 +1022,51 @@ export function AutomationListPage({
     });
   }
 
-  function handleCreated(definition: AutomationDefinitionDocumentModel) {
+  function openEditDialog(definitionId: string) {
+    saveListScrollMemory({
+      key: listKey,
+      y: Number.isFinite(window.scrollY) ? window.scrollY : 0,
+      // Keep the exact URL the operator was reading, so the edit card's close
+      // restores the same conditions, page and scroll identity.
+      search: listSearchForClose(searchParams),
+    });
+    void navigate({
+      to: "/operations/automation/lifecycle/$definitionId",
+      params: { definitionId },
+      search: listReturnState(),
+    });
+  }
+
+  function handleCreated(
+    definition: AutomationDefinitionDocumentModel | null,
+    meta?: AutomationCreateOutcomeMeta,
+  ) {
+    if (
+      meta?.reconciled === true &&
+      (meta.currentState === "modified" ||
+        meta.currentState === "absent" ||
+        meta.currentState === "unreadable")
+    ) {
+      // A proved reconciliation names what the command did and what the saved
+      // state is now; it never re-creates or re-toggles anything.
+      automationReconciledCreateMemory = {
+        publishedEnabled: meta.publishedEnabled,
+        currentState: meta.currentState,
+        definitionId: definition?.id ?? null,
+        definitionName: definition?.name ?? null,
+        currentEnabled: definition === null ? null : definition.enabled,
+      };
+      setReconciledCreate(automationReconciledCreateMemory);
+      setCreatedDefinition(null);
+      automationCreatedDefinitionMemory = null;
+      if (definition !== null) setHighlightedDefinitionId(definition.id);
+      void queryClient.invalidateQueries({
+        queryKey: [automationListQueryKey],
+      });
+      void listQuery.refetch();
+      return;
+    }
+    if (definition === null) return;
     automationCreatedDefinitionMemory = {
       id: definition.id,
       name: definition.name,
@@ -930,6 +1074,24 @@ export function AutomationListPage({
       createdAt: Date.now(),
     };
     setCreatedDefinition({
+      id: definition.id,
+      name: definition.name,
+      enabled: definition.enabled,
+    });
+    setHighlightedDefinitionId(definition.id);
+    void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
+    void listQuery.refetch();
+  }
+
+  /** The confirmed Save's list feedback: refresh real rows and mark the row. */
+  function handleSaved(definition: AutomationDefinitionDocumentModel) {
+    automationSavedDefinitionMemory = {
+      id: definition.id,
+      name: definition.name,
+      enabled: definition.enabled,
+      savedAt: Date.now(),
+    };
+    setSavedDefinition({
       id: definition.id,
       name: definition.name,
       enabled: definition.enabled,
@@ -961,6 +1123,13 @@ export function AutomationListPage({
       : definitionsPage !== null &&
         definitionsPage.items.some(
           (item) => item.document.id === createdDefinition.id,
+        );
+  const savedVisible =
+    savedDefinition === null || listQuery.isFetching
+      ? null
+      : definitionsPage !== null &&
+        definitionsPage.items.some(
+          (item) => item.document.id === savedDefinition.id,
         );
 
   // The four cards read full-population backend aggregates. They are never
@@ -1059,6 +1228,86 @@ export function AutomationListPage({
           </StatusBanner>
         )}
 
+        {savedDefinition !== null && (
+          <StatusBanner
+            variant="success"
+            title={
+              savedDefinition.enabled ? "已保存并启用" : "已保存，当前停用"
+            }
+          >
+            <p>
+              {savedDefinition.name
+                ? savedDefinition.enabled
+                  ? `已保存「${savedDefinition.name}」并启用；后续将按保存的计划定时运行。`
+                  : `已保存「${savedDefinition.name}」，当前为停用状态；不会定时运行。`
+                : savedDefinition.enabled
+                  ? "已保存并启用。"
+                  : "已保存，当前为停用状态。"}
+              {createdListUnavailable
+                ? "当前任务列表暂不可用；刷新后可查看这条任务。"
+                : savedVisible === null
+                  ? "正在刷新任务列表…"
+                  : savedVisible
+                    ? "已在本页标出，可再次编辑或运行一次。"
+                    : "当前筛选或分页下未展示该任务；可调整筛选查看。"}
+            </p>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => {
+                automationSavedDefinitionMemory = null;
+                setSavedDefinition(null);
+              }}
+            >
+              关闭提示
+            </button>
+          </StatusBanner>
+        )}
+
+        {reconciledCreate !== null && (
+          <StatusBanner variant="info" title="已核对本次创建">
+            <p>
+              {`创建命令已从持久审计证实（${
+                reconciledCreate.publishedEnabled
+                  ? "创建当时已启用"
+                  : "创建当时未启用"
+              }）；`}
+              {reconciledCreate.currentState === "modified"
+                ? `该定义之后被再次修改，当前为${
+                    reconciledCreate.currentEnabled ? "启用" : "停用"
+                  }状态。`
+                : reconciledCreate.currentState === "absent"
+                  ? "该定义当前已不在生效配置中（可能已被移除）。"
+                  : "当前保存状态暂时无法确认，请刷新列表核对实际状态。"}
+              {"系统不会重新创建或自动启停。"}
+              {createdListUnavailable
+                ? "当前任务列表暂不可用；刷新后可核对实际状态。"
+                : reconciledCreate.currentState === "modified" &&
+                    reconciledCreate.definitionId !== null
+                  ? listQuery.isFetching
+                    ? "正在刷新任务列表…"
+                    : definitionsPage !== null &&
+                        definitionsPage.items.some(
+                          (item) =>
+                            item.document.id === reconciledCreate.definitionId,
+                        )
+                      ? "列表行显示当前实际状态，已在本页标出。"
+                      : "当前筛选或分页下未展示该任务；可调整筛选查看。"
+                  : ""}
+            </p>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => {
+                automationReconciledCreateMemory = null;
+                setReconciledCreate(null);
+              }}
+            >
+              关闭提示
+            </button>
+          </StatusBanner>
+        )}
+
         {definitionsPage !== null && (
           <section className="mf-automation-metrics" aria-label="自动化统计">
             <AutomationMetricCards
@@ -1149,13 +1398,7 @@ export function AutomationListPage({
                     submitSearch(definitionState({ sort: value }))
                   }
                   onOpen={openDefinition}
-                  onEdit={(definitionId) =>
-                    void navigate({
-                      to: "/operations/automation/lifecycle/$definitionId",
-                      params: { definitionId },
-                      search: listReturnState(),
-                    })
-                  }
+                  onEdit={openEditDialog}
                   onRunOnce={(definition) => void submitRunOnce(definition)}
                   onCheckRunOnce={(definitionId) =>
                     void checkRunOnce(definitionId)
@@ -1268,6 +1511,14 @@ export function AutomationListPage({
         <AutomationCreateDialog
           onClose={closeCreateDialog}
           onCreated={handleCreated}
+        />
+      )}
+
+      {editDialogOpen && editDefinitionId !== undefined && (
+        <AutomationEditDialog
+          definitionId={editDefinitionId}
+          onClose={closeEditDialog}
+          onSaved={handleSaved}
         />
       )}
     </div>

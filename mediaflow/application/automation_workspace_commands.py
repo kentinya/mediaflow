@@ -546,8 +546,59 @@ class AutomationWorkspaceCommandService:
                         "active": self._safe_active(revision),
                         "sideEffects": "configuration_only",
                     },
+                    # The publication proof is what this command did at its own
+                    # revision; it is never a proof of what the definition looks
+                    # like now. The current saved state is read separately so a
+                    # reconciliation can distinguish "still current" from
+                    # "succeeded, later modified" instead of presenting the
+                    # published outcome as the present one.
+                    **self._current_definition_state_evidence(definition_id, submitted),
                 }
         return {"state": "unknown", "publication": None, "sideEffects": "none"}
+
+    def _current_definition_state_evidence(
+        self, definition_id: str, submitted: AutomationTaskDefinition
+    ) -> dict[str, object]:
+        """The definition's current saved state, read from the current Active.
+
+        ``currentDefinitionState`` is ``current`` when the stored definition's
+        fingerprint still equals the submitted command's candidate,
+        ``modified`` when a later publication changed it, ``absent`` when the
+        definition is no longer in the Active configuration, and
+        ``unreadable`` when the current Active cannot be read or verified. An
+        unreadable current state is reported as such — it is never substituted
+        with the publication's own revision, and it never downgrades the
+        already-proved publication fact.
+        """
+
+        try:
+            current = self._require_active_read("publication reconciliation")
+            stored = None
+            for item in self._objects._automation_definition_objects(current.document):
+                if str(item.get("id")) == definition_id:
+                    stored = item
+                    break
+            if stored is None:
+                return {
+                    "currentDefinitionState": "absent",
+                    "currentDefinition": None,
+                    "currentActive": self._safe_active(current),
+                }
+            current_definition = AutomationTaskDefinition.from_document(stored)
+            matches = current_definition.definition_fingerprint == submitted.definition_fingerprint
+            return {
+                "currentDefinitionState": "current" if matches else "modified",
+                "currentDefinition": current_definition.document(),
+                "currentActive": self._safe_active(current),
+            }
+        except Exception:
+            # Fail closed: the operator is told the current state cannot be
+            # confirmed instead of being told it still matches the command.
+            return {
+                "currentDefinitionState": "unreadable",
+                "currentDefinition": None,
+                "currentActive": None,
+            }
 
     def copy_intent(
         self,

@@ -8,11 +8,16 @@
  * never creates a Draft, runs work or mutates Storage. A lost create response
  * is retained as an unknown command identity and may only be reconciled from
  * durable evidence; it is never replayed.
+ *
+ * A proved reconciliation proves what the create command did at its own
+ * revision; it never proves what the definition looks like now. The durable
+ * current-state evidence read from the current Active decides whether the
+ * feedback says "still current", "succeeded but later modified",
+ * "no longer present" or "current state unconfirmable".
  */
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   createAutomationDefinitionFocused,
@@ -21,9 +26,17 @@ import {
   type AutomationMutationFailureDetails,
 } from "../../shared/api/api-client";
 import type { AutomationDefinitionDocumentModel } from "../../entities/operations/automation";
-import type { AutomationDefinitionFormAuthorityModel } from "../../entities/operations/automation-lifecycle";
+import type {
+  AutomationCurrentDefinitionState,
+  AutomationDefinitionFormAuthorityModel,
+} from "../../entities/operations/automation-lifecycle";
 import { Button } from "../../shared/ui/Button";
 import { usePrincipalIdentity } from "./principal-identity-query";
+import {
+  AutomationCardDiscardPrompt,
+  AutomationCardShell,
+  useAutomationCardExit,
+} from "./automation-card-shell";
 import { AutomationDefinitionFormFields } from "./AutomationDefinitionFormFields";
 import {
   buildCandidateFromPublicationForm,
@@ -46,9 +59,25 @@ import {
   type PendingAutomationPublication,
 } from "./automation-publication-session";
 
+export interface AutomationCreateOutcomeMeta {
+  readonly reconciled: true;
+  readonly publishedEnabled: boolean;
+  readonly currentState: AutomationCurrentDefinitionState;
+}
+
 export interface AutomationCreateDialogProps {
   readonly onClose: () => void;
-  readonly onCreated: (definition: AutomationDefinitionDocumentModel) => void;
+  /**
+   * One confirmed create (or its reconciliation) for the list feedback. The
+   * definition is the definition the list should present: the proved
+   * publication's own document only while it is still current, the current
+   * saved document when a later command modified it, and `null` when the
+   * current state cannot be named.
+   */
+  readonly onCreated: (
+    definition: AutomationDefinitionDocumentModel | null,
+    meta?: AutomationCreateOutcomeMeta,
+  ) => void;
 }
 
 type CommandError =
@@ -62,7 +91,6 @@ type CommandError =
   | { readonly kind: "unknown"; readonly code: string }
   | { readonly kind: "reconcile-unknown"; readonly code: string | null };
 
-const EXIT_MS = 160;
 const COMMAND_ERROR_ID = "automation-create-command-error";
 const DISCARD_CONTINUE_ID = "automation-create-discard-continue";
 
@@ -78,14 +106,6 @@ function scheduleFieldId(schedule: CreateScheduleKind): string {
     case "cron":
       return "automation-create-cron";
   }
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }
 
 function activeAuthority(
@@ -157,6 +177,35 @@ function commandErrorMessage(error: CommandError): {
   }
 }
 
+/**
+ * The reconciliation feedback separates what the command did at its own
+ * revision from the definition's current saved state; it never reports the
+ * published outcome as the present one.
+ */
+export function reconciliationOutcomeCopy(
+  publishedEnabled: boolean,
+  currentState: AutomationCurrentDefinitionState,
+  currentDefinition: AutomationDefinitionDocumentModel | null,
+): string {
+  const publishedFact = publishedEnabled ? "创建当时已启用" : "创建当时未启用";
+  switch (currentState) {
+    case "current":
+      return publishedEnabled
+        ? "已核对本次创建；已创建并启用，当前保存状态与之一致。"
+        : "已核对本次创建；结果已持久发布，当前保存状态与之一致。";
+    case "modified": {
+      const currentEnabled = currentDefinition?.enabled === true;
+      return `已核对本次创建：${publishedFact}；该定义之后被再次修改，当前为${
+        currentEnabled ? "启用" : "停用"
+      }状态。列表显示的是当前实际状态。`;
+    }
+    case "absent":
+      return `已核对本次创建：${publishedFact}；该定义当前已不在生效配置中（可能已被移除）。`;
+    case "unreadable":
+      return `已核对本次创建：${publishedFact}；当前保存状态暂时无法确认。请刷新列表核对实际状态；不会重新创建或自动启停。`;
+  }
+}
+
 export function AutomationCreateDialog({
   onClose,
   onCreated,
@@ -167,18 +216,9 @@ export function AutomationCreateDialog({
     ? principalIdentity.principalId
     : null;
   const browserZone = useMemo(() => browserTimeZone(), []);
-  const layerRef = useRef<HTMLDivElement | null>(null);
   const diagnosticsRef = useRef<HTMLDetailsElement | null>(null);
-  const invokerRef = useRef<Element | null>(
-    typeof document === "undefined" ? null : document.activeElement,
-  );
   const mountedRef = useRef(true);
   const submittingRef = useRef(false);
-  const bypassBlockerRef = useRef(false);
-  const blockersResetRef = useRef<(() => void) | null>(null);
-  const discardReturnFocusRef = useRef<HTMLElement | null>(null);
-  const lastFieldFocusRef = useRef<HTMLElement | null>(null);
-  const exitTimerRef = useRef<number | null>(null);
   const previewGeneration = useRef(0);
   const initializedRef = useRef(false);
 
@@ -190,8 +230,6 @@ export function AutomationCreateDialog({
   const [showIssues, setShowIssues] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reconciling, setReconciling] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [discardArmed, setDiscardArmed] = useState(false);
   const [commandError, setCommandError] = useState<CommandError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
@@ -214,6 +252,18 @@ export function AutomationCreateDialog({
     setPendingOverride({ owner: principalId, value });
     writePendingAutomationPublication(principalId, "create", value);
   };
+
+  const card = useAutomationCardExit({
+    onClose,
+    shouldBlockLeave: () =>
+      submittingRef.current || (dirty && pendingPublication === null),
+    isSubmitting: () => submittingRef.current,
+    hasUnsavedInput: () => dirty && pendingPublication === null,
+    onDiscardCommitted: () => setDirty(false),
+    firstFieldId: "automation-create-name",
+    discardContinueId: DISCARD_CONTINUE_ID,
+    focusReturnId: "automation-create-entry",
+  });
 
   const authorityQuery = useQuery({
     queryKey: ["operations.automation-lifecycle-authority"],
@@ -275,41 +325,10 @@ export function AutomationCreateDialog({
     principalIdentity.resolved,
   ]);
 
-  // The dialog owns the viewport while open: background scrolling and
-  // interaction stop, and the sibling list surface is inert. Cleanup restores
-  // exactly the previous state so an interrupted close cannot leave a lock.
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
-
-  useEffect(() => {
-    const layer = layerRef.current;
-    const parent = layer?.parentElement;
-    if (layer === null || parent === null || parent === undefined) return;
-    const siblings = Array.from(parent.children).filter(
-      (child): child is HTMLElement =>
-        child !== layer && child instanceof HTMLElement,
-    );
-    const previous = siblings.map((child) => child.hasAttribute("inert"));
-    for (const sibling of siblings) sibling.setAttribute("inert", "");
-    return () => {
-      siblings.forEach((sibling, index) => {
-        if (!previous[index]) sibling.removeAttribute("inert");
-      });
-    };
-  }, []);
-
   useEffect(
     () => () => {
       mountedRef.current = false;
       previewGeneration.current += 1;
-      if (exitTimerRef.current !== null) {
-        window.clearTimeout(exitTimerRef.current);
-      }
     },
     [],
   );
@@ -321,26 +340,7 @@ export function AutomationCreateDialog({
         : [],
     [form, authorityModel],
   );
-  // A submitted create command blocks route and browser-back navigation until
-  // the response arrives, so an in-flight command cannot be silently abandoned
-  // by an accidental leave. Unsaved input keeps its own discard choice.
-  const blocker = useBlocker({
-    shouldBlockFn: () =>
-      !bypassBlockerRef.current &&
-      (submittingRef.current || (dirty && pendingPublication === null)),
-    withResolver: true,
-  });
-  useEffect(() => {
-    blockersResetRef.current =
-      blocker.status === "blocked" ? blocker.reset : null;
-  }, [blocker]);
-  const submitBlocked = submitting && blocker.status === "blocked";
-
-  function releaseBlockedNavigation() {
-    const reset = blockersResetRef.current;
-    blockersResetRef.current = null;
-    if (reset !== null) reset();
-  }
+  const submitBlocked = submitting && card.routeBlocked;
 
   function focusCommandError() {
     window.requestAnimationFrame(() => {
@@ -348,167 +348,17 @@ export function AutomationCreateDialog({
     });
   }
 
-  const beginExit = (after: (() => void) | null) => {
-    if (closing) return;
-    setClosing(true);
-    const finish = () => {
-      if (after !== null) after();
-      else onClose();
-    };
-    if (prefersReducedMotion()) {
-      finish();
-      return;
-    }
-    exitTimerRef.current = window.setTimeout(finish, EXIT_MS);
-  };
-
-  const commitClose = () => {
-    if (submittingRef.current) return;
-    setDiscardArmed(false);
-    setDirty(false);
-    discardReturnFocusRef.current = null;
-    bypassBlockerRef.current = true;
-    if (blocker.status === "blocked") {
-      const proceed = blocker.proceed;
-      beginExit(() => proceed());
-      return;
-    }
-    beginExit(onClose);
-  };
-
-  const attemptClose = () => {
-    if (submittingRef.current || closing) return;
-    if (discardArmed) {
-      // A second close gesture while the choice is open keeps the input and
-      // returns to the field the operator was editing.
-      cancelDiscard();
-      return;
-    }
-    if (blocker.status === "blocked") {
-      setDiscardArmed(true);
-      return;
-    }
-    if (dirty && pendingPublication === null) {
-      setDiscardArmed(true);
-      return;
-    }
-    commitClose();
-  };
-  const attemptCloseRef = useRef(attemptClose);
-  useEffect(() => {
-    attemptCloseRef.current = attemptClose;
-  });
-  const discardPromptOpen =
-    !submitting && (discardArmed || blocker.status === "blocked");
-
-  // The discard choice is always visible and focusable: it is rendered above
-  // the scrolling fields, the safe "keep editing" action receives focus, and
-  // cancelling restores the exact field the operator was editing.
-  function cancelDiscard() {
-    setDiscardArmed(false);
-    if (blocker.status === "blocked") blocker.reset();
-    const previous = discardReturnFocusRef.current;
-    discardReturnFocusRef.current = null;
-    window.requestAnimationFrame(() => {
-      if (previous !== null && document.contains(previous)) {
-        previous.focus();
-        return;
-      }
-      document.getElementById("automation-create-name")?.focus();
-    });
-  }
+  const { attemptClose, commitClose, cancelDiscard, beginExit } = card;
 
   // Any pending leave - a close gesture, a blocked route or a blocked browser
   // back - shows the same pinned decision and moves focus to the safe action.
-  useEffect(() => {
-    if (!discardPromptOpen) return;
-    const active = document.activeElement;
-    // Prefer the last field the operator edited, so both the close button and a
-    // backdrop click return to the same input rather than to a dismissed button.
-    discardReturnFocusRef.current =
-      lastFieldFocusRef.current ??
-      (active instanceof HTMLElement && active !== document.body
-        ? active
-        : null);
-    const timer = window.requestAnimationFrame(() => {
-      document.getElementById(DISCARD_CONTINUE_ID)?.focus();
-    });
-    return () => window.cancelAnimationFrame(timer);
-  }, [discardPromptOpen]);
-
-  // Escape, Tab trapping and the first focus belong to the dialog. The invoker
-  // is captured at mount; focus returns to it when the dialog unmounts, or to
-  // the list's create entry after a route-level open/close.
-  useEffect(() => {
-    const layer = layerRef.current;
-    const focusables = () =>
-      Array.from(
-        layer?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      ).filter((element) => element.offsetParent !== null);
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        attemptCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusables();
-      if (items.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !layer?.contains(active))) {
-        event.preventDefault();
-        last.focus();
-        return;
-      }
-      if (!event.shiftKey && (active === last || !layer?.contains(active))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKey, true);
-    const handleFocusIn = (event: FocusEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)
-      ) {
-        lastFieldFocusRef.current = target;
-      }
-    };
-    layer?.addEventListener("focusin", handleFocusIn);
-    return () => {
-      document.removeEventListener("keydown", handleKey, true);
-      layer?.removeEventListener("focusin", handleFocusIn);
-    };
-  }, []);
-
-  useEffect(
-    () => () => {
-      const invoker = invokerRef.current;
-      if (invoker instanceof HTMLElement && document.contains(invoker)) {
-        invoker.focus();
-      } else {
-        window.setTimeout(() => {
-          document.getElementById("automation-create-entry")?.focus();
-        }, 0);
-      }
-    },
-    [],
-  );
+  const discardPromptOpen = card.discardPromptOpen;
 
   useEffect(() => {
     if (form === null) return;
     const target =
       pendingPublication !== null
-        ? layerRef.current?.querySelector<HTMLElement>(
+        ? card.layerRef.current?.querySelector<HTMLElement>(
             '[data-automation-create-primary="true"]',
           )
         : document.getElementById("automation-create-name");
@@ -598,7 +448,7 @@ export function AutomationCreateDialog({
       form === null ||
       authorityModel === null ||
       submittingRef.current ||
-      closing ||
+      card.closing ||
       pendingPublication !== null
     ) {
       return;
@@ -641,7 +491,6 @@ export function AutomationCreateDialog({
     }
     const submittedForm = publicationFormFromCreateForm(form);
     const submittedAuthority = observedAuthority;
-    setDiscardArmed(false);
     setPendingPublication({
       definitionId: form.id.trim(),
       action: "create",
@@ -668,7 +517,7 @@ export function AutomationCreateDialog({
       setSubmitting(false);
       // A leave attempted while the command was still in flight is released
       // together with the result, so the operator sees the real outcome first.
-      releaseBlockedNavigation();
+      card.releaseBlockedNavigation();
       if (result.ok) {
         const definition = result.model.definition;
         setPendingPublication(null);
@@ -680,7 +529,7 @@ export function AutomationCreateDialog({
             : "创建成功，尚未启用。",
         );
         setDirty(false);
-        bypassBlockerRef.current = true;
+        card.bypassBlockerRef.current = true;
         if (definition !== null) onCreated(definition);
         beginExit(onClose);
         return;
@@ -750,16 +599,34 @@ export function AutomationCreateDialog({
         result.model.state === "published" &&
         result.model.publication !== null
       ) {
-        const definition = result.model.publication.definition;
+        const publishedEnabled =
+          result.model.publication.definition?.enabled === true;
+        const currentState = result.model.currentState ?? "unreadable";
+        const currentDefinition = result.model.currentDefinition;
         setPendingPublication(null);
         setNotice(
-          definition !== null && definition.enabled
-            ? "已核对本次创建；已创建并启用。"
-            : "已核对本次创建；结果已持久发布。",
+          reconciliationOutcomeCopy(
+            publishedEnabled,
+            currentState,
+            currentDefinition,
+          ),
         );
         setDirty(false);
-        bypassBlockerRef.current = true;
-        if (definition !== null) onCreated(definition);
+        card.bypassBlockerRef.current = true;
+        // The list feedback presents the definition the list should show:
+        // the proved publication only while it is still current, the current
+        // saved document after a later modification, and nothing it cannot
+        // name. It never re-creates or re-toggles anything.
+        onCreated(
+          currentState === "current" || currentState === "modified"
+            ? (currentDefinition ?? null)
+            : null,
+          {
+            reconciled: true,
+            publishedEnabled,
+            currentState,
+          },
+        );
         beginExit(onClose);
         return;
       }
@@ -816,359 +683,299 @@ export function AutomationCreateDialog({
     (showIssues && validationIssues.length > 0);
 
   return (
-    <div
-      ref={layerRef}
-      className={
-        closing
-          ? "mf-automation-create-layer mf-automation-create-layer-exiting"
-          : "mf-automation-create-layer"
-      }
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) attemptClose();
-      }}
-      data-automation-create-dialog="true"
+    <AutomationCardShell
+      layerRef={card.layerRef}
+      closing={card.closing}
+      busy={submitting || reconciling}
+      title="新建自动化任务"
+      titleId="automation-create-title"
+      description="设置来源、运行时间与启用状态；创建本身不会扫描、整理或运行媒体文件。"
+      closeLabel="关闭新建自动化任务"
+      closeDisabled={submitting || card.closing}
+      onRequestClose={attemptClose}
     >
-      <div
-        className="mf-automation-create-backdrop"
-        aria-hidden="true"
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          attemptClose();
-        }}
-      />
-      <section
-        className="mf-automation-create-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="automation-create-title"
-        aria-busy={submitting || reconciling}
-      >
-        <header className="mf-automation-create-header">
-          <div>
-            <h2 id="automation-create-title">新建自动化任务</h2>
-            <p>
-              设置来源、运行时间与启用状态；创建本身不会扫描、整理或运行媒体文件。
-            </p>
-          </div>
-          <button
-            type="button"
-            className="mf-automation-create-close"
-            aria-label="关闭新建自动化任务"
-            disabled={submitting || closing}
-            onClick={attemptClose}
-          >
-            ×
-          </button>
-        </header>
+      {authorityFailed !== null && (
+        <div className="mf-automation-create-alert" role="alert">
+          <strong>无法读取创建权限</strong>
+          <p>
+            {authorityFailed.status === 401
+              ? "登录已失效，请重新登录后再创建。"
+              : authorityFailed.status === 403
+                ? "当前身份没有读取或创建自动化任务的权限。"
+                : `读取当前配置失败（${authorityFailed.code}）。请刷新后重试；没有提交任何修改。`}
+          </p>
+        </div>
+      )}
+      {authorityQuery.isPending && (
+        <p className="mf-automation-create-hint" role="status">
+          正在读取当前配置与创建权限…
+        </p>
+      )}
+      {authorityModel !== null && !principalIdentity.resolved && (
+        <p className="mf-automation-create-hint" role="status">
+          {principalIdentity.reason === "loading"
+            ? "正在确认当前登录身份…"
+            : "当前登录身份暂不可用。为避免未决结果归属不明，暂时不能创建；你仍可关闭此卡片。"}
+        </p>
+      )}
 
-        <div className="mf-automation-create-body">
-          {authorityFailed !== null && (
-            <div className="mf-automation-create-alert" role="alert">
-              <strong>无法读取创建权限</strong>
+      {hasAttention && (
+        <div
+          className="mf-automation-create-attention"
+          data-automation-create-attention="true"
+        >
+          {submitting && (
+            <div className="mf-automation-create-pending" role="status">
+              <strong>正在创建…</strong>
               <p>
-                {authorityFailed.status === 401
-                  ? "登录已失效，请重新登录后再创建。"
-                  : authorityFailed.status === 403
-                    ? "当前身份没有读取或创建自动化任务的权限。"
-                    : `读取当前配置失败（${authorityFailed.code}）。请刷新后重试；没有提交任何修改。`}
+                创建命令已提交，正在等待后端确认。请稍候；系统不会自动重发。
+              </p>
+              {submitBlocked && (
+                <p>
+                  已暂时阻止离开本页；收到结果后会在这里显示并解除这一限制。
+                </p>
+              )}
+            </div>
+          )}
+          {pendingPublication !== null && !submitting && (
+            <div className="mf-automation-create-pending" role="status">
+              <strong>上次创建结果待核对</strong>
+              <p>
+                创建命令可能已经生效。系统不会自动重发；请使用底部的“核对本次创建”读取真实持久结果。
+                关闭后再次打开会继续保留这次命令身份。
               </p>
             </div>
           )}
-          {authorityQuery.isPending && (
-            <p className="mf-automation-create-hint" role="status">
-              正在读取当前配置与创建权限…
-            </p>
+          {discardPromptOpen && (
+            <AutomationCardDiscardPrompt
+              questionId="automation-create-discard-question"
+              detailId="automation-create-discard-detail"
+              continueId={DISCARD_CONTINUE_ID}
+              question="表单中有未保存的输入；关闭会丢弃这些修改。"
+              detail="选择「继续填写」保留当前输入并回到原字段；选择「放弃修改」返回自动化列表。"
+              onContinue={cancelDiscard}
+              onDiscard={commitClose}
+            />
           )}
-          {authorityModel !== null && !principalIdentity.resolved && (
-            <p className="mf-automation-create-hint" role="status">
-              {principalIdentity.reason === "loading"
-                ? "正在确认当前登录身份…"
-                : "当前登录身份暂不可用。为避免未决结果归属不明，暂时不能创建；你仍可关闭此卡片。"}
-            </p>
-          )}
-
-          {hasAttention && (
+          {commandError !== null && commandErrorCopy !== null && (
             <div
-              className="mf-automation-create-attention"
-              data-automation-create-attention="true"
+              className="mf-automation-create-alert"
+              id={COMMAND_ERROR_ID}
+              role="alert"
+              tabIndex={-1}
             >
-              {submitting && (
-                <div className="mf-automation-create-pending" role="status">
-                  <strong>正在创建…</strong>
-                  <p>
-                    创建命令已提交，正在等待后端确认。请稍候；系统不会自动重发。
-                  </p>
-                  {submitBlocked && (
-                    <p>
-                      已暂时阻止离开本页；收到结果后会在这里显示并解除这一限制。
-                    </p>
-                  )}
-                </div>
-              )}
-              {pendingPublication !== null && !submitting && (
-                <div className="mf-automation-create-pending" role="status">
-                  <strong>上次创建结果待核对</strong>
-                  <p>
-                    创建命令可能已经生效。系统不会自动重发；请使用底部的“核对本次创建”读取真实持久结果。
-                    关闭后再次打开会继续保留这次命令身份。
-                  </p>
-                </div>
-              )}
-              {discardPromptOpen && (
-                <div
-                  className="mf-automation-create-discard"
-                  role="alertdialog"
-                  aria-labelledby="automation-create-discard-question"
-                  aria-describedby="automation-create-discard-detail"
-                >
-                  <p id="automation-create-discard-question">
-                    表单中有未保存的输入；关闭会丢弃这些修改。
-                  </p>
-                  <p
-                    className="mf-automation-create-hint"
-                    id="automation-create-discard-detail"
-                  >
-                    选择「继续填写」保留当前输入并回到原字段；选择「放弃修改」返回自动化列表。
-                  </p>
-                  <div className="mf-actions">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      id={DISCARD_CONTINUE_ID}
-                      onClick={cancelDiscard}
-                    >
-                      继续填写
-                    </Button>
-                    <Button type="button" onClick={commitClose}>
-                      放弃修改
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {commandError !== null && commandErrorCopy !== null && (
-                <div
-                  className="mf-automation-create-alert"
-                  id={COMMAND_ERROR_ID}
-                  role="alert"
-                  tabIndex={-1}
-                >
-                  <strong>{commandErrorCopy.title}</strong>
-                  <p>{commandErrorCopy.body}</p>
-                  {commandError.kind === "rejected" && (
-                    <p className="mf-automation-create-hint">
-                      后端返回码：{commandError.code}（仅用于诊断）
-                    </p>
-                  )}
-                  {commandError.kind === "reconcile-unknown" &&
-                    commandError.code !== null && (
-                      <p className="mf-automation-create-hint">
-                        核对返回：{commandError.code}
-                      </p>
-                    )}
-                  {scheduleRejected && form !== null && (
-                    <div className="mf-actions">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => {
-                          window.requestAnimationFrame(() => {
-                            document
-                              .getElementById(scheduleFieldId(form.schedule))
-                              ?.focus();
-                          });
-                        }}
-                      >
-                        检查时间计划
-                      </Button>
-                    </div>
-                  )}
-                  {commandError.kind === "conflict" &&
-                    commandError.code !== "automation_definition_duplicate" && (
-                      <div className="mf-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={rechecking || closing}
-                          onClick={() => {
-                            void recheckAuthority();
-                          }}
-                        >
-                          {rechecking ? "重新核对中…" : "重新核对当前配置"}
-                        </Button>
-                      </div>
-                    )}
-                  {commandError.kind === "conflict" &&
-                    commandError.code === "automation_definition_duplicate" && (
-                      <div className="mf-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={regenerateId}
-                        >
-                          重新生成内部 ID
-                        </Button>
-                      </div>
-                    )}
-                </div>
-              )}
-              {notice !== null && (
-                <p className="mf-automation-create-notice" role="status">
-                  {notice}
+              <strong>{commandErrorCopy.title}</strong>
+              <p>{commandErrorCopy.body}</p>
+              {commandError.kind === "rejected" && (
+                <p className="mf-automation-create-hint">
+                  后端返回码：{commandError.code}（仅用于诊断）
                 </p>
               )}
-              {showIssues &&
-                validationIssues.length > 0 &&
-                commandError === null && (
-                  <div className="mf-automation-create-alert" role="alert">
-                    <strong>有 {validationIssues.length} 处输入需要修正</strong>
-                    <ul>
-                      {validationIssues.map((issue) => (
-                        <li key={`${issue.fieldId}:${issue.message}`}>
-                          {issue.label}：{issue.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+              {commandError.kind === "reconcile-unknown" &&
+                commandError.code !== null && (
+                  <p className="mf-automation-create-hint">
+                    核对返回：{commandError.code}
+                  </p>
                 )}
-            </div>
-          )}
-
-          {form !== null && authorityModel !== null && (
-            <form
-              className="mf-automation-create-form"
-              onSubmit={handleSubmit}
-              noValidate
-            >
-              <div className="mf-automation-create-scroll">
-                <AutomationDefinitionFormFields
-                  mode="create"
-                  form={form}
-                  authority={authorityModel}
-                  issues={validationIssues}
-                  showIssues={showIssues}
-                  scheduleRejected={scheduleRejected}
-                  onPatch={updateFields}
-                  onScheduleKind={updateSchedule}
-                />
-
-                <details
-                  className="mf-automation-create-diagnostics"
-                  ref={diagnosticsRef}
-                >
-                  <summary>诊断信息（内部 ID 与发布机制）</summary>
-                  <dl>
-                    <dt>内部 ID</dt>
-                    <dd>
-                      <code id="automation-create-id" tabIndex={-1}>
-                        {form.id.length > 0 ? form.id : "未生成"}
-                      </code>{" "}
-                      {pendingPublication === null && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={submitting || closing}
-                          onClick={regenerateId}
-                        >
-                          重新生成 ID
-                        </Button>
-                      )}
-                    </dd>
-                    <dt>创建依据的 Active</dt>
-                    <dd>
-                      <code>{observedAuthority?.revisionId ?? "尚未读取"}</code>
-                      {observedAuthority !== null && (
-                        <>
-                          {" "}
-                          · 版本 {observedAuthority.version} · digest{" "}
-                          <code className="mf-automation-create-digest">
-                            {observedAuthority.digest}
-                          </code>
-                        </>
-                      )}
-                    </dd>
-                    <dt>发布机制</dt>
-                    <dd>
-                      一次明确创建直接提交经过后端校验的候选并原子发布；不创建
-                      Draft，不运行任务。选择“启用定时计划”后，同一次创建会按共享的发布链路完成启用。
-                    </dd>
-                  </dl>
-                </details>
-              </div>
-
-              <footer className="mf-automation-create-footer">
-                <div className="mf-automation-create-footer-note">
-                  {createDisabledReason !== null && (
-                    <span role="status">{createDisabledReason}</span>
-                  )}
-                  {createDisabledReason === null &&
-                    pendingPublication === null && (
-                      <span>
-                        {form.enabled
-                          ? "将创建并启用：保存后按计划定时运行；运行一次请在任务列表发起。"
-                          : "创建后未启用，可在列表中启用或运行一次。"}
-                      </span>
-                    )}
-                </div>
+              {scheduleRejected && form !== null && (
                 <div className="mf-actions">
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={inFlight || closing}
-                    onClick={attemptClose}
+                    onClick={() => {
+                      window.requestAnimationFrame(() => {
+                        document
+                          .getElementById(scheduleFieldId(form.schedule))
+                          ?.focus();
+                      });
+                    }}
                   >
-                    {pendingPublication !== null && !submitting
-                      ? "关闭"
-                      : "取消"}
+                    检查时间计划
                   </Button>
-                  {submitting ? (
+                </div>
+              )}
+              {commandError.kind === "conflict" &&
+                commandError.code !== "automation_definition_duplicate" && (
+                  <div className="mf-actions">
                     <Button
                       type="button"
-                      data-automation-create-primary="true"
-                      disabled
+                      variant="secondary"
+                      disabled={rechecking || card.closing}
+                      onClick={() => {
+                        void recheckAuthority();
+                      }}
                     >
-                      创建中…
+                      {rechecking ? "重新核对中…" : "重新核对当前配置"}
                     </Button>
-                  ) : pendingPublication !== null ? (
+                  </div>
+                )}
+              {commandError.kind === "conflict" &&
+                commandError.code === "automation_definition_duplicate" && (
+                  <div className="mf-actions">
                     <Button
                       type="button"
-                      data-automation-create-primary="true"
-                      disabled={
-                        reconciling || closing || !principalIdentity.resolved
-                      }
-                      onClick={reconcile}
+                      variant="secondary"
+                      onClick={regenerateId}
                     >
-                      {reconciling ? "核对中…" : "核对本次创建"}
+                      重新生成内部 ID
                     </Button>
-                  ) : (
+                  </div>
+                )}
+            </div>
+          )}
+          {notice !== null && (
+            <p className="mf-automation-create-notice" role="status">
+              {notice}
+            </p>
+          )}
+          {showIssues &&
+            validationIssues.length > 0 &&
+            commandError === null && (
+              <div className="mf-automation-create-alert" role="alert">
+                <strong>有 {validationIssues.length} 处输入需要修正</strong>
+                <ul>
+                  {validationIssues.map((issue) => (
+                    <li key={`${issue.fieldId}:${issue.message}`}>
+                      {issue.label}：{issue.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+        </div>
+      )}
+
+      {form !== null && authorityModel !== null && (
+        <form
+          className="mf-automation-create-form"
+          onSubmit={handleSubmit}
+          noValidate
+        >
+          <div className="mf-automation-create-scroll">
+            <AutomationDefinitionFormFields
+              mode="create"
+              form={form}
+              authority={authorityModel}
+              issues={validationIssues}
+              showIssues={showIssues}
+              scheduleRejected={scheduleRejected}
+              onPatch={updateFields}
+              onScheduleKind={updateSchedule}
+            />
+
+            <details
+              className="mf-automation-create-diagnostics"
+              ref={diagnosticsRef}
+            >
+              <summary>诊断信息（内部 ID 与发布机制）</summary>
+              <dl>
+                <dt>内部 ID</dt>
+                <dd>
+                  <code id="automation-create-id" tabIndex={-1}>
+                    {form.id.length > 0 ? form.id : "未生成"}
+                  </code>{" "}
+                  {pendingPublication === null && (
                     <Button
-                      type="submit"
-                      data-automation-create-primary="true"
-                      disabled={
-                        createDisabledReason !== null || submitting || closing
-                      }
+                      type="button"
+                      variant="secondary"
+                      disabled={submitting || card.closing}
+                      onClick={regenerateId}
                     >
-                      {form.enabled ? "创建并启用" : "创建任务"}
+                      重新生成 ID
                     </Button>
                   )}
-                </div>
-              </footer>
-            </form>
-          )}
+                </dd>
+                <dt>创建依据的 Active</dt>
+                <dd>
+                  <code>{observedAuthority?.revisionId ?? "尚未读取"}</code>
+                  {observedAuthority !== null && (
+                    <>
+                      {" "}
+                      · 版本 {observedAuthority.version} · digest{" "}
+                      <code className="mf-automation-create-digest">
+                        {observedAuthority.digest}
+                      </code>
+                    </>
+                  )}
+                </dd>
+                <dt>发布机制</dt>
+                <dd>
+                  一次明确创建直接提交经过后端校验的候选并原子发布；不创建
+                  Draft，不运行任务。选择“启用定时计划”后，同一次创建会按共享的发布链路完成启用。
+                </dd>
+              </dl>
+            </details>
+          </div>
 
-          {form === null && (
-            <div className="mf-automation-create-footer">
+          <footer className="mf-automation-create-footer">
+            <div className="mf-automation-create-footer-note">
+              {createDisabledReason !== null && (
+                <span role="status">{createDisabledReason}</span>
+              )}
+              {createDisabledReason === null && pendingPublication === null && (
+                <span>
+                  {form.enabled
+                    ? "将创建并启用：保存后按计划定时运行；运行一次请在任务列表发起。"
+                    : "创建后未启用，可在列表中启用或运行一次。"}
+                </span>
+              )}
+            </div>
+            <div className="mf-actions">
               <Button
                 type="button"
                 variant="secondary"
-                disabled={closing}
+                disabled={inFlight || card.closing}
                 onClick={attemptClose}
               >
-                关闭
+                {pendingPublication !== null && !submitting ? "关闭" : "取消"}
               </Button>
+              {submitting ? (
+                <Button
+                  type="button"
+                  data-automation-create-primary="true"
+                  disabled
+                >
+                  创建中…
+                </Button>
+              ) : pendingPublication !== null ? (
+                <Button
+                  type="button"
+                  data-automation-create-primary="true"
+                  disabled={
+                    reconciling || card.closing || !principalIdentity.resolved
+                  }
+                  onClick={reconcile}
+                >
+                  {reconciling ? "核对中…" : "核对本次创建"}
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  data-automation-create-primary="true"
+                  disabled={
+                    createDisabledReason !== null || submitting || card.closing
+                  }
+                >
+                  {form.enabled ? "创建并启用" : "创建任务"}
+                </Button>
+              )}
             </div>
-          )}
+          </footer>
+        </form>
+      )}
+
+      {form === null && (
+        <div className="mf-automation-create-footer">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={card.closing}
+            onClick={attemptClose}
+          >
+            关闭
+          </Button>
         </div>
-      </section>
-    </div>
+      )}
+    </AutomationCardShell>
   );
 }

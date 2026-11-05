@@ -314,6 +314,7 @@ export function AutomationDefinitionRow({
             <button
               type="button"
               className="mf-button mf-button-secondary"
+              data-automation-edit-entry={definition.document.id}
               onClick={onEdit}
             >
               编辑

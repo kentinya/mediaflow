@@ -715,3 +715,93 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
     ),
   ).toHaveLength(2);
 });
+
+test("a proved create reconciliation reports the current saved state after a peer change", async ({
+  page,
+  browser,
+}) => {
+  // B49.2-02: the create commits with enablement but only its response is
+  // lost. A peer then disables the definition through the list's edit card.
+  // The original session reloads, reconciles the original create from durable
+  // audit and must distinguish what the command did (created and enabled)
+  // from the current saved state (disabled by a later modification): no
+  // "已创建并启用" present-tense claim, no second create POST and no
+  // automatic re-enable.
+  let createPosts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname ===
+        "/api/v1/operations/automation/definitions"
+    ) {
+      createPosts += 1;
+    }
+  });
+  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("核对当前状态任务");
+  await page.getByLabel(/资源库/).selectOption("source");
+  await page.getByLabel("启用定时计划").check();
+  await page.route(
+    "**/api/v1/operations/automation/definitions",
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      // The real backend commits; only the successful response is replaced.
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { code: "b_lost_response", message: "response unavailable" },
+        }),
+      });
+    },
+  );
+  await page.getByRole("button", { name: "创建并启用" }).click();
+  await expect(page.getByText("创建结果待核对", { exact: true })).toBeVisible();
+  const created = await harnessState(page);
+  expect(created.definitions[0]?.enabled).toBe(true);
+
+  // The peer disables the definition through the real row edit entry.
+  const peerContext = await browser.newContext();
+  const peer = await peerContext.newPage();
+  await connectOn(peer, "/ui-v2/operations/automation");
+  await peer.getByRole("button", { name: "编辑", exact: true }).first().click();
+  await expect(
+    peer.getByRole("heading", { name: "编辑自动化任务" }),
+  ).toBeVisible();
+  await peer.getByLabel("启用定时计划").uncheck();
+  await peer.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(peer).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  const durable = await harnessState(page);
+  expect(durable.definitions[0]?.enabled).toBe(false);
+  await peerContext.close();
+
+  // A real reload and same-principal reconnect; the retained command identity
+  // is reconciled exactly once.
+  await connectOn(page, page.url());
+  await expect(page.getByText("上次创建结果待核对")).toBeVisible();
+  await page.getByRole("button", { name: "核对本次创建" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  // The list banner states both facts: what the command did and what the
+  // current saved state is after the peer's later modification.
+  await expect(
+    page.getByText(/该定义之后被再次修改，当前为停用状态/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "已创建并启用", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(/该定义之后被再次修改，当前为停用状态/),
+  ).toBeVisible();
+  expect(createPosts).toBe(1);
+  const after = await harnessState(page);
+  expect(after.definitions[0]?.enabled).toBe(false);
+  expect(after.occurrenceTotal).toBe(0);
+});

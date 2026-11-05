@@ -188,8 +188,11 @@ test("a disabled published definition runs once from the list without a file pic
   const api = recordApiCalls(page);
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
   await openLifecycleEdit(page);
-  // The retired edit entry no longer offers a Run once command.
-  await expect(page.getByRole("button", { name: "运行一次" })).toHaveCount(0);
+  // The retired edit card no longer offers a Run once command; the workspace
+  // list behind the card keeps the ordinary Run once entry.
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "运行一次" }),
+  ).toHaveCount(0);
   const before = await lifecycleState(page);
   await openAutomationList(page);
   const row = definitionRow(page);
@@ -686,9 +689,8 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
   await openLifecycleEdit(page);
   await page.getByLabel("处理上限").fill("150");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(
-    page.getByText(/已保存并保持启用|已保存，当前为停用状态/),
-  ).toBeVisible();
+  // The confirmed Save returns to the workspace list.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
   const id = await runOnceFromList(page);
   expect((await runOnceState(page, id)).effectivePrimaryLimit).toBe(100);
   const result = await page.request.post(

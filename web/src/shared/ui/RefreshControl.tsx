@@ -18,7 +18,15 @@ export function RefreshControl({
   refreshingLabel = "Refreshing…",
 }: RefreshControlProps) {
   return (
-    <Button variant="secondary" onClick={onRefresh} disabled={refreshing}>
+    <Button
+      variant="secondary"
+      // A refresh control is never a form submit: pages render it inside
+      // forms (the Automation edit card), where the HTML default submit type
+      // would publish the form instead of re-reading the query.
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshing}
+    >
       {refreshing ? refreshingLabel : label}
     </Button>
   );

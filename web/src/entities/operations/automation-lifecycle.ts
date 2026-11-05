@@ -595,3 +595,96 @@ export function normalizeAutomationPublication(
     active: normalizeAutomationActiveIdentity(source["active"]),
   };
 }
+
+/**
+ * The definition's current saved state at reconciliation time.
+ *
+ * `current` means the stored definition still equals the proved command's
+ * candidate; `modified` means a later publication changed it; `absent` means
+ * it is no longer in the Active configuration; `unreadable` means the current
+ * Active could not be read or verified, so the current state stays
+ * unconfirmable. A proved publication is never allowed to pose as the current
+ * state, so a missing or malformed current read degrades to `unreadable`
+ * instead of claiming `current`.
+ */
+export type AutomationCurrentDefinitionState =
+  "current" | "modified" | "absent" | "unreadable";
+
+const AUTOMATION_CURRENT_DEFINITION_STATES = [
+  "current",
+  "modified",
+  "absent",
+  "unreadable",
+] as const;
+
+export interface AutomationPublicationReconciliationModel {
+  readonly state: "published" | "unknown";
+  readonly publication: AutomationPublicationModel | null;
+  /** Only meaningful when `state` is `"published"`; `null` for `unknown`. */
+  readonly currentState: AutomationCurrentDefinitionState | null;
+  readonly currentDefinition: AutomationDefinitionDocumentModel | null;
+  /** The current Active identity when it could be read; `null` otherwise. */
+  readonly currentActive: AutomationActiveIdentityModel | null;
+}
+
+export function normalizeAutomationPublicationReconciliation(
+  payload: unknown,
+): AutomationPublicationReconciliationModel {
+  const value = readRecord(payload, "publicationIntent");
+  if (value["state"] === "published") {
+    const publication = normalizeAutomationPublication(value["publication"]);
+    const rawState = value["currentDefinitionState"];
+    let currentState: AutomationCurrentDefinitionState = "unreadable";
+    let currentDefinition: AutomationDefinitionDocumentModel | null = null;
+    let currentActive: AutomationActiveIdentityModel | null = null;
+    if (
+      typeof rawState === "string" &&
+      (AUTOMATION_CURRENT_DEFINITION_STATES as readonly string[]).includes(
+        rawState,
+      )
+    ) {
+      currentState = rawState as AutomationCurrentDefinitionState;
+      const rawDefinition = value["currentDefinition"];
+      if (rawDefinition !== null && rawDefinition !== undefined) {
+        try {
+          currentDefinition =
+            normalizeAutomationDefinitionDocument(rawDefinition);
+        } catch {
+          // A malformed current read degrades to unreadable; the proved
+          // publication fact itself stands on its own evidence.
+          currentState = "unreadable";
+          currentDefinition = null;
+        }
+      }
+      const rawActive = value["currentActive"];
+      if (rawActive !== null && rawActive !== undefined) {
+        try {
+          currentActive = normalizeAutomationActiveIdentity(rawActive);
+        } catch {
+          currentActive = null;
+        }
+      }
+    }
+    if (currentState !== "current" && currentState !== "modified") {
+      // Only a read that proves the current values may carry them.
+      currentDefinition = null;
+    }
+    return {
+      state: "published",
+      publication,
+      currentState,
+      currentDefinition,
+      currentActive,
+    };
+  }
+  if (value["state"] !== "unknown" || value["publication"] !== null) {
+    throw new Error("malformed publication reconciliation");
+  }
+  return {
+    state: "unknown",
+    publication: null,
+    currentState: null,
+    currentDefinition: null,
+    currentActive: null,
+  };
+}
