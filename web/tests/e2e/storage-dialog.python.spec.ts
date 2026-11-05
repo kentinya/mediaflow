@@ -260,6 +260,55 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   ).toBeVisible();
   expect(commands.filter((method) => method === "PUT")).toHaveLength(1);
   await page.unroute(/\/api\/v1\/storages\/ui-pending-save$/);
+
+  // A known rejection after the same backdrop gesture still lands in the
+  // retained card with the exact submitted input and no automatic replay.
+  const postsBeforeDuplicate = commands.filter(
+    (method) => method === "POST",
+  ).length;
+  let releaseDuplicate: () => void = () => {};
+  const duplicateGate = new Promise<void>((resolve) => {
+    releaseDuplicate = resolve;
+  });
+  let duplicateStarted: () => void = () => {};
+  const duplicateRequestStarted = new Promise<void>((resolve) => {
+    duplicateStarted = resolve;
+  });
+  await page.route(/\/api\/v1\/storages$/, async (route) => {
+    if (route.request().method() === "POST") {
+      duplicateStarted();
+      await duplicateGate;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "+ 添加存储" }).click();
+  const duplicateCard = card(page, "添加存储");
+  await fillLocalCard(page, {
+    id: storageId,
+    name: "重复遮罩存储",
+    rootPath: "/tmp",
+  });
+  await duplicateCard.getByRole("button", { name: "保存" }).click();
+  await duplicateRequestStarted;
+  await expect(duplicateCard).toHaveAttribute("aria-busy", "true");
+  await expect(
+    duplicateCard.getByRole("button", { name: "取消" }),
+  ).toBeDisabled();
+  await page.mouse.click(2, 2);
+  await expect(duplicateCard).toBeVisible();
+  releaseDuplicate();
+  await expect(
+    duplicateCard.getByText(/该存储 ID 已存在于当前 Active 配置/),
+  ).toBeVisible();
+  await duplicateCard.getByRole("button", { name: /1\s*基本信息/ }).click();
+  await expect(duplicateCard.getByLabel("名称 *")).toHaveValue("重复遮罩存储");
+  await expect(duplicateCard.getByLabel("存储 ID *")).toHaveValue(storageId);
+  expect(commands.filter((method) => method === "POST").length).toBe(
+    postsBeforeDuplicate + 1,
+  );
+  await duplicateCard.getByRole("button", { name: "取消" }).click();
+  await expect(duplicateCard).toHaveCount(0);
+  await page.unroute(/\/api\/v1\/storages$/);
 });
 
 test("keeps a duplicate rejection inside the card and preserves the input", async ({
