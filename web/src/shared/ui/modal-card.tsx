@@ -229,6 +229,10 @@ export function ModalCardShell({
         closing ? "mf-modal-layer mf-modal-layer-exiting" : "mf-modal-layer"
       }
       onMouseDown={(event) => {
+        // The owner decides whether leaving is allowed right now (for example
+        // a Storage command already in flight). Backdrop and layer-edge
+        // dismissal obey that same permission as the close button.
+        if (closeDisabled) return;
         if (event.target === event.currentTarget) onRequestClose();
       }}
       data-modal-card="true"
@@ -238,6 +242,7 @@ export function ModalCardShell({
         aria-hidden="true"
         onMouseDown={(event) => {
           event.stopPropagation();
+          if (closeDisabled) return;
           onRequestClose();
         }}
       />
@@ -265,7 +270,10 @@ export function ModalCardShell({
             className="mf-modal-close"
             aria-label={closeLabel}
             disabled={closeDisabled}
-            onClick={onRequestClose}
+            onClick={() => {
+              if (closeDisabled) return;
+              onRequestClose();
+            }}
           >
             ×
           </button>

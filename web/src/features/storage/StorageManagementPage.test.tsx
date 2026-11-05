@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -1212,7 +1218,7 @@ function stubWorkspace(options: {
   onSave?: (
     method: "POST" | "PUT" | "DELETE",
     body: Record<string, unknown>,
-  ) => [number, unknown];
+  ) => [number, unknown] | Promise<[number, unknown]>;
 }): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
@@ -1234,10 +1240,10 @@ function stubWorkspace(options: {
         string,
         unknown
       >;
-      const [status, payload] = options.onSave?.(
+      const [status, payload] = await (options.onSave?.(
         method as "POST" | "PUT" | "DELETE",
         body,
-      ) ?? [200, saveResponsePayload()];
+      ) ?? [200, saveResponsePayload()]);
       return jsonResponse(payload, status);
     }
     if (url.startsWith(INVENTORY_PATH)) {
@@ -1564,6 +1570,29 @@ async function fillLocalAdd(form: ReturnType<typeof within>, id = "new-local") {
   await userEvent.click(form.getByRole("button", { name: "下一步" }));
 }
 
+/** Hold the next command response until the test has observed the in-flight UI. */
+function deferredSave(): {
+  readonly result: Promise<[number, unknown]>;
+  readonly release: (result: [number, unknown]) => void;
+} {
+  let release: (result: [number, unknown]) => void = () => {};
+  const result = new Promise<[number, unknown]>((resolve) => {
+    release = resolve;
+  });
+  return { result, release };
+}
+
+/** Click both backdrop routes the shared card exposes: the backdrop element
+ * itself and the layer edge (the outer padding around the card). */
+function dismissThroughBackdrop(card: HTMLElement) {
+  const layer = card.closest(".mf-modal-layer");
+  if (!(layer instanceof HTMLElement)) throw new Error("modal layer missing");
+  const backdrop = layer.querySelector(".mf-modal-backdrop");
+  if (!(backdrop instanceof HTMLElement)) throw new Error("backdrop missing");
+  fireEvent.mouseDown(backdrop);
+  fireEvent.mouseDown(layer);
+}
+
 describe("Storage Add/Edit drawer", () => {
   it("stays closed on normal entry and opens step 1 on explicit Add", async () => {
     stubWorkspace({});
@@ -1623,6 +1652,106 @@ describe("Storage Add/Edit drawer", () => {
       expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
     );
     expect(commandCalls(fetchMock, "POST")).toHaveLength(0);
+  });
+
+  it("keeps a pending Add and its single request when the backdrop is clicked", async () => {
+    const deferred = deferredSave();
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_LOCAL],
+      onSave: () => deferred.result,
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await fillLocalAdd(form, "pending-add");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+
+    const card = screen.getByRole("dialog", { name: "添加存储" });
+    await waitFor(() => expect(card).toHaveAttribute("aria-busy", "true"));
+    expect(form.getByRole("button", { name: "取消" })).toBeDisabled();
+
+    await userEvent.keyboard("{Escape}");
+    dismissThroughBackdrop(card);
+    expect(screen.getByRole("dialog", { name: "添加存储" })).toBeVisible();
+    // The card stayed mounted with the submitted input; the command was sent
+    // once and never replayed by the backdrop gesture.
+    expect(form.getByText("新的本地存储")).toBeVisible();
+    expect(form.getByText("pending-add")).toBeVisible();
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+
+    deferred.release([200, saveResponsePayload({ id: "pending-add" })]);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
+    );
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it("keeps a pending Edit open on backdrop clicks and shows a known rejection in place", async () => {
+    const deferred = deferredSave();
+    const fetchMock = stubWorkspace({
+      onSave: () => deferred.result,
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
+    );
+    const form = within(
+      await screen.findByRole("dialog", { name: "编辑存储 nas-media" }),
+    );
+    await userEvent.type(form.getByLabelText("名称 *"), " 保存中");
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    await userEvent.click(form.getByRole("button", { name: "保存并激活" }));
+
+    const card = screen.getByRole("dialog", {
+      name: "编辑存储 nas-media",
+    });
+    await waitFor(() => expect(card).toHaveAttribute("aria-busy", "true"));
+    expect(form.getByRole("button", { name: "取消" })).toBeDisabled();
+
+    dismissThroughBackdrop(card);
+    expect(
+      screen.getByRole("dialog", { name: "编辑存储 nas-media" }),
+    ).toBeVisible();
+    expect(commandCalls(fetchMock, "PUT")).toHaveLength(1);
+
+    deferred.release([
+      409,
+      errorPayload("storage_duplicate", {
+        durableState: "active_preserved",
+      }),
+    ]);
+    expect(await form.findByText(/该存储 ID 已存在/)).toBeVisible();
+    // The rejected card remains with the retained input and no automatic PUT.
+    await userEvent.click(form.getByRole("button", { name: /基本信息/ }));
+    expect(form.getByLabelText("名称 *")).toHaveValue("NAS 媒体 保存中");
+    expect(commandCalls(fetchMock, "PUT")).toHaveLength(1);
+  });
+
+  it("keeps an unknown Add outcome on its verification entry after backdrop clicks", async () => {
+    const deferred = deferredSave();
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_LOCAL],
+      onSave: () => deferred.result,
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await fillLocalAdd(form, "unknown-backdrop");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+
+    const card = screen.getByRole("dialog", { name: "添加存储" });
+    await waitFor(() => expect(card).toHaveAttribute("aria-busy", "true"));
+    dismissThroughBackdrop(card);
+    expect(screen.getByRole("dialog", { name: "添加存储" })).toBeVisible();
+
+    deferred.release([500, errorPayload("internal_error")]);
+    expect(await form.findByText(/保存结果未知/)).toBeVisible();
+    expect(form.getByRole("button", { name: "核实当前状态" })).toBeVisible();
+    expect(form.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
   });
 
   it("blocks an invalid step instead of advancing", async () => {

@@ -1,6 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useBodyScrollLock } from "./modal-card";
+import {
+  ModalCardShell,
+  useBodyScrollLock,
+  type ModalCardShellProps,
+} from "./modal-card";
 
 function LockedSurface() {
   useBodyScrollLock();
@@ -21,6 +26,7 @@ function setScrollbarGutter(pixels: number) {
 
 describe("useBodyScrollLock", () => {
   beforeEach(() => {
+    cleanup();
     document.body.removeAttribute("style");
   });
 
@@ -74,5 +80,61 @@ describe("useBodyScrollLock", () => {
     expect(getComputed).not.toHaveBeenCalled();
     unmount();
     expect(document.body.style.overflow).toBe("");
+  });
+});
+
+function ShellHarness(
+  props: Pick<ModalCardShellProps, "closeDisabled" | "onRequestClose">,
+) {
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  return (
+    <ModalCardShell
+      layerRef={layerRef}
+      closing={false}
+      busy={!props.closeDisabled}
+      title="存储卡片"
+      titleId="shell-title"
+      description="共享呈现"
+      closeLabel="关闭"
+      closeDisabled={props.closeDisabled}
+      onRequestClose={props.onRequestClose}
+    >
+      <p>卡片正文</p>
+    </ModalCardShell>
+  );
+}
+
+function layerAndBackdrop() {
+  const card = screen.getByRole("dialog");
+  const layer = card.closest(".mf-modal-layer");
+  if (!(layer instanceof HTMLElement)) throw new Error("modal layer missing");
+  const backdrop = layer.querySelector(".mf-modal-backdrop");
+  if (!(backdrop instanceof HTMLElement)) throw new Error("backdrop missing");
+  return { layer, backdrop };
+}
+
+describe("ModalCardShell close permission", () => {
+  beforeEach(cleanup);
+
+  it("closes from the backdrop, layer edge and close button when allowed", () => {
+    const onRequestClose = vi.fn();
+    render(
+      <ShellHarness closeDisabled={false} onRequestClose={onRequestClose} />,
+    );
+    const { layer, backdrop } = layerAndBackdrop();
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseDown(layer);
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onRequestClose).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses backdrop and layer-edge dismissal while the owner disables exit", () => {
+    const onRequestClose = vi.fn();
+    render(<ShellHarness closeDisabled onRequestClose={onRequestClose} />);
+    const { layer, backdrop } = layerAndBackdrop();
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseDown(layer);
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
   });
 });

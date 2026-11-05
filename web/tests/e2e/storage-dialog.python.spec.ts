@@ -154,6 +154,114 @@ test("views, adds and edits through centered cards with exact readback", async (
   await reopened.getByRole("button", { name: "取消" }).click();
 });
 
+test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
+  page,
+}) => {
+  const commands: string[] = [];
+  page.on("request", (request) => {
+    if (
+      ["POST", "PUT"].includes(request.method()) &&
+      request.url().includes("/api/v1/storages")
+    ) {
+      commands.push(request.method());
+    }
+  });
+  await openStorage(page);
+
+  const storageId = "ui-pending-save";
+  const createdName = "保存中存储";
+  let releaseAdd: () => void = () => {};
+  const addGate = new Promise<void>((resolve) => {
+    releaseAdd = resolve;
+  });
+  let addStarted: () => void = () => {};
+  const addRequestStarted = new Promise<void>((resolve) => {
+    addStarted = resolve;
+  });
+  await page.route(/\/api\/v1\/storages$/, async (route) => {
+    if (route.request().method() === "POST") {
+      addStarted();
+      await addGate;
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "+ 添加存储" }).click();
+  const addCard = card(page, "添加存储");
+  await fillLocalCard(page, {
+    id: storageId,
+    name: createdName,
+    rootPath: "/tmp",
+  });
+  await addCard.getByRole("button", { name: "保存" }).click();
+  await addRequestStarted;
+  await expect(addCard).toHaveAttribute("aria-busy", "true");
+  await expect(addCard.getByRole("button", { name: "取消" })).toBeDisabled();
+  // A real desktop backdrop click and a click in the layer gutter beside the
+  // card must not dismiss the in-flight commit.
+  await page.mouse.click(10, 10);
+  await expect(addCard).toBeVisible();
+  const addBox = await addCard.boundingBox();
+  expect(addBox).not.toBeNull();
+  await page.mouse.click((addBox?.x ?? 100) - 8, (addBox?.y ?? 100) + 24);
+  await expect(addCard).toBeVisible();
+  await expect(addCard.getByText(createdName)).toBeVisible();
+  await expect(addCard.getByText(storageId, { exact: true })).toBeVisible();
+  expect(commands.filter((method) => method === "POST")).toHaveLength(1);
+
+  releaseAdd();
+  await expect(addCard).toHaveCount(0);
+  await expect(
+    page.getByRole("row").filter({ hasText: createdName }),
+  ).toBeVisible();
+  expect(commands.filter((method) => method === "POST")).toHaveLength(1);
+  await page.unroute(/\/api\/v1\/storages$/);
+
+  // The narrow viewport keeps the same in-flight protection; the click lands
+  // on the tiny real gutter around the full-width card.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const row = page.getByRole("row").filter({ hasText: createdName });
+  await row.getByRole("button", { name: `编辑 ${createdName}` }).click();
+  const editCard = card(page, `编辑存储 ${storageId}`);
+  await expect(editCard.getByLabel("名称 *")).toHaveValue(createdName);
+  await editCard.getByLabel("名称 *").fill("保存中存储已编辑");
+  await editCard.getByRole("button", { name: "下一步" }).click();
+  await editCard.getByRole("button", { name: "下一步" }).click();
+  await editCard.getByRole("button", { name: "下一步" }).click();
+
+  let releaseEdit: () => void = () => {};
+  const editGate = new Promise<void>((resolve) => {
+    releaseEdit = resolve;
+  });
+  let editStarted: () => void = () => {};
+  const editRequestStarted = new Promise<void>((resolve) => {
+    editStarted = resolve;
+  });
+  await page.route(/\/api\/v1\/storages\/ui-pending-save$/, async (route) => {
+    if (route.request().method() === "PUT") {
+      editStarted();
+      await editGate;
+    }
+    await route.continue();
+  });
+  await editCard.getByRole("button", { name: "保存并激活" }).click();
+  await editRequestStarted;
+  await expect(editCard).toHaveAttribute("aria-busy", "true");
+  await expect(editCard.getByRole("button", { name: "取消" })).toBeDisabled();
+  await page.mouse.click(2, 2);
+  await expect(editCard).toBeVisible();
+  await expect(editCard.getByText("保存中存储已编辑")).toBeVisible();
+  expect(commands.filter((method) => method === "PUT")).toHaveLength(1);
+
+  releaseEdit();
+  await expect(editCard).toHaveCount(0);
+  await expect(
+    page.getByRole("row").filter({ hasText: "保存中存储已编辑" }),
+  ).toBeVisible();
+  expect(commands.filter((method) => method === "PUT")).toHaveLength(1);
+  await page.unroute(/\/api\/v1\/storages\/ui-pending-save$/);
+});
+
 test("keeps a duplicate rejection inside the card and preserves the input", async ({
   page,
 }) => {
