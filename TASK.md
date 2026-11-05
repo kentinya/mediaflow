@@ -249,9 +249,13 @@ web/.DS_Store
 
 ### Developer Completion Report
 
-**状态：`READY FOR B REVIEW`。候选在本轮工作区（未提交）形成；Task Base 仍为
-`9fa51289539c5279687ad0420bc74de758414776`，未改 `SLICE.md`、Roadmap、Progress，
-未推送。实施开始时 Task 处于 `IN PROGRESS`，本报告提交时转入 `READY FOR B REVIEW`。**
+**状态：`READY FOR B REVIEW`。实施候选已本地 checkpoint：
+`d6e8f979c491f9101c926c4f2854a5fb33e4383a`
+（`fix(automation): move copy to the list and align the shared enable switch`）。
+下面所有验证均在该 checkpoint 的同一源码/测试树上执行；其后只追加本报告的 SHA 引用，
+不改可执行输入。Task Base 仍为 `9fa51289539c5279687ad0420bc74de758414776`，
+未改 `SLICE.md`、Roadmap、Progress，未推送。实施开始时 Task 处于 `IN PROGRESS`，
+本报告提交时转入 `READY FOR B REVIEW`。**
 
 **改动（仅本 Task 入口）：**
 
