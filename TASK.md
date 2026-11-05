@@ -1,28 +1,12 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261105-1 — 自动化创建/编辑展示与列表复制入口修正
 
-Last Tasks: 49.1 / 49.2 — Slice49
-Decision: SLICE49 PASS / CLOSED — A FINAL REVIEW, 2026-11-05
-Next Action: A SELECTS THE NEXT LARGE SLICE
+用户于 2026-11-05 明确要求“激活Task吧”，将已确认规划
+`df05111f1cb551d3267a370173e3838574a28d92:TASK.md` 激活为正式当前 Task。
+原 Task Base、三项需求、实现边界、验收和测试分工均保持不变。
+下一步由 Developer 按本 Task 实施，实际开始时更新为 `IN PROGRESS`；本轮 B 仅完成激活，
+尚未开始产品实施或独立验收，不构成 PASS、push 或部署授权。
 
-原始 Slice Base：`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`。
-已审 Implementation Head：`9d6b78147d90b950ed2333f9747facc77bf0391a`。
-完整范围、验收、独立验证和限制见 [SLICE.md](SLICE.md#final-validation-closure-packet-and-a-final-review)。
-
-B 最终 Closure Packet / Task49.2 PASS：
-`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`；
-Task49.1 PASS：`7b7e9aaa24684ee59552ca95641843706dc7680d:TASK.md`。
-既有拒绝、修正、完整测试结果及原始失败/skip均留在 Git 和对应本地证据中。
-本通知记录已完成的 A 终审与闭环，不授权新实施或自动选择下一 Slice；独立小版本 bug 仍由 B 按流程处理。
-
----
-
-## Planning-only draft — Task PATCH-20261105-1：自动化创建/编辑展示与列表复制入口修正
-
-**仅规划草案，尚未授权实施。** 用户本轮要求“规划Task吧，不要扩大或收窄需求”。
-保留上方 `NO ACTIVE IMPLEMENTATION TASK`；获得实施授权后才启用以下独立 Task，
-原 Task Base 不因启用或规划提交而重设。不得把本草案当成实施、评审 PASS、push 或部署授权。
-
-Authority：用户本轮及前两轮对截图问题确认的三项范围；生命周期、Git、测试和独立小 Bug
+Authority：用户在本会话确认的三项截图需求及本轮激活指令；生命周期、Git、测试和独立小 Bug
 流程以 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 为准。
 角色经验见 [B](docs/agent-experience/task-planner-reviewer.md) 和
 [Developer](docs/agent-experience/developer-implementation-role.md)。
@@ -40,6 +24,8 @@ Planner / Reviewer: B
 
 Slice49 仅为已接受行为的参考，不是本 Task 的父 Slice；其 Base、Implementation Head、
 验收和关闭状态不变，不修改 `SLICE.md`、Roadmap 或 Progress。
+已接受实现与闭环指针见 [SLICE.md](SLICE.md#final-validation-closure-packet-and-a-final-review)；
+原无活动 Task 通知及规划版本保留在上述激活前 checkpoint。
 
 ### Goal
 
@@ -158,7 +144,7 @@ Slice49 仅为已接受行为的参考，不是本 Task 的父 Slice；其 Base�
 ### Required Tests
 
 遵循 [测试等级与所有权](docs/development-workflow.md#6-test-levels)。本 Task 为 T4；
-下列实施/验收命令是后续执行计划，不表示本轮已实施或验证产品修复。
+下列实施/验收命令是后续执行计划，不表示本轮激活已实施或验证产品修复。
 
 ### Developer — affected tests
 
@@ -230,13 +216,14 @@ Run once/移除入口的直接回归。原生用真实 Python harness 和生产�
 - 不改 `SLICE.md`、Roadmap、Progress 或其他产品文档来扩大/收窄三项需求；实现中仅允许
   与本入口直接相关的提示和测试同步，不顺手清理其他问题。
 
-### Planning preflight / workspace
+### Activation preflight / workspace
 
-Repository：`/Users/songzhidong/mediaflow`；branch：`main`；起点/不可变 Task Base 如上。
-规划前 `python3 scripts/check_governance.py` PASS；`TASK.md` 与 `.git` 可写，暂存区为空。
-本轮只修改并 checkpoint 本草案，不实施产品代码。
+Repository：`/Users/songzhidong/mediaflow`；branch：`main`；不可变 Task Base 如上，未重设。
+激活起点 HEAD：`df05111f1cb551d3267a370173e3838574a28d92`。
+激活前 `python3 scripts/check_governance.py` PASS；暂存区为空。
+本轮只修改并 checkpoint Task 激活状态，不实施产品代码。
 
-预存变更全部保留且不纳入 checkpoint：tracked `mediaflow/.DS_Store`；untracked：
+激活时预存变更全部保留且不纳入 checkpoint：tracked `mediaflow/.DS_Store`；untracked：
 
 ```text
 .DS_Store
@@ -252,8 +239,6 @@ Repository：`/Users/songzhidong/mediaflow`；branch：`main`；起点/不可变
 15
 docs/.DS_Store
 docs/pics/.DS_Store
-docs/pics/自动化页-全局设置.png
-docs/pics/自动化页.png
 output/.DS_Store
 output/database-reference-2026-11-01/
 output/imagegen/slice45-task-center-v1.zip
@@ -269,4 +254,4 @@ web/.DS_Store
 
 ### B Review Result
 
-尚无实施候选，未开始独立验收。本轮产物仅为规划草案，不是 PASS/FIX REQUIRED 评审。
+尚无实施候选，未开始独立验收。本轮仅激活 Task，不是 PASS/FIX REQUIRED 评审。
