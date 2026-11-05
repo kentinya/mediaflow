@@ -16,9 +16,9 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 Automation create/edit stability requirement `V2-UX-013` as planning-only targets. This is not delivered
 CURRENT behavior or implementation authorization. The target changes presentation of Task detail,
 Storage and both library configuration surfaces, removes the two page-local directory trees, and
-coordinates transitions across all existing V2 pages plus Files/MediaLibrary loading, and fixes
-Automation create/edit card opening jitter. It does not
-introduce a backend capability, schema, task lifecycle, recovery engine or configuration authority.
+coordinates transitions between existing V2 sidebar destination pages plus Files/MediaLibrary loading,
+and fixes Automation create/edit card opening jitter. It does not introduce a backend capability,
+schema, task lifecycle, recovery engine or configuration authority.
 
 **Presentation reuse:** use the existing Automation create/edit card as the visual/interaction
 baseline: backdrop, centered card, header/body/footer hierarchy, entry/exit, focus, narrow layout
@@ -60,14 +60,18 @@ presentation step creates/migrates/deletes a directory, grants authority or repl
 that are no longer consumed, while preserving exact library-kind/path identity, breadcrumbs,
 folder/parent/root navigation, selection, search, list/grid, refresh and bounded paging. Do not
 remove state still required by ordinary commands or organizing return paths. Shared Shell global
-navigation remains. Coordinate the existing Router/Query lifecycle with lightweight page/card
-transitions and separate library-list/directory loading states; undefined data is not an empty
-list. Preserve same-query refresh content and authoritative errors, reject stale cross-library/
-path responses, respect reduced-motion, and do not remount/replay business commands for animation.
+navigation remains. Apply the shared page transition only between the main pages reached through
+existing V2 sidebar entries. In-page tabs, detail subpages/deep links, library/path changes and card
+open/close do not trigger that page transition; retain existing navigation/return/authentication
+compatibility and handle selected cards through their own overlay transitions. Coordinate the
+existing Router/Query lifecycle with separate library-list/directory loading states; undefined data
+is not an empty list. Preserve same-query refresh content and authoritative errors, reject stale
+cross-library/path responses, respect reduced-motion, and do not remount/replay business commands
+for animation.
 
 Beyond the selected Task/Storage/library surfaces and Automation create/edit stability, other
-pages participate in navigation motion only; their business bodies are not redesigned.
-Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
+sidebar destination pages participate in the main-page transition only; their business bodies are
+not redesigned. Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
 query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
 the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below
 and earlier Base/Head/closure facts remain valid until target implementation/acceptance is recorded.
