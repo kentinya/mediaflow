@@ -43,69 +43,18 @@ Run Once** — is **PASS / CLOSED** by independent A Final Review on 2026-11-05.
 large Slice separately; no next capability is authorized here. [TASK.md](../TASK.md) points to the
 immutable B Closure Packet and A decision.
 
-## Latest accepted boundary — Slice49
+## Accepted boundary references
 
-[SLICE.md](../SLICE.md) preserves original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through
-accepted implementation `9d6b78147d90b950ed2333f9747facc77bf0391a`. Tasks49.1/49.2 complete all four
-outcomes: correct confined sources, direct in-list Run once, shared create/edit cards and optional
-explicit enabled creation with later enable/disable. Creation uses one atomic checked publication;
-reads/publishing start no immediate media work. Exact request/publication reconciliation distinguishes
-historical success from current state and preserves authority, pins and non-replay. B final packet:
-`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`. CURRENT docs are reconciled, with failed gate
-attempts, seven optional external-service/endurance skips, testing-time deviations and original
-Contract deferrals retained. This is development acceptance, not release or deployment.
+Latest acceptance is [Slice49's Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review):
+original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
+`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes are accepted; no next Slice is
+selected. Prior accepted Base/Head/closure identities, delivered results, deferrals and validation
+limits belong to [Progress](progress.md#closure-ledger) and its immutable review pointers. Earlier
+Slices are not reopened, and Scan/Preview/FileIndex/Job/Pause retirements remain intact.
 
-## Prior accepted boundary — Slice48
-
-Slice48 — **Task Flow Status and Automation Success Rate** — is **PASS / CLOSED** by independent
-A Final Review on 2026-11-04. Original Base `ba84272721961c970f1eb85d616a0d129523ab92`;
-accepted implementation `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. [Slice48 Contract / A review](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md#final-validation-closure-packet-and-a-final-review)
-records the whole-range RO-1–4 / AC-1–16 assessment, corrected A48-01 and independent checks.
-The complete B Closure Packet remains at `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md`.
-
-Delivered: five-state durable Task flow independent of file outcomes, ended file technical closure
-with honest missing-result/unknown-effect evidence, preserved waiting/cancellation/fences/non-replay,
-consistent Task Center/Files/API/CLI/other consumers, and due/definition Run once success rate
-completed/(completed+failed) plus matching execution-record flow results. Original times/attempts/
-file effects stay factual. CURRENT documents incorporate `V2-TASK-012–014` / `V2-AUTO-012`.
-All selected deferrals and seven optional external-service/endurance skips remain disclosed.
-
-Slice49 acceptance above preserves Slice48's original Base, reviewed Head, boundaries,
-deferrals and history. No Slice48 work is reopened.
-
-## Prior accepted boundary
-
-Slice47 — **Unified Task Scheduling and Organizing Execution** — is **PASS / CLOSED** after
-independent A Final Review on 2026-11-03. Immutable Base: `5144ab1fc2344b06194969cc2c496835729664c0`;
-accepted implementation: `5134c78b22057781d472e6ebf61a1799d9e40324`. [Slice47 Contract](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md) records the
-complete six-outcome/AC-1–26 review and independent evidence. B's final Closure Packet remains at
-`749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`.
-
-Delivered: one Task-owned scheduling/organizing engine across manual/due/Run once and same-Task
-four-type recovery; Job removal; latest-outcome automatic exclusions/manual history warnings;
-Pause/resume and CLI retry-failed retirement; three runtime settings in System Settings with shared
-organizing capacity 1–10000, shared Worker idle polling and due-only Scheduler polling. The unused
-stale-age parameter is removed; immutable snapshots with that key remain readable. Current
-heartbeat/lease/call-timeout safety and completed/uncertain non-replay remain.
-
-Slice48 acceptance does not reopen Slice47. Existing
-deferrals, seven optional external-service/
-endurance skips and the explicit old-task/cross-version upgrade/V1 exclusions remain disclosed.
-Earlier rejected candidates/reviews remain in Git; their blockers were corrected before acceptance.
-
-Slice46 remains **PASS / CLOSED** with original Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`
-and reviewed implementation `6469f45811ee59c875cfd10107d3aed129e9d489`. Its Contract/A review is at
-`5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; B's Closure Packet remains at
-`85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`. Earlier closure facts are unchanged.
-
-Accepted43/45 foundations and retirement boundaries remain protected by the current requirements.
-Original Bases, historical holds/integration refs, accepted Heads, prior exceptions and validation
-limits remain in Git and [Progress](progress.md); Slice47 closure does not rewrite those facts or
-restore retired products/compatibility.
-
-[Release](release.md) owns release-line facts, [Progress](progress.md) the closure ledger,
-[Architecture](architecture.md)/[Product Experience](product-experience.md) CURRENT behavior,
-and [Development Workflow](development-workflow.md) testing/review allocation. This page keeps priority/status.
+[Release](release.md) owns release-line facts; [Architecture](architecture.md) and
+[Product Experience](product-experience.md) own CURRENT behavior. This page records large-Slice
+priority/status, not Task history or repeated acceptance reports.
 
 ## Roadmap rules
 

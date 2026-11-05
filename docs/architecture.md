@@ -51,8 +51,8 @@ resident Scheduler independently follows the schedule using existing pins and li
 **Direct list command:** read the backend's exact saved-definition/configuration identity and action
 availability, then use the existing Run once admission and request-lookup service from the row.
 Expose any necessary bounded read identity through the existing projection rather than deriving
-authority from browser state. Remove Run once buttons from the edit page/card; the list is the
-ordinary Web command entry. Reuse the existing backend admission/request-lookup behavior and preserve
+authority from browser state. The edit page/card has no Run once button; the list is the ordinary
+Web command entry. Reuse the existing backend admission/request-lookup behavior and preserve
 list reconciliation for pending requests previously submitted from the edit entry.
 Busy/accepted/rejected/unknown UI state is scoped to the actual definition/request and
 principal, survives the required reload/reopen recovery, and never becomes another durable work
@@ -1212,9 +1212,9 @@ The Web creation card is a consumer of the existing focused checked-create comma
 `/operations/automation/lifecycle` and former `/operations/automation/new` routes share the same
 list background and form. One stable browser-generated ID and observed Active fence belong to
 the creation session; ordinary time choices compile to the existing interval/Cron fields, while
-the backend owns due-time calculation, validation and default-disabled or explicitly enabled atomic publication under Slice49. Directory selection
-uses the existing bounded ResourceLibrary-scoped read-only Files API. In-flight UI state is distinct
-from an ended unknown response; retained principal-scoped command context permits only exact
+the backend owns due-time calculation, validation and default-disabled or explicitly enabled atomic
+publication under Slice49. Directory selection uses the existing bounded ResourceLibrary-scoped
+read-only Files API. In-flight UI state is distinct from an ended unknown response; retained principal-scoped command context permits only exact
 publication reconciliation. List context and focus restoration introduce no configuration or
 execution authority, draft store or additional backend entry point.
 

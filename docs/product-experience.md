@@ -53,7 +53,7 @@ Original Slice43/46 acceptance and all unchanged deferrals remain historical fac
   internal publication details do not occupy ordinary fields or introductory tutorials. One `保存`
   publishes only that intended successor under existing configuration and execution permissions.
   After creation the operator can explicitly enable or disable the saved definition here, regardless
-  of the initial choice. Remove the edit card/page's `运行一次` button; use the list for that action.
+  of the initial choice. The edit card/page has no `运行一次` button; use the list for that action.
   Existing copy/remove actions remain reachable with their present authority/confirmation boundaries.
 - **Edit success/failure/recovery:** preserve the creation card's grouping, controls, animations,
   reduced-motion, keyboard and narrow-screen behavior. Success returns to the original list with
@@ -696,7 +696,8 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
 ### CURRENT — Complete native Automation workspace (accepted43, amended46)
 
 Slice47 replaces the former settings tab/four-field form with three System Settings fields.
-Historical43/46 acceptance remains unchanged; the current journeys include accepted47.
+Historical43/46 acceptance remains unchanged. Current settings follow accepted47, flow/results and
+rate follow accepted48, and creation/editing/list Run once follow accepted49 above.
 
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory; name/打开/direct links
   read saved definitions before/after enablement, including truthful disabled/unavailable states.
@@ -714,8 +715,8 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   explicit; preview writes nothing and supplies no execution authority. The default `创建任务` publishes
   a disabled definition; explicitly selecting enablement changes the action to `创建并启用` and publishes
   the enabled definition atomically with checked scheduled intent. Neither starts immediate work.
-  The limit bounds the complete source
-  scope; overflow requires narrowing, never automatic batching or first-N execution.
+  The limit bounds the complete source scope; overflow requires narrowing, never automatic batching
+  or first-N execution.
 - **Create feedback/return:** unchanged input closes directly; edited input offers visible
   `继续填写 / 放弃修改`. Cancellation, discard and success preserve the list's filters, page, scroll
   and entry focus. Success refreshes authoritative rows/statistics and explains when the new row is
@@ -737,9 +738,9 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
 - **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
   the existing Worker/OrganizerExecutor without another per-run click, with independent item results.
 - **Run once:** click the saved row's `运行一次` directly in the list, retaining row feedback and an
-  explicit exact-Task link. The edit card has no Run once button. Use the published definition's saved scope to discover/freeze a complete bounded
-  manifest without asking the user to pick files again. One explicit command admits the organizing
-  Task before readiness and executes ready items without a second initial confirmation. Four-type
+  explicit exact-Task link. The edit card has no Run once button. The published definition's saved scope
+  supplies a complete bounded manifest without asking the user to pick files again. One explicit
+  command admits the organizing Task before readiness and executes ready items without a second initial confirmation. Four-type
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
 - **Execution records:** 自动化 → 执行记录 → 查看详情 reads only this execution. Compact rows

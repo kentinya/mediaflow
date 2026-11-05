@@ -16,14 +16,12 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 
 ## Authority and accepted baseline
 
-用户先要求调查来源范围失败、列表运行一次不可用、编辑体验与新建不一致和新建缺少启用选项，
-随后明确要求规划新 Slice，并确认使用下一编号 **Slice49**。用户进一步明确：删除编辑页
-“运行一次”，创建后仍可启用/停用；创建启用的内部命令顺序不作为用户硬要求。用户随后
-明确要求激活 Slice 和 Task。A 先 checkpoint ACTIVE Contract，B 随后确认既有 Task49.1
-草案并转为正式 PLANNED Task；Developer 仅实施正式当前 Task。原激活轮只调整治理状态，
-没有产品代码、B 验收或 A Final Review；现已完成两项 Task、B
-最终验收和下方独立 A 终审。生命周期与测试责任仅遵循
-[Development Workflow](docs/development-workflow.md)。
+用户授权规划并激活 Slice49：修复保存来源、列表直接运行、统一创建/编辑卡片，并允许
+创建时明确选择启用且保留后续启停。A checkpoint ACTIVE Contract 后，B 依次规划/验收
+Task49.1和49.2，Developer 仅实施正式当前 Task；独立 A 终审已接受完整实现范围。
+原规划/激活及完整终审记录保存在
+[关闭 checkpoint](https://github.com/kentinya/mediaflow/blob/7a020b125670e6d5c3ea0b25dc07d89a085b1f06/SLICE.md)。
+生命周期与测试责任仅遵循 [Development Workflow](docs/development-workflow.md)。
 
 Base 是调查时的既有源码基线；纯文档规划/激活提交不重设 Base。Task49.1 原 Task Base
 `129d1c060dea05a91755dbd2ed70632f09655fd4` 同样保留，不因激活重设。
@@ -52,21 +50,12 @@ Base 是调查时的既有源码基线；纯文档规划/激活提交不重设 B
 完整旅程见 [Product Experience CURRENT](docs/product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)，
 技术边界见 [Architecture CURRENT](docs/architecture.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)。
 
-## Investigated gaps
+## Investigation reference
 
-| 现有触发与事实 | 根因及范围判断 |
-|---|---|
-| 非空资源库根 `Incoming`，选择整个库 Run once；空目录、有文件均在 Storage 读取前失败，记录显示“来源范围设置无效” | `automation_run_once.py` 拼接出 `Incoming/`；`automation_definition_execution.py` 以严格相对路径规则拒绝 Task 范围的末尾空段。属于内部路径表示不一致，不能靠放宽危险路径或改成 completed 修补。 |
-| 列表点击运行一次跳详情，详情没有运行按钮 | `AutomationListPage.tsx` 的 `onRunOnce={openDefinition}` 只导航；真实浏览器 mutation 请求为零，编辑页才提交运行命令。 |
-| 新建是中文卡片，编辑是英文长页、小原生输入框和技术说明 | `AutomationCreateDialog` 与有 ID 的 `AutomationLifecyclePage` 是两套表单；上次独立修正明确排除了编辑/详情/Run once。 |
-| 新建无启用选项，提示却说可在列表启用 | 前端始终 enabled=false，后端拒绝 enabled=true 创建；列表也没有直接启用控件。这次选择调整创建结果，并纠正相关入口提示。 |
-
-隔离 API→SQLite→Worker→执行记录探针：空 Storage 根/整个库正常，非空库根/整个库两组
-复现失败，非空库根/子目录与 Scheduler due 对照正常。原有测试库根为空，列表测试只验证
-按钮存在，未覆盖真实点击准入。浏览器已检查桌面和 390px 窄屏。
-调查没有读取用户那条 Task 的运行数据库，不能宣称已核对其具体 ID。
-本地原始材料在 `.git/validation-evidence/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/automation-investigation/`，
-不声称远程可取；本表保留不依赖本地附件的触发与根因。
+原调查沿既有自动化列表、创建/编辑和真实 Run once/due→Task→Worker 入口，确认内部
+范围拼接、导航代替命令及两套表单的缺口。触发、根因、基线和原证据限制完整保留在
+[调查记录](https://github.com/kentinya/mediaflow/blob/7a020b125670e6d5c3ea0b25dc07d89a085b1f06/SLICE.md#investigated-gaps)。
+没有读取用户运行数据库；不宣称核对过其特定历史 Task。
 
 ## RO-1 — 正确、受限且可解释的来源范围
 
@@ -231,77 +220,29 @@ Task49.2和最终 Closure Packet 在
 | 运行及安全，AC-13–15 | PASS。发布/读取/预览不即时准入或变更媒体，后续Scheduler消费真实受限intent；权限丢失/禁用、pins/fences、源所有权、C使用A策略仍为C、四类恢复及成功/不确定不重放有自动化证明。五态/独立文件结果、原时间和统计保留；fresh/同版本重开覆盖。 |
 | 交接与全表面，AC-16 | PASS。Web/API/application/runtime/persistence均纳入；T4、原生、source外安装包/容器和文档证据匹配。原Base、已审实现及既有延期不变，无未解决P0/P1，不另造Task或提前选择下一Slice。 |
 
-### A independently executed
+### Validation summary and evidence
 
-- 仓库根 `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_automation_execution_intent tests.test_v2_automation_lifecycle
-  tests.test_v2_automation_run_once`：**149 tests OK / 59.167秒**。覆盖真实范围消费、权限/
-  发布、核对、Task/Worker及运行结果边界。
-- `web/` 中用 `playwright.python.automation.config.ts` 跑create-dialog/lifecycle/run-once的
-  9项关键原生用例：**9 passed / 15.5秒**。包括真实Incoming媒体整理、连续运行失联核对、
-  发布后同伴变更、编辑退出/提交未知、启用后立即重开与窄屏/键盘/reduced-motion。
-- 独立复跑 B 的原始慢读取探针，只改本地证据输出目录：**1 passed / 3.3秒**。
-  从现有列表创建→编辑启用保存→暂缓真实定义GET回复→立即重开只改名称→保存；请求和
-  SQLite回读仍为enabled=true，没有伪造定义回复或最终状态。检查本轮桌面/390px截图，
-  临时spec已撤出工作树，探针源码保留。首次探针命令因cwd路径错误未启动用例，修正后执行；
-  首轮日志保留，不算产品失败或隐去命令错误。
-- 核对B manifest全部15项文件SHA256匹配；实际source/wheel/container三模块hash一致，
-  精确wheel `eb244e651dc952d94318dd8ac164974e69b901e86e350e60d0c9f923e14974ca`，
-  镜像 `mediaflow:b-task49-2-6baa0e50` / ID
-  `sha256:3cfac7148ba68a383f8ae422b18be279bc29a8ada372bb3ced6d393f13f29666`。
-  未机械重复B全量/发布矩阵。本轮164个本地Markdown链接/锚点检查通过。文档/治理
-  consumer提交前28项中1项按规则拒绝未checkpoint的Contract（其余通过），提交后复验；
-  两轮实际日志保留于 `documentation.log` / `documentation-after-checkpoint.log`，不伪报首轮通过。
+A独立执行 **149项Python / 9项真实Python浏览器 / 1项原始慢GET重开探针**，均通过；
+检查桌面/390px截图、15项B产物manifest和source/wheel/container模块身份。
+关闭checkpoint后的文档/治理测试 **28项通过**。详细命令、精确产物身份、首轮错误与实际
+复验留在[完整A记录](https://github.com/kentinya/mediaflow/blob/7a020b125670e6d5c3ea0b25dc07d89a085b1f06/SLICE.md#final-validation-closure-packet-and-a-final-review)，
+本地原始日志及完成状态见
+`.git/validation-evidence/edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c/a-slice49/review-manifest.json`。
+只在本地可取的材料不宣称远程可用；历史checkpoint中的“本轮不push”仅描述当轮行为。
 
-A本地证据：`.git/validation-evidence/edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c/a-slice49/`；
-`focused-python.log`、`native.log`、`reopen-corrected.log`、probe源码/JSON/截图与review manifest
-可核对实际命令及结果。仅本地可取，不宣称远程可用。
+B最终证据及失败/限制见
+[不可变Closure Packet](https://github.com/kentinya/mediaflow/blob/edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c/TASK.md)：
 
-### B final evidence and retained limits
+- Python全量 **2603项，1失败、7 skip**；唯一失败为Task文档标题，文档修正后对应
+  consumer **8项通过**，其余执行输入不变而复用。原全量命令仍记为失败。
+- Web **1324项 / 92文件通过**，默认E2E **253项通过**；首轮trace输出碰撞与独立目录
+  完整复跑记录保留。原生首轮 **46通过/1失败**（读取超时，具体原因未证实），隔离完整
+  复跑 **47通过**；A关键重开/未知用例也通过，没有新的可重复产品阻塞证据。
+- wheel/smoke/容器安全通过；source外安装消费者与无网络容器各 **24项通过**。
+- 7项skip为合同排除的真实OpenList/SMB/S3及四类Storage耐久性专项；ResourceWarning、
+  构建warning、B49.1与B49.2披露的测试用时偏差、A探针初次cwd错误及提交前治理拒绝
+  均保留，不改写成通过。未知响应注入不等于物理网络分区。
 
-B实际全Python **2603 tests / failures=1 / skipped=7**；唯一失败为Task文档测试分工标题，
-`054602e6`仅修文档后同一文档消费者 **8 tests OK**，其他执行输入未变，合法复用其余证据。
-不把原全量命令写成OK。Web **1324 passed / 92文件**，默认E2E **253 passed**；首轮
-252/1的trace输出ENOENT与独立目录完整复跑均保留。原生首轮 **46 passed / 1 failed**，
-重开编辑读取超过期限；当轮collection GET约10.8秒，具体原因未证实。隔离完整复跑
-**47 passed**；A此次关键重开/未知用例亦通过，尚无可重复产品阻塞证据，原失败trace不删除。
-wheel/smoke/container安全通过，source外安装消费者与无网络容器各 **24 tests OK**。
-
-7项skip仍为未配置真实OpenList/SMB/S3及Local/SMB/OpenList/S3耐久性专项，属既有合同排除。
-ResourceWarning与既有构建warning保留。未知响应是实际发布/准入后的浏览器回复注入，不是
-物理网络分区。未核对用户历史Task数据库；无旧任务修复、跨版本升级、生产外部服务验收或
-部署声明。B49.1测试占比未达用户限制；B49.2本轮活动墙钟642.2/1440.9秒=44.6%，累计
-进程1299.0秒不满足低于50%口径，执行偏差保持披露，不用空等或省门禁修饰。
-
-CURRENT要求、旅程、架构、README/release指引及Slice/Roadmap/Progress/Task指针在本次
-闭环一致对齐。复盘已读A/B/Developer经验；新增一条A可复用核对经验，无新增B/Developer
-条目。此前B49.1-01及B49.2-01/02/03的拒绝、原证据和修正留在Git，不改写历史。
-
-## Planning workspace（原规划记录）
-
-仓库 `/Users/songzhidong/mediaflow`，分支 `main`，起始 HEAD 与 Base 如上。
-治理预检 PASS，tracked 工作树干净，工作区和 Git 可写。保留全部预存 untracked OS 文件、
-`.mgmt.log`/`.t*.log`、`15`、docs/pics 的两张自动化参考图、既有 output 目录/文件与
-各 `.DS_Store`；完整起始清单在同 Base 的本地 `slice49-planning/workspace-before.txt`。
-本次只 checkpoint 本 Contract、必要 TARGET 要求/旅程/架构及 Roadmap/Progress/Task 指针，
-并修正 README / Task Center 文档中指向旧 Slice48 的链接。
-不读取用户运行数据库/私有配置/生产媒体，不改产品代码、不 push/部署/改写历史。
-
-## Activation workspace
-
-仓库 `/Users/songzhidong/mediaflow`，branch `main`，激活起始 HEAD
-`9d70d0c211db1403bbcf536d8e619672ffd8b3d1`；原 Slice / Task Base 不变。治理预检 PASS，
-tracked 工作树干净，工作区/Git可写，预存 untracked 文件完整保留、不入提交；起始清单在
-该起始 HEAD 的本地 `slice49-task49.1-activation/workspace-before.txt`。原 Task Base 到激活
-起点的生产代码/测试/harness diff 为空。此次按用户明确指令先由 A 提交 ACTIVE Contract，
-再由用户指定的 B 代行者确认并正式激活 Task49.1；没有 Developer 实施、B 验收或 A 终审。
-只改变治理状态与事实指针，不读用户数据库/私有配置/生产媒体，不 push/部署/改写历史。
-
-## A review workspace
-
-仓库 `/Users/songzhidong/mediaflow`，main，起点
-`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c`，治理预检PASS、tracked起点干净，工作区/Git可写。
-预存untracked清单保存在A证据 `workspace-before.txt`，全部保留且不入提交。过程中另观察到
-tracked `mediaflow/.DS_Store` 变化，同样保留不入提交；不推断其来源、不恢复覆盖。
-本轮只提交A终审/闭环相关文档；临时probe退出后移除，原证据保留。不读用户运行数据库/
-私有配置/生产媒体，不push、部署、改写历史或规划新Task。
+所有显式延期和原接受范围不变；没有旧Task修复/迁移、跨版本升级、生产外部服务验收、
+发布或部署声明。先前B49.1-01和B49.2-01/02/03拒绝及修正保留在Git。规划、激活、
+工作区清单和详细复盘不再重复到当前合同，见上述关闭checkpoint；当前只保留合同与验收。

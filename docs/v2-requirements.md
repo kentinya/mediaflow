@@ -340,8 +340,9 @@ scoped authorization, checks, supported pins/results/audit and non-replay. React
 restore retired entry points, schemas, executors or dedicated compatibility/history machinery.
 
 The accepted `V2-TASK-011` amendment updates `V2-AUTO-001/007/008` below: three shared runtime
-settings live in System Settings and the unused stale-age parameter is removed. Other rows retain
-their accepted meanings; historical43 delivery/closure is unchanged.
+settings live in System Settings and the unused stale-age parameter is removed. `V2-AUTO-012`
+updates flow/rate/record results; `V2-AUTO-013–015` update creation/editing/direct list Run once.
+The stable rows incorporate these amendments; historical43 delivery/closure is unchanged.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|

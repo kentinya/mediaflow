@@ -12,4 +12,4 @@ B 最终 Closure Packet / Task49.2 PASS：
 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`；
 Task49.1 PASS：`7b7e9aaa24684ee59552ca95641843706dc7680d:TASK.md`。
 既有拒绝、修正、完整测试结果及原始失败/skip均留在 Git 和对应本地证据中。
-本轮仅 A 独立终审与闭环文档，不授权新实施、不介入独立小版本 bug、不 push/部署。
+本通知记录已完成的 A 终审与闭环，不授权新实施或自动选择下一 Slice；独立小版本 bug 仍由 B 按流程处理。

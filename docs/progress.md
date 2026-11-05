@@ -38,51 +38,26 @@ skips and disclosed B test-time deviations remain visible. No new migration/prod
 release or deployment is claimed. `V2-AUTO-013–015` and relevant journeys/contracts are CURRENT;
 frozen V1 and previous Slice acceptance identities are unchanged.
 
-## Prior accepted closure — Slice48
+## Prior acceptance references
 
-Original Base `ba84272721961c970f1eb85d616a0d129523ab92` through accepted implementation
-`a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. [Slice48 Contract/A review](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md#final-validation-closure-packet-and-a-final-review)
-records RO-1–4 / AC-1–16, the original A48-01 rejection and corrected whole-range acceptance.
-B's refreshed packet is preserved at `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md`.
+Original Base/accepted Head, delivered scope and deferrals remain in the ledger below; new
+amendments do not rewrite older acceptance. Detailed prior closure/validation pointers remain at
+[the Slice49 closure checkpoint](https://github.com/kentinya/mediaflow/blob/7a020b125670e6d5c3ea0b25dc07d89a085b1f06/docs/progress.md).
 
-Delivered: five-state Task flow, independent file outcomes and processed progress, technical closure
-without requiring missing Results/effect verification, preserved waiting/cancellation/fences/non-replay,
-and consistent affected Task consumers. Automation due/definition Run once success rate is
-completed/(completed+failed), excluding cancellation/unfinished/manual/ordinary work; execution
-records use current Task flow with independent files and unchanged original times/attempts/effects.
-A48-01's file-derived recovered-status override is corrected. Requirements/journey/architecture/page
-specification are reconciled as CURRENT, with the frozen V1 baseline unchanged.
+| Slice | Immutable Contract / A review | B Closure Packet |
+|---|---|---|
+| 48 | `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e:SLICE.md` | `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md` |
+| 47 | `ba84272721961c970f1eb85d616a0d129523ab92:SLICE.md` | `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md` |
+| 46 | `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md` | `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md` |
+| 45 | `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` | `13ecfc0e75fc34ff0ae489e655124a178943cba4:TASK.md` |
+| 43 | `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md` | `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md` |
 
-A independently ran 314 affected Python tests and 3 real Python browser cases (passed), reran the
-unchanged original existing-entry publication probe with corrected durable/API readback, inspected
-desktop/narrow screenshots and checked B's actual T4/native/artifact evidence. The initial Python
-document-consumer failure plus corrective 8-pass run, Docker mount failure plus shared-directory
-rerun, and seven optional external-service/endurance skips remain disclosed in the packet/Contract.
-No new deferral, cross-version/old-task support, remote validation or production deployment is claimed.
-
-Slice47 remains PASS / CLOSED at original Base `5144ab1fc2344b06194969cc2c496835729664c0` through
-`5134c78b22057781d472e6ebf61a1799d9e40324`; its [Contract/A review](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md)
-and B packet `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md` remain unchanged. Slice46's
-Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`, full B packet
-at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`. Prior closures are not reopened.
-
-The ledger below retains each closure's original Base/accepted Head, delivered scope and deferrals.
-Current amendments may replace behavior without rewriting an older acceptance. Detailed43
-resumption/hold/integration and44 review records are reachable at
-`22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; complete accepted43 Contract/A review
-at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`, refreshed B packet at
-`0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`; accepted45 Contract/Task at
-`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` / `TASK.md`.
-
-Original identities, `frozen/slice-43-2026-10-15` and integration-preservation refs remain unchanged
-in owner-local backups; attribution-update equivalents and exact refs remain in the prior43 Contract.
-External-service/endurance skips, original role/test-allocation exceptions and evidence limitations
-remain disclosed in those packets; they are not erased, waived or recast as a new acceptance.
-
-Testing ownership now follows [Development Workflow](development-workflow.md): Developer runs
-new/changed/affected tests; B owns full acceptance. This process change does not rewrite prior
-acceptance or turn historical validation gaps into passes. Detailed previous pointers, maintenance
-and dated implementation notes remain in Git at `479518e4aff0419da82c667bef6f127936774cec:docs/progress.md`.
+Historical43 hold/resumption/integration and44 review details remain at
+`22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; original identities and preservation
+refs remain in their Contracts and owner-local backups. All earlier failures, skips, evidence limits
+and explicit role/test-allocation exceptions remain disclosed, never erased or recast as acceptance.
+Current test ownership follows [Development Workflow](development-workflow.md), without changing
+past evidence. `docs/history/` stays read-only; no new archive is created.
 
 ## Closure Ledger
 
