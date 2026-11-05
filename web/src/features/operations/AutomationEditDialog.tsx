@@ -46,6 +46,7 @@ import {
 } from "../../shared/api/api-client";
 import { automationListQueryKey } from "./automation-query";
 import type {
+  AutomationActiveIdentityModel,
   AutomationPublicationModel,
   AutomationEditProjectionModel,
 } from "../../entities/operations/automation-lifecycle";
@@ -107,6 +108,27 @@ interface FormEntry {
   readonly key: FormContextKey;
   readonly form: FormState;
   readonly authority: CandidateAuthority;
+}
+
+/**
+ * The exact publication fence one Active identity offers. An identity that
+ * cannot name its revision or digest offers no fence at all, so no command is
+ * ever composed against a half-read Active.
+ */
+function candidateAuthorityOf(
+  active: {
+    readonly revisionId: string;
+    readonly revisionSequence: number;
+    readonly digest: string;
+  } | null,
+): CandidateAuthority | null {
+  if (active === null) return null;
+  if (active.revisionId.length === 0 || active.digest.length === 0) return null;
+  return {
+    revisionId: active.revisionId,
+    version: active.revisionSequence,
+    digest: active.digest,
+  };
 }
 
 /**
@@ -324,32 +346,69 @@ export function AutomationEditDialog({
         : null;
 
   const activeIdentity = authorityModel?.active ?? null;
-  const latestAuthority: CandidateAuthority | null =
-    activeIdentity !== null
-      ? {
-          revisionId: activeIdentity.revisionId,
-          version: activeIdentity.revisionSequence,
-          digest: activeIdentity.digest,
-        }
+  // The newest Active any read reported. It only decides whether a retained
+  // candidate is stale; it is never the fence of values it was not read with.
+  const latestAuthority = candidateAuthorityOf(activeIdentity);
+  // The exact Active the loaded definition was read with. The edit projection
+  // resolves both in one request, so this — never the separately read authority
+  // — is the only fence those values may be published against. The authority
+  // read can legitimately be newer (a peer published in between); pairing it
+  // with these values would publish the older fields onto the newer revision and
+  // silently undo the peer's change.
+  const loadedAuthority: CandidateAuthority | null =
+    loadedForRoute !== null &&
+    editQueryResult !== undefined &&
+    editQueryResult.ok
+      ? candidateAuthorityOf(editQueryResult.model.active)
       : null;
-  // The command fence: exactly the authority snapshot the retained candidate
-  // was composed against. When the operator has not touched the form, the
-  // candidate is the freshly loaded definition and its snapshot is the latest
-  // observed authority. Once input is retained, the snapshot is pinned to that
-  // retained input — a refresh must never silently repin it.
+  // The command fence: exactly the authority snapshot the candidate was
+  // composed against. A loaded definition carries its own read's Active; once
+  // input is retained, the snapshot is pinned to that retained input — a
+  // refresh must never silently repin it.
   const candidateAuthority: CandidateAuthority | null =
     formEntry !== null && formEntry.key === formContextKey
       ? formEntry.authority
-      : latestAuthority;
-  // The retained candidate is stale when the Active moved after this input was
-  // observed. It is surfaced truthfully instead of silently repinned: the
-  // operator reviews the current values and re-adopts them deliberately.
+      : loadedAuthority;
+  // The retained candidate is stale when a read observed an Active newer than
+  // the one this input was composed against. It is surfaced truthfully instead
+  // of silently repinned: the operator reviews the current values and re-adopts
+  // them deliberately. A read that is *older* than the retained fence (the
+  // dialog's authority query can lag behind a definition re-read) is not
+  // evidence of a concurrent change, so it never disables a current candidate.
+  const newestObservedActiveVersion = Math.max(
+    latestAuthority?.version ?? -1,
+    loadedAuthority?.version ?? -1,
+  );
   const candidateIsStale =
     formEntry !== null &&
     formEntry.key === formContextKey &&
-    latestAuthority !== null &&
-    (formEntry.authority.revisionId !== latestAuthority.revisionId ||
-      formEntry.authority.digest !== latestAuthority.digest);
+    newestObservedActiveVersion > formEntry.authority.version;
+  // A confirmed command publishes one exact definition onto one exact Active.
+  // Seeding the definition projection with that same pair keeps the values and
+  // the fence the next open backfills from one read even when the following
+  // definition read is slow: the confirmed Save's fields are never joined to a
+  // separately cached Active. The projection is re-read from durable state on
+  // the next open as usual; this seeded pair only fills the gap until then.
+  const seedDefinitionProjection = (
+    definition: AutomationDefinitionDocumentModel,
+    active: AutomationActiveIdentityModel,
+  ) => {
+    queryClient.setQueryData(
+      ["operations.automation-lifecycle-edit", definition.id],
+      {
+        ok: true as const,
+        status: 200,
+        model: {
+          definition,
+          active,
+          definitionState: "active" as const,
+          // The fingerprint is backend-computed evidence this command did not
+          // receive, so it stays unknown instead of being invented.
+          definitionFingerprint: null,
+        },
+      },
+    );
+  };
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void queryClient.invalidateQueries({
@@ -482,6 +541,7 @@ export function AutomationEditDialog({
           JSON.stringify({ ...liveForm, id: input.targetId }) !==
             JSON.stringify({ ...input.form, id: input.targetId });
         if (changedAfterSubmit) {
+          seedDefinitionProjection(saved, result.model.active);
           acceptPublication(
             result.model,
             input.form,
@@ -503,8 +563,10 @@ export function AutomationEditDialog({
         }
         // The confirmed Save returns to the original list: the list refreshes
         // its real rows/statistics and the card closes. Nothing is replayed.
-        // The observed Active identity advances to the confirmed publication
+        // The confirmed definition and the Active it was published onto are the
+        // next open's backfill pair, and the observed Active identity advances
         // so an immediate re-open never fences against the older snapshot.
+        seedDefinitionProjection(saved, result.model.active);
         updateAuthorityCache(result.model.active);
         card.bypassBlockerRef.current = true;
         card.releaseBlockedNavigation();
@@ -559,6 +621,14 @@ export function AutomationEditDialog({
     onSuccess: (result, input) => {
       if (result.ok) {
         setPendingPublication(null);
+        if (result.model.definition !== null) {
+          // An enable/disable publishes the whole definition onto the new
+          // Active, so this pair is the exact state the next open backfills.
+          seedDefinitionProjection(
+            result.model.definition,
+            result.model.active,
+          );
+        }
         acceptPublication(
           result.model,
           input.form,
@@ -613,7 +683,11 @@ export function AutomationEditDialog({
         const published = result.model.publication;
         if (currentState === "current" && currentActive !== null) {
           // The proved publication is still the saved state: the reviewed
-          // candidate may adopt the current Active as its exact baseline.
+          // candidate may adopt the current Active as its exact baseline, and
+          // the pair it proved is what the next open backfills.
+          if (published.definition !== null) {
+            seedDefinitionProjection(published.definition, currentActive);
+          }
           acceptPublication(
             published,
             createFormFromPublication(pending, browserZone.timeZone),
@@ -823,7 +897,10 @@ export function AutomationEditDialog({
     principalId !== null &&
     authorityModel !== null &&
     activeIdentity !== null &&
-    activeIdentity.digest.length > 0;
+    activeIdentity.digest.length > 0 &&
+    // The route's form must also carry the fence its own values were read
+    // with: without that pair no command may be composed at all.
+    candidateAuthority !== null;
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId;
   const copyBlocked = pendingCopyIntent !== null;

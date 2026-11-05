@@ -1132,3 +1132,123 @@ test("the edit card fits a narrow viewport and stays keyboard operable", async (
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toHaveCount(0);
 });
+
+test("re-editing right after an enabled save keeps the saved values and fence", async ({
+  page,
+}) => {
+  // B49.2-03: enable and save from the row edit card, then immediately edit the
+  // same definition again and change only its Name. The card's backfill and the
+  // fence it submits are one read, so the second Save can never publish the
+  // previous projection's fields onto the newer Active and silently disable the
+  // definition the operator just enabled.
+  await publishNewDefinition(page);
+
+  interface Submitted {
+    readonly object: Record<string, unknown>;
+    readonly expectedRevisionId: string;
+  }
+  const writes: Submitted[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "PUT" &&
+      url.pathname ===
+        `/api/v1/operations/automation/definitions/${DEFINITION_ID}`
+    ) {
+      writes.push(request.postDataJSON() as Submitted);
+    }
+  });
+
+  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  const rowFor = (text: string) =>
+    page.getByRole("row").filter({ hasText: text });
+  const openRowEdit = async (text: string) => {
+    await rowFor(text).getByRole("button", { name: "编辑" }).click();
+    await expect(
+      page.getByRole("heading", { name: "编辑自动化任务" }),
+    ).toBeVisible();
+  };
+
+  // One checked Save enables the definition and changes its limit.
+  await openRowEdit("Harness automation");
+  await page.getByLabel(/任务名称/).fill("启用后的定义");
+  await page.getByLabel("处理上限").fill("7");
+  await page.getByLabel("启用定时计划").check();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(
+    page.getByRole("heading", { name: "已保存并启用" }),
+  ).toBeVisible();
+  let state = await harnessState(page);
+  expect(
+    state.definitions.find((item) => item.id === DEFINITION_ID),
+  ).toMatchObject({ name: "启用后的定义", enabled: true, itemLimit: 7 });
+  const fenceAfterFirstSave = state.activeRevisionId;
+
+  // The immediate re-open reads the definition slowly: the card is first
+  // rendered from its cached projection. Everything it offers must be the
+  // confirmed Save's own values and fence, never the cached "disabled, limit 5"
+  // fields joined to the newer Active.
+  await page.route(
+    `**/api/v1/operations/automation/definitions/${DEFINITION_ID}`,
+    async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      await route.continue();
+    },
+  );
+  await openRowEdit("启用后的定义");
+  // Snapshot, not an auto-retrying matcher: this is what the card offers while
+  // its definition read is still in flight.
+  expect(await page.getByLabel(/任务名称/).inputValue()).toBe("启用后的定义");
+  expect(await page.getByLabel("处理上限").inputValue()).toBe("7");
+  expect(await page.getByLabel("启用定时计划").isChecked()).toBe(true);
+  // Act while the read is still in flight: only the Name changes.
+  await page.getByLabel(/任务名称/).fill("只改名称（慢读）");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(
+    page.getByRole("heading", { name: "已保存并启用" }),
+  ).toBeVisible();
+  state = await harnessState(page);
+  expect(
+    state.definitions.find((item) => item.id === DEFINITION_ID),
+  ).toMatchObject({ name: "只改名称（慢读）", enabled: true, itemLimit: 7 });
+  const fenceAfterSecondSave = state.activeRevisionId;
+  await page.unroute(
+    `**/api/v1/operations/automation/definitions/${DEFINITION_ID}`,
+  );
+
+  // The same journey on a normal read: re-open, change only the Name, save.
+  await openRowEdit("只改名称（慢读）");
+  expect(await page.getByLabel(/任务名称/).inputValue()).toBe(
+    "只改名称（慢读）",
+  );
+  expect(await page.getByLabel("处理上限").inputValue()).toBe("7");
+  await expect(page.getByLabel("启用定时计划")).toBeChecked();
+  await page.getByLabel(/任务名称/).fill("只改名称（正常读）");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  state = await harnessState(page);
+  expect(
+    state.definitions.find((item) => item.id === DEFINITION_ID),
+  ).toMatchObject({ name: "只改名称（正常读）", enabled: true, itemLimit: 7 });
+
+  // Every command carried the confirmed definition, and each fence is the exact
+  // Active the previous confirmed save produced — never the older read.
+  expect(writes).toHaveLength(3);
+  expect(writes.map((write) => write.object.enabled)).toEqual([
+    true,
+    true,
+    true,
+  ]);
+  expect(writes.slice(1).map((write) => write.object.itemLimit)).toEqual([
+    7, 7,
+  ]);
+  expect(writes[1]?.expectedRevisionId).toBe(fenceAfterFirstSave);
+  expect(writes[2]?.expectedRevisionId).toBe(fenceAfterSecondSave);
+  expect(fenceAfterFirstSave).not.toBe(fenceAfterSecondSave);
+});

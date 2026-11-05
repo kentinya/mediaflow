@@ -1245,6 +1245,246 @@ describe("AutomationLifecyclePage", () => {
     expect(save.object.name).toBe("Nightly");
   });
 
+  it("re-opens only the confirmed save's own values and fence while the definition read is slow", async () => {
+    // P1 regression (B49.2-03): enable and save from the edit card, then
+    // immediately edit the same definition again and change only its Name.
+    // The next definition read is slow, so the card is first rendered from the
+    // cached projection. The backfilled values and the publication fence must
+    // still be the confirmed save's own pair: the older cached fields joined to
+    // the newer Active would silently publish the definition as disabled.
+    let saved = definition();
+    let active = ACTIVE;
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url.endsWith("/automation/definitions") && call.method === "GET")
+        return jsonResponse({ ...formAuthority(), active });
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      )
+        return jsonResponse({ ...editProjection(), definition: saved, active });
+      if (call.method === "PUT") {
+        // The real authority refuses a candidate whose fence is not its own
+        // observed Active; the fake enforces the same rule.
+        if (call.body?.expectedRevisionId !== active.revisionId) {
+          return jsonResponse({ error: { code: "active_changed" } }, 409);
+        }
+        saved = definition(call.body?.object as Record<string, unknown>);
+        active = {
+          ...active,
+          revisionId: `confirmed-${calls.filter((item) => item.method === "PUT").length}`,
+          revisionSequence: active.revisionSequence + 1,
+          digest: "d".repeat(64),
+        };
+        return jsonResponse({ ...publication("save", saved), active });
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "编辑自动化任务" });
+    await userEvent.clear(screen.getByLabelText(/任务名称/));
+    await userEvent.type(screen.getByLabelText(/任务名称/), "启用并保存");
+    await userEvent.clear(screen.getByLabelText("处理上限"));
+    await userEvent.type(screen.getByLabelText("处理上限"), "12");
+    await userEvent.click(screen.getByLabelText("启用定时计划"));
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(saved.enabled).toBe(true));
+    expect(saved.name).toBe("启用并保存");
+    const confirmedRevision = active.revisionId;
+
+    // The immediate re-open reads the definition slowly: everything the card
+    // offers must come from the confirmed save's own pair, not the previous
+    // projection joined to the newer Active.
+    const readFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          init?.method === "GET" &&
+          String(input).endsWith("/automation/definitions/nightly")
+        ) {
+          return new Promise<Response>(() => {});
+        }
+        return readFetch(input, init);
+      }),
+    );
+    await router.navigate({
+      to: "/operations/automation/lifecycle/$definitionId",
+      params: { definitionId: "nightly" },
+    });
+    const reopened = await screen.findByLabelText(/任务名称/);
+    await waitFor(() => expect(reopened).toHaveValue("启用并保存"));
+    expect(screen.getByLabelText("处理上限")).toHaveValue("12");
+    expect(screen.getByLabelText("启用定时计划")).toBeChecked();
+
+    await userEvent.clear(reopened);
+    await userEvent.type(reopened, "只改名称");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saved.name).toBe("只改名称"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const writes = calls.filter((call) => call.method === "PUT");
+    expect(writes).toHaveLength(2);
+    expect(writes[1]?.body?.expectedRevisionId).toBe(confirmedRevision);
+    // Only the Name changed, so the enablement chosen in the previous confirmed
+    // save survives the second Save.
+    expect((writes[1]?.body?.object as Record<string, unknown>).enabled).toBe(
+      true,
+    );
+    expect((writes[1]?.body?.object as Record<string, unknown>).itemLimit).toBe(
+      12,
+    );
+    expect(saved.enabled).toBe(true);
+  });
+
+  it("never publishes an older definition read on a newer Active's fence", async () => {
+    // P1 regression (B49.2-03): the authority read can legitimately observe a
+    // newer Active than the definition projection the card backfilled from.
+    // The exact values and their fence are one read, so the card can never
+    // submit the older fields against the newer revision: it reports the stale
+    // candidate, publishes nothing, and only a deliberate re-read of the
+    // current values is published.
+    const peerActive = {
+      ...ACTIVE,
+      revisionId: "revision-peer",
+      version: 7,
+      revisionSequence: 6,
+      digest: "c".repeat(64),
+    };
+    let peerRead = false;
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url.endsWith("/automation/definitions") && call.method === "GET")
+        return jsonResponse({ ...formAuthority(), active: peerActive });
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      )
+        return peerRead
+          ? jsonResponse({
+              ...editProjection(),
+              definition: definition({ itemLimit: 9 }),
+              active: peerActive,
+            })
+          : jsonResponse(editProjection());
+      if (call.method === "PUT") {
+        if (call.body?.expectedRevisionId !== peerActive.revisionId) {
+          return jsonResponse({ error: { code: "active_changed" } }, 409);
+        }
+        return jsonResponse({
+          ...publication(
+            "save",
+            definition(call.body?.object as Record<string, unknown>),
+          ),
+          active: peerActive,
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    const name = await screen.findByLabelText(/\u4efb\u52a1\u540d\u79f0/);
+    await waitFor(() => expect(name).toHaveValue("Nightly"));
+    // The values shown are the ones the projection read together with its own
+    // Active; the newer authority Active is never joined to them.
+    expect(screen.getByLabelText("\u5904\u7406\u4e0a\u9650")).toHaveValue("10");
+    await userEvent.clear(name);
+    await userEvent.type(name, "\u4e0d\u5e94\u53d1\u5e03");
+    await screen.findByText(
+      /\u672a\u4fdd\u5b58\u7684\u4fee\u6539\u57fa\u4e8e\u8f83\u65e7\u7684\u914d\u7f6e/,
+    );
+    expect(screen.getByRole("button", { name: "\u4fdd\u5b58" })).toBeDisabled();
+    expect(calls.some((call) => call.method === "PUT")).toBe(false);
+    // The deliberate re-read adopts the peer's current values with the Active
+    // they were read with, so the next Save is fenced exactly.
+    peerRead = true;
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "\u6838\u5bf9\u5f53\u524d\u503c\u5e76\u91c7\u7528",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("\u5904\u7406\u4e0a\u9650")).toHaveValue(
+        "9",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "\u4fdd\u5b58" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58" }));
+    await waitFor(() =>
+      expect(calls.some((call) => call.method === "PUT")).toBe(true),
+    );
+    const write = calls.find((call) => call.method === "PUT");
+    expect(write?.body?.expectedRevisionId).toBe("revision-peer");
+    expect((write?.body?.object as Record<string, unknown>).itemLimit).toBe(9);
+  });
+
+  it("keeps a candidate composed from a newer projection savable", async () => {
+    // The definition projection can legitimately be re-read after a peer
+    // publication while this dialog's authority query still reports the older
+    // Active. Input composed against those newer values is current, so the page
+    // must not report it as stale or block it: the Save carries the projection's
+    // own fence and the peer's field survives.
+    const newerActive = {
+      ...ACTIVE,
+      revisionId: "revision-newer",
+      version: 5,
+      revisionSequence: 4,
+      digest: "e".repeat(64),
+    };
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url.endsWith("/automation/definitions") && call.method === "GET")
+        return jsonResponse({ ...formAuthority(), active: ACTIVE });
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      )
+        return jsonResponse({
+          ...editProjection(),
+          definition: definition({ itemLimit: 9 }),
+          active: newerActive,
+        });
+      if (call.method === "PUT") {
+        return jsonResponse({
+          ...publication(
+            "save",
+            definition(call.body?.object as Record<string, unknown>),
+          ),
+          active: newerActive,
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    const name = await screen.findByLabelText(/\u4efb\u52a1\u540d\u79f0/);
+    await waitFor(() => expect(name).toHaveValue("Nightly"));
+    await userEvent.type(name, " retained");
+    expect(
+      screen.queryByText(
+        /\u672a\u4fdd\u5b58\u7684\u4fee\u6539\u57fa\u4e8e\u8f83\u65e7\u7684\u914d\u7f6e/,
+      ),
+    ).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58" }));
+    await waitFor(() =>
+      expect(calls.some((call) => call.method === "PUT")).toBe(true),
+    );
+    const write = calls.find((call) => call.method === "PUT");
+    expect(write?.body?.expectedRevisionId).toBe("revision-newer");
+    expect((write?.body?.object as Record<string, unknown>).itemLimit).toBe(9);
+  });
+
   it("keeps an unknown Copy outcome blocking after a real page reload", async () => {
     // P1 regression: a Copy whose response was lost stays unknown across a
     // reload. The intent persists in session storage (identity + observed
