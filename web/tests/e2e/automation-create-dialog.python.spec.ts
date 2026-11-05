@@ -118,6 +118,95 @@ async function expectListPositionRestored(
   expect(url.pathname + url.search).toBe(expectedPath);
 }
 
+/**
+ * Record real animation frames while a card opens. The sampler observes the
+ * background scroll/geometry and the card's viewport box, so a first-frame
+ * short shell, a reset-to-top or a scrollbar-width reflow becomes visible
+ * rather than being hidden by a settled final screenshot.
+ */
+async function startOpenSampler(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface FrameSample {
+      readonly at: number;
+      readonly scrollY: number;
+      readonly headingX: number | null;
+      readonly headingWidth: number | null;
+      readonly cardTop: number | null;
+      readonly cardHeight: number | null;
+      readonly bodyPaddingRight: string;
+    }
+    const samples: FrameSample[] = [];
+    const started = performance.now();
+    let stopped = false;
+    const tick = () => {
+      const heading = document.querySelector<HTMLElement>(
+        ".mf-automation-workspace h2",
+      );
+      const card = document.querySelector<HTMLElement>(
+        ".mf-automation-create-dialog",
+      );
+      const headingBox = heading?.getBoundingClientRect() ?? null;
+      const cardBox = card?.getBoundingClientRect() ?? null;
+      samples.push({
+        at: performance.now() - started,
+        scrollY: window.scrollY,
+        headingX: headingBox === null ? null : Math.round(headingBox.x),
+        headingWidth: headingBox === null ? null : Math.round(headingBox.width),
+        cardTop: cardBox === null ? null : Math.round(cardBox.top),
+        cardHeight: cardBox === null ? null : Math.round(cardBox.height),
+        bodyPaddingRight: document.body.style.paddingRight,
+      });
+      if (!stopped && performance.now() - started < 4_000) {
+        requestAnimationFrame(tick);
+      }
+    };
+    (
+      window as unknown as {
+        __openSampler: { samples: FrameSample[]; stop: () => void };
+      }
+    ).__openSampler = {
+      samples,
+      stop: () => {
+        stopped = true;
+      },
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+async function stopOpenSampler(page: Page): Promise<
+  {
+    at: number;
+    scrollY: number;
+    headingX: number | null;
+    headingWidth: number | null;
+    cardTop: number | null;
+    cardHeight: number | null;
+    bodyPaddingRight: string;
+  }[]
+> {
+  return page.evaluate(() => {
+    const sampler = (
+      window as unknown as {
+        __openSampler: {
+          samples: {
+            at: number;
+            scrollY: number;
+            headingX: number | null;
+            headingWidth: number | null;
+            cardTop: number | null;
+            cardHeight: number | null;
+            bodyPaddingRight: string;
+          }[];
+          stop: () => void;
+        };
+      }
+    ).__openSampler;
+    sampler.stop();
+    return sampler.samples;
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.request.post("/__harness__/reset-automation-definitions");
   await page.request.post("/__harness__/restore-source-media");
@@ -806,11 +895,29 @@ test("a proved create reconciliation reports the current saved state after a pee
   expect(after.occurrenceTotal).toBe(0);
 });
 
-test("opens create and edit cards without moving the Automation list background", async ({
+test("opens create and edit cards from a scrolled list without moving or resizing the background", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1536, height: 900 });
+  // The app's CSP allows only same-origin styles, so the test adds its classic
+  // scrollbar stylesheet through a same-origin route rather than inline style.
+  await page.route("**/test-scrollbars.css", async (route) => {
+    await route.fulfill({
+      contentType: "text/css",
+      body: "html{overflow-y:scroll!important;scrollbar-gutter:stable}::-webkit-scrollbar{width:15px;height:15px}::-webkit-scrollbar-thumb{background:#c8d2e0}",
+    });
+  });
   await connectOn(page, "/ui-v2/operations/automation");
+  await page.evaluate(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "/test-scrollbars.css";
+    document.head.append(link);
+  });
+  await page.waitForFunction(
+    () => getComputedStyle(document.documentElement).overflowY === "scroll",
+  );
+
   const heading = page.getByRole("heading", {
     name: "自动化",
     exact: true,
@@ -818,46 +925,161 @@ test("opens create and edit cards without moving the Automation list background"
   });
   await expect(heading).toBeVisible();
   await expect(page.locator(".mf-page-context")).toHaveCount(0);
-  const background = await heading.boundingBox();
-  expect(background).not.toBeNull();
 
-  // The canonical creation route renders the same list behind its card, with
-  // no extra location line and no shift of the background heading.
+  // Publish one real definition so both the create and edit entries are real.
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await openCreateCard(page);
-  await expect(page).toHaveURL(/\/operations\/automation\/lifecycle(\?.*)?$/);
-  await expect(page.locator(".mf-page-context")).toHaveCount(0);
-  const createBox = await heading.boundingBox();
-  expect(createBox).not.toBeNull();
-  expect(
-    Math.abs((createBox?.y ?? -1) - (background?.y ?? 0)),
-  ).toBeLessThanOrEqual(1);
-  await page.getByRole("button", { name: "取消" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
-
-  // Publish one real definition so the edit route is a real route.
-  await page.getByRole("link", { name: "新建自动化任务" }).click();
-  await openCreateCard(page);
-  await page.getByLabel(/任务名称/).fill("背景定位");
+  await page.getByLabel(/任务名称/).fill("滚动背景");
   await page.getByLabel(/资源库/).selectOption({ index: 1 });
   await page.getByLabel("处理上限").fill("5");
   await page.getByRole("button", { name: "创建任务" }).click();
   await expect(
     page.getByRole("heading", { name: "创建成功，尚未启用" }),
   ).toBeVisible();
-  const listBox = await heading.boundingBox();
-  const row = page.getByRole("row").filter({ hasText: "背景定位" });
+  await expect(page.locator(".mf-automation-create-layer")).toHaveCount(0);
+
+  // Narrow the viewport only as far as needed so a real scrolled list exists.
+  for (const height of [900, 760, 620, 500]) {
+    await page.setViewportSize({ width: 1536, height });
+    const available = await page.evaluate(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    );
+    if (available >= 60) break;
+  }
+  await page.getByRole("link", { name: "新建自动化任务" }).focus();
+  const targetY = Math.min(
+    90,
+    await page.evaluate(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    ),
+  );
+  expect(targetY).toBeGreaterThan(20);
+  await page.evaluate((top) => window.scrollTo(0, top), targetY);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
+  const gutter = await page.evaluate(() => {
+    const htmlGutter = window.innerWidth - document.documentElement.clientWidth;
+    const bodyGutter =
+      document.body.clientWidth > 0
+        ? window.innerWidth - document.body.clientWidth
+        : 0;
+    return Math.max(htmlGutter, bodyGutter);
+  });
+  expect(gutter).toBeGreaterThan(0);
+  const entry = page.getByRole("link", { name: "新建自动化任务" });
+  // Keyboard activation keeps the operator's scroll: the entry received focus
+  // before scrolling and activating it does not auto-scroll the background.
+  await expect(entry).toBeFocused();
+
+  // A slow, real authority read keeps the card/background stable.
+  await page.route(
+    "**/api/v1/operations/automation/definitions",
+    async (route) => {
+      if (route.request().method() === "GET") {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      await route.continue();
+    },
+  );
+  await startOpenSampler(page);
+  await page.keyboard.press("Enter");
+  // The slow permission read has a visible, content-shaped waiting state.
+  await expect(
+    page.getByText("正在读取当前配置与创建权限…").first(),
+  ).toBeVisible();
+  await expect(page.getByLabel(/任务名称/)).toBeVisible();
+  await page.waitForTimeout(350);
+  const createFrames = await stopOpenSampler(page);
+  const createCards = createFrames.filter((frame) => frame.cardTop !== null);
+  expect(createCards.length).toBeGreaterThan(3);
+  // Frames after the intended 220ms enter animation: a loading shell that is
+  // replaced by a taller form would still change the box here.
+  const settledCreate = createCards.filter((frame) => frame.at >= 300);
+  expect(settledCreate.length).toBeGreaterThan(3);
+  expect(new Set(settledCreate.map((frame) => frame.cardTop)).size).toBe(1);
+  expect(new Set(settledCreate.map((frame) => frame.cardHeight)).size).toBe(1);
+  // The very first card frame already reserves the full card, not a short
+  // banner-like shell.
+  const firstCreateHeight = createCards[0]?.cardHeight ?? 0;
+  const finalCreateHeight = settledCreate.at(-1)?.cardHeight ?? 0;
+  expect(firstCreateHeight / finalCreateHeight).toBeGreaterThan(0.9);
+  expect(
+    Math.min(...createFrames.map((frame) => frame.scrollY)),
+  ).toBeGreaterThanOrEqual(targetY);
+  expect(
+    Math.max(...createFrames.map((frame) => frame.scrollY)),
+  ).toBeLessThanOrEqual(targetY);
+  const headingBoxes = createFrames
+    .filter((frame) => frame.headingX !== null)
+    .map((frame) => `${frame.headingX}:${frame.headingWidth}`);
+  expect(new Set(headingBoxes).size).toBe(1);
+  // The scrollbar gutter was reserved rather than removed.
+  expect(
+    createFrames.some(
+      (frame) =>
+        frame.bodyPaddingRight !== "" &&
+        frame.bodyPaddingRight === `${gutter}px`,
+    ),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(entry).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
+  await page.unroute("**/api/v1/operations/automation/definitions");
+
+  // Edit uses the same overlay guarantee with a slow real definition read and
+  // reduced motion; the already-scrolled list must not move at all.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route(
+    /\/api\/v1\/operations\/automation\/definitions\/[^/]+$/,
+    async (route) => {
+      if (route.request().method() === "GET") {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      await route.continue();
+    },
+  );
+  const row = page.getByRole("row").filter({ hasText: "滚动背景" });
+  await expect(row).toBeVisible();
+  await page.evaluate((top) => window.scrollTo(0, top), targetY);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
+  await startOpenSampler(page);
   await row.getByRole("button", { name: "编辑" }).click();
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/operations\/automation\/lifecycle\/.+/);
-  await expect(page.locator(".mf-page-context")).toHaveCount(0);
-  const editBox = await heading.boundingBox();
-  expect(editBox).not.toBeNull();
-  expect(Math.abs((editBox?.y ?? -1) - (listBox?.y ?? 0))).toBeLessThanOrEqual(
-    1,
-  );
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("滚动背景");
+  await page.waitForTimeout(350);
+  const editFrames = await stopOpenSampler(page);
+  const editCards = editFrames.filter((frame) => frame.cardTop !== null);
+  expect(editCards.length).toBeGreaterThan(3);
+  const settledEdit = editCards.filter((frame) => frame.at >= 300);
+  expect(settledEdit.length).toBeGreaterThan(3);
+  expect(new Set(settledEdit.map((frame) => frame.cardTop)).size).toBe(1);
+  expect(new Set(settledEdit.map((frame) => frame.cardHeight)).size).toBe(1);
+  const firstEditHeight = editCards[0]?.cardHeight ?? 0;
+  const finalEditHeight = settledEdit.at(-1)?.cardHeight ?? 0;
+  expect(firstEditHeight / finalEditHeight).toBeGreaterThan(0.9);
+  expect(
+    Math.min(...editFrames.map((frame) => frame.scrollY)),
+  ).toBeGreaterThanOrEqual(targetY);
+  expect(
+    Math.max(...editFrames.map((frame) => frame.scrollY)),
+  ).toBeLessThanOrEqual(targetY);
+  expect(
+    new Set(
+      editFrames
+        .filter((frame) => frame.headingX !== null)
+        .map((frame) => `${frame.headingX}:${frame.headingWidth}`),
+    ).size,
+  ).toBe(1);
+
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
+  await expect(
+    page.getByRole("button", { name: "编辑", exact: true }).first(),
+  ).toBeFocused();
 });
 
 test("renders the shared enable switch on the limit control row at both widths", async ({

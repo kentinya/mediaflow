@@ -4018,6 +4018,12 @@ button.mf-grid-button {
   font-size: 0.95rem;
 }
 
+/* Long configured roots and provider paths stay readable in the narrow card. */
+.mf-storage-detail-section p,
+.mf-storage-detail-section li {
+  overflow-wrap: anywhere;
+}
+
 .mf-storage-check {
   margin: 8px 0;
 }
@@ -6694,6 +6700,13 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   width: min(760px, 100%);
+  /*
+   * V2-UX-013: the card owns one stable viewport-relative height for the
+   * permission read, the short error/refusal states and the complete form.
+   * The loading shell, header, close button and footer therefore keep their
+   * position while the body changes; long form content scrolls inside.
+   */
+  height: min(90dvh, 880px);
   max-height: min(90dvh, 880px);
   overflow: hidden;
   border: 1px solid #dfe6ef;
@@ -6904,6 +6917,53 @@ tr[aria-selected="true"] {
   color: #5f6b7d;
   font-size: 12.5px;
   line-height: 1.55;
+}
+
+/*
+ * The permission/definition read occupies the same bounded card as the form.
+ * Static skeleton lines make that waiting state intentional instead of a blank
+ * tall shell; they are not an animation gate or a fake progress signal.
+ */
+.mf-automation-create-loading {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 18px 24px 8px;
+}
+
+.mf-automation-create-loading p {
+  margin: 0 0 4px;
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-automation-create-loading-line {
+  display: block;
+  height: 14px;
+  border-radius: 7px;
+  background: #eef2f7;
+}
+
+.mf-automation-create-loading-line:nth-child(2) {
+  width: 92%;
+}
+
+.mf-automation-create-loading-line:nth-child(3) {
+  width: 68%;
+}
+
+.mf-automation-create-loading-line:nth-child(4) {
+  width: 84%;
+}
+
+.mf-automation-create-loading-line:nth-child(5) {
+  width: 56%;
+}
+
+/* With no form yet, the only reachable action stays at the card's bottom edge. */
+.mf-automation-create-loading + .mf-automation-create-footer {
+  margin-top: auto;
 }
 
 .mf-automation-create-field-error {
@@ -7350,6 +7410,7 @@ tr[aria-selected="true"] {
 
   .mf-automation-create-dialog {
     width: 100%;
+    height: calc(100dvh - 16px);
     max-height: calc(100dvh - 16px);
     border-radius: 12px;
   }
@@ -7405,6 +7466,7 @@ tr[aria-selected="true"] {
   }
 
   .mf-automation-create-dialog {
+    height: calc(100dvh - 8px);
     max-height: calc(100dvh - 8px);
   }
 
@@ -7435,4 +7497,334 @@ tr[aria-selected="true"] {
   .mf-automation-run-once-feedback {
     animation: none;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared modal card (Slice50 RO-2)                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The Storage view/add/edit cards reuse the Automation card's visual grammar
+ * through these feature-independent classes. The card keeps a stable
+ * viewport-relative height across loading, failure and ready content so the
+ * centered position never jumps between a short shell and a tall form.
+ */
+.mf-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.mf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 22, 44, 0.52);
+  animation: mf-automation-create-fade-in 200ms ease-out both;
+}
+
+.mf-modal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: min(88dvh, 820px);
+  max-height: min(88dvh, 820px);
+  overflow: hidden;
+  border: 1px solid #dfe6ef;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 24px 64px rgba(9, 18, 38, 0.3);
+  animation: mf-automation-create-enter 220ms cubic-bezier(0.22, 1, 0.36, 1)
+    both;
+}
+
+.mf-modal-card-detail {
+  width: min(680px, 100%);
+}
+
+.mf-modal-layer-exiting .mf-modal-backdrop {
+  animation: mf-automation-create-fade-out 160ms ease-in both;
+}
+
+.mf-modal-layer-exiting .mf-modal-card {
+  animation: mf-automation-create-exit 160ms ease-in both;
+}
+
+.mf-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mf-modal-header h2 {
+  margin: 0;
+  color: #0e1728;
+  font-size: 21px;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+.mf-modal-header p {
+  margin: 5px 0 0;
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-modal-close {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5f6b7d;
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.mf-modal-close:hover,
+.mf-modal-close:focus {
+  background: #f0f3f8;
+  color: #14223c;
+}
+
+.mf-modal-close:focus-visible {
+  outline: 2px solid #1268f5;
+  outline-offset: 2px;
+}
+
+.mf-modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mf-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mf-modal-footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 18px;
+  border-top: 1px solid #e8edf4;
+}
+
+/* Detail content scrolls as one bounded column. */
+.mf-modal-body-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px 24px 20px;
+}
+
+.mf-modal-card-status {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 28px 24px;
+}
+
+.mf-modal-card-status p {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.mf-modal-card-status-error p {
+  color: #7a271a;
+}
+
+/* The Storage Add/Edit card keeps the four-step rail and scrolling body. */
+.mf-storage-card-grid {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 150px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.mf-storage-card-grid .mf-files-drawer-steps,
+.mf-storage-card-grid .mf-files-drawer-body {
+  grid-row: 1;
+}
+
+.mf-storage-card-notice {
+  margin: 10px 24px 0;
+  padding: 9px 11px;
+  border: 1px solid #c7d7ef;
+  border-radius: 8px;
+  background: #f3f7fe;
+  color: #274b8f;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-storage-card-notice[role="alert"] {
+  border-color: #b42318;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+@media (max-width: 1080px) {
+  .mf-storage-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .mf-storage-card-grid .mf-files-drawer-steps {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .mf-storage-card-grid .mf-files-drawer-body {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .mf-modal-layer {
+    padding: 8px;
+  }
+
+  .mf-modal-card {
+    width: 100%;
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 12px;
+  }
+
+  .mf-modal-header {
+    padding: 14px 16px 10px;
+  }
+
+  .mf-modal-header h2 {
+    font-size: 19px;
+  }
+
+  .mf-modal-body-scroll {
+    padding: 2px 16px 16px;
+  }
+
+  .mf-modal-footer {
+    padding: 10px 16px 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .mf-modal-layer {
+    padding: 4px;
+  }
+
+  .mf-modal-card {
+    height: calc(100dvh - 8px);
+    max-height: calc(100dvh - 8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-modal-backdrop,
+  .mf-modal-card,
+  .mf-modal-layer-exiting .mf-modal-backdrop,
+  .mf-modal-layer-exiting .mf-modal-card {
+    animation: none;
+  }
+}
+
+/* Storage row "More" menu: a row-anchored, viewport-clamped overlay. */
+.mf-storage-more {
+  position: relative;
+  display: inline-flex;
+}
+
+.mf-storage-more > summary {
+  list-style: none;
+}
+
+.mf-storage-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mf-storage-more[open] > summary {
+  color: var(--accent-strong, #1268f5);
+}
+
+.mf-storage-more-menu {
+  min-width: 196px;
+  padding: 6px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(9, 18, 38, 0.18);
+}
+
+.mf-storage-more-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #1d2b45;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mf-storage-more-menu button svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  color: #50658a;
+}
+
+.mf-storage-more-menu button:hover,
+.mf-storage-more-menu button:focus-visible {
+  background: #eef3fb;
+  outline: none;
+}
+
+.mf-storage-more-menu button:disabled {
+  color: #98a4b7;
+  cursor: not-allowed;
+}
+
+.mf-storage-more-menu button:disabled svg {
+  color: #a9b5c7;
+}
+
+.mf-storage-more-menu button.mf-storage-more-danger {
+  margin-top: 4px;
+  border-top: 1px solid #eef1f6;
+  border-radius: 0 0 7px 7px;
+  color: #b42318;
+}
+
+.mf-storage-more-menu button.mf-storage-more-danger svg {
+  color: #b42318;
+}
+
+.mf-storage-more-menu button.mf-storage-more-danger:disabled,
+.mf-storage-more-menu button.mf-storage-more-danger:disabled svg {
+  color: #c99a95;
 }

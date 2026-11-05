@@ -13,7 +13,14 @@
  * enable/disable and removal remain a subsequent mutation unit.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -21,6 +28,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { ModalCardShell, useModalLayer } from "../../shared/ui/modal-card";
 import {
   PROVIDER_ROOT_LABEL,
   STORAGE_FAMILIES,
@@ -55,7 +63,7 @@ import {
   storageInventoryQueryOptions,
 } from "./storage-management-query";
 import {
-  StorageEditDrawer,
+  StorageEditCard,
   addStorageContent,
   editStorageContent,
   type StorageDrawerContent,
@@ -430,6 +438,7 @@ function ReferencesCell({ item }: { readonly item: StorageRowItem }) {
 function InventoryTable({
   items,
   canManage,
+  lifecycleBusy,
   onView,
   onEdit,
   onAction,
@@ -437,6 +446,7 @@ function InventoryTable({
 }: {
   readonly items: readonly StorageRowItem[];
   readonly canManage: boolean;
+  readonly lifecycleBusy: boolean;
   readonly onView: (storageId: string) => void;
   readonly onEdit: (storageId: string) => void;
   readonly onAction: (
@@ -491,6 +501,7 @@ function InventoryTable({
                   <button
                     type="button"
                     className="mf-link-button"
+                    id={`mf-view-storage-${item.id}`}
                     aria-label={`查看 ${item.name}`}
                     onClick={() => onView(item.id)}
                   >
@@ -510,6 +521,7 @@ function InventoryTable({
                   <StorageMoreMenu
                     item={item}
                     canManage={canManage}
+                    busy={lifecycleBusy}
                     onAction={onAction}
                     onCheck={onCheck}
                   />
@@ -526,11 +538,13 @@ function InventoryTable({
 function StorageMoreMenu({
   item,
   canManage,
+  busy,
   onAction,
   onCheck,
 }: {
   readonly item: StorageRowItem;
   readonly canManage: boolean;
+  readonly busy: boolean;
   readonly onAction: (
     action: "copy" | "toggle" | "remove",
     item: StorageRowItem,
@@ -539,30 +553,94 @@ function StorageMoreMenu({
   readonly onCheck: (item: StorageRowItem) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{
+    readonly top: number;
+    readonly left: number;
+  } | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const ignoreToggleRef = useRef(false);
 
   const closeAndRestoreFocus = useCallback(() => {
     ignoreToggleRef.current = true;
     detailsRef.current?.removeAttribute("open");
     setOpen(false);
+    setPosition(null);
     // Restore before starting another action. A delayed frame can steal focus
     // from the copy drawer (or its input) after the authority read completes.
-    summaryRef.current?.focus();
+    summaryRef.current?.focus({ preventScroll: true });
   }, []);
+
+  // A row-anchored menu is positioned in viewport coordinates and clamped to
+  // the viewport, so a narrow window, the table's horizontal scroller or the
+  // last row's edge cannot clip it. Scrolling/resizing dismisses it instead of
+  // leaving it detached from its row.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const summary = summaryRef.current;
+    if (summary === null) return undefined;
+    const rect = summary.getBoundingClientRect();
+    const width = 196;
+    const height = 168;
+    const left = Math.max(
+      8,
+      Math.min(rect.right - width, window.innerWidth - width - 8),
+    );
+    const below = rect.bottom + 6;
+    const top =
+      below + height > window.innerHeight - 8
+        ? Math.max(8, rect.top - height - 6)
+        : below;
+    setPosition({ top, left });
+    const dismiss = () => closeAndRestoreFocus();
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        detailsRef.current !== null &&
+        !detailsRef.current.contains(target)
+      ) {
+        closeAndRestoreFocus();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [open, closeAndRestoreFocus]);
+
+  // Once the positioned menu exists, its first enabled action receives focus so
+  // Enter/Space from the summary and the mouse path both land on the same item.
+  useLayoutEffect(() => {
+    if (!open || position === null) return;
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus({ preventScroll: true });
+  }, [open, position]);
 
   return (
     <details
       ref={detailsRef}
       className="mf-storage-more"
       open={open}
+      aria-busy={busy}
+      data-storage-more-busy={busy ? "true" : undefined}
       onToggle={(event) => {
         if (ignoreToggleRef.current) {
           ignoreToggleRef.current = false;
           return;
         }
-        setOpen(event.currentTarget.open);
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          setPosition(null);
+          summaryRef.current?.focus({ preventScroll: true });
+        }
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {
@@ -577,56 +655,78 @@ function StorageMoreMenu({
         id={`mf-more-storage-${item.id}`}
         className="mf-link-button"
         aria-label={`更多操作 ${item.name}`}
+        aria-disabled={busy || undefined}
+        onClick={(event) => {
+          // While this row's lifecycle command is in flight the menu cannot
+          // start a second command; the current operation remains visible as
+          // the row's busy entry instead.
+          if (busy) event.preventDefault();
+        }}
       >
-        更多
+        {busy ? "处理中…" : "更多"}
       </summary>
-      {open && (
-        <div className="mf-storage-more-menu" role="menu">
+      {open && position !== null && (
+        <div
+          ref={menuRef}
+          className="mf-storage-more-menu"
+          role="menu"
+          style={{
+            position: "fixed",
+            top: `${position.top}px`,
+            left: `${position.left}px`,
+            zIndex: 120,
+          }}
+        >
           <button
             type="button"
             role="menuitem"
-            disabled={!canManage}
+            disabled={!canManage || busy}
             onClick={() => {
               closeAndRestoreFocus();
               if (summaryRef.current !== null)
                 onAction("copy", item, summaryRef.current);
             }}
           >
+            <Icon name="action" />
             复制
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={!canManage}
+            disabled={!canManage || busy}
             onClick={() => {
               closeAndRestoreFocus();
               if (summaryRef.current !== null)
                 onAction("toggle", item, summaryRef.current);
             }}
           >
+            <Icon name="refresh" />
             {item.enabled ? "停用" : "启用"}
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={!canManage}
+            disabled={!canManage || busy}
             onClick={() => {
               closeAndRestoreFocus();
               onCheck(item);
             }}
           >
+            <Icon name="search" />
             运行只读检查
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={!canManage}
+            className="mf-storage-more-danger"
+            disabled={!canManage || busy}
             onClick={() => {
               closeAndRestoreFocus();
               if (summaryRef.current !== null)
                 onAction("remove", item, summaryRef.current);
             }}
           >
+            <Icon name="trash" />
             移除配置
           </button>
         </div>
@@ -695,152 +795,219 @@ function CheckEvidencePanel({
   );
 }
 
-function StorageDetailPanel({
+function StorageDetailCard({
   detail,
+  reading,
+  failed,
+  canManage,
+  onRetry,
   onClose,
+}: {
+  readonly detail: StorageDetailViewModel | null;
+  readonly reading: boolean;
+  readonly failed: boolean;
+  readonly canManage: boolean;
+  readonly onRetry: () => void;
+  readonly onClose: () => void;
+}) {
+  const card = useModalLayer({
+    onEscape: onClose,
+    fallbackFocusId:
+      detail === null ? undefined : `mf-view-storage-${detail.storage.id}`,
+  });
+  // On open and after a retry the close control is the stable focus target;
+  // ready content does not move it. Heading text can change without moving
+  // the card because every state uses the same card geometry.
+  useEffect(() => {
+    card.layerRef.current
+      ?.querySelector<HTMLElement>(".mf-modal-close")
+      ?.focus({ preventScroll: true });
+  }, [card.layerRef]);
+  const title = reading
+    ? "正在读取存储详情"
+    : failed
+      ? "存储详情不可用"
+      : detail === null
+        ? "存储详情"
+        : detail.storage.name;
+  const description =
+    detail === null
+      ? reading
+        ? "正在读取该存储的配置、引用与检查证据。"
+        : "已有配置未被本次读取修改。"
+      : `${detail.storage.id} · ${providerTypeLabel(detail.storage.type)}`;
+  return (
+    <ModalCardShell
+      layerRef={card.layerRef}
+      closing={false}
+      busy={reading}
+      title={title}
+      titleId="mf-storage-detail-title"
+      accessibleName={
+        detail === null
+          ? reading
+            ? "存储详情"
+            : "存储详情不可用"
+          : `存储详情 ${detail.storage.name}`
+      }
+      description={description}
+      closeLabel="关闭存储详情"
+      closeDisabled={false}
+      onRequestClose={onClose}
+      size="detail"
+      bodyClassName="mf-modal-body-scroll"
+    >
+      {reading ? (
+        <div className="mf-modal-card-status">
+          <p role="status">正在读取该存储的配置与引用信息…</p>
+        </div>
+      ) : failed || detail === null ? (
+        <div className="mf-modal-card-status mf-modal-card-status-error">
+          <div role="alert">
+            <p>
+              无法读取该存储的详情；已有配置未被本次读取修改。请确认当前 Active
+              与 API 可用后重试，或返回存储清单。
+            </p>
+          </div>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-primary"
+              onClick={onRetry}
+            >
+              重新读取
+            </button>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={onClose}
+            >
+              返回存储列表
+            </button>
+          </div>
+        </div>
+      ) : (
+        <StorageDetailFacts detail={detail} canManage={canManage} />
+      )}
+    </ModalCardShell>
+  );
+}
+
+function StorageDetailFacts({
+  detail,
   canManage,
 }: {
   readonly detail: StorageDetailViewModel;
-  readonly onClose: () => void;
   readonly canManage: boolean;
 }) {
   const storage = detail.storage;
   return (
-    <aside className="mf-files-drawer" aria-label={`存储详情 ${storage.name}`}>
-      <div className="mf-files-drawer-header">
-        <div>
-          <h2>{storage.name}</h2>
-          <p className="mf-files-drawer-helper">
-            {storage.id} · {providerTypeLabel(storage.type)}
+    <>
+      <div className="mf-storage-detail-section">
+        <h3>基本状态</h3>
+        <p>
+          <StateBadge enabled={storage.enabled} />
+          {storage.readOnly && (
+            <span className="mf-storage-readonly-tag">只读</span>
+          )}
+        </p>
+        <p>位置: {locationLabel(storage.location)}</p>
+        <p>
+          声明能力:{" "}
+          {storage.capabilitiesKnown
+            ? Object.entries(storage.capabilities)
+                .filter(([, value]) => value)
+                .map(([key]) => key)
+                .join(", ") || "适配器声明不支持写入操作"
+            : "当前 Active 尚无适配器能力声明;运行只读检查可读取声明。"}
+        </p>
+        {storage.secretReadiness.length > 0 && (
+          <p>
+            凭据引用就绪:{" "}
+            {storage.secretReadiness
+              .map((entry) => `${entry.field} (${entry.state})`)
+              .join(", ")}
           </p>
-        </div>
-        <button
-          type="button"
-          className="mf-files-drawer-close"
-          aria-label={`关闭存储详情 ${storage.name}`}
-          onClick={onClose}
-        >
-          ×
-        </button>
+        )}
       </div>
-      <div className="mf-files-drawer-body">
-        <div className="mf-storage-detail-section">
-          <h3>基本状态</h3>
-          <p>
-            <StateBadge enabled={storage.enabled} />
-            {storage.readOnly && (
-              <span className="mf-storage-readonly-tag">只读</span>
-            )}
+      <div className="mf-storage-detail-section">
+        <h3>引用情况</h3>
+        <p>
+          资源库 {storage.references.resourceLibraries} · 媒体库{" "}
+          {storage.references.mediaLibraries} · 共计 {storage.references.total}
+          {storage.references.truncated ? "(已截断)" : ""}
+        </p>
+        {detail.references.resourceLibraries.length > 0 && (
+          <ul>
+            {detail.references.resourceLibraries.map((entry) => (
+              <li key={entry.id}>
+                资源库 {entry.name} ({entry.id}) —{" "}
+                {entry.enabled ? "已启用" : "已停用"} · 路径{" "}
+                {entry.path === "" ? "/" : `/${entry.path}`}
+              </li>
+            ))}
+          </ul>
+        )}
+        {detail.references.mediaLibraries.length > 0 && (
+          <ul>
+            {detail.references.mediaLibraries.map((entry) => (
+              <li key={entry.id}>
+                媒体库 {entry.name} ({entry.id}) —{" "}
+                {entry.enabled ? "已启用" : "已停用"} · 路径{" "}
+                {entry.path === "" ? "/" : `/${entry.path}`}
+              </li>
+            ))}
+          </ul>
+        )}
+        {detail.references.truncated && (
+          <p className="mf-storage-ref-truncated" role="note">
+            引用列表已截断;可能还存在更多依赖项。
           </p>
-          <p>位置: {locationLabel(storage.location)}</p>
-          <p>
-            声明能力:{" "}
-            {storage.capabilitiesKnown
-              ? Object.entries(storage.capabilities)
-                  .filter(([, value]) => value)
-                  .map(([key]) => key)
-                  .join(", ") || "适配器声明不支持写入操作"
-              : "当前 Active 尚无适配器能力声明;运行只读检查可读取声明。"}
+        )}
+      </div>
+      <div className="mf-storage-detail-section">
+        <h3>连接/读取检查</h3>
+        <CheckEvidencePanel check={detail.checkResult ?? null} />
+        {detail.checkError !== null && (
+          <p className="mf-error" role="alert">
+            {detail.checkError}
           </p>
-          {storage.secretReadiness.length > 0 && (
-            <p>
-              凭据引用就绪:{" "}
-              {storage.secretReadiness
-                .map((entry) => `${entry.field} (${entry.state})`)
-                .join(", ")}
-            </p>
-          )}
-        </div>
-        <div className="mf-storage-detail-section">
-          <h3>引用情况</h3>
-          <p>
-            资源库 {storage.references.resourceLibraries} · 媒体库{" "}
-            {storage.references.mediaLibraries} · 共计{" "}
-            {storage.references.total}
-            {storage.references.truncated ? "(已截断)" : ""}
-          </p>
-          {detail.references.resourceLibraries.length > 0 && (
-            <ul>
-              {detail.references.resourceLibraries.map((entry) => (
-                <li key={entry.id}>
-                  资源库 {entry.name} ({entry.id}) —{" "}
-                  {entry.enabled ? "已启用" : "已停用"} · 路径{" "}
-                  {entry.path === "" ? "/" : `/${entry.path}`}
-                </li>
-              ))}
-            </ul>
-          )}
-          {detail.references.mediaLibraries.length > 0 && (
-            <ul>
-              {detail.references.mediaLibraries.map((entry) => (
-                <li key={entry.id}>
-                  媒体库 {entry.name} ({entry.id}) —{" "}
-                  {entry.enabled ? "已启用" : "已停用"} · 路径{" "}
-                  {entry.path === "" ? "/" : `/${entry.path}`}
-                </li>
-              ))}
-            </ul>
-          )}
-          {detail.references.truncated && (
-            <p className="mf-storage-ref-truncated" role="note">
-              引用列表已截断;可能还存在更多依赖项。
-            </p>
-          )}
-        </div>
-        <div className="mf-storage-detail-section">
-          <h3>连接/读取检查</h3>
-          <CheckEvidencePanel check={detail.checkResult ?? null} />
-          {detail.checkError !== null && (
-            <p className="mf-error" role="alert">
-              {detail.checkError}
-            </p>
-          )}
-          <div className="mf-storage-check-actions">
+        )}
+        <div className="mf-storage-check-actions">
+          <button
+            type="button"
+            className="mf-button mf-button-primary"
+            disabled={
+              !canManage ||
+              !detail.actions.check.available ||
+              detail.checkRunning ||
+              detail.checkBlocked
+            }
+            title={
+              detail.checkBlocked
+                ? "请先核实当前状态再重试"
+                : detail.actions.check.available
+                  ? undefined
+                  : (detail.actions.check.reason ?? undefined)
+            }
+            onClick={detail.onRunCheck}
+          >
+            {detail.checkRunning ? "检查中..." : "运行只读检查"}
+          </button>
+          {detail.checkBlocked && (
             <button
               type="button"
-              className="mf-button mf-button-primary"
-              disabled={
-                !canManage ||
-                !detail.actions.check.available ||
-                detail.checkRunning ||
-                detail.checkBlocked
-              }
-              title={
-                detail.checkBlocked
-                  ? "请先核实当前状态再重试"
-                  : detail.actions.check.available
-                    ? undefined
-                    : (detail.actions.check.reason ?? undefined)
-              }
-              onClick={detail.onRunCheck}
+              className="mf-button mf-button-secondary"
+              onClick={detail.onVerifyCheck}
             >
-              {detail.checkRunning ? "检查中..." : "运行只读检查"}
+              核实当前状态
             </button>
-            {detail.checkBlocked && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={detail.onVerifyCheck}
-              >
-                核实当前状态
-              </button>
-            )}
-          </div>
-          <p className="mf-storage-check-note">{detail.writeCapabilityNote}</p>
+          )}
         </div>
+        <p className="mf-storage-check-note">{detail.writeCapabilityNote}</p>
       </div>
-    </aside>
+    </>
   );
-}
-
-interface StorageDetailSafeLocation {
-  readonly kind: "local" | "remote";
-  readonly rootPath: string;
-  readonly host?: string;
-  readonly share?: string;
-  readonly bucket?: string;
-  readonly endpoint?: string;
-  readonly region?: string;
 }
 
 /**
@@ -1228,12 +1395,23 @@ export function StorageManagementPage() {
   // verified before another attempt).
   const [checkBlocked, setCheckBlocked] = useState<string | null>(null);
 
-  // Add/Edit drawer state.  The drawer is an operator-invoked action surface:
-  // it stays closed on normal entry, reload and reconnect, and a failed Save
+  // Add/Edit card state. The card is an operator-invoked action surface: it
+  // stays closed on normal entry, reload and reconnect, and a failed Save
   // keeps the entered values instead of discarding a rejected candidate.
+  //
+  // `requestId` fences the asynchronous Add authority / Edit projection read:
+  // a response for a closed, replaced or different intent is discarded rather
+  // than reopening the card or overwriting the current object. `reading` and
+  // `readError` render inside the same card, so opening never waits on a
+  // side-channel page banner. The exact edit values and their Active fence are
+  // always committed together in one state update.
   const [drawer, setDrawer] = useState<{
     readonly open: boolean;
     readonly editing: boolean;
+    readonly storageId: string | null;
+    readonly requestId: number;
+    readonly reading: boolean;
+    readonly readError: string | null;
     readonly content: StorageDrawerContent;
     readonly originalOptions: Readonly<
       Record<string, StorageFieldValue>
@@ -1246,19 +1424,27 @@ export function StorageManagementPage() {
   }>({
     open: false,
     editing: false,
+    storageId: null,
+    requestId: 0,
+    reading: false,
+    readError: null,
     content: addStorageContent("local"),
     originalOptions: null,
     expected: null,
   });
+  const drawerRequestRef = useRef(0);
   const lastCandidateRef = useRef<StorageSaveCandidate | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   // An outcome the browser cannot confirm (transport/malformed/internal) is a
   // state-verification problem: another submission stays blocked until the
   // operator refreshes the durable Active state.
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  // Lifecycle (Copy/Remove) read errors remain page-level: they belong to an
+  // action outside the Add/Edit card and must not be hidden inside one.
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
-  const drawerInvokerIdRef = useRef<string | null>(null);
-  const editInvokerRef = useRef<HTMLElement | null>(null);
+  // Copy/enable/remove share one row-menu command boundary; a second command
+  // cannot start from the same menu while this one is in flight.
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [lifecycle, setLifecycle] = useState<{
     readonly action: "copy" | "remove";
@@ -1386,78 +1572,85 @@ export function StorageManagementPage() {
       invoker: HTMLElement,
     ) => {
       if (!inventory?.active || !inventory.canManage) return;
-      const authority = await fetchStorageAuthority(token);
-      if (!authority.ok) {
-        setEditLoadError("无法核实当前 Active 配置,请刷新后重试。");
-        return;
-      }
-      if (!activeMatchesAuthority(inventory.active, authority.model)) {
-        setEditLoadError(
-          "当前 Active 已在清单显示后发生变化。请刷新并重新查看当前存储后再操作。",
-        );
-        refreshInventoryAuthority();
-        return;
-      }
-      if (action === "copy") {
-        lifecycleInvokerRef.current = invoker;
-        setLifecycle({
-          action,
-          item,
-          authority: authority.model,
-          newId: `${item.id}-copy`,
-          name: `${item.name} copy`,
-          unknown: false,
-          needsReview: false,
-        });
-        return;
-      }
-      if (
-        action === "remove" &&
-        !window.confirm(
-          `仅移除存储“${item.name}”的配置,物理文件不会被删除。当前确认绑定到已读取的 Active,继续?`,
-        )
-      )
-        return;
-      const result =
-        action === "toggle"
-          ? await setStorageEnabled(token, {
-              storageId: item.id,
-              enabled: !item.enabled,
-              authority: authority.model,
-            })
-          : await removeStorage(token, {
-              storageId: item.id,
-              authority: authority.model,
-            });
-      if (!result.ok) {
-        const details = result.details;
-        setEditLoadError(lifecycleFailureMessage(action, result.code, details));
-        if (
-          [
-            "transport_unavailable",
-            "malformed_response",
-            "internal_error",
-            "service_unavailable",
-          ].includes(result.code)
-        ) {
+      setLifecycleBusy(true);
+      try {
+        const authority = await fetchStorageAuthority(token);
+        if (!authority.ok) {
+          setEditLoadError("无法核实当前 Active 配置,请刷新后重试。");
+          return;
+        }
+        if (!activeMatchesAuthority(inventory.active, authority.model)) {
+          setEditLoadError(
+            "当前 Active 已在清单显示后发生变化。请刷新并重新查看当前存储后再操作。",
+          );
+          refreshInventoryAuthority();
+          return;
+        }
+        if (action === "copy") {
+          lifecycleInvokerRef.current = invoker;
           setLifecycle({
-            action: "remove",
+            action,
             item,
             authority: authority.model,
-            newId: "",
-            name: "",
-            unknown: true,
+            newId: `${item.id}-copy`,
+            name: `${item.name} copy`,
+            unknown: false,
             needsReview: false,
           });
+          return;
         }
-        if (action === "remove" && result.code === "storage_remove_stale") {
-          setLifecycle(null);
+        if (
+          action === "remove" &&
+          !window.confirm(
+            `仅移除存储“${item.name}”的配置,物理文件不会被删除。当前确认绑定到已读取的 Active,继续?`,
+          )
+        )
+          return;
+        const result =
+          action === "toggle"
+            ? await setStorageEnabled(token, {
+                storageId: item.id,
+                enabled: !item.enabled,
+                authority: authority.model,
+              })
+            : await removeStorage(token, {
+                storageId: item.id,
+                authority: authority.model,
+              });
+        if (!result.ok) {
+          const details = result.details;
+          setEditLoadError(
+            lifecycleFailureMessage(action, result.code, details),
+          );
+          if (
+            [
+              "transport_unavailable",
+              "malformed_response",
+              "internal_error",
+              "service_unavailable",
+            ].includes(result.code)
+          ) {
+            setLifecycle({
+              action: "remove",
+              item,
+              authority: authority.model,
+              newId: "",
+              name: "",
+              unknown: true,
+              needsReview: false,
+            });
+          }
+          if (action === "remove" && result.code === "storage_remove_stale") {
+            setLifecycle(null);
+          }
+          refreshInventoryAuthority();
+          return;
         }
+        setEditLoadError(null);
         refreshInventoryAuthority();
-        return;
+      } finally {
+        setLifecycleBusy(false);
       }
-      setEditLoadError(null);
-      refreshInventoryAuthority();
     },
     [inventory, token, refreshInventoryAuthority],
   );
@@ -1558,74 +1751,149 @@ export function StorageManagementPage() {
   }, [token, refreshInventoryAuthority]);
 
   const closeDrawer = useCallback(() => {
-    setDrawer((current) => ({ ...current, open: false }));
+    // Invalidate any in-flight Add authority / Edit projection read so a late
+    // response can never reopen the card or overwrite a newer intent. Focus
+    // return is owned by the card's unmount (preventScroll).
+    drawerRequestRef.current += 1;
+    setDrawer((current) => ({
+      ...current,
+      open: false,
+      reading: false,
+      readError: null,
+    }));
     setSaveError(null);
     setAwaitingVerification(false);
-    // Focus returns to the invoking control where practical.
-    if (drawerInvokerIdRef.current !== null) {
-      document.getElementById(drawerInvokerIdRef.current)?.focus();
-    } else {
-      editInvokerRef.current?.focus();
-    }
-    editInvokerRef.current = null;
   }, []);
 
-  const openAddDrawer = useCallback(async () => {
-    const authority = await fetchStorageAuthority(token);
-    if (!authority.ok) {
-      setEditLoadError("无法打开添加表单：请刷新并确认托管 Active 配置可用。");
-      return;
-    }
-    drawerInvokerIdRef.current = "mf-add-storage-button";
-    editInvokerRef.current = null;
+  const loadAddAuthority = useCallback(
+    async (requestId: number) => {
+      const authority = await fetchStorageAuthority(token);
+      if (drawerRequestRef.current !== requestId) return;
+      setDrawer((current) => {
+        if (!current.open || current.requestId !== requestId) return current;
+        if (!authority.ok) {
+          return {
+            ...current,
+            reading: false,
+            expected: null,
+            readError:
+              "无法读取当前 Active 保存授权；没有提交任何更改，已填写的输入会保留。请确认托管配置可用后重试。",
+          };
+        }
+        return {
+          ...current,
+          reading: false,
+          readError: null,
+          expected: authority.model,
+        };
+      });
+    },
+    [token],
+  );
+
+  const openAddDrawer = useCallback(() => {
+    const requestId = ++drawerRequestRef.current;
+    setDetailId(null);
+    setCheckBlocked(null);
+    checkMutation.reset();
     setEditLoadError(null);
     setSaveError(null);
     setAwaitingVerification(false);
     setDrawer({
       open: true,
       editing: false,
+      storageId: null,
+      requestId,
+      reading: true,
+      readError: null,
       content: addStorageContent("local"),
       originalOptions: null,
-      expected: authority.model,
+      expected: null,
     });
-  }, [token]);
+    void loadAddAuthority(requestId);
+  }, [checkMutation, loadAddAuthority]);
 
   const openEditDrawer = useCallback(
-    async (storageId: string) => {
-      drawerInvokerIdRef.current = null;
-      editInvokerRef.current = document.getElementById(
-        `mf-edit-storage-${storageId}`,
-      );
+    (storageId: string) => {
+      const requestId = ++drawerRequestRef.current;
+      setDetailId(null);
+      setCheckBlocked(null);
+      checkMutation.reset();
       setEditLoadError(null);
       setSaveError(null);
       setAwaitingVerification(false);
-      const result = await fetchStorageEdit(token, storageId);
-      if (!result.ok) {
-        setEditLoadError(storageEditLoadFailure(result.code));
-        if (
-          result.code === "transport_unavailable" ||
-          result.code === "malformed_response"
-        ) {
-          refreshInventoryAuthority();
-        }
-        editInvokerRef.current = null;
-        return;
-      }
-      const model: StorageFormModel = result.model;
+      const placeholder = addStorageContent("local");
       setDrawer({
         open: true,
         editing: true,
-        content: editStorageContent(model),
-        originalOptions: model.values.options,
-        expected: {
-          expectedRevisionId: model.activeRevisionId,
-          expectedVersion: model.activeRevisionSequence,
-          expectedDigest: model.activeDigest,
+        storageId,
+        requestId,
+        reading: true,
+        readError: null,
+        content: {
+          ...placeholder,
+          values: { ...placeholder.values, id: storageId },
         },
+        originalOptions: null,
+        expected: null,
       });
+      void (async () => {
+        const result = await fetchStorageEdit(token, storageId);
+        if (drawerRequestRef.current !== requestId) return;
+        if (!result.ok) {
+          if (
+            result.code === "transport_unavailable" ||
+            result.code === "malformed_response"
+          ) {
+            refreshInventoryAuthority();
+          }
+          setDrawer((current) =>
+            current.open && current.requestId === requestId
+              ? {
+                  ...current,
+                  reading: false,
+                  readError: storageEditLoadFailure(result.code),
+                }
+              : current,
+          );
+          return;
+        }
+        const model: StorageFormModel = result.model;
+        setDrawer((current) =>
+          current.open && current.requestId === requestId
+            ? {
+                ...current,
+                reading: false,
+                readError: null,
+                content: editStorageContent(model),
+                originalOptions: model.values.options,
+                expected: {
+                  expectedRevisionId: model.activeRevisionId,
+                  expectedVersion: model.activeRevisionSequence,
+                  expectedDigest: model.activeDigest,
+                },
+              }
+            : current,
+        );
+      })();
     },
-    [token, refreshInventoryAuthority],
+    [checkMutation, token, refreshInventoryAuthority],
   );
+
+  const retryDrawerRead = useCallback(() => {
+    if (drawer.editing && drawer.storageId !== null) {
+      openEditDrawer(drawer.storageId);
+      return;
+    }
+    const requestId = ++drawerRequestRef.current;
+    setDrawer((current) => ({
+      ...current,
+      requestId,
+      reading: true,
+      readError: null,
+    }));
+    void loadAddAuthority(requestId);
+  }, [drawer.editing, drawer.storageId, loadAddAuthority, openEditDrawer]);
 
   const saveMutation = useMutation({
     mutationFn: async ({
@@ -1660,8 +1928,7 @@ export function StorageManagementPage() {
       }
       setSaveError(null);
       setAwaitingVerification(false);
-      const wasEditing = drawer.editing;
-      const invoker = editInvokerRef.current;
+      drawerRequestRef.current += 1;
       setDrawer((current) => ({ ...current, open: false }));
       refreshInventoryAuthority();
       setSavedNotice(
@@ -1669,12 +1936,6 @@ export function StorageManagementPage() {
           ? null
           : `存储“${result.model.values.name}”已保存并激活,但当前为停用状态:它仍出现在存储清单中,只作为配置事实存在。Storage 内容未被改动。`,
       );
-      if (wasEditing) {
-        requestAnimationFrame(() => {
-          if (invoker?.isConnected) invoker.focus();
-        });
-      }
-      editInvokerRef.current = null;
     },
     onError: () => {
       // A transport-level failure never replays automatically: the operator
@@ -1823,7 +2084,7 @@ export function StorageManagementPage() {
                 </StatusBanner>
               )}
               {editLoadError !== null && (
-                <StatusBanner variant="error" title="无法打开编辑表单">
+                <StatusBanner variant="error" title="存储操作未完成">
                   <p>{editLoadError}</p>
                   <div className="mf-actions">
                     <button
@@ -1984,6 +2245,7 @@ export function StorageManagementPage() {
                 <InventoryTable
                   items={rows}
                   canManage={data.canManage && !saveMutation.isPending}
+                  lifecycleBusy={lifecycleBusy}
                   onView={(id) => {
                     if (id !== detailId) {
                       setCheckBlocked(null);
@@ -2005,48 +2267,53 @@ export function StorageManagementPage() {
                   }}
                 />
               )}
-              {!drawer.open &&
-                detailId !== null &&
-                (detailQuery.data ? (
-                  <StorageDetailPanel
-                    detail={toDetailViewModel(detailQuery.data, {
-                      running: checkMutation.isPending,
-                      result: checkMutation.data?.ok
-                        ? checkMutation.data.model
-                        : null,
-                      error: checkBlocked,
-                      blocked: checkBlocked !== null,
-                      onRun: () => runCheck(detailId),
-                      onVerify: verifyCheck,
-                    })}
-                    onClose={() => {
-                      setDetailId(null);
-                      setCheckBlocked(null);
-                      checkMutation.reset();
-                    }}
-                    canManage={data.canManage && !saveMutation.isPending}
-                  />
-                ) : detailQuery.isError ? (
-                  <StatusBanner variant="error" title="存储详情不可用">
-                    <p>无法读取该存储的详情。请关闭后重试,或返回存储清单。</p>
-                  </StatusBanner>
-                ) : (
-                  <StatusBanner variant="info" title="正在加载存储详情">
-                    <p>正在读取该存储的配置与引用信息...</p>
-                  </StatusBanner>
-                ))}
+              {detailId !== null && (
+                <StorageDetailCard
+                  detail={
+                    detailQuery.data === undefined
+                      ? null
+                      : toDetailViewModel(detailQuery.data, {
+                          running: checkMutation.isPending,
+                          result: checkMutation.data?.ok
+                            ? checkMutation.data.model
+                            : null,
+                          error: checkBlocked,
+                          blocked: checkBlocked !== null,
+                          onRun: () => runCheck(detailId),
+                          onVerify: verifyCheck,
+                        })
+                  }
+                  reading={
+                    detailQuery.data === undefined && !detailQuery.isError
+                  }
+                  failed={detailQuery.isError && detailQuery.data === undefined}
+                  onRetry={() => {
+                    void detailQuery.refetch();
+                  }}
+                  onClose={() => {
+                    setDetailId(null);
+                    setCheckBlocked(null);
+                    checkMutation.reset();
+                  }}
+                  canManage={data.canManage && !saveMutation.isPending}
+                />
+              )}
               {drawer.open && (
-                <StorageEditDrawer
+                <StorageEditCard
                   open
                   editing={drawer.editing}
                   content={drawer.content}
                   originalOptions={drawer.originalOptions}
+                  reading={drawer.reading}
+                  readError={drawer.readError}
+                  authorityReady={drawer.expected !== null}
                   saving={saveMutation.isPending}
                   saveError={saveError}
                   awaitingVerification={awaitingVerification}
                   onVerify={() => {
                     void verifySaveState();
                   }}
+                  onRetryRead={retryDrawerRead}
                   onClose={closeDrawer}
                   onSave={submitDrawer}
                 />

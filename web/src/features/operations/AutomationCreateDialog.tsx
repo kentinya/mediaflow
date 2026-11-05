@@ -706,19 +706,6 @@ export function AutomationCreateDialog({
           </p>
         </div>
       )}
-      {authorityQuery.isPending && (
-        <p className="mf-automation-create-hint" role="status">
-          正在读取当前配置与创建权限…
-        </p>
-      )}
-      {authorityModel !== null && !principalIdentity.resolved && (
-        <p className="mf-automation-create-hint" role="status">
-          {principalIdentity.reason === "loading"
-            ? "正在确认当前登录身份…"
-            : "当前登录身份暂不可用。为避免未决结果归属不明，暂时不能创建；你仍可关闭此卡片。"}
-        </p>
-      )}
-
       {hasAttention && (
         <div
           className="mf-automation-create-attention"
@@ -962,6 +949,31 @@ export function AutomationCreateDialog({
             </div>
           </footer>
         </form>
+      )}
+
+      {form === null && authorityFailed === null && (
+        <div className="mf-automation-create-loading" role="status">
+          <p>
+            {authorityModel === null || authorityQuery.isFetching
+              ? "正在读取当前配置与创建权限…"
+              : !principalIdentity.resolved
+                ? principalIdentity.reason === "loading"
+                  ? "正在确认当前登录身份…"
+                  : "当前登录身份暂不可用。为避免未决结果归属不明，暂时不能创建；你仍可关闭此卡片。"
+                : "正在准备创建表单…"}
+          </p>
+          {(authorityModel === null ||
+            authorityQuery.isFetching ||
+            (!principalIdentity.resolved &&
+              principalIdentity.reason === "loading")) && (
+            <>
+              <span className="mf-automation-create-loading-line" />
+              <span className="mf-automation-create-loading-line" />
+              <span className="mf-automation-create-loading-line" />
+              <span className="mf-automation-create-loading-line" />
+            </>
+          )}
+        </div>
       )}
 
       {form === null && (

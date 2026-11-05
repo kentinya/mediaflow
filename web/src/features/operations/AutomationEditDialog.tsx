@@ -736,6 +736,12 @@ export function AutomationEditDialog({
               <StatusBanner variant="info" title="正在读取定义">
                 <p>正在读取当前的自动化配置与表单授权。</p>
               </StatusBanner>
+              <div className="mf-automation-create-loading" aria-hidden="true">
+                <span className="mf-automation-create-loading-line" />
+                <span className="mf-automation-create-loading-line" />
+                <span className="mf-automation-create-loading-line" />
+                <span className="mf-automation-create-loading-line" />
+              </div>
             </AutomationCardShell>
           );
         }

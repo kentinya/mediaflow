@@ -18,7 +18,7 @@
  * organizing Task exists, Task Center owns execution recovery.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -509,6 +509,29 @@ export function AutomationListPage({
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const queryClient = useQueryClient();
   const listKey = listSearchKey(searchParams);
+  // The create/edit routes mount this same list as the overlay background.
+  // Keep the operator's exact scroll position from the first paint: reserve
+  // the previous document height (so the initial list read cannot clamp the
+  // scroll to zero) and restore the position in a layout effect before the
+  // browser paints. This preserves the same background instead of visibly
+  // jumping to the top and correcting it later.
+  const [initialScrollY] = useState(() =>
+    automationListScrollMemory !== null &&
+    automationListScrollMemory.key === listKey
+      ? automationListScrollMemory.y
+      : 0,
+  );
+  const [reservedScrollHeight, setReservedScrollHeight] =
+    useState(initialScrollY);
+  useLayoutEffect(() => {
+    if (!Number.isFinite(initialScrollY) || initialScrollY <= 0) return;
+    try {
+      window.scrollTo({ top: initialScrollY, left: 0 });
+    } catch {
+      // A DOM-only test environment may not implement scrolling; the list is
+      // still rendered in the correct server page and filter state.
+    }
+  }, [initialScrollY]);
   const [createdDefinition, setCreatedDefinition] = useState<{
     readonly id: string;
     readonly name: string;
@@ -667,6 +690,14 @@ export function AutomationListPage({
       tab === "definitions",
     ),
   );
+
+  // Once the stable rows exist again the temporary height reservation is no
+  // longer needed; removing it cannot shorten the real list below its content.
+  useEffect(() => {
+    if (!listQuery.isFetched || reservedScrollHeight === 0) return;
+    const timer = window.setTimeout(() => setReservedScrollHeight(0), 0);
+    return () => window.clearTimeout(timer);
+  }, [listQuery.isFetched, reservedScrollHeight]);
 
   // The list Run-once command is a submission layer only. It reuses the exact
   // definition/Active snapshot this row was read from, retains the caller's
@@ -1576,6 +1607,10 @@ export function AutomationListPage({
       to: "/operations/automation",
       search: Object.keys(search).length > 0 ? search : undefined,
       replace: true,
+      // Returning from the overlay is not a page visit: keep the exact list
+      // scroll position the operator left instead of jumping to the top and
+      // visibly restoring it afterwards.
+      resetScroll: false,
     });
   }
 
@@ -1591,6 +1626,7 @@ export function AutomationListPage({
       to: "/operations/automation/lifecycle/$definitionId",
       params: { definitionId },
       search: listReturnState(),
+      resetScroll: false,
     });
   }
 
@@ -1718,7 +1754,14 @@ export function AutomationListPage({
   );
 
   return (
-    <div className="mf-dashboard mf-automation-workspace">
+    <div
+      className="mf-dashboard mf-automation-workspace"
+      style={
+        reservedScrollHeight > 0
+          ? { minHeight: `calc(100vh + ${reservedScrollHeight}px)` }
+          : undefined
+      }
+    >
       <div className="mf-automation-create-background">
         <header className="mf-dashboard-head">
           <div>
@@ -1734,6 +1777,7 @@ export function AutomationListPage({
                 className="mf-button mf-button-primary"
                 to="/operations/automation/lifecycle"
                 search={listReturnState()}
+                resetScroll={false}
                 onClick={openCreateDialog}
               >
                 新建自动化任务

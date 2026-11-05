@@ -66,7 +66,7 @@ function editRow(page: Page, name: string): Locator {
 
 /** The four-step Add/Edit drawer. */
 function storageDrawer(page: Page, storageId?: string): Locator {
-  return page.getByRole("complementary", {
+  return page.getByRole("dialog", {
     name: storageId === undefined ? "添加存储" : `编辑存储 ${storageId}`,
   });
 }
@@ -164,9 +164,7 @@ test.describe("Storage management", () => {
     // is closed on normal entry (Task 39.2): it opens only on explicit intent.
     const addButton = page.getByRole("button", { name: "+ 添加存储" });
     await expect(addButton).toBeEnabled();
-    await expect(
-      page.getByRole("complementary", { name: "添加存储" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "添加存储" })).toHaveCount(0);
     // Every row keeps 查看 then 编辑 in the operation cell.
     await expect(
       firstRow.getByRole("button", { name: "编辑 本地媒体" }),
@@ -264,7 +262,7 @@ test.describe("Storage management", () => {
     // A Storage found only through search is inspectable in full.
     await search.fill("openlist-beyond-page");
     await viewRow(page, "OpenList 后续页").click();
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 OpenList 后续页",
     });
     await expect(drawer).toBeVisible();
@@ -356,7 +354,7 @@ test.describe("Storage management", () => {
     await openStorageManagement(page);
 
     await viewRow(page, "本地媒体").click();
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 本地媒体",
     });
     await expect(drawer).toBeVisible();
@@ -400,7 +398,7 @@ test.describe("Storage management", () => {
     await openStorageManagement(page);
 
     await viewRow(page, "本地媒体").click();
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 本地媒体",
     });
     const runButton = drawer.getByRole("button", { name: "运行只读检查" });
@@ -425,7 +423,7 @@ test.describe("Storage management", () => {
     // A disabled Storage withholds the check with a truthful reason.
     await drawer.getByRole("button", { name: /关闭存储详情/ }).click();
     await viewRow(page, "R2 归档").click();
-    const disabledDrawer = page.getByRole("complementary", {
+    const disabledDrawer = page.getByRole("dialog", {
       name: "存储详情 R2 归档",
     });
     const disabledRun = disabledDrawer.getByRole("button", {
@@ -441,7 +439,7 @@ test.describe("Storage management", () => {
     await openStorageManagement(page);
 
     await viewRow(page, "NAS 媒体").click();
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 NAS 媒体",
     });
     await drawer.getByRole("button", { name: "运行只读检查" }).click();
@@ -625,7 +623,7 @@ test.describe("Storage management", () => {
     ).toBeDisabled();
 
     await viewRow(page, "本地媒体").click();
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 本地媒体",
     });
     const runButton = drawer.getByRole("button", { name: "运行只读检查" });
@@ -682,7 +680,7 @@ test.describe("Storage management", () => {
     // Detail + check remain reachable from the keyboard at narrow width.
     await viewRow(page, "本地媒体").focus();
     await page.keyboard.press("Enter");
-    const drawer = page.getByRole("complementary", {
+    const drawer = page.getByRole("dialog", {
       name: "存储详情 本地媒体",
     });
     await expect(drawer).toBeVisible();
@@ -1089,9 +1087,7 @@ test.describe("Storage management", () => {
     await expect(edit).toBeDisabled();
     // A disabled action never opens a drawer.
     await edit.click({ force: true });
-    await expect(
-      page.getByRole("complementary", { name: /编辑存储/ }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /编辑存储/ })).toHaveCount(0);
   });
 
   test("setup state offers no false Add surface and fails truthfully", async ({

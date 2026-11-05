@@ -770,7 +770,7 @@ describe("Storage management journey", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "编辑 OpenList root" }),
     );
-    const drawer = await screen.findByRole("complementary", {
+    const drawer = await screen.findByRole("dialog", {
       name: "编辑存储 openlist-root",
     });
     await userEvent.click(
@@ -949,7 +949,7 @@ describe("Storage management journey", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "查看 Local source" }),
     );
-    const drawer = await screen.findByRole("complementary", {
+    const drawer = await screen.findByRole("dialog", {
       name: "存储详情 Local source",
     });
     expect(within(drawer).getByText("引用情况")).toBeVisible();
@@ -1027,7 +1027,7 @@ describe("Storage management journey", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "查看 Local source" }),
     );
-    const drawer = await screen.findByRole("complementary", {
+    const drawer = await screen.findByRole("dialog", {
       name: "存储详情 Local source",
     });
     await userEvent.click(
@@ -1278,6 +1278,16 @@ describe("Storage lifecycle actions", () => {
           (init as RequestInit | undefined)?.method === "POST",
       ),
     ).toBe(true);
+    // The check opens the detail card over the list; close it before using the
+    // row menu again. The background is inert while the card is open.
+    await userEvent.click(
+      await screen.findByRole("button", { name: "关闭存储详情" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "存储详情 Local source" }),
+      ).toBeNull(),
+    );
 
     await userEvent.click(invoker);
     await userEvent.keyboard("{Escape}");
@@ -1540,7 +1550,7 @@ async function openAddDrawer() {
   await userEvent.click(
     await screen.findByRole("button", { name: "+ 添加存储" }),
   );
-  return screen.findByRole("complementary", { name: "添加存储" });
+  return screen.findByRole("dialog", { name: "添加存储" });
 }
 
 /** Step 1..3 walker for a Local Add: name/ID, root, then advanced defaults. */
@@ -1560,9 +1570,7 @@ describe("Storage Add/Edit drawer", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
     await screen.findByRole("heading", { name: "存储管理" });
-    expect(
-      screen.queryByRole("complementary", { name: "添加存储" }),
-    ).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull();
 
     const form = within(await openAddDrawer());
     // Prescribed four-step rail in Contract order.
@@ -1596,9 +1604,7 @@ describe("Storage Add/Edit drawer", () => {
 
     await userEvent.click(form.getByRole("button", { name: "取消" }));
     await waitFor(() =>
-      expect(
-        screen.queryByRole("complementary", { name: "添加存储" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
     );
     expect(document.activeElement?.getAttribute("id")).toBe(
       "mf-add-storage-button",
@@ -1614,9 +1620,7 @@ describe("Storage Add/Edit drawer", () => {
     await userEvent.type(form.getByLabelText("名称 *"), "半成品");
     await userEvent.keyboard("{Escape}");
     await waitFor(() =>
-      expect(
-        screen.queryByRole("complementary", { name: "添加存储" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
     );
     expect(commandCalls(fetchMock, "POST")).toHaveLength(0);
   });
@@ -1645,7 +1649,7 @@ describe("Storage Add/Edit drawer", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
     );
-    const drawer = await screen.findByRole("complementary", {
+    const drawer = await screen.findByRole("dialog", {
       name: "编辑存储 nas-media",
     });
     const form = within(drawer);
@@ -1683,7 +1687,7 @@ describe("Storage Add/Edit drawer", () => {
     await userEvent.click(form.getByRole("button", { name: "保存并激活" }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("complementary", { name: "编辑存储 nas-media" }),
+        screen.queryByRole("dialog", { name: "编辑存储 nas-media" }),
       ).toBeNull(),
     );
     const puts = commandCalls(fetchMock, "PUT");
@@ -1844,22 +1848,26 @@ describe("Storage Add/Edit drawer", () => {
     },
   );
 
-  it("refuses to open the Edit drawer when the projection fails", async () => {
+  it("keeps a failed Edit projection inside the card with a real next step", async () => {
     const fetchMock = stubWorkspace({ editProjection: null });
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
     );
-    const banner = await screen.findByRole("heading", {
-      name: "无法打开编辑表单",
+    const card = await screen.findByRole("dialog", {
+      name: "编辑存储 nas-media",
     });
-    expect(banner.parentElement?.textContent).toContain(
-      "该存储已不在当前 Active 配置中",
-    );
+    // The card opens immediately, shows the read failure there and offers a
+    // real retry/return path; no page banner and no form/save is exposed.
+    expect(card).toHaveAttribute("aria-busy", "false");
     expect(
-      screen.queryByRole("complementary", { name: /编辑存储/ }),
-    ).toBeNull();
+      within(card).getByText(/该存储已不在当前 Active 配置中/),
+    ).toBeVisible();
+    expect(
+      within(card).getByRole("button", { name: "重新读取" }),
+    ).toBeVisible();
+    expect(within(card).queryByLabelText("名称 *")).toBeNull();
     expect(commandCalls(fetchMock, "PUT")).toHaveLength(0);
   });
 
@@ -1875,9 +1883,7 @@ describe("Storage Add/Edit drawer", () => {
     expect(editButton).toBeDisabled();
     // A disabled action never opens the drawer.
     await userEvent.click(editButton);
-    expect(
-      screen.queryByRole("complementary", { name: /编辑存储/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("dialog", { name: /编辑存储/ })).toBeNull();
   });
 
   it("keeps Add/Edit reachable by keyboard in a narrow layout", async () => {
@@ -1890,7 +1896,7 @@ describe("Storage Add/Edit drawer", () => {
     expect(editButton).not.toHaveAttribute("tabindex", "-1");
     await editButton.focus();
     await userEvent.keyboard("{Enter}");
-    const drawer = await screen.findByRole("complementary", {
+    const drawer = await screen.findByRole("dialog", {
       name: "编辑存储 nas-media",
     });
     const form = within(drawer);
@@ -1902,5 +1908,247 @@ describe("Storage Add/Edit drawer", () => {
     expect(form.getByLabelText("主机地址")).toBeInTheDocument();
     await userEvent.click(form.getByRole("button", { name: "上一步" }));
     expect(form.getByLabelText("名称 *")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 50.1 — centered cards, late-read fencing and row menu ergonomics.
+
+describe("Storage centered cards and More menu", () => {
+  it("keeps a closed detail card closed when its slow read resolves later", async () => {
+    let resolveDetail: (response: Response) => void = () => {};
+    const detail = new Promise<Response>((resolve) => {
+      resolveDetail = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = String(input);
+        if (url.startsWith(INVENTORY_PATH)) {
+          return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
+        }
+        if (url.endsWith("/storage/local-source")) return detail;
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "查看 Local source" }),
+    );
+    const card = await screen.findByRole("dialog", { name: "存储详情" });
+    expect(
+      within(card).getByText(/正在读取该存储的配置与引用信息/),
+    ).toBeVisible();
+    // The background is locked and keeps its scrollbar space while open.
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "关闭存储详情" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.body.style.overflow).toBe("");
+
+    // A late response for the closed intent must not reopen the card.
+    resolveDetail(jsonResponse(detailPayload(STORAGE_LOCAL)));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "存储详情 Local source" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps Add input while the authority read is pending and gates Save until it is ready", async () => {
+    let resolveAuthority: (response: Response) => void = () => {};
+    const authority = new Promise<Response>((resolve) => {
+      resolveAuthority = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/v1/storages" && method === "GET") return authority;
+        if (url.startsWith(INVENTORY_PATH)) {
+          return jsonResponse(commandInventoryPayload([STORAGE_LOCAL]));
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "+ 添加存储" }),
+    );
+    const card = await screen.findByRole("dialog", { name: "添加存储" });
+    expect(
+      within(card).getByText(/正在读取当前 Active 保存授权/),
+    ).toBeVisible();
+    // Local input is harmless and preserved while the fence is pending.
+    await userEvent.type(within(card).getByLabelText("名称 *"), "慢授权存储");
+    await userEvent.type(within(card).getByLabelText("存储 ID *"), "slow-auth");
+    await userEvent.click(within(card).getByRole("button", { name: "下一步" }));
+    await userEvent.type(
+      within(card).getByLabelText("根路径 *"),
+      "/media/slow-auth",
+    );
+    await userEvent.click(within(card).getByRole("button", { name: "下一步" }));
+    await userEvent.click(within(card).getByRole("button", { name: "下一步" }));
+    const save = within(card).getByRole("button", { name: "保存" });
+    expect(save).toBeDisabled();
+    expect(save.getAttribute("title")).toMatch(/正在读取当前 Active 保存授权/);
+
+    resolveAuthority(
+      jsonResponse({
+        active: SMB_EDIT_PROJECTION.active,
+        sideEffects: "none",
+      }),
+    );
+    await waitFor(() => expect(save).toBeEnabled());
+    // The exact entered value survived the late authority response.
+    await userEvent.click(
+      within(card).getByRole("button", { name: /1\s*基本信息/ }),
+    );
+    expect(within(card).getByLabelText("名称 *")).toHaveValue("慢授权存储");
+  });
+
+  it("discards a late edit projection after switching to another object", async () => {
+    let resolveFirst: (response: Response) => void = () => {};
+    const first = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondProjection = {
+      ...SMB_EDIT_PROJECTION,
+      storage: {
+        ...STORAGE_OPENLIST_ROOT,
+        options: {
+          baseUrl: "https://openlist.example",
+          tokenEnv: "OPENLIST_TOKEN",
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = String(input);
+        if (url.startsWith(INVENTORY_PATH)) {
+          return jsonResponse(
+            commandInventoryPayload([STORAGE_SMB, STORAGE_OPENLIST_ROOT]),
+          );
+        }
+        if (url.endsWith("/storages/nas-media/edit")) return first;
+        if (url.endsWith("/storages/openlist-root/edit")) {
+          return jsonResponse(secondProjection);
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
+    );
+    const firstCard = await screen.findByRole("dialog", {
+      name: "编辑存储 nas-media",
+    });
+    expect(
+      within(firstCard).getByText(/正在读取该存储的配置与保存授权/),
+    ).toBeVisible();
+    await userEvent.click(
+      within(firstCard).getByRole("button", { name: "关闭编辑存储" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "编辑 OpenList root" }),
+    );
+    const secondCard = await screen.findByRole("dialog", {
+      name: "编辑存储 openlist-root",
+    });
+    expect(within(secondCard).getByLabelText("名称 *")).toHaveValue(
+      "OpenList root",
+    );
+
+    // The abandoned read resolves after the new object is ready: its values
+    // and fence must never replace the current intent.
+    resolveFirst(jsonResponse(SMB_EDIT_PROJECTION));
+    await waitFor(() =>
+      expect(within(secondCard).getByLabelText("名称 *")).toHaveValue(
+        "OpenList root",
+      ),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "编辑存储 nas-media" }),
+    ).toBeNull();
+  });
+
+  it("focuses the first More item and returns to the row entry on Escape", async () => {
+    stubWorkspace({ items: [STORAGE_LOCAL] });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    const invoker = await screen.findByLabelText("更多操作 Local source");
+    await userEvent.click(invoker);
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "复制" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(invoker).toHaveFocus();
+  });
+});
+
+describe("Storage More command boundary", () => {
+  it("marks the row busy while one explicit lifecycle command is in flight", async () => {
+    let resolveToggle: (response: Response) => void = () => {};
+    const toggle = new Promise<Response>((resolve) => {
+      resolveToggle = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/v1/storages" && method === "GET") {
+        return jsonResponse({
+          active: SMB_EDIT_PROJECTION.active,
+          sideEffects: "none",
+        });
+      }
+      if (
+        url.endsWith("/api/v1/storages/local-source/disable") &&
+        method === "POST"
+      ) {
+        return toggle;
+      }
+      if (url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(
+      await screen.findByLabelText("更多操作 Local source"),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "停用" }));
+    const summary = await screen.findByLabelText("更多操作 Local source");
+    await waitFor(() => expect(summary).toHaveTextContent("处理中…"));
+    expect(summary.closest("details")).toHaveAttribute("aria-busy", "true");
+    // The menu cannot start a second command for this row while it is busy.
+    await userEvent.click(summary);
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    resolveToggle(jsonResponse(saveResponsePayload()));
+    await waitFor(() => expect(summary).toHaveTextContent("更多"));
+    expect(
+      (fetchMock.mock.calls as unknown as [string, RequestInit][]).filter(
+        ([url, init]) =>
+          String(url).endsWith("/api/v1/storages/local-source/disable") &&
+          init?.method === "POST",
+      ),
+    ).toHaveLength(1);
   });
 });

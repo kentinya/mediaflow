@@ -20,6 +20,7 @@ import {
 } from "react";
 import { useBlocker } from "@tanstack/react-router";
 import { Button } from "../../shared/ui/Button";
+import { useBodyScrollLock } from "../../shared/ui/modal-card";
 
 export const AUTOMATION_CARD_EXIT_MS = 160;
 
@@ -254,15 +255,11 @@ export function useAutomationCardExit(
   }, []);
 
   // The card owns the viewport while open: background scrolling and
-  // interaction stop, and the sibling list surface is inert. Cleanup restores
-  // exactly the previous state so an interrupted close cannot leave a lock.
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
+  // interaction stop, and the sibling list surface is inert. The shared lock
+  // also reserves the measured scrollbar gutter, so hiding the scrollbar never
+  // widens/reflows the background list. Cleanup restores exactly the previous
+  // state so an interrupted close cannot leave a lock or padding behind.
+  useBodyScrollLock();
 
   useEffect(() => {
     const layer = layerRef.current;
@@ -288,10 +285,14 @@ export function useAutomationCardExit(
       }
       const invoker = invokerRef.current;
       if (invoker instanceof HTMLElement && document.contains(invoker)) {
-        invoker.focus();
+        // Never scroll while handing focus back: the list's preserved scroll
+        // position is part of the close contract.
+        invoker.focus({ preventScroll: true });
       } else {
         window.setTimeout(() => {
-          document.getElementById(options.focusReturnId)?.focus();
+          document
+            .getElementById(options.focusReturnId)
+            ?.focus({ preventScroll: true });
         }, 0);
       }
     },
