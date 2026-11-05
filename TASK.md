@@ -1,12 +1,11 @@
 # Task PATCH-20261105-1 — 自动化创建/编辑展示与列表复制入口修正
 
-用户于 2026-11-05 明确要求“激活Task吧”，将已确认规划
-`df05111f1cb551d3267a370173e3838574a28d92:TASK.md` 激活为正式当前 Task。
-原 Task Base、三项需求、实现边界、验收和测试分工均保持不变。
-下一步由 Developer 按本 Task 实施，实际开始时更新为 `IN PROGRESS`；本轮 B 仅完成激活，
-尚未开始产品实施或独立验收，不构成 PASS、push 或部署授权。
+B 于 2026-11-05 独立复核完整 Task Base..候选，结论 **FIX REQUIRED**。
+三项界面修正已有实现，但列表复制的本次结果、冲突恢复和所见配置绑定尚未满足验收。
+修复继续留在本 Task；下方 B Review Result 给出真实用户触发、证据及开发指导。
+Task Base、三项需求、Difficulty / Test Level 与既有边界不变。
 
-Authority：用户在本会话确认的三项截图需求及本轮激活指令；生命周期、Git、测试和独立小 Bug
+Authority：此前确认的三项截图需求、Task 激活及本轮 B 独立复核指令；生命周期、Git、测试和独立小 Bug
 流程以 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 为准。
 角色经验见 [B](docs/agent-experience/task-planner-reviewer.md) 和
 [Developer](docs/agent-experience/developer-implementation-role.md)。
@@ -15,7 +14,7 @@ Authority：用户在本会话确认的三项截图需求及本轮激活指令�
 Task ID: PATCH-20261105-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 9fa51289539c5279687ad0420bc74de758414776
 Difficulty: Medium
 Test Level: T4
@@ -346,4 +345,83 @@ E2E 60s+66s、静态/构建约 30s），约 11%，低于 30% 上限。
 
 ### B Review Result
 
-候选已提交（见 Developer Completion Report）；B 独立验收尚未开始。
+**Decision: FIX REQUIRED — 2026-11-05，B 独立审查。**
+
+Reviewed range：`9fa51289539c5279687ad0420bc74de758414776..7881139688a00ae50c9184318a3688749de4e93a`，
+完整 17 文件（含计划/交接、实现和测试），不是只看最后提交。
+产品候选 `d6e8f979c491f9101c926c4f2854a5fb33e4383a`；其后到被审 Head 仅
+`TASK.md` 报告变更，执行输入相同。三个问题均由该实现提交引入
+（2026-11-05 21:35:30 +0800）。修复不重设 Base，不另立 Task。
+
+#### 已核对的交付与未完成结果
+
+- 实际创建/编辑卡片和列表已移除多余位置行；复制紧邻编辑，编辑区不再有生命周期
+  按钮组，引用安全移除仍可见。共用开关桌面紧凑对齐，390px 中文字可读；检查了实际
+  截图、开/关、键盘焦点和 reduced-motion。这里只确认所观察的结果，未将全部 AC 勾为通过。
+- **AC-7 未满足：本次未知被上次成功覆盖。** 用户在列表复制一次成功，随后再次点击同一行
+  复制；第二次后台已产生另一个停用副本，但响应丢失。当前行仍显示第一次“已复制为停用
+  副本”和第一次的“编辑副本”，没有第二次的“核对复制结果”。本次待核对信息实际仍在
+  session 中；继续点复制被提交保护静默拦住，当前页面不能完成本次核对。页面重载后可找回
+  核对，不等于当前结果准确。根因：`clearCopyRowFeedback` 没清理该行 `copiedCopies`，
+  `copyFeedback` 又让旧成功优先于当前 pending。**P1，B-PATCH-01**。
+- **AC-6 未满足：按提示刷新后仍无法恢复复制。** 用户先打开列表，另一标签页正常创建
+  一个任务；原列表点击复制收到 409。列表已重读并显示另一标签页的新任务，用户再按页面
+  “刷新”并明确重新点击复制，仍为 409，两个请求携带完全相同的旧版本。
+  根因：409 和页面刷新只重读列表，未更新复制所用的表单授权查询。
+  恢复说明让用户核对最新内容再复制，却持续提交旧配置。**P1，B-PATCH-02**。
+- **AC-5/6 未满足：所见来源与命令配置版本分离。** 用户打开列表时行已读出上限 5，
+  独立的授权读取较慢；另一标签页通过普通编辑保存上限 9，随后原页的授权读取完成。
+  原列表仍显示 5，用户点击复制却 200 成功并复制上限 9。这里仅延迟真实 GET、使用现有
+  编辑/保存/复制入口，没有构造不存在的命令。根因：`submitCopy` 只从行取 ID，直接配
+  独立查询返回的 `copyBaseline`，没有绑定行所观察的配置。**P1，B-PATCH-03**。
+
+#### Developer 修复指导（按顺序完成同一 Task）
+
+1. 修复当前行的新旧反馈交接。一次新的明确复制开始时移除该行旧成功反馈；本次提交、
+   拒绝、未知和核对结果必须对应本次命令。第二次未知应立即显示本次核对入口；核对后
+   “编辑副本”打开第二个副本。保留兄弟行状态和已有未决意图，不新增通用命令框架。
+2. 将复制来源与其读到的配置配对。复用行的 `activeConfiguration` 和现有授权身份；
+   不一致时只读重读并让用户看到当前来源，再由下一次明确点击提交。不得把新授权悄悄
+   配给旧行，也不得在原点击里换基线自动补发。若现有投影确实不足，仅补本入口所需的
+   最小只读信息。Draft-only/历史来源继续按原可复制范围处理。
+3. 让 409 后和页面“刷新”的只读恢复同时更新复制需要的来源与授权；更新后的可用复制
+   必须绑定相同观察配置。无权限/读失败应有可用的恢复说明；重读本身不发复制命令。
+4. 在 `AutomationListCopy.test.tsx` 及真实 Python 生命周期 spec 补上述三条完整旅程：
+   第一次成功→第二次丢响应/5xx/畸形响应→核对第二次→可编辑第二副本；旧成功后第二次
+   明确拒绝不显示旧成功；并发发布→409→页面刷新→下一次明确复制成功；行先返回、授权
+   后返回且中间有合法保存时，旧行不能复制未展示的新值。断言真实副本 ID/字段、请求次数
+   和原提交版本，不只检查按钮重新可点。保留现有测试的原权限/复制停用/未知不重发断言。
+5. 执行本 Task 原 Developer affected-test 计划及新增失败用例，提交新连贯候选并更新交接。
+   B 复核这些阻塞消除后负责剩余 T4 门禁；不把全量回归转交 Developer。
+   本轮和修复轮均遵守用户要求：测试执行时间小于该轮总用时的 50%。
+
+#### B 实际验证与证据
+
+本地稳定证据根：
+`.git/validation-evidence/7881139688a00ae50c9184318a3688749de4e93a/patch-20261105-1/`。
+只在本机可取，不声称远程可达。命令/结果/构建身份摘要见该目录 `manifest.json`。
+
+- `python3 scripts/check_governance.py`：PASS（审查前）。
+- `git diff --check 9fa51289..HEAD`：通过；`web/` 的 `npm run build`：成功，
+  使用 `index-BPlF38lR.js` / `index-UWKGzSrN.css`，保留既有 chunk warning。
+- B 新建独立 Playwright 探针置于上述 ignored 证据目录，以真实
+  `scripts/operations_inventory_harness.py`、临时 SQLite、生产构建和 Chromium 执行。
+  从现有 UI 创建/编辑/保存/复制；丢响应只拦响应，慢读取只延迟真实授权 GET。
+  每条业务写入仍经过实际 API 与配置发布，不读用户数据库或媒体。
+- 首轮 `npx playwright test --config=<证据根>/review.config.mjs`：**1 passed / 2 failed**，
+  12.68 秒；B-PATCH-01 实证失败。另一个失败是探针 `exact` 文本定位遗漏图标，不算
+  产品问题；保留 `review.log` 和 `results/`，修正探针定位后继续确认。
+- `--grep 'B conflict|B copy source'`：**2 failed**，5.83 秒；
+  B-PATCH-02 的两次 409 同一提交版本，B-PATCH-03 的所见 5 / 复制 9 已记录，
+  见 `review-confirmation.log` 和 `results-confirmation/`。
+- `--grep 'B visual|B conflict'`：**1 passed / 1 failed**，3.34 秒；
+  显式点击页面“刷新”后仍复现 B-PATCH-02；视觉用例在 reduced-motion 下重新截图，
+  包含桌面和390px开关、编辑移除入口及键盘操作，见 `review-final.log` / `results-final/`。
+  已实际查看四张创建/编辑截图。三次浏览器总执行约 **21.85 秒**；计时段
+  21:39:15–21:43:25 已超过4分钟，构建不足2秒，测试占该已计时段不足10%，整轮低于50%。
+- 按 workflow §6 的“已证实阻塞可提前 FIX REQUIRED”，**未运行**完整 Python/Web/默认
+  E2E、剩余原生集合、wheel/安装消费者/容器门禁；这些保持 B pending，并非免除或 PASS。
+  Developer 原交接结果保留为其报告，不冒充 B 本轮独立执行。
+
+本轮仅更新并 checkpoint `TASK.md`；原预存文件原样保留，不纳入提交。
+`SLICE.md`、Roadmap、Progress 不变；没有新 Slice、push 或部署。
