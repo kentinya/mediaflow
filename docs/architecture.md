@@ -12,10 +12,12 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
 
-[Slice50](../SLICE.md) selects `V2-UX-005–012` as a planning-only target. This is not delivered
+[Slice50](../SLICE.md) selects the original eight `V2-UX-005–012` and the explicitly added
+Automation create/edit stability requirement `V2-UX-013` as planning-only targets. This is not delivered
 CURRENT behavior or implementation authorization. The target changes presentation of Task detail,
 Storage and both library configuration surfaces, removes the two page-local directory trees, and
-coordinates transitions across all existing V2 pages plus Files/MediaLibrary loading. It does not
+coordinates transitions across all existing V2 pages plus Files/MediaLibrary loading, and fixes
+Automation create/edit card opening jitter. It does not
 introduce a backend capability, schema, task lifecycle, recovery engine or configuration authority.
 
 **Presentation reuse:** use the existing Automation create/edit card as the visual/interaction
@@ -24,6 +26,20 @@ and reduced-motion. Extract/reuse feature-independent presentation only as neede
 fields, saved-definition identity, command sessions and authorization stay with Automation.
 Task detail has its own readable content/size; Storage and library forms keep their own models,
 Provider fields, validation and checked publication. No broad design-system rewrite is required.
+
+**Automation card stability:** treat list-to-create/edit and their close paths as overlay navigation
+that preserves background scroll and content, using the existing Router's local scroll-reset control
+or equivalent; avoid unnecessary background remounts and never reset then visibly restore the page.
+Ordinary page scroll behavior is unchanged. Keep shared scroll locking with stable scrollbar space
+or measured compensation as appropriate, without double compensation or leftover locks/offsets after
+exit. Use a responsive bounded card layout for both authority/definition loading and form content so
+the centered card does not jump from a short shell to a tall form. Keep header/close/primary actions
+stable and long content internally scrollable; do not defer real failures behind endless animation.
+Focus must not add background scrolling. Deep links, same-definition readback, current authority,
+exact-value/Active pairing, unsaved/in-flight guards and unknown-publication reconciliation stay with
+their existing owners. Do not skip reads, reuse stale authority for submission, or replay commands
+to make loading appear faster. Share this corrected presentation with the selected cards as needed;
+do not rewrite the global router, fields or command models for the fix.
 
 **Task detail:** existing authorized Task overview/item/result/plan/log/audit/export and recovery
 reads/commands remain the source of truth. The same selected task and supported deep links render
@@ -49,7 +65,8 @@ transitions and separate library-list/directory loading states; undefined data i
 list. Preserve same-query refresh content and authoritative errors, reject stale cross-library/
 path responses, respect reduced-motion, and do not remount/replay business commands for animation.
 
-Other pages participate in navigation motion only; their business bodies are not redesigned.
+Beyond the selected Task/Storage/library surfaces and Automation create/edit stability, other
+pages participate in navigation motion only; their business bodies are not redesigned.
 Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
 query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
 the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below

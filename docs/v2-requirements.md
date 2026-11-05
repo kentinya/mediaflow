@@ -28,8 +28,10 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 ## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
 
 用户于 2026-11-05 授权规划八项体验要求及相关文档，并明确不得扩大或收窄需求。
-[Slice50](../SLICE.md) 为 **PLANNED**；以下 ID 与用户序号一一对应，全部为目标必需结果，
-尚未实施/验收，不授权激活、正式实施 Task 或代码修改。现有自动化创建/编辑卡片是共同
+后续明确补充自动化新建/编辑弹卡抖动修复；`V2-UX-005–012` 保留原八项一一映射，
+`V2-UX-013` 单列补充，不替代或缩减原要求。[Slice50](../SLICE.md) 为 **PLANNED**，
+全部为目标必需结果，尚未实施/验收，不授权激活、正式实施 Task 或代码修改。
+现有自动化创建/编辑卡片是共同
 视觉和交互基准；其他业务按各自内容设计，不能复制自动化字段或改变其命令。
 
 | ID | Requirement | Acceptance meaning |
@@ -42,10 +44,12 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 | V2-UX-010 | 用户第 6 项：改善文件/媒体库页编辑媒体库、删除媒体库的呈现。 | 两页库配置编辑/移除菜单及相应确认协调、清楚、美观，普通/危险操作可辨，覆盖编辑/删除媒体库。现有入口、权限、引用阻塞、取消/确认保留；移除配置保留物理文件，不变成条目 Delete 或强制修改引用。 |
 | V2-UX-011 | 用户第 7 项：添加/编辑资源库、媒体库均为弹出卡片。 | 四个入口使用与自动化/存储协调的居中卡片，保留全部既有字段、准确回填、不可变编辑 ID、隐藏配置、checked Active Save、合法目录返回及禁用恢复。成功/无效输入/冲突/失败/未知状态真实，输入/核对保留；不创建/迁移/删除物理内容。 |
 | V2-UX-012 | 用户第 8 项：各页面切换自然、美观，文件/媒体库未加载时以一致加载动画改善体验。 | 覆盖现有共享 Shell 下各 V2 页面间切换，不限弹卡页面；其他业务内容不重设计。切页/开关卡片协调，无突兀挤压/闪白/旧页残留，刷新/轮询不重复整页入场。两种库的库信息和目录读取分阶段加载、内容平顺接入；未返回不能当空态，真实空/失败/权限/无 Active 可辨。保留同条件刷新内容，快速切库/路径不串响应，尊重 reduced-motion，不人为延时或重放命令。 |
+| V2-UX-013 | 用户补充：自动化页新建与编辑弹卡打开稳定、不抖动。 | 两个入口均保留背景列表的滚动、宽度和合法上下文；叠层路由不默认回顶，滚动锁定保留实际滚动条占位并准确释放。权限/定义读取与完整表单使用协调的稳定卡片布局，不从矮空壳突然撑大重居中；不跳过真实读取、放宽提交权限或人为延时。覆盖打开中间帧、关闭/重开、页顶/已滚动、占位滚动条/无占位、慢权限/慢定义、失败/拒绝/缺失、桌面/窄屏和 reduced-motion；保留深链、认证续转、回焦、未保存/在途保护、精确保存和未知核对。仅停稳截图或标题 y 不能证明通过。 |
 
 这组目标替换现有任务侧详情、Storage 右抽屉及 Files/MediaLibrary 目录树/添加编辑抽屉的
 所选呈现约束；旧参考图/旧 Slice 原始验收保持历史事实。沿用 `V2-UX-001–004`、当前
 五态 Task/文件结果分离、四类恢复、配置/执行权限和非重放，不新增引擎/状态/恢复或设置。
+自动化新建/编辑补充仅修正共享卡片的布局稳定性，视觉基准与已有业务字段/命令保持。
 完整 [TARGET 旅程](product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
 与 [TARGET 架构](architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
 共同解释目标；CURRENT 段落仍表示已交付基线，不能将本规划记为完成。

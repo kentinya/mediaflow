@@ -52,7 +52,8 @@ a shared Chinese create/edit card and optional enabled creation. The subsequent 
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
 [TASK.md](TASK.md) has no active implementation Task and links the latest independent B review;
 [Progress](docs/progress.md) preserves original large-Slice Base/Head, closure evidence and deferrals.
-[Slice50](SLICE.md) is PLANNED for the user's eight dialog/readability/navigation UX requests;
+[Slice50](SLICE.md) is PLANNED for the user's original eight dialog/readability/navigation UX requests
+and the explicitly added Automation create/edit card jitter correction;
 this checkpoint authorizes planning/documentation only, with no activation or implementation Task.
 Its [TARGET requirements](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
 are not delivered behavior. Earlier acceptance remains unreleased V2 development acceptance.
