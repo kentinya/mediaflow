@@ -25,12 +25,12 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
+## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
 
 用户于 2026-11-05 授权规划八项体验要求及相关文档，并明确不得扩大或收窄需求。
 后续明确补充自动化新建/编辑弹卡抖动修复；`V2-UX-005–012` 保留原八项一一映射，
-`V2-UX-013` 单列补充，不替代或缩减原要求。[Slice50](../SLICE.md) 为 **PLANNED**，
-全部为目标必需结果，尚未实施/验收，不授权激活、正式实施 Task 或代码修改。
+`V2-UX-013` 单列补充，不替代或缩减原要求。[Slice50](../SLICE.md) 为 **ACTIVE**，
+用户已授权激活和首个 B Task 规划；全部为目标必需结果，尚未实施/验收，本轮不开始代码修改。
 现有自动化创建/编辑卡片是共同
 视觉和交互基准；其他业务按各自内容设计，不能复制自动化字段或改变其命令。
 
@@ -50,8 +50,8 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 所选呈现约束；旧参考图/旧 Slice 原始验收保持历史事实。沿用 `V2-UX-001–004`、当前
 五态 Task/文件结果分离、四类恢复、配置/执行权限和非重放，不新增引擎/状态/恢复或设置。
 自动化新建/编辑补充仅修正共享卡片的布局稳定性，视觉基准与已有业务字段/命令保持。
-完整 [TARGET 旅程](product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
-与 [TARGET 架构](architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)
+完整 [TARGET 旅程](product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)
+与 [TARGET 架构](architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)
 共同解释目标；CURRENT 段落仍表示已交付基线，不能将本规划记为完成。
 
 ## Automation forms and direct Run once — CURRENT (Slice49 PASS / CLOSED)

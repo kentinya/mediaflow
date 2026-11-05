@@ -10,11 +10,12 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
+## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
 
 [Slice50](../SLICE.md) selects the original eight `V2-UX-005–012` and the explicitly added
-Automation create/edit stability requirement `V2-UX-013` as planning-only targets. This is not delivered
-CURRENT behavior or implementation authorization. The target changes presentation of Task detail,
+Automation create/edit stability requirement `V2-UX-013` as active targets. Activation and the first
+B Task plan are authorized; code implementation is not performed in this turn. This is not delivered
+CURRENT behavior. The target changes presentation of Task detail,
 Storage and both library configuration surfaces, removes the two page-local directory trees, and
 coordinates transitions between existing V2 sidebar destination pages plus Files/MediaLibrary loading,
 and fixes Automation create/edit card opening jitter. It does not introduce a backend capability,

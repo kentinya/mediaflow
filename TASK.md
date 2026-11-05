@@ -1,7 +1,8 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-[Slice50 — V2 页面弹卡、可读性与切换体验](SLICE.md) 已规划，状态 **PLANNED**。
-本轮只授权 Slice/相关文档规划；尚未授权激活、B 正式 Task 规划或代码实施。
+[Slice50 — V2 页面弹卡、可读性与切换体验](SLICE.md) 已由用户授权激活，状态 **ACTIVE**。
+此激活 checkpoint 尚无实施 Task；下一步由同一代理按明确授权承担 B，规划第一个 Task。
+本轮止于规划，不开始代码实施。
 原八项及用户补充的自动化新建/编辑弹卡抖动方案见 Contract（`V2-UX-005–013`）；
 约四个行为分组仅为建议，不是活动 Task。
 

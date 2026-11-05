@@ -11,7 +11,7 @@ The supplied image defines hierarchy with explicit overrides below: no card stat
 both library selectors share cards with name/selection/menu and selected context with enabled state/
 path only. Reuse the shared shell; this visual specification adds no unrelated Files business scope.
 
-## TARGET — Slice50 弹卡、去目录树与加载体验（PLANNED）
+## TARGET — Slice50 弹卡、去目录树与加载体验（ACTIVE）
 
 [Slice50](../SLICE.md) / `V2-UX-009–012` 逐项承接用户要求，尚未实施/验收。
 目标删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、

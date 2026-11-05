@@ -4,14 +4,14 @@
 Slice ID: 50
 Name: V2 Dialog, Readability and Navigation Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY; NO IMPLEMENTATION AUTHORIZATION
+Development Authorization: SLICE ACTIVATION AND FIRST B TASK PLANNING; NO CODE IMPLEMENTATION IN THIS TURN
 Risk: High
 Final Test Level: T4
-Next Action: USER AUTHORIZES ACTIVATION BEFORE B PLANS AN IMPLEMENTATION TASK
+Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
 ```
 
 ## Authority and accepted baseline
@@ -22,7 +22,9 @@ Next Action: USER AUTHORIZES ACTIVATION BEFORE B PLANS AN IMPLEMENTATION TASK
 用户进一步明确：第 8 项的页面切换仅指左侧侧栏入口对应的主页面之间切换；同一主页面内
 的标签、详情子路由（含其深链）、切库/目录与弹卡进出不属于这项整页切换动画，加载与
 弹卡要求分别保留。按主页面身份判断切换，不把链接来源或每次 URL 变化等同于切页。
-本轮为 A 的范围/文档规划；不激活实施，不创建正式 B Task，不改产品代码，不推送或部署。
+用户现明确授权“激活 Slice 并代替 B 规划第一个 Task”。本轮先由 A 激活并 checkpoint，
+再由同一代理按用户授权承担 B 的首次 Task 规划；该角色授权不包含自我验收或 A 终审。
+本轮止于激活和规划，不改产品代码，不推送或部署。
 生命周期与测试分工遵循
 [Development Workflow](docs/development-workflow.md)。
 
@@ -57,9 +59,9 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 | 8 | 各页面切换动画自然、美观；用加载动画优化文件/媒体库尚未加载的体验，两种库一致 | RO-4 / `V2-UX-012` |
 | 补充 | 修复自动化页“新建自动化任务”和“编辑”打开弹卡时的页面/卡片抖动 | RO-4 / `V2-UX-013` |
 
-稳定定义见 [V2 Requirements TARGET](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)，
-完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)，
-技术边界见 [Architecture TARGET](docs/architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-planned)。
+稳定定义见 [V2 Requirements TARGET](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)，
+完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)，
+技术边界见 [Architecture TARGET](docs/architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)。
 这些是尚未实施/验收的目标，不是 CURRENT 交付声明。
 
 沿用适用 `UX-001–010`、`REQ-STO-*`、`REQ-LIB-*`、`REQ-WEB-*`、`REQ-TASK-*`、
@@ -240,7 +242,7 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 
 ## Planning and validation allocation
 
-建议激活后按完整行为组织约四个 Task：存储弹卡/菜单（含必要共享呈现）、任务详情弹卡/
+建议按完整行为组织约四个 Task：存储弹卡/菜单（含必要共享呈现）、任务详情弹卡/
 可读性、两种库布局/配置交互、侧栏主页面切换/两种库加载。自动化新建/编辑稳定性作为共享弹卡
 呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。这是分组建议，不是正式
 Task 或额外范围；B 按真实依赖决定顺序/粒度，不按原八项或补充原因机械拆任务。

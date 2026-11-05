@@ -35,15 +35,16 @@ only in [the development workflow](development-workflow.md).
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
-| 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PLANNED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization and subsequent create/edit stability supplement only |
+| 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | ACTIVE | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 
 ## Current boundary
 
-[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **PLANNED**.
+[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **ACTIVE**.
 The user authorized planning and related documentation for the original eight requests and explicitly
 added Automation create/edit card jitter correction; the original eight requirements remain intact.
-Activation, a formal B implementation Task and code implementation are not authorized
-by this planning checkpoint; [TASK.md](../TASK.md) remains NO ACTIVE IMPLEMENTATION TASK.
+The user has now authorized activation and the first B Task plan by the same agent after the A
+activation checkpoint. The current plan is in [TASK.md](../TASK.md); this turn stops before code
+implementation, with no self-acceptance or A Final Review.
 Page transitions cover only the main pages reached through existing V2 sidebar entries, as clarified
 by the user; main-page identity determines a transition. Tabs, detail subroutes (including their deep
 links), library/path changes and card open/close within the same main page do not replay that page

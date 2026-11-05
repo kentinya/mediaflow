@@ -8,10 +8,10 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice50](../SLICE.md) is **PLANNED** under the user's 2026-11-05 authorization to plan the original
-eight UX changes and related documents, plus the explicitly added Automation create/edit card jitter
-correction. No activation, implementation, Task acceptance or Slice50 closure is claimed;
-[TASK.md](../TASK.md) remains NO ACTIVE IMPLEMENTATION TASK.
+[Slice50](../SLICE.md) is **ACTIVE** under the user's authorization to activate it and plan the first
+B Task, retaining the original eight UX changes and Automation create/edit card jitter correction.
+The current plan is in [TASK.md](../TASK.md). This turn stops before code implementation;
+no Task acceptance or Slice50 closure is claimed.
 Slice49 remains PASS / CLOSED. The accepted closure ledger below is unchanged.
 
 ## Latest accepted closure — Slice49

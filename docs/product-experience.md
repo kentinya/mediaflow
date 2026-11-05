@@ -20,10 +20,10 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 PLANNED)
+## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
 
 [Slice50](../SLICE.md) / `V2-UX-005–012` 逐项承接用户的原八项要求，`V2-UX-013` 承接后续
-自动化新建/编辑弹卡抖动补充；仅完成规划，尚未激活、实施或验收。本节是未来目标；
+自动化新建/编辑弹卡抖动补充；已授权激活和首个 B Task 规划，尚未实施或验收。本节是未来目标；
 下方 CURRENT 仍记录现状。目标替换任务侧详情、所选存储/库
 抽屉和两种库的页内目录树，旧图片不要求未来页面继续复现这些结构。其他已接受业务语义保留。
 

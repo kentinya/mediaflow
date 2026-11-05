@@ -11,7 +11,7 @@ Original revision/delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
 Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
-## TARGET — Slice50 弹卡、去目录树与加载体验（PLANNED）
+## TARGET — Slice50 弹卡、去目录树与加载体验（ACTIVE）
 
 [Slice50](../SLICE.md) / `V2-UX-009–012` 是用户授权的规划目标，尚未实施/验收。
 本节在目标实现/验收中替换下方 CURRENT 的 Directory Pane 和 Add/Edit drawer 呈现约束；

@@ -13,7 +13,7 @@ Slice46 于 2026-10-29 通过 A 完整范围审查。本文是现行页面/交�
 结果保持；取消仍安全协作，Pause/resume-from-pause 已退出。系统设置和源历史处理见完整
 Product Experience 旅程，原 Slice46 接受身份不变。
 
-### TARGET — Slice50 任务详情弹卡与可读性（PLANNED）
+### TARGET — Slice50 任务详情弹卡与可读性（ACTIVE）
 
 [Slice50](../SLICE.md) / `V2-UX-005/006` 对应用户第 1、2 项，尚未实施/验收。
 点击任务名称在当前列表背景打开居中详情卡，列表不被挤窄；与自动化新建的遮罩、卡片层级、
