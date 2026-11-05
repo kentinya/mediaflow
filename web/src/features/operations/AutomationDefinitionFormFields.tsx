@@ -936,13 +936,16 @@ export function AutomationDefinitionFormFields({
               <input
                 id="automation-create-enabled"
                 type="checkbox"
+                role="switch"
                 checked={form.enabled}
                 disabled={enablementBlocked}
                 onChange={(event) =>
                   updateFields({ enabled: event.target.checked })
                 }
               />
-              启用定时计划
+              <span className="mf-automation-create-toggle-text">
+                启用定时计划
+              </span>
             </label>
             <p className="mf-automation-create-hint">
               {mode === "create"

@@ -65,7 +65,7 @@ const AUTHORITY: AutomationDefinitionFormAuthorityModel = {
   ],
   modes: ["automatic-organization"],
   scheduleTypes: ["interval", "cron"],
-  actions: { create: true, enable: true, createEnabled: true },
+  actions: { create: true, copy: true, enable: true, createEnabled: true },
   actionReasons: { enable: null, createEnabled: null },
   limits: {
     id: 64,

@@ -9,10 +9,11 @@
  * it. The definition's ID is immutable and the exact saved values — including
  * arbitrary legal Cron and fractional intervals — are backfilled without being
  * rewritten into a convenience default. The enablement choice is part of the
- * same card: saving publishes the toggled state through the same checked
- * publication boundary. Enable/disable, copy and removal remain separate
- * explicit lifecycle commands with their own durable outcomes; removal
- * evidence and unattended-authority state come from the backend projection.
+ * same card: saving publishes the selected state through the same checked
+ * publication boundary. Copy lives on the list next to 编辑; removal remains
+ * this card's separate explicit lifecycle command with its own durable
+ * outcome. Removal evidence and unattended-authority state come from the
+ * backend projection.
  *
  * Form state, retained input and the command target are all bound to the
  * current definition route context, and the candidate carries its own observed
@@ -27,22 +28,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
-import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   reconcileAutomationPublicationFocused,
-  copyAutomationDefinitionFocused,
-  fetchAutomationCopyCandidate,
-  fetchAutomationCopyIntent,
   fetchAutomationEditProjection,
   fetchAutomationFormAuthority,
   fetchAutomationRemovalImpact,
   removeAutomationDefinitionFocused,
   saveAutomationDefinitionFocused,
-  setAutomationDefinitionEnabledFocused,
 } from "../../shared/api/api-client";
 import { automationListQueryKey } from "./automation-query";
 import type {
@@ -131,104 +125,6 @@ function candidateAuthorityOf(
   };
 }
 
-/**
- * The submitted-but-unconfirmed Copy intent, bounded to identity and the
- * observed authority — no token, secret or reusable execution authority is
- * persisted. It survives a real page reload because a lost Copy response is an
- * unknown durable outcome: until it is reconciled, no second Copy is offered.
- * The key is principal-scoped and cleared when the active principal changes,
- * exactly like the existing recovery-batch session context.
- */
-interface PendingCopyIntent {
-  readonly sourceId: string;
-  readonly authority: CandidateAuthority;
-}
-
-const COPY_INTENT_SESSION_PREFIX =
-  "mediaflow.operations.automation-copy-intent:";
-
-function copyIntentSessionKey(principalId: string): string {
-  return `${COPY_INTENT_SESSION_PREFIX}${principalIdStorageSegment(principalId)}`;
-}
-
-function readPendingCopyIntent(
-  principalId: string | null,
-): PendingCopyIntent | null {
-  if (principalId === null || typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(
-      copyIntentSessionKey(principalId),
-    );
-    if (raw === null) return null;
-    const value = JSON.parse(raw) as unknown;
-    if (
-      value === null ||
-      typeof value !== "object" ||
-      typeof (value as Record<string, unknown>).sourceId !== "string"
-    ) {
-      return null;
-    }
-    const source = value as Record<string, unknown>;
-    const authority = source.authority;
-    if (
-      authority === null ||
-      typeof authority !== "object" ||
-      typeof (authority as Record<string, unknown>).revisionId !== "string" ||
-      typeof (authority as Record<string, unknown>).version !== "number" ||
-      typeof (authority as Record<string, unknown>).digest !== "string"
-    ) {
-      return null;
-    }
-    const boundedAuthority = authority as Record<string, unknown>;
-    return {
-      sourceId: source.sourceId as string,
-      authority: {
-        revisionId: boundedAuthority.revisionId as string,
-        version: boundedAuthority.version as number,
-        digest: boundedAuthority.digest as string,
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writePendingCopyIntent(
-  principalId: string | null,
-  intent: PendingCopyIntent | null,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (principalId === null) return;
-    const key = copyIntentSessionKey(principalId);
-    if (intent === null) {
-      window.sessionStorage.removeItem(key);
-    } else {
-      window.sessionStorage.setItem(
-        key,
-        JSON.stringify({
-          sourceId: intent.sourceId,
-          authority: intent.authority,
-        }),
-      );
-    }
-  } catch {
-    // Persisting the reconciliation context is best-effort: the operator can
-    // always reconcile from the durable inventory after a reconnect.
-  }
-}
-
-registerPrincipalSessionDataCleaner(() => {
-  if (typeof window === "undefined") return;
-  const storage = window.sessionStorage;
-  const keys: string[] = [];
-  for (let index = 0; index < storage.length; index += 1) {
-    const key = storage.key(index);
-    if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
-  }
-  for (const key of keys) storage.removeItem(key);
-});
-
 export interface AutomationEditDialogProps {
   readonly definitionId: string;
   readonly onClose: () => void;
@@ -250,7 +146,6 @@ export function AutomationEditDialog({
   const principalId = principalIdentity.resolved
     ? principalIdentity.principalId
     : null;
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const editing = definitionId.length > 0;
   // The exact route context this page's form and commands belong to.
@@ -296,26 +191,6 @@ export function AutomationEditDialog({
   const [notice, setNotice] = useState<string | null>(null);
   const [showIssues, setShowIssues] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  // One submitted-but-unconfirmed Copy command: while its outcome is unknown,
-  // no second Copy is offered until it is reconciled from durable evidence.
-  const [pendingCopyIntentOverride, setPendingCopyIntentState] =
-    useState<PendingCopyIntent | null>(null);
-  const pendingCopyIntent =
-    pendingCopyIntentOverride ?? readPendingCopyIntent(principalId);
-  const setPendingCopyIntent = (intent: PendingCopyIntent | null) => {
-    setPendingCopyIntentState(intent);
-    writePendingCopyIntent(principalId, intent);
-  };
-  const [reconcileCopyForState, setReconcileCopyFor] = useState<string | null>(
-    null,
-  );
-  const reconcileCopyFor =
-    reconcileCopyForState !== null &&
-    pendingCopyIntent !== null &&
-    reconcileCopyForState === pendingCopyIntent.sourceId
-      ? reconcileCopyForState
-      : null;
-
   const authority = authorityQuery.data;
   const editQueryResult = editQuery.data;
   const authorityModel =
@@ -583,82 +458,17 @@ export function AutomationEditDialog({
         return;
       }
       setPendingPublication(null);
-      setError(
-        result.status === 409
-          ? "当前配置已被其他操作更新，保存命令没有生效。请先核对当前配置再明确重试；不会自动重试。"
-          : `保存被拒绝（${result.code}）。请核对当前持久状态后修正重试。`,
-      );
-    },
-  });
-
-  const toggleMutation = useMutation({
-    mutationFn: (input: {
-      readonly id: string;
-      readonly form: FormState;
-      readonly enabled: boolean;
-      readonly authority: CandidateAuthority;
-    }) =>
-      setAutomationDefinitionEnabledFocused(token, {
-        definitionId: input.id,
-        enabled: input.enabled,
-        authority: {
-          expectedRevisionId: input.authority.revisionId,
-          expectedVersion: input.authority.version,
-          expectedDigest: input.authority.digest,
-        },
-      }),
-    retry: false,
-    onMutate: (input) => {
-      setPendingPublication({
-        definitionId: input.id,
-        action: input.enabled ? "enable" : "disable",
-        form: publicationFormFromCreateForm(input.form),
-        authority: input.authority,
-      });
-      setError(null);
-      setNotice(null);
-    },
-    onSuccess: (result, input) => {
-      if (result.ok) {
-        setPendingPublication(null);
-        if (result.model.definition !== null) {
-          // An enable/disable publishes the whole definition onto the new
-          // Active, so this pair is the exact state the next open backfills.
-          seedDefinitionProjection(
-            result.model.definition,
-            result.model.active,
-          );
-        }
-        acceptPublication(
-          result.model,
-          input.form,
-          input.authority,
-          input.id,
-          {
-            revisionId: result.model.active.revisionId,
-            version: result.model.active.revisionSequence,
-            digest: result.model.active.digest,
-          },
-          true,
+      if (result.status === 409) {
+        setError(
+          "当前配置已被其他操作更新，保存命令没有生效。请先核对当前配置再明确重试；不会自动重试。",
         );
-        setNotice(
-          result.model.definition?.enabled
-            ? "已启用：后续按保存的计划定时运行；启用本身没有启动任务。"
-            : "已停用：后续定时准入停止，已受理的工作保持不变。",
-        );
+        // Re-read the current durable state so the retained input is
+        // truthfully reported as stale and the explicit re-adoption entry is
+        // reachable. This is a read: nothing is rebound or republished.
         invalidate();
         return;
       }
-      if (
-        result.status === 0 ||
-        result.status >= 500 ||
-        result.code === "malformed_response"
-      ) {
-        setError("启停结果尚未确认。先核对本次发布；不会自动重发命令。");
-        return;
-      }
-      setPendingPublication(null);
-      setError(`启停命令被拒绝（${result.code}）。请刷新核对当前状态。`);
+      setError(`保存被拒绝（${result.code}）。请核对当前持久状态后修正重试。`);
     },
   });
 
@@ -730,81 +540,6 @@ export function AutomationEditDialog({
     },
   });
 
-  const copyMutation = useMutation({
-    mutationFn: (input: {
-      readonly id: string;
-      readonly authority: CandidateAuthority;
-    }) =>
-      copyAutomationDefinitionFocused(token, {
-        definitionId: input.id,
-        authority: {
-          expectedRevisionId: input.authority.revisionId,
-          expectedVersion: input.authority.version,
-          expectedDigest: input.authority.digest,
-        },
-      }),
-    retry: false,
-    onMutate: () => {
-      setError(null);
-      setNotice(null);
-    },
-    onSuccess: (result, input) => {
-      if (result.ok) {
-        setNotice("副本已发布为新的停用定义，不继承任何授权。");
-        setPendingCopyIntent(null);
-        invalidate();
-        if (result.model.definition?.id) {
-          void navigate({
-            to: "/operations/automation/lifecycle/$definitionId",
-            params: { definitionId: result.model.definition.id },
-          });
-        }
-        return;
-      }
-      if (result.status === 0 || result.code === "transport_unavailable") {
-        // The response was lost: the command may or may not have committed.
-        // This is an unknown outcome, never a rejection. Keep the submitted
-        // intent — including the exact authority it was submitted against —
-        // and require reconciliation before any resubmission.
-        setPendingCopyIntent({
-          sourceId: input.id,
-          authority: input.authority,
-        });
-        setError(
-          "复制命令没有收到确认结果（transport_unavailable）。副本可能已经发布，也可能没有；请先核对，再决定是否再次复制。",
-        );
-        return;
-      }
-      setError(`复制命令被拒绝（${result.code}）。`);
-    },
-  });
-
-  const copyIntentQuery = useQuery({
-    queryKey: [
-      "operations.automation-lifecycle-copy-intent",
-      reconcileCopyFor ?? "",
-    ],
-    queryFn: () => {
-      const intent = pendingCopyIntent;
-      const params = new URLSearchParams();
-      if (intent !== null && intent.sourceId === reconcileCopyFor) {
-        params.set("expectedRevisionId", intent.authority.revisionId);
-        params.set("expectedVersion", String(intent.authority.version));
-        params.set("expectedDigest", intent.authority.digest);
-      }
-      const query = params.toString();
-      return fetchAutomationCopyIntent(
-        token,
-        reconcileCopyFor ?? "",
-        fetch,
-        query.length > 0 ? `?${query}` : "",
-      );
-    },
-    enabled: token !== null && reconcileCopyFor !== null,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-
   const removeMutation = useMutation({
     mutationFn: (input: {
       readonly id: string;
@@ -845,13 +580,6 @@ export function AutomationEditDialog({
     refetchOnWindowFocus: false,
   });
 
-  const copyCandidateQuery = useQuery({
-    queryKey: ["operations.automation-lifecycle-copy", definitionId],
-    queryFn: () => fetchAutomationCopyCandidate(token, definitionId),
-    enabled: false,
-    retry: false,
-  });
-
   const currentFormRef = useRef<FormState | null>(null);
   useEffect(() => {
     currentFormRef.current = currentForm;
@@ -862,14 +590,10 @@ export function AutomationEditDialog({
     shouldBlockLeave: () =>
       (dirty && pendingPublication === null) ||
       saveMutation.isPending ||
-      toggleMutation.isPending ||
       reconcilePublication.isPending ||
-      copyMutation.isPending ||
       removeMutation.isPending,
     isSubmitting: () =>
       saveMutation.isPending ||
-      toggleMutation.isPending ||
-      copyMutation.isPending ||
       removeMutation.isPending ||
       reconcilePublication.isPending,
     hasUnsavedInput: () => dirty && pendingPublication === null,
@@ -884,7 +608,7 @@ export function AutomationEditDialog({
   const { attemptClose, commitClose, cancelDiscard, beginExit } = card;
   const discardPromptOpen = card.discardPromptOpen;
 
-  // A Copy navigation keeps this card instance mounted under a new definition
+  // A definition navigation keeps this card instance mounted under a new
   // context: the exit state of the abandoned context must not disable the
   // next one.
   useEffect(() => {
@@ -903,12 +627,9 @@ export function AutomationEditDialog({
     candidateAuthority !== null;
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId;
-  const copyBlocked = pendingCopyIntent !== null;
   const busy =
     saveMutation.isPending ||
-    toggleMutation.isPending ||
     reconcilePublication.isPending ||
-    copyMutation.isPending ||
     removeMutation.isPending;
 
   return (
@@ -1099,14 +820,6 @@ export function AutomationEditDialog({
         const removal =
           removalQuery.data !== undefined && removalQuery.data.ok
             ? removalQuery.data.model
-            : null;
-        const copyCandidate =
-          copyCandidateQuery.data !== undefined && copyCandidateQuery.data.ok
-            ? copyCandidateQuery.data.model
-            : null;
-        const copyIntent =
-          copyIntentQuery.data !== undefined && copyIntentQuery.data.ok
-            ? copyIntentQuery.data.model
             : null;
         return (
           <AutomationCardShell
@@ -1311,139 +1024,7 @@ export function AutomationEditDialog({
                 </details>
 
                 <section className="mf-count-section">
-                  <h3>生命周期操作</h3>
-                  <div className="mf-actions">
-                    <Button
-                      type="button"
-                      disabled={!canManage || toggleMutation.isPending}
-                      onClick={() =>
-                        candidateAuthority !== null &&
-                        toggleMutation.mutate({
-                          id: routeTargetId,
-                          form: currentForm,
-                          enabled: !currentForm.enabled,
-                          authority: candidateAuthority,
-                        })
-                      }
-                    >
-                      {toggleMutation.isPending
-                        ? "更新中…"
-                        : currentForm.enabled
-                          ? "停用定时计划"
-                          : "启用定时计划"}
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={
-                        !canManage || copyMutation.isPending || copyBlocked
-                      }
-                      onClick={() =>
-                        candidateAuthority !== null &&
-                        copyMutation.mutate({
-                          id: routeTargetId,
-                          authority: candidateAuthority,
-                        })
-                      }
-                    >
-                      {copyMutation.isPending ? "复制中…" : "复制为停用定义"}
-                    </Button>
-                    <RefreshControl
-                      label="刷新"
-                      refreshingLabel="刷新中…"
-                      onRefresh={refresh}
-                      refreshing={isFetching}
-                    />
-                  </div>
-                  {copyCandidate !== null && (
-                    <p className="mf-dashboard-meta">
-                      副本候选 {copyCandidate.definition.id}（
-                      {copyCandidate.definition.enabled ? "已启用" : "已停用"}）
-                    </p>
-                  )}
-                  {copyBlocked && (
-                    <StatusBanner variant="error" title="复制结果未知">
-                      <p>
-                        最近一次对 {pendingCopyIntent?.sourceId}{" "}
-                        的复制命令没有确认结果，可能已经持久发布。核对不会创建新副本，也不会重放命令。
-                      </p>
-                      <div className="mf-actions">
-                        {!reconcileCopyFor && (
-                          <Button
-                            type="button"
-                            onClick={() => {
-                              setReconcileCopyFor(
-                                pendingCopyIntent?.sourceId ?? null,
-                              );
-                            }}
-                          >
-                            核对已提交的复制
-                          </Button>
-                        )}
-                      </div>
-                      {reconcileCopyFor !== null && (
-                        <p className="mf-dashboard-meta">
-                          {copyIntent === null
-                            ? "正在读取持久复制证据…"
-                            : copyIntent.committed
-                              ? `副本已持久发布为 ${copyIntent.committedDefinitionId}。请刷新清单；不会创建第二个副本。`
-                              : !copyIntent.evidenceComplete
-                                ? "持久命令证据无法完整读取，因此已提交副本的结果仍未知。请从当前清单核对；不要为这次意图再提交复制。"
-                                : copyIntent.observedCommands > 0
-                                  ? "持久证据中不存在已提交副本的发布证明；刷新清单后可以明确再次提交复制。"
-                                  : "持久证据中没有观察到已提交的复制命令；结果确为未发布。"}
-                        </p>
-                      )}
-                      {copyIntent?.committed === true && (
-                        <div className="mf-actions">
-                          <Button
-                            type="button"
-                            onClick={() => {
-                              setPendingCopyIntent(null);
-                              setReconcileCopyFor(null);
-                              setError(null);
-                              if (copyIntent.committedDefinitionId) {
-                                void navigate({
-                                  to: "/operations/automation/lifecycle/$definitionId",
-                                  params: {
-                                    definitionId:
-                                      copyIntent.committedDefinitionId,
-                                  },
-                                });
-                              }
-                            }}
-                          >
-                            打开已发布的副本
-                          </Button>
-                        </div>
-                      )}
-                      {copyIntent !== null &&
-                        copyIntent.committed === false &&
-                        // A genuinely unpublished outcome is proven only when
-                        // the durable evidence read was complete: no submitted
-                        // command was ever observed for this intent, so the
-                        // resubmission block is released. A located command
-                        // whose publication could not be proven — or an
-                        // incomplete/unavailable evidence read — stays unknown:
-                        // the block holds and the operator reconciles from the
-                        // durable inventory instead.
-                        copyIntent.evidenceComplete &&
-                        copyIntent.observedCommands === 0 && (
-                          <div className="mf-actions">
-                            <Button
-                              type="button"
-                              onClick={() => {
-                                setPendingCopyIntent(null);
-                                setReconcileCopyFor(null);
-                                setError(null);
-                              }}
-                            >
-                              已核对：未发布副本
-                            </Button>
-                          </div>
-                        )}
-                    </StatusBanner>
-                  )}
-                  <h3>引用安全的移除</h3>
+                  <h3>引用安全的移除定义</h3>
                   {removal === null ? (
                     <p className="mf-dashboard-meta">正在读取移除影响证据…</p>
                   ) : (

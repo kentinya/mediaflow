@@ -250,22 +250,35 @@ describe("AutomationLifecyclePage", () => {
     });
     const reopenedName = await screen.findByLabelText(/任务名称/);
     await waitFor(() => expect(reopenedName).toHaveValue("Updated"));
-    await userEvent.click(screen.getByRole("button", { name: "启用定时计划" }));
+    // The shared enable switch only changes the form choice: the publication
+    // is the same explicit Save, and no immediate enable command exists.
+    await userEvent.click(screen.getByLabelText("启用定时计划"));
+    expect(calls.some((call) => call.url.endsWith("/nightly/enable"))).toBe(
+      false,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saved.enabled).toBe(true));
-    await userEvent.click(screen.getByRole("button", { name: "停用定时计划" }));
-    await waitFor(() => expect(saved.enabled).toBe(false));
-    await userEvent.clear(reopenedName);
-    await userEvent.type(reopenedName, "Updated again");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await router.navigate({
+      to: "/operations/automation/lifecycle/$definitionId",
+      params: { definitionId: "nightly" },
+    });
+    const secondOpenName = await screen.findByLabelText(/任务名称/);
+    await waitFor(() => expect(secondOpenName).toHaveValue("Updated"));
+    expect(screen.getByLabelText("启用定时计划")).toBeChecked();
+    await userEvent.click(screen.getByLabelText("启用定时计划"));
+    await userEvent.clear(secondOpenName);
+    await userEvent.type(secondOpenName, "Updated again");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saved.name).toBe("Updated again"));
+    await waitFor(() => expect(saved.enabled).toBe(false));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(commands.map((call) => call.body?.expectedRevisionId)).toEqual([
       ACTIVE_REVISION,
       "own-1",
       "own-2",
-      "own-3",
     ]);
-    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(4);
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(3);
   });
 
   it("retains typing made while Save is pending and advances only its confirmed fence", async () => {
@@ -389,7 +402,7 @@ describe("AutomationLifecyclePage", () => {
     expect(fences[1]).toBe("revision-active-2");
   });
 
-  it("offers enable and a disabled copy for a published definition", async () => {
+  it("keeps enablement in the shared form and no longer offers lifecycle commands", async () => {
     const calls = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         return principalResponse();
@@ -409,16 +422,14 @@ describe("AutomationLifecyclePage", () => {
       if (call.url.endsWith("/nightly/removal-impact")) {
         return jsonResponse(removalImpact());
       }
-      if (call.url.endsWith("/nightly/enable")) {
-        return jsonResponse(
-          publication("enable", definition({ enabled: true })),
-        );
-      }
-      if (call.url.endsWith("/nightly/copy")) {
+      if (call.method === "PUT") {
         return jsonResponse(
           publication(
-            "copy",
-            definition({ id: "nightly-copy", name: "Nightly copy" }),
+            "edit",
+            definition({
+              ...(call.body?.object as Record<string, unknown>),
+              enabled: true,
+            }),
           ),
         );
       }
@@ -428,28 +439,47 @@ describe("AutomationLifecyclePage", () => {
     renderApp("/operations/automation/lifecycle/nightly");
     await screen.findByRole("heading", { name: "编辑自动化任务" });
     await screen.findByText(/0 个配置引用/);
+    const dialog = within(screen.getByRole("dialog"));
 
-    await userEvent.click(screen.getByRole("button", { name: "启用定时计划" }));
-    await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith("/nightly/enable"))).toBe(
-        true,
-      ),
-    );
-    const enable = calls.find((call) => call.url.endsWith("/nightly/enable"));
-    expect(enable?.body).toMatchObject({
-      expectedRevisionId: ACTIVE_REVISION,
-      expectedVersion: 2,
-      expectedDigest: DIGEST,
-    });
+    // The screenshot's lifecycle group is gone: no duplicate enable/copy
+    // commands and no separate refresh button in its place. Copy lives on the
+    // list next to 编辑 and removal keeps its own explicit entry.
+    expect(dialog.queryByRole("heading", { name: "生命周期操作" })).toBeNull();
+    expect(dialog.queryByRole("button", { name: "启用定时计划" })).toBeNull();
+    expect(dialog.queryByRole("button", { name: "停用定时计划" })).toBeNull();
+    expect(dialog.queryByRole("button", { name: "复制为停用定义" })).toBeNull();
+    expect(dialog.queryByRole("button", { name: "刷新" })).toBeNull();
+    expect(
+      dialog.getByRole("heading", { name: "引用安全的移除定义" }),
+    ).toBeVisible();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "复制为停用定义" }),
-    );
+    // The shared switch changes only the form choice, then the explicit Save
+    // publishes it through the same checked command.
+    const toggle = dialog.getByLabelText("启用定时计划");
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(calls.some((call) => call.method !== "GET")).toBe(false);
+    await userEvent.click(dialog.getByRole("button", { name: "保存" }));
     await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith("/nightly/copy"))).toBe(
-        true,
-      ),
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url.endsWith("/automation/definitions/nightly"),
+        ),
+      ).toBe(true),
     );
+    const save = calls.find((call) => call.method === "PUT");
+    expect((save?.body?.object as Record<string, unknown>).enabled).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.url.endsWith("/nightly/enable") ||
+          call.url.endsWith("/nightly/disable") ||
+          call.url.endsWith("/nightly/copy"),
+      ),
+    ).toBe(false);
   });
 
   it("requires an explicit confirmation before the destructive removal", async () => {
@@ -912,91 +942,6 @@ describe("AutomationLifecyclePage", () => {
     });
   });
 
-  it("blocks Copy resubmission until an unknown outcome is reconciled", async () => {
-    // P1-5 regression: a transport-lost Copy response is an unknown outcome.
-    // The page retains the submitted intent, offers reconciliation from
-    // durable evidence bound to the exact submitted authority, and never
-    // allocates a second copy automatically.
-    let copyCalls = 0;
-    const copyIntentCalls: string[] = [];
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return principalResponse();
-      }
-      if (
-        call.url.endsWith("/automation/definitions") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority());
-      }
-      if (
-        call.url.endsWith("/automation/definitions/nightly") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(editProjection());
-      }
-      if (call.url.endsWith("/nightly/removal-impact")) {
-        return jsonResponse(removalImpact());
-      }
-      if (call.url.endsWith("/nightly/copy")) {
-        copyCalls += 1;
-        // First request is committed but its response is lost; the reconciliation
-        // read then proves the committed copy.
-        if (copyCalls === 1) {
-          throw new Error("network dropped");
-        }
-        return jsonResponse(
-          publication("copy", definition({ id: "nightly-copy" })),
-        );
-      }
-      if (call.url.includes("/nightly/copy-intent")) {
-        // The reconciliation read carries the exact submitted intent: the
-        // observed Active identity the lost Copy was submitted against.
-        copyIntentCalls.push(call.url);
-        return jsonResponse({
-          definitionId: "nightly",
-          sourcePresent: true,
-          committed: true,
-          committedDefinitionId: "nightly-copy",
-          lastObserved: {
-            auditId: "audit-1",
-            action: "copy",
-            occurredAt: "2026-01-01T00:00:00+00:00",
-            candidateId: "nightly-copy",
-            published: true,
-          },
-          observedCommands: 1,
-          evidenceComplete: true,
-          active: ACTIVE,
-          sideEffects: "none",
-          nextAction: "the copy committed durably",
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    await userEvent.click(
-      screen.getByRole("button", { name: "复制为停用定义" }),
-    );
-    await screen.findByText("复制结果未知");
-    // The blocked state offers reconciliation, not a second Copy.
-    await userEvent.click(
-      screen.getByRole("button", { name: "核对已提交的复制" }),
-    );
-    await screen.findByText(/副本已持久发布为 nightly-copy/);
-    // The reconciliation read carries the submitted intent's fence.
-    expect(copyIntentCalls[0]).toContain("expectedRevisionId=");
-    expect(copyIntentCalls[0]).toContain(
-      `expectedDigest=${encodeURIComponent(DIGEST)}`,
-    );
-    // Opening the committed copy clears the intent.
-    await userEvent.click(
-      screen.getByRole("button", { name: "打开已发布的副本" }),
-    );
-  });
-
   it("does not silently repin a retained candidate after the Active changes", async () => {
     // P1 regression: open a definition, change only its Name without saving.
     // Another legitimate writer publishes item limit 9. Refresh. The retained
@@ -1035,6 +980,7 @@ describe("AutomationLifecyclePage", () => {
     // Another writer publishes; every authority read after the original render
     // observes the newer revision.
     let authorityReads = 0;
+    let staleSaveAttempts = 0;
     const peerPublished = true;
     const secondAuthority = jsonResponse({
       ...formAuthority(),
@@ -1083,16 +1029,24 @@ describe("AutomationLifecyclePage", () => {
         if (url.endsWith("/nightly/removal-impact")) {
           return jsonResponse(removalImpact());
         }
+        if (
+          url.endsWith("/automation/definitions/nightly") &&
+          method === "PUT"
+        ) {
+          // The backend's authoritative fence refuses the retained candidate.
+          staleSaveAttempts += 1;
+          return jsonResponse(
+            { error: { code: "configuration_version_conflict" } },
+            409,
+          );
+        }
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    // Refresh: the page re-reads the current authority. The card owns its own
-    // refresh control; the list behind the card is inert.
-    await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "刷新",
-      }),
-    );
+    // The explicit Save is refused by the newer Active. The page then re-reads
+    // the current state (not a resubmission) and reports the stale candidate.
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(staleSaveAttempts).toBe(1));
     await waitFor(() => expect(authorityReads).toBeGreaterThanOrEqual(1));
     // The retained input is still visible (no silent value replacement), but
     // the page truthfully reports the stale candidate and blocks Save.
@@ -1180,14 +1134,19 @@ describe("AutomationLifecyclePage", () => {
           url.endsWith("/automation/definitions/nightly") &&
           method === "PUT"
         ) {
-          savedBodies.push(
-            JSON.parse(String(init?.body)) as Record<string, unknown>,
-          );
+          const body = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          if (body.expectedRevisionId !== "revision-active-2") {
+            return jsonResponse(
+              { error: { code: "configuration_version_conflict" } },
+              409,
+            );
+          }
+          savedBodies.push(body);
           return jsonResponse(
-            publication(
-              "edit",
-              definition({ itemLimit: 9, name: "Nightly retained" }),
-            ),
+            publication("edit", definition({ itemLimit: 9, name: "Nightly" })),
           );
         }
         return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -1203,12 +1162,9 @@ describe("AutomationLifecyclePage", () => {
     await userEvent.type(screen.getByLabelText(/任务名称/), " retained");
     // Another legitimate writer publishes item limit 9.
     peerPublished = true;
-    // Refresh re-reads the newer Active.
-    await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "刷新",
-      }),
-    );
+    // The explicit Save is refused by the peer's newer Active; the page then
+    // re-reads the current state instead of silently repinning the candidate.
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await screen.findByText(/未保存的修改基于较旧的配置/);
     await expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     // Deliberate re-adoption re-reads the definition: the current durable
@@ -1483,331 +1439,5 @@ describe("AutomationLifecyclePage", () => {
     const write = calls.find((call) => call.method === "PUT");
     expect(write?.body?.expectedRevisionId).toBe("revision-newer");
     expect((write?.body?.object as Record<string, unknown>).itemLimit).toBe(9);
-  });
-
-  it("keeps an unknown Copy outcome blocking after a real page reload", async () => {
-    // P1 regression: a Copy whose response was lost stays unknown across a
-    // reload. The intent persists in session storage (identity + observed
-    // authority only), Copy stays blocked without any reconciliation, and the
-    // reconciliation read carries the submitted intent's exact fence.
-    sessionStorage.clear();
-    const copyIntentCalls: string[] = [];
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return principalResponse();
-      }
-      if (
-        call.url.endsWith("/automation/definitions") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority());
-      }
-      if (
-        call.url.endsWith("/automation/definitions/nightly") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(editProjection());
-      }
-      if (call.url.endsWith("/nightly/removal-impact")) {
-        return jsonResponse(removalImpact());
-      }
-      if (call.url.includes("/nightly/copy-intent")) {
-        copyIntentCalls.push(call.url);
-        // A genuinely unpublished outcome: the read was complete and no
-        // submitted copy command was ever observed in durable evidence, so the
-        // resubmission block is released.
-        return jsonResponse({
-          definitionId: "nightly",
-          sourcePresent: true,
-          committed: false,
-          committedDefinitionId: null,
-          lastObserved: null,
-          observedCommands: 0,
-          evidenceComplete: true,
-          active: ACTIVE,
-          sideEffects: "none",
-          nextAction: "no submitted copy command was observed",
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    // Simulate the persisted unknown outcome from a lost response before the
-    // reload, exactly as the page writes it.
-    sessionStorage.setItem(
-      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
-      JSON.stringify({
-        sourceId: "nightly",
-        authority: {
-          revisionId: ACTIVE_REVISION,
-          version: ACTIVE.revisionSequence,
-          digest: DIGEST,
-        },
-      }),
-    );
-    // A real page reload: fresh modules, fresh component state.
-    cleanup();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    // Copy stays blocked without any reconciliation.
-    const copy = screen.getByRole("button", {
-      name: "复制为停用定义",
-    });
-    expect(copy).toBeDisabled();
-    await screen.findByText("复制结果未知");
-    expect(
-      screen.queryByRole("button", { name: "核对已提交的复制" }),
-    ).toBeEnabled();
-    await userEvent.click(
-      screen.getByRole("button", { name: "核对已提交的复制" }),
-    );
-    await screen.findByText(/确为未发布/);
-    expect(copyIntentCalls[0]).toContain(
-      `expectedRevisionId=${encodeURIComponent(ACTIVE_REVISION)}`,
-    );
-    // Reconciliation resolved the unknown outcome; the block is lifted.
-    await userEvent.click(
-      screen.getByRole("button", {
-        name: "已核对：未发布副本",
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "复制为停用定义" }),
-      ).toBeEnabled(),
-    );
-    sessionStorage.clear();
-  });
-
-  it("keeps the Copy block when the located command's publication is unproven", async () => {
-    // P1 regression: a bounded recent scan must never turn a committed Copy
-    // into a "genuinely unpublished" outcome. When the backend reports a
-    // located command whose publication could not be proven from durable
-    // evidence, the outcome stays unknown: the block holds, no release button
-    // is offered, and the operator reconciles from the durable inventory.
-    sessionStorage.clear();
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return principalResponse();
-      }
-      if (
-        call.url.endsWith("/automation/definitions") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority());
-      }
-      if (
-        call.url.endsWith("/automation/definitions/nightly") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(editProjection());
-      }
-      if (call.url.endsWith("/nightly/removal-impact")) {
-        return jsonResponse(removalImpact());
-      }
-      if (call.url.includes("/nightly/copy-intent")) {
-        // A located command whose publication cannot be proven: committed
-        // false with observed evidence stays an unknown outcome.
-        return jsonResponse({
-          definitionId: "nightly",
-          sourcePresent: true,
-          committed: false,
-          committedDefinitionId: null,
-          lastObserved: {
-            auditId: "audit-3",
-            action: "copy",
-            occurredAt: "2026-01-01T00:00:00+00:00",
-            candidateId: "nightly-copy",
-            published: false,
-          },
-          observedCommands: 1,
-          evidenceComplete: true,
-          active: ACTIVE,
-          sideEffects: "none",
-          nextAction:
-            "the submitted copy command's publication could not be proven from durable evidence; reconcile the current Active Automation inventory",
-        });
-      }
-      return undefined;
-    });
-    sessionStorage.setItem(
-      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
-      JSON.stringify({
-        sourceId: "nightly",
-        authority: {
-          revisionId: ACTIVE_REVISION,
-          version: 3,
-          digest: DIGEST,
-        },
-      }),
-    );
-    await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    await expect(
-      screen.getByRole("button", { name: "复制为停用定义" }),
-    ).toBeDisabled();
-    await userEvent.click(
-      screen.getByRole("button", { name: "核对已提交的复制" }),
-    );
-    await screen.findByText(/发布证明/);
-    // No release action exists for an unproven outcome.
-    expect(
-      screen.queryByRole("button", {
-        name: "已核对：未发布副本",
-      }),
-    ).toBeNull();
-    sessionStorage.clear();
-  });
-
-  it("never releases the Copy block when the durable evidence read is incomplete", async () => {
-    // P1 (fix loop 4) regression: an incomplete/truncated evidence read must
-    // not be presented as a proven non-publication. The backend reports zero
-    // observed commands *and* `evidenceComplete: false`, the exact shape a
-    // bounded read produces after a committed Copy falls outside its window.
-    // No release action may appear, so a duplicate copy cannot be allocated.
-    sessionStorage.clear();
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return principalResponse();
-      }
-      if (
-        call.url.endsWith("/automation/definitions") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority());
-      }
-      if (
-        call.url.endsWith("/automation/definitions/nightly") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(editProjection());
-      }
-      if (call.url.endsWith("/nightly/removal-impact")) {
-        return jsonResponse(removalImpact());
-      }
-      if (call.url.includes("/nightly/copy-intent")) {
-        // The durable read could not be completed: zero commands observed,
-        // but that absence is not evidence of non-publication.
-        return jsonResponse({
-          definitionId: "nightly",
-          sourcePresent: true,
-          committed: false,
-          committedDefinitionId: null,
-          lastObserved: null,
-          observedCommands: 0,
-          evidenceComplete: false,
-          active: ACTIVE,
-          sideEffects: "none",
-          nextAction:
-            "the submitted copy outcome is unknown: the durable command evidence could not be read completely",
-        });
-      }
-      return undefined;
-    });
-    sessionStorage.setItem(
-      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
-      JSON.stringify({
-        sourceId: "nightly",
-        authority: {
-          revisionId: ACTIVE_REVISION,
-          version: 3,
-          digest: DIGEST,
-        },
-      }),
-    );
-    await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    const copy = screen.getByRole("button", {
-      name: "复制为停用定义",
-    });
-    expect(copy).toBeDisabled();
-    await userEvent.click(
-      screen.getByRole("button", { name: "核对已提交的复制" }),
-    );
-    await screen.findByText(/无法完整读取/);
-    // The block holds: an incomplete read proves nothing.
-    expect(
-      screen.queryByRole("button", {
-        name: "已核对：未发布副本",
-      }),
-    ).toBeNull();
-    expect(copy).toBeDisabled();
-    sessionStorage.clear();
-  });
-
-  it("releases the Copy block only for a complete, command-free evidence read", async () => {
-    // The positive counterpart: a complete read that observed no command is a
-    // genuine non-publication, so the operator can deliberately release the
-    // block. This pins the exact contract the incomplete case must not meet.
-    sessionStorage.clear();
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return principalResponse();
-      }
-      if (
-        call.url.endsWith("/automation/definitions") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority());
-      }
-      if (
-        call.url.endsWith("/automation/definitions/nightly") &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(editProjection());
-      }
-      if (call.url.endsWith("/nightly/removal-impact")) {
-        return jsonResponse(removalImpact());
-      }
-      if (call.url.includes("/nightly/copy-intent")) {
-        return jsonResponse({
-          definitionId: "nightly",
-          sourcePresent: true,
-          committed: false,
-          committedDefinitionId: null,
-          lastObserved: null,
-          observedCommands: 0,
-          evidenceComplete: true,
-          active: ACTIVE,
-          sideEffects: "none",
-          nextAction:
-            "no pending copy command was observed for this definition",
-        });
-      }
-      return undefined;
-    });
-    sessionStorage.setItem(
-      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
-      JSON.stringify({
-        sourceId: "nightly",
-        authority: {
-          revisionId: ACTIVE_REVISION,
-          version: 3,
-          digest: DIGEST,
-        },
-      }),
-    );
-    await connect();
-    renderApp("/operations/automation/lifecycle/nightly");
-    await screen.findByRole("heading", { name: "编辑自动化任务" });
-    await userEvent.click(
-      screen.getByRole("button", { name: "核对已提交的复制" }),
-    );
-    await screen.findByText(/确为未发布/);
-    await userEvent.click(
-      screen.getByRole("button", {
-        name: "已核对：未发布副本",
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "复制为停用定义" }),
-      ).toBeEnabled(),
-    );
-    sessionStorage.clear();
   });
 });

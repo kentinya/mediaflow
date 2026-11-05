@@ -107,6 +107,26 @@ async function publishDefinition(
   return created.id;
 }
 
+/**
+ * Publish the shared enablement choice through one explicit Save from the
+ * definition's edit card, then return to the list.
+ */
+async function enableDefinitionFromEdit(page: Page): Promise<void> {
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "编辑自动化任务" }),
+  ).toBeVisible();
+  await page.getByLabel("启用定时计划").check();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(
+    page.getByRole("heading", { name: "已保存并启用" }),
+  ).toBeVisible();
+}
+
 async function runOnceFromList(page: Page, name: string): Promise<string> {
   await connectOn(page, "/ui-v2/operations/automation");
   await expect(
@@ -217,14 +237,7 @@ test("the records tab reports this execution only, without recovery details", as
 
   // A real scheduled occurrence is emitted by the production Scheduler and
   // then processed by the resident Worker, so the record below is genuine.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
-  await page.getByRole("button", { name: "启用定时计划" }).click();
-  await expect(
-    page.getByText(/已启用：后续按保存的计划定时运行/),
-  ).toBeVisible();
+  await enableDefinitionFromEdit(page);
   const tick = await page.request.post(
     "/__harness__/run-automation-scheduler-tick",
   );
@@ -307,14 +320,7 @@ test("the records page traverses beyond one page and back with its own filters",
   });
   // Enabling the schedule is a separate, deliberate step: only an enabled
   // published definition is evaluated by the Scheduler.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
-  await page.getByRole("button", { name: "启用定时计划" }).click();
-  await expect(
-    page.getByText(/已启用：后续按保存的计划定时运行/),
-  ).toBeVisible();
+  await enableDefinitionFromEdit(page);
   // Many real scheduled occurrences are emitted by the production Scheduler, so
   // the records population genuinely exceeds one page instead of being faked.
   const seeded = await page.request.post(

@@ -265,6 +265,11 @@ describe("AutomationCreateDialog", () => {
     ) as HTMLInputElement;
     expect(enableChoice.checked).toBe(false);
     expect(enableChoice).toBeEnabled();
+    // The shared compact switch exposes its state as a real switch control.
+    expect(enableChoice).toHaveAttribute("role", "switch");
+    expect(screen.getByRole("switch", { name: "启用定时计划" })).toBe(
+      enableChoice,
+    );
     expect(
       screen.getByText("默认停用。创建后可在任务列表或编辑中随时启用。"),
     ).toBeVisible();

@@ -805,3 +805,107 @@ test("a proved create reconciliation reports the current saved state after a pee
   expect(after.definitions[0]?.enabled).toBe(false);
   expect(after.occurrenceTotal).toBe(0);
 });
+
+test("opens create and edit cards without moving the Automation list background", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 900 });
+  await connectOn(page, "/ui-v2/operations/automation");
+  const heading = page.getByRole("heading", {
+    name: "自动化",
+    exact: true,
+    level: 2,
+  });
+  await expect(heading).toBeVisible();
+  await expect(page.locator(".mf-page-context")).toHaveCount(0);
+  const background = await heading.boundingBox();
+  expect(background).not.toBeNull();
+
+  // The canonical creation route renders the same list behind its card, with
+  // no extra location line and no shift of the background heading.
+  await page.getByRole("link", { name: "新建自动化任务" }).click();
+  await openCreateCard(page);
+  await expect(page).toHaveURL(/\/operations\/automation\/lifecycle(\?.*)?$/);
+  await expect(page.locator(".mf-page-context")).toHaveCount(0);
+  const createBox = await heading.boundingBox();
+  expect(createBox).not.toBeNull();
+  expect(
+    Math.abs((createBox?.y ?? -1) - (background?.y ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+
+  // Publish one real definition so the edit route is a real route.
+  await page.getByRole("link", { name: "新建自动化任务" }).click();
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("背景定位");
+  await page.getByLabel(/资源库/).selectOption({ index: 1 });
+  await page.getByLabel("处理上限").fill("5");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  const listBox = await heading.boundingBox();
+  const row = page.getByRole("row").filter({ hasText: "背景定位" });
+  await row.getByRole("button", { name: "编辑" }).click();
+  await expect(
+    page.getByRole("heading", { name: "编辑自动化任务" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/operations\/automation\/lifecycle\/.+/);
+  await expect(page.locator(".mf-page-context")).toHaveCount(0);
+  const editBox = await heading.boundingBox();
+  expect(editBox).not.toBeNull();
+  expect(Math.abs((editBox?.y ?? -1) - (listBox?.y ?? 0))).toBeLessThanOrEqual(
+    1,
+  );
+});
+
+test("renders the shared enable switch on the limit control row at both widths", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 900 });
+  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await openCreateCard(page);
+
+  const toggle = page.getByRole("switch", { name: "启用定时计划" });
+  await expect(toggle).not.toBeChecked();
+  const track = await toggle.boundingBox();
+  const limit = await page.getByLabel("处理上限").boundingBox();
+  const label = await page
+    .locator(".mf-automation-create-toggle-text")
+    .boundingBox();
+  expect(track).not.toBeNull();
+  expect(limit).not.toBeNull();
+  expect(label).not.toBeNull();
+  const center = (box: { y: number; height: number }) => box.y + box.height / 2;
+  // A compact 44x24 track, not a full-width text-input box.
+  expect(track?.width ?? 0).toBeGreaterThanOrEqual(40);
+  expect(track?.width ?? 0).toBeLessThanOrEqual(48);
+  expect(track?.height ?? 0).toBeGreaterThanOrEqual(20);
+  expect(track?.height ?? 0).toBeLessThanOrEqual(26);
+  // The switch and its text share one control row that lines up with the
+  // adjacent 处理上限 input.
+  const trackBox = track as { y: number; height: number; width: number };
+  const limitBox = limit as { y: number; height: number };
+  const labelBox = label as { y: number; height: number };
+  expect(Math.abs(center(trackBox) - center(limitBox))).toBeLessThanOrEqual(2);
+  expect(Math.abs(center(trackBox) - center(labelBox))).toBeLessThanOrEqual(2);
+
+  // Keyboard focus and state are operable through the same control.
+  await toggle.focus();
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(toggle).toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(toggle).not.toBeChecked();
+
+  // Narrow: the form stays readable and never overflows the page.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(toggle).toBeVisible();
+  const narrowTrack = await toggle.boundingBox();
+  expect(narrowTrack?.width ?? 0).toBeLessThanOrEqual(48);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});

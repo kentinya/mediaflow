@@ -30,6 +30,9 @@ import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { authStore } from "../../shared/api/auth-store";
 import {
   admitAutomationRunOnce,
+  copyAutomationDefinitionFocused,
+  fetchAutomationCopyIntent,
+  fetchAutomationFormAuthority,
   reconcileAutomationRunOnce,
 } from "../../shared/api/api-client";
 import { usePrincipalIdentity } from "./principal-identity-query";
@@ -39,6 +42,13 @@ import {
   readRunOnceSession,
   type PendingRunOnceIntent,
 } from "./automation-run-once-session";
+import {
+  beginCopyIntent,
+  clearCopyIntent,
+  readCopySession,
+  type CopyAuthority,
+  type PendingCopyIntent,
+} from "./automation-copy-session";
 import {
   automationListQueryKey,
   automationListQueryOptions,
@@ -50,6 +60,7 @@ import {
   AutomationDefinitionRow,
   AutomationMetricCards,
   AutomationRecordRow,
+  type AutomationCopyRowFeedback,
   type AutomationTab,
 } from "./AutomationInventory";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -347,6 +358,80 @@ function rejectedRunOnceCopy(
 
 const PENDING_RUN_ONCE_DETAIL = "任务可能已提交，请先查看提交结果。";
 
+interface RejectedCopy {
+  readonly reason: string;
+  readonly nextAction: string;
+}
+
+/**
+ * A bounded operator explanation for a proved Copy refusal.
+ *
+ * Backend error codes are diagnostic only. The list says which stage refused
+ * the command, that this submission published nothing, and the one safe next
+ * action. A changed Active is always followed by a fresh read; it is never
+ * retried with a new baseline bound in place of the one the operator saw.
+ */
+function rejectedCopy(status: number, code: string | null): RejectedCopy {
+  if (
+    status === 409 ||
+    code === "configuration_version_conflict" ||
+    code === "active_changed"
+  ) {
+    return {
+      reason: "当前配置已被其他操作更新，本次复制未生效。",
+      nextAction:
+        "列表会重新读取当前配置；请确认最新保存内容后再决定是否复制。不会自动重试。",
+    };
+  }
+  if (code === "automation_definition_not_found" || status === 404) {
+    return {
+      reason: "这个任务在当前保存配置中已不存在，本次复制未受理。",
+      nextAction: "刷新列表，确认任务仍然存在后再复制。",
+    };
+  }
+  if (status === 401) {
+    return {
+      reason: "登录身份已失效，本次复制未受理。",
+      nextAction: "重新连接后确认列表内容，再决定是否复制。",
+    };
+  }
+  if (status === 403) {
+    return {
+      reason: "当前身份没有复制权限，本次复制未受理。",
+      nextAction:
+        "请使用具备配置管理和配置激活权限的身份，或请管理员调整权限。",
+    };
+  }
+  if (status === 400 || code === "invalid_request") {
+    return {
+      reason: "本次提交内容无效，未发送复制命令。",
+      nextAction: "刷新列表，确认任务内容后再复制。",
+    };
+  }
+  if (status === 503 || status >= 500) {
+    return {
+      reason: "复制服务暂时不可用，本次复制未受理。",
+      nextAction: "稍后刷新列表，确认配置可用后再复制。",
+    };
+  }
+  return {
+    reason: "当前保存的任务或配置不允许这次复制，本次复制未受理。",
+    nextAction: "刷新列表，确认任务状态和来源后再复制。",
+  };
+}
+
+function copyBaselineUnavailableNext(unreadable: boolean): string {
+  return unreadable
+    ? "请刷新列表，在当前配置授权可用后再复制。"
+    : "请刷新列表，确认任务状态和权限后再复制。";
+}
+
+interface CopiedCopy {
+  readonly copyDefinitionId: string;
+  readonly copyName: string | null;
+  readonly reconciled: boolean;
+}
+
 export function AutomationListPage({
   createDialogOpen = false,
   editDefinitionId,
@@ -405,6 +490,11 @@ export function AutomationListPage({
     }
     return null;
   });
+  // The label names what the operator's own command produced, so a copied row
+  // is never presented as a freshly created one.
+  const [highlightedLabel, setHighlightedLabel] = useState(
+    automationCreatedDefinitionMemory !== null ? "刚刚创建" : "刚刚保存",
+  );
   // A Task Center record round trip returns here with the exact `执行记录` list
   // state it left. The marker is consumed once and dropped, so the URL stays
   // the single source of truth and a later reconnect restores the same view.
@@ -560,6 +650,110 @@ export function AutomationListPage({
     runOnceInFlight.current.clear();
   }, [principalId, authGeneration]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // The list Copy command reuses the existing focused Copy command and the
+  // exact Active authority the create/edit cards read. The form authority is
+  // the same backend projection, so its advertised `copy` action and Active
+  // identity fence the command; the list never infers permission.
+  const copyAuthorityQuery = useQuery({
+    queryKey: ["operations.automation-lifecycle-authority"],
+    queryFn: () => fetchAutomationFormAuthority(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const copyAuthorityResult = copyAuthorityQuery.data;
+  const copyAuthority =
+    copyAuthorityResult !== undefined && copyAuthorityResult.ok
+      ? copyAuthorityResult.model
+      : null;
+  const copyAuthorityFailed =
+    copyAuthorityResult !== undefined && !copyAuthorityResult.ok;
+  const copyBaseline: CopyAuthority | null =
+    copyAuthority !== null &&
+    copyAuthority.actions.copy &&
+    copyAuthority.active.revisionId.trim() !== "" &&
+    copyAuthority.active.digest.trim() !== ""
+      ? {
+          revisionId: copyAuthority.active.revisionId,
+          version: copyAuthority.active.revisionSequence,
+          digest: copyAuthority.active.digest,
+        }
+      : null;
+
+  const [copySession, setCopySession] = useState(() => readCopySession(null));
+  const [copyBusy, setCopyBusy] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [copyChecking, setCopyChecking] = useState<string | null>(null);
+  const [copiedCopies, setCopiedCopies] = useState<
+    Readonly<Record<string, CopiedCopy>>
+  >({});
+  const [copyRejected, setCopyRejected] = useState<
+    Readonly<Record<string, RejectedCopy>>
+  >({});
+  const [copyNotes, setCopyNotes] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
+  const [copyReleased, setCopyReleased] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const copyInFlight = useRef<Set<string>>(new Set());
+  // A principal change is a hard boundary: the old principal's async responses
+  // must not update or clear the new principal's Copy state.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setCopySession(readCopySession(principalId));
+    setCopyBusy(new Set());
+    setCopyChecking(null);
+    setCopiedCopies({});
+    setCopyRejected({});
+    setCopyNotes({});
+    setCopyReleased(new Set());
+    copyInFlight.current.clear();
+  }, [principalId, authGeneration]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const copyFeedback = useMemo(() => {
+    const feedback: Record<string, AutomationCopyRowFeedback> = {};
+    for (const definitionId of copyBusy) {
+      feedback[definitionId] = { state: "submitting" };
+    }
+    if (copyChecking !== null && !feedback[copyChecking]) {
+      feedback[copyChecking] = { state: "checking" };
+    }
+    for (const [definitionId, copy] of Object.entries(copiedCopies)) {
+      if (!feedback[definitionId]) {
+        feedback[definitionId] = { state: "copied", ...copy };
+      }
+    }
+    for (const [definitionId, rejected] of Object.entries(copyRejected)) {
+      if (!feedback[definitionId]) {
+        feedback[definitionId] = { state: "rejected", ...rejected };
+      }
+    }
+    for (const definitionId of copyReleased) {
+      if (!feedback[definitionId]) {
+        feedback[definitionId] = { state: "released" };
+      }
+    }
+    for (const pending of copySession.pending) {
+      if (feedback[pending.sourceId]) continue;
+      feedback[pending.sourceId] = {
+        state: "pending",
+        note: copyNotes[pending.sourceId] ?? null,
+      };
+    }
+    return feedback;
+  }, [
+    copyBusy,
+    copyChecking,
+    copyNotes,
+    copyRejected,
+    copyReleased,
+    copySession,
+    copiedCopies,
+  ]);
 
   const runOnceFeedback = useMemo(() => {
     const feedback: Record<string, RunOnceFeedback> = {};
@@ -860,6 +1054,285 @@ export function AutomationListPage({
     }
   };
 
+  /** Drop only this row's displayed Copy result before a new explicit attempt. */
+  const clearCopyRowFeedback = (definitionId: string) => {
+    setCopyRejected((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    setCopyNotes((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    setCopyReleased((current) => {
+      if (!current.has(definitionId)) return current;
+      const next = new Set(current);
+      next.delete(definitionId);
+      return next;
+    });
+  };
+
+  const rememberCopied = (
+    owner: string,
+    sourceId: string,
+    copy: CopiedCopy,
+  ) => {
+    clearCopyIntent(owner, sourceId);
+    setCopySession(readCopySession(owner));
+    setCopyNotes((current) => {
+      if (current[sourceId] === undefined) return current;
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+    setCopyRejected((current) => {
+      if (current[sourceId] === undefined) return current;
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+    setCopyReleased((current) => {
+      if (!current.has(sourceId)) return current;
+      const next = new Set(current);
+      next.delete(sourceId);
+      return next;
+    });
+    setCopiedCopies((current) => ({ ...current, [sourceId]: copy }));
+    setHighlightedDefinitionId(copy.copyDefinitionId);
+    setHighlightedLabel("刚刚复制");
+    refreshDefinitionRead();
+    void queryClient.invalidateQueries({
+      queryKey: ["operations.automation-lifecycle-authority"],
+    });
+  };
+
+  const submitCopy = async (definition: AutomationDefinitionModel) => {
+    const sourceId = definition.document.id;
+    if (copyInFlight.current.has(sourceId)) return;
+    if (
+      readCopySession(
+        principalIdentity.resolved ? principalIdentity.principalId : null,
+      ).pending.some((pending) => pending.sourceId === sourceId)
+    ) {
+      return;
+    }
+    // This explicit click is a new submission for this row, so the row must
+    // stop showing the previous Copy result. Other rows and retained intents
+    // are untouched.
+    clearCopyRowFeedback(sourceId);
+    if (!principalIdentity.resolved || token === null || principalId === null) {
+      setCopyRejected((current) => ({
+        ...current,
+        [sourceId]: {
+          reason: principalIdentity.resolved
+            ? "当前登录状态不可用，本次复制未发送。"
+            : "正在确认当前登录身份，本次复制未发送。",
+          nextAction: "请稍后刷新列表，身份确认后再复制。",
+        },
+      }));
+      return;
+    }
+    const baseline = copyBaseline;
+    if (baseline === null) {
+      setCopyRejected((current) => ({
+        ...current,
+        [sourceId]: {
+          reason:
+            copyAuthorityFailed || copyAuthorityQuery.isError
+              ? "无法读取当前配置授权，本次复制未发送。"
+              : copyAuthority === null
+                ? "正在读取当前配置授权，本次复制未发送。"
+                : "当前身份或配置状态不允许复制，本次复制未发送。",
+          nextAction: copyBaselineUnavailableNext(copyAuthorityFailed),
+        },
+      }));
+      return;
+    }
+
+    copyInFlight.current.add(sourceId);
+    setCopyBusy((current) => new Set(current).add(sourceId));
+    const generation = authStore.getGeneration();
+    const begin = beginCopyIntent(principalId, sourceId, baseline);
+    if (!begin.ok) {
+      copyInFlight.current.delete(sourceId);
+      setCopyBusy((current) => {
+        const next = new Set(current);
+        next.delete(sourceId);
+        return next;
+      });
+      setCopyRejected((current) => ({
+        ...current,
+        [sourceId]: {
+          reason:
+            begin.reason === "storage-unavailable"
+              ? "浏览器无法保存这次复制的核对信息，本次复制未发送。"
+              : begin.reason === "capacity"
+                ? "待核对的复制提交过多，本次复制未发送。"
+                : begin.reason === "already-pending"
+                  ? "这个任务已有待核对的复制结果，本次未再次发送。"
+                  : "当前身份或配置版本信息不可用，本次复制未发送。",
+          nextAction:
+            begin.reason === "capacity"
+              ? "先核对或等待现有待核对复制完成，再复制这个任务。"
+              : "刷新页面后确认当前任务状态，再决定是否复制。",
+        },
+      }));
+      return;
+    }
+    setCopySession(readCopySession(principalId));
+
+    try {
+      const result = await copyAutomationDefinitionFocused(token, {
+        definitionId: sourceId,
+        authority: {
+          expectedRevisionId: baseline.revisionId,
+          expectedVersion: baseline.version,
+          expectedDigest: baseline.digest,
+        },
+      });
+      if (authStore.getGeneration() !== generation) return;
+      if (!result.ok) {
+        const unknown =
+          result.status === 0 ||
+          result.status >= 500 ||
+          result.code === "malformed_response";
+        if (unknown) {
+          // Keep the exact retained intent. The operator can read it back by
+          // identity after refresh/reconnect; this never auto-retries.
+          setCopySession(readCopySession(principalId));
+          return;
+        }
+        clearCopyIntent(principalId, sourceId);
+        setCopySession(readCopySession(principalId));
+        setCopyRejected((current) => ({
+          ...current,
+          [sourceId]: rejectedCopy(result.status, result.code ?? null),
+        }));
+        refreshDefinitionRead();
+        return;
+      }
+      const copy = result.model.definition;
+      if (copy === null) {
+        // A publication response without its identity cannot prove which copy
+        // was created, so the retained intent stays and the row asks for a
+        // read-only reconciliation.
+        setCopySession(readCopySession(principalId));
+        return;
+      }
+      rememberCopied(principalId, sourceId, {
+        copyDefinitionId: copy.id,
+        copyName: copy.name,
+        reconciled: false,
+      });
+    } catch {
+      if (authStore.getGeneration() !== generation) return;
+      // A transport exception is an unknown durable outcome, never a proved
+      // refusal. Keep the exact intent for read-only reconciliation.
+      setCopySession(readCopySession(principalId));
+    } finally {
+      if (authStore.getGeneration() === generation) {
+        copyInFlight.current.delete(sourceId);
+        setCopyBusy((current) => {
+          if (!current.has(sourceId)) return current;
+          const next = new Set(current);
+          next.delete(sourceId);
+          return next;
+        });
+      }
+    }
+  };
+
+  const checkCopy = async (sourceId: string) => {
+    const pending = readCopySession(principalId).pending.find(
+      (item) => item.sourceId === sourceId,
+    );
+    if (pending === undefined || copyChecking !== null) return;
+    if (principalId === null || token === null) {
+      setCopyNotes((current) => ({
+        ...current,
+        [sourceId]: "当前登录身份不可用，暂时无法核对；请稍后刷新再试。",
+      }));
+      return;
+    }
+    setCopyChecking(sourceId);
+    const generation = authStore.getGeneration();
+    try {
+      const params = new URLSearchParams();
+      params.set("expectedRevisionId", pending.authority.revisionId);
+      params.set("expectedVersion", String(pending.authority.version));
+      params.set("expectedDigest", pending.authority.digest);
+      const result = await fetchAutomationCopyIntent(
+        token,
+        pending.sourceId,
+        fetch,
+        `?${params.toString()}`,
+      );
+      if (authStore.getGeneration() !== generation) return;
+      if (!result.ok) {
+        setCopyNotes((current) => ({
+          ...current,
+          [sourceId]:
+            "暂时无法核对这次复制的结果；副本可能已发布，请不要重复复制，稍后再核对。",
+        }));
+        return;
+      }
+      const intent = result.model;
+      if (intent.committed && intent.committedDefinitionId !== null) {
+        const currentPage =
+          listQuery.data?.ok === true ? listQuery.data.model : null;
+        const currentName =
+          currentPage?.items.find(
+            (item) => item.document.id === intent.committedDefinitionId,
+          )?.document.name ?? null;
+        rememberCopied(principalId, sourceId, {
+          copyDefinitionId: intent.committedDefinitionId,
+          copyName: currentName,
+          reconciled: true,
+        });
+        return;
+      }
+      if (
+        intent.committed === false &&
+        intent.evidenceComplete &&
+        intent.observedCommands === 0
+      ) {
+        // A complete read that observed no command is a genuine
+        // non-publication: the resubmission block can be released.
+        clearCopyIntent(principalId, sourceId);
+        setCopySession(readCopySession(principalId));
+        setCopyNotes((current) => {
+          if (current[sourceId] === undefined) return current;
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        setCopyReleased((current) => new Set(current).add(sourceId));
+        return;
+      }
+      setCopyNotes((current) => ({
+        ...current,
+        [sourceId]: intent.evidenceComplete
+          ? "持久证据中未证实这次副本已发布；请从当前清单核对，不要为这次意图再次提交复制。"
+          : "持久命令证据无法完整读取，因此这次复制的结果仍未知。请从当前清单核对；不要为这次意图再提交复制。",
+      }));
+    } catch {
+      if (authStore.getGeneration() !== generation) return;
+      setCopyNotes((current) => ({
+        ...current,
+        [sourceId]:
+          "暂时无法核对这次复制的结果；副本可能已发布，请不要重复复制，稍后再核对。",
+      }));
+    } finally {
+      if (authStore.getGeneration() === generation) {
+        setCopyChecking((current) => (current === sourceId ? null : current));
+      }
+    }
+  };
+
   const recordsQuery = useQuery(
     automationRecordsQueryOptions(
       token,
@@ -1079,6 +1552,7 @@ export function AutomationListPage({
       enabled: definition.enabled,
     });
     setHighlightedDefinitionId(definition.id);
+    setHighlightedLabel("刚刚创建");
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void listQuery.refetch();
   }
@@ -1097,6 +1571,7 @@ export function AutomationListPage({
       enabled: definition.enabled,
     });
     setHighlightedDefinitionId(definition.id);
+    setHighlightedLabel("刚刚保存");
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void listQuery.refetch();
   }
@@ -1399,6 +1874,20 @@ export function AutomationListPage({
                   }
                   onOpen={openDefinition}
                   onEdit={openEditDialog}
+                  highlightedLabel={highlightedLabel}
+                  copyAllowed={copyBaseline !== null}
+                  copyUnavailableReason={
+                    copyAuthorityFailed || copyAuthorityQuery.isError
+                      ? "复制暂不可用：无法读取当前配置授权；请刷新后重试。"
+                      : null
+                  }
+                  onCopy={(definition) => void submitCopy(definition)}
+                  onCheckCopy={(definitionId) => void checkCopy(definitionId)}
+                  onEditCopy={openEditDialog}
+                  copyFeedback={copyFeedback}
+                  copyPending={copySession.pending}
+                  copyInvalidLegacy={copySession.invalidLegacy}
+                  copiedCopies={copiedCopies}
                   onRunOnce={(definition) => void submitRunOnce(definition)}
                   onCheckRunOnce={(definitionId) =>
                     void checkRunOnce(definitionId)
@@ -1544,6 +2033,16 @@ function DefinitionsTab({
   onSort,
   onOpen,
   onEdit,
+  highlightedLabel,
+  copyAllowed,
+  copyUnavailableReason,
+  onCopy,
+  onCheckCopy,
+  onEditCopy,
+  copyFeedback,
+  copyPending,
+  copyInvalidLegacy,
+  copiedCopies,
   onRunOnce,
   onCheckRunOnce,
   runOnceFeedback,
@@ -1573,6 +2072,9 @@ function DefinitionsTab({
   readonly sort: string;
   readonly filtered: boolean;
   readonly highlightedDefinitionId: string | null;
+  readonly highlightedLabel: string;
+  readonly copyAllowed: boolean;
+  readonly copyUnavailableReason: string | null;
   readonly onSearchChange: (value: string) => void;
   readonly onSearchSubmit: (value: string) => void;
   readonly onEnabled: (value: string) => void;
@@ -1582,6 +2084,13 @@ function DefinitionsTab({
   readonly onSort: (value: string) => void;
   readonly onOpen: (definitionId: string) => void;
   readonly onEdit: (definitionId: string) => void;
+  readonly onCopy: (definition: AutomationDefinitionModel) => void;
+  readonly onCheckCopy: (definitionId: string) => void;
+  readonly onEditCopy: (definitionId: string) => void;
+  readonly copyFeedback: Readonly<Record<string, AutomationCopyRowFeedback>>;
+  readonly copyPending: readonly PendingCopyIntent[];
+  readonly copyInvalidLegacy: boolean;
+  readonly copiedCopies: Readonly<Record<string, CopiedCopy>>;
   readonly onRunOnce: (definition: AutomationDefinitionModel) => void;
   readonly onCheckRunOnce: (definitionId: string) => void;
   readonly runOnceFeedback: Readonly<Record<string, RunOnceFeedback>>;
@@ -1606,6 +2115,16 @@ function DefinitionsTab({
   );
   const hasHiddenRunOnce =
     hiddenPending.length > 0 || hiddenAdmitted.length > 0;
+  const hiddenCopyPending = copyPending.filter(
+    (pending) => !visibleDefinitionIds.has(pending.sourceId),
+  );
+  const hiddenCopied = Object.entries(copiedCopies).filter(
+    ([sourceId, copy]) =>
+      !visibleDefinitionIds.has(sourceId) &&
+      !hiddenCopyPending.some((pending) => pending.sourceId === sourceId) &&
+      copy.copyDefinitionId.length > 0,
+  );
+  const hasHiddenCopy = hiddenCopyPending.length > 0 || hiddenCopied.length > 0;
   return (
     <section className="mf-count-section" aria-label="自动化任务列表">
       <div className="mf-actions mf-automation-filters">
@@ -1692,6 +2211,75 @@ function DefinitionsTab({
           </button>
         )}
       </div>
+
+      {copyUnavailableReason !== null && (
+        <p className="mf-dashboard-meta">{copyUnavailableReason}</p>
+      )}
+
+      {hasHiddenCopy && (
+        <StatusBanner
+          variant="info"
+          title={
+            hiddenCopyPending.length > 0 ? "有复制结果待核对" : "已复制副本"
+          }
+        >
+          {hiddenCopyPending.length > 0 && (
+            <p>
+              下面的来源任务不在当前筛选或分页中，但那次复制命令仍可安全核对。
+              核对只读取原命令的持久证据，不会再次复制。
+            </p>
+          )}
+          {hiddenCopyPending.map((pending) => {
+            const feedback = copyFeedback[pending.sourceId];
+            return (
+              <div
+                key={pending.sourceId}
+                className="mf-automation-hidden-pending"
+              >
+                <strong>一个自动化任务</strong>
+                {feedback?.state === "checking" ? (
+                  <span className="mf-dashboard-meta">正在确认…</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="mf-button mf-button-secondary"
+                    onClick={() => onCheckCopy(pending.sourceId)}
+                  >
+                    核对复制结果
+                  </button>
+                )}
+                {feedback?.state === "pending" && feedback.note !== null && (
+                  <p className="mf-dashboard-meta">{feedback.note}</p>
+                )}
+              </div>
+            );
+          })}
+          {hiddenCopied.map(([sourceId, copy]) => (
+            <div key={sourceId} className="mf-automation-hidden-pending">
+              <strong>一个自动化任务</strong>
+              <span className="mf-dashboard-meta">
+                已复制为停用副本 {copy.copyDefinitionId}；不在当前筛选或分页中。
+              </span>
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() => onEditCopy(copy.copyDefinitionId)}
+              >
+                编辑副本
+              </button>
+            </div>
+          ))}
+        </StatusBanner>
+      )}
+
+      {copyInvalidLegacy && (
+        <StatusBanner variant="info" title="之前保存的复制信息无法识别">
+          <p>
+            编辑页留下的一次复制信息已损坏，无法自动核对。它不会被当成新的复制
+            请求；请刷新清单确认实际结果，不要重复复制。
+          </p>
+        </StatusBanner>
+      )}
 
       {hasHiddenRunOnce && (
         <StatusBanner
@@ -1786,29 +2374,44 @@ function DefinitionsTab({
                 </tr>
               </thead>
               <tbody>
-                {page.items.map((definition) => (
-                  <AutomationDefinitionRow
-                    key={definition.document.id}
-                    definition={definition}
-                    latestRun={latestRuns[definition.document.id] ?? null}
-                    onOpen={() => onOpen(definition.document.id)}
-                    onEdit={() => onEdit(definition.document.id)}
-                    onRunOnce={
-                      definition.actions.runOnce.available
-                        ? () => onRunOnce(definition)
-                        : null
-                    }
-                    onCheckRunOnce={() =>
-                      onCheckRunOnce(definition.document.id)
-                    }
-                    runOnceFeedback={
-                      runOnceFeedback[definition.document.id] ?? null
-                    }
-                    highlighted={
-                      highlightedDefinitionId === definition.document.id
-                    }
-                  />
-                ))}
+                {page.items.map((definition) => {
+                  const feedback = copyFeedback[definition.document.id] ?? null;
+                  return (
+                    <AutomationDefinitionRow
+                      key={definition.document.id}
+                      definition={definition}
+                      latestRun={latestRuns[definition.document.id] ?? null}
+                      onOpen={() => onOpen(definition.document.id)}
+                      onEdit={() => onEdit(definition.document.id)}
+                      onCopy={copyAllowed ? () => onCopy(definition) : null}
+                      onCheckCopy={() => onCheckCopy(definition.document.id)}
+                      onEditCopy={onEditCopy}
+                      copyFeedback={feedback}
+                      copyVisible={
+                        feedback?.state === "copied" &&
+                        page.items.some(
+                          (item) =>
+                            item.document.id === feedback.copyDefinitionId,
+                        )
+                      }
+                      onRunOnce={
+                        definition.actions.runOnce.available
+                          ? () => onRunOnce(definition)
+                          : null
+                      }
+                      onCheckRunOnce={() =>
+                        onCheckRunOnce(definition.document.id)
+                      }
+                      runOnceFeedback={
+                        runOnceFeedback[definition.document.id] ?? null
+                      }
+                      highlighted={
+                        highlightedDefinitionId === definition.document.id
+                      }
+                      highlightedLabel={highlightedLabel}
+                    />
+                  );
+                })}
               </tbody>
             </table>
           </div>

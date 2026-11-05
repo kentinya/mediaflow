@@ -6913,6 +6913,77 @@ tr[aria-selected="true"] {
   line-height: 1.5;
 }
 
+/* The enablement choice is the same compact switch the Rules forms use. The
+   generic field rules above size every text control to 100% width and a 40px
+   control row; scoped here so the checkbox keeps its own 44x24 track and the
+   switch shares one control row with the adjacent numeric input. */
+.mf-automation-create-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.mf-automation-create-toggle-text {
+  color: #263b61;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #b6c3d7;
+  appearance: none;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 120ms ease;
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input:checked {
+  background: #1268f5;
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input:checked::after {
+  transform: translateX(20px);
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input:focus-visible {
+  outline: 2px solid #1268f5;
+  outline-offset: 2px;
+}
+
+.mf-automation-create-field .mf-automation-create-toggle input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-automation-create-field .mf-automation-create-toggle input,
+  .mf-automation-create-field .mf-automation-create-toggle input::after {
+    transition: none;
+  }
+}
+
 .mf-automation-create-notice {
   margin: 0;
   padding: 9px 12px;

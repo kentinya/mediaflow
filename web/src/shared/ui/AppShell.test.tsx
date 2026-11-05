@@ -108,6 +108,41 @@ describe("AppShell", () => {
     expect(document.querySelectorAll(".mf-shell-topbar h1")).toHaveLength(0);
   });
 
+  it("prints no location line over the Automation list on any list-backed route", async () => {
+    // The list, creation and edit routes all render the same Automation list
+    // as their background. The shared shell must not add its own English
+    // destination line above that list (or reserve its space) on any of them,
+    // including legacy/deep-link and post-login continuations.
+    const routes: Array<readonly [string, string]> = [
+      ["/ui-v2/operations/automation", "Automation"],
+      ["/ui-v2/operations/automation/new", "Create Automation definition"],
+      ["/ui-v2/operations/automation/lifecycle", "New Automation definition"],
+      [
+        "/ui-v2/operations/automation/lifecycle/nightly",
+        "Automation lifecycle",
+      ],
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    for (const [path, label] of routes) {
+      cleanup();
+      authStore.setToken("shell-test-token");
+      renderApp(path);
+      await screen.findByRole("heading", { name: "自动化" });
+      const main = screen.getByRole("main");
+      expect(main.querySelector(".mf-page-context")).toBeNull();
+      expect(within(main).queryByText(label, { exact: true })).toBeNull();
+    }
+  });
+
   it("renders Overview without a keyword search", async () => {
     authStore.setToken("shell-test-token");
     vi.stubGlobal(

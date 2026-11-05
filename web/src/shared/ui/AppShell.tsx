@@ -26,6 +26,23 @@ interface FilesSearchContextValue {
   readonly subscribeToQueryChange: (listener: () => void) => () => void;
 }
 
+/**
+ * The Automation inventory and the routes that render it as their background.
+ *
+ * Create and edit are the same operator surface as the list: they only add a
+ * card over it. The shared shell must therefore not print its own English
+ * location line above that list, and must not reserve the line's space, so the
+ * background never shifts when the card opens or closes.
+ */
+function isAutomationListSurface(pathname: string): boolean {
+  return (
+    pathname === "/operations/automation" ||
+    pathname === "/operations/automation/new" ||
+    pathname === "/operations/automation/lifecycle" ||
+    pathname.startsWith("/operations/automation/lifecycle/")
+  );
+}
+
 const FilesSearchContext = createContext<FilesSearchContextValue>({
   query: "",
   setQuery: () => undefined,
@@ -198,7 +215,7 @@ export function AppShell({ children }: AppShellProps) {
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
           {destination !== undefined &&
           destination.id !== "operations" &&
-          pathname !== "/operations/automation" &&
+          !isAutomationListSurface(pathname) &&
           !searchIsRules ? (
             <p className="mf-page-context">{destination.label}</p>
           ) : null}

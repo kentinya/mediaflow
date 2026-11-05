@@ -153,6 +153,7 @@ export interface AutomationDefinitionFormAuthorityModel {
   /** The backend-advertised command availability for this principal. */
   readonly actions: {
     readonly create: boolean;
+    readonly copy: boolean;
     readonly enable: boolean;
     readonly createEnabled: boolean;
   };
@@ -305,6 +306,7 @@ export function normalizeAutomationFormAuthority(
     actions: {
       // Fail closed: a missing or malformed action never becomes permission.
       create: actionsSource !== null && actionsSource["create"] === true,
+      copy: actionsSource !== null && actionsSource["copy"] === true,
       enable: actionsSource !== null && actionsSource["enable"] === true,
       createEnabled:
         actionsSource !== null && actionsSource["createEnabled"] === true,

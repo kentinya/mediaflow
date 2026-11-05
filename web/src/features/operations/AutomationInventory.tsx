@@ -230,26 +230,57 @@ export type AutomationRunOnceRowFeedback =
       readonly note: string | null;
     };
 
+export type AutomationCopyRowFeedback =
+  | { readonly state: "submitting" }
+  | { readonly state: "checking" }
+  | {
+      readonly state: "copied";
+      readonly copyDefinitionId: string;
+      readonly copyName: string | null;
+      /** Proved from durable Copy evidence after an unknown response. */
+      readonly reconciled: boolean;
+    }
+  | { readonly state: "released" }
+  | {
+      readonly state: "rejected";
+      readonly reason: string;
+      readonly nextAction: string;
+    }
+  | { readonly state: "pending"; readonly note: string | null };
+
 /** One definition row of the reference-style task table. */
 export function AutomationDefinitionRow({
   definition,
   latestRun,
   onOpen,
   onEdit,
+  onCopy,
   onRunOnce,
   onCheckRunOnce,
+  onCheckCopy,
+  onEditCopy,
   runOnceFeedback,
+  copyFeedback,
+  copyVisible = false,
   highlighted = false,
+  highlightedLabel = "刚刚创建",
 }: {
   readonly definition: AutomationDefinitionModel;
   readonly latestRun: AutomationLatestRunModel | null;
   readonly onOpen: () => void;
   readonly onEdit: (() => void) | null;
+  readonly onCopy: (() => void) | null;
   readonly onRunOnce: (() => void) | null;
   readonly onCheckRunOnce: (() => void) | null;
+  readonly onCheckCopy: (() => void) | null;
+  readonly onEditCopy: ((definitionId: string) => void) | null;
   readonly runOnceFeedback: AutomationRunOnceRowFeedback | null;
-  /** Briefly mark the row just created by this operator in this session. */
+  readonly copyFeedback: AutomationCopyRowFeedback | null;
+  /** Whether this row's created copy is on the current list page. */
+  readonly copyVisible?: boolean;
+  /** Briefly mark the row just created, saved or copied by this operator. */
   readonly highlighted?: boolean;
+  readonly highlightedLabel?: string;
 }) {
   const draftOnly = definition.definitionState === "draft-only";
   const latest = latestRunCell(latestRun);
@@ -257,18 +288,24 @@ export function AutomationDefinitionRow({
     runOnceFeedback?.state === "pending" ||
     runOnceFeedback?.state === "checking";
   const runOnceSubmitting = runOnceFeedback?.state === "submitting";
+  const copySubmitting = copyFeedback?.state === "submitting";
+  const copyChecking = copyFeedback?.state === "checking";
+  const copyPending = copyFeedback?.state === "pending" || copyChecking;
   return (
     <tr
       className={highlighted ? "mf-automation-row-created" : undefined}
       data-created={highlighted ? "true" : undefined}
       data-run-once-state={runOnceFeedback?.state ?? "idle"}
+      data-copy-state={copyFeedback?.state ?? "idle"}
     >
       <td>
         <button type="button" className="mf-link-button" onClick={onOpen}>
           {definition.document.name}
         </button>
         {highlighted && (
-          <span className="mf-automation-created-badge">刚刚创建</span>
+          <span className="mf-automation-created-badge">
+            {highlightedLabel}
+          </span>
         )}
         <p className="mf-dashboard-meta">
           {definition.document.sourceScope ?? "资源库根目录"}
@@ -320,6 +357,20 @@ export function AutomationDefinitionRow({
               编辑
             </button>
           )}
+          {onCopy !== null && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              data-automation-copy-entry={definition.document.id}
+              aria-disabled={copySubmitting || copyPending}
+              onClick={() => {
+                if (copySubmitting || copyPending) return;
+                onCopy();
+              }}
+            >
+              {copySubmitting ? "复制中…" : "复制"}
+            </button>
+          )}
           {onRunOnce !== null && (
             <button
               type="button"
@@ -355,6 +406,94 @@ export function AutomationDefinitionRow({
               {definition.actions.runOnce.reason}
             </p>
           )}
+        <div
+          className="mf-automation-copy-feedback"
+          role="status"
+          aria-live="polite"
+          data-copy-state={copyFeedback?.state ?? "idle"}
+        >
+          {copyFeedback?.state === "submitting" && (
+            <p className="mf-dashboard-meta">正在复制，请稍候。</p>
+          )}
+          {copyFeedback?.state === "checking" && (
+            <>
+              <p className="mf-automation-run-once-title">正在核对…</p>
+              <p className="mf-dashboard-meta">
+                只读取上次复制命令的持久证据，不会再次复制。
+              </p>
+            </>
+          )}
+          {copyFeedback?.state === "copied" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">✓ </span>
+                已复制为停用副本
+              </p>
+              <p className="mf-dashboard-meta">
+                {copyFeedback.copyName
+                  ? `副本「${copyFeedback.copyName}」使用新 ID，不继承任何执行授权。`
+                  : `副本 ${copyFeedback.copyDefinitionId} 使用新 ID，不继承任何执行授权。`}
+                {copyFeedback.reconciled
+                  ? "已从持久证据确认本次复制；没有重发命令。"
+                  : "本页已刷新真实结果；来源定义保持不变。"}
+                {copyVisible
+                  ? "副本已显示在列表中。"
+                  : "副本不在当前筛选或分页中；可通过“编辑副本”打开。"}
+              </p>
+              {onEditCopy !== null && (
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  onClick={() => onEditCopy(copyFeedback.copyDefinitionId)}
+                >
+                  编辑副本
+                </button>
+              )}
+            </>
+          )}
+          {copyFeedback?.state === "released" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">✓ </span>已核对：未发布副本
+              </p>
+              <p className="mf-dashboard-meta">
+                持久证据中没有观察到这次复制命令，可以重新复制。
+              </p>
+            </>
+          )}
+          {copyFeedback?.state === "rejected" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">! </span>未能复制
+              </p>
+              <p className="mf-dashboard-meta">{copyFeedback.reason}</p>
+              <p className="mf-dashboard-meta">{copyFeedback.nextAction}</p>
+            </>
+          )}
+          {copyFeedback?.state === "pending" &&
+            (copyFeedback.note !== null ? (
+              <p className="mf-dashboard-meta">{copyFeedback.note}</p>
+            ) : (
+              <p className="mf-dashboard-meta">
+                复制结果待核对：可能已经发布，请先核对再决定是否再次复制。
+              </p>
+            ))}
+          {(copyFeedback?.state === "pending" ||
+            copyFeedback?.state === "checking") &&
+            onCheckCopy !== null && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                aria-disabled={copyChecking}
+                onClick={() => {
+                  if (copyChecking) return;
+                  onCheckCopy();
+                }}
+              >
+                {copyChecking ? "正在确认…" : "核对复制结果"}
+              </button>
+            )}
+        </div>
         <div
           className="mf-automation-run-once-feedback"
           role="status"
