@@ -3,7 +3,7 @@
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
 再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已实施完成，状态
-**READY FOR B REVIEW（待独立审查）**；Task Base、范围与验收不变。Developer 本轮只实施本
+**FIX REQUIRED（B 独立审查发现保存中遮罩可关闭卡片）**；Task Base、范围与验收不变。Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
@@ -12,7 +12,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -278,6 +278,88 @@ Developer 未作出 PASS/FIX REQUIRED 判断，交给 B 独立审查。
 
 ## B Review Result
 
-Developer 已提交实现候选；B 尚未审查该候选、未执行 acceptance/full gates，未作
-PASS / FIX REQUIRED 判断。B 应按模板记录 Reviewed Base..Head、实际验收、Task blockers、全部
-Slice outcomes 是否满足及下一步；不得以本 Task 文档替代独立审查或 A Final Review。
+**Decision: FIX REQUIRED — 2026-11-06，继续同一 Task50.1，不规划下一 Task。**
+
+```text
+Reviewed Base: f24dce7a0a97e035078879e2a93855de02d74f54
+Reviewed Head: 9c608a4070bc1f164dd88700f5ebd1272ae88fe5
+Implementation checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
+Branch: main
+```
+
+审查覆盖完整 Base..Head 的文档、源码、样式和测试变更。工作区原有 `.DS_Store`、日志、
+`15` 和 `output/` 等保持原样；本轮仅修改本 Task 的审查状态和指导，未修改产品实现。
+
+### 阻塞项：P1 — 保存中点击遮罩仍可关闭存储卡片
+
+**实际用户旅程：** 操作者进入 `/ui-v2/storage` → 添加存储 → 填写 Local 名称、ID、根路径 →
+到确认页点击保存。请求尚未返回时，卡片已显示“保存中…”，取消和关闭按钮均禁用；此时点击
+卡片外灰色遮罩，卡片仍立即消失。请求继续完成，存储实际进入 Active 清单。编辑现有 Source
+名称并保存，同样可以在保存中点遮罩退出，随后真实名称变更仍完成。
+
+这使操作者在明确不允许退出的提交阶段失去正在保存的表单和结果反馈位置；关闭并没有取消
+保存。它违反本 Task 的在途保护要求，不能因为主按钮禁用或普通保存测试通过而接受。
+
+**原因与定位：** `web/src/shared/ui/modal-card.tsx` 的层外沿 `onMouseDown`（231–233 行）及
+遮罩 `onMouseDown`（239–242 行）无条件调用 `onRequestClose`；`closeDisabled` 只用于右上角
+关闭按钮。`StorageEditDrawer.tsx`（391–401 行）把未受提交状态约束的 `onClose` 直接传入；
+页面 `closeDrawer` 直接关闭并清理状态。原实现没有这个遮罩关闭入口，原按钮和 Escape 有保存中
+保护。本回归由 `b7636a874d643c36fabc90b51080aa67a1c8c543` 引入
+（提交时间 2026-11-06 01:32:12 +0800）。
+
+**独立复现：** 当前生产构建 + 仓库已有 `scripts/operations_inventory_harness.py --port 4183`，
+真实 API、临时 SQLite 与 Local 根，Chromium 1536×1024。从上述已有入口发出 POST/PUT，
+仅在浏览器网络层暂缓已有请求的送达，等到 `aria-busy=true`、取消按钮禁用后点击遮罩，再放行
+原请求；没有伪造保存响应或构造新业务入口。添加/编辑卡片数量均从 1 变为 0，随后真实清单
+读回确认两次保存均完成。复现脚本曾重复添加两个隔离对象，未触及用户数据。
+
+本机稳定 ignored 证据目录：
+`.git/validation-evidence/9c608a40/b-review-20261106/`。
+其中 `probe.mjs` 为实际复现脚本，`result.json` 为最终两入口结果，`add-saving.png` /
+`edit-saving.png` 与对应 `*-dismissed-while-pending.png` 为保存中及错误退出后的截图。
+这些为本机证据，不宣称远程可取；脚本再次运行需重新启动隔离 harness 或换用测试 ID。
+
+### 给 Developer 的本轮修正指导
+
+1. 在现有关闭请求路径应用统一的在途退出规则，使遮罩、卡片外沿、关闭按钮、取消及 Escape
+   都遵守同一存储保存状态。保持业务规则由存储功能所有者决定，共享呈现只执行传入的退出
+   许可；复用当前 `saving` 等既有状态即可，不增加新的确认步骤或命令框架。
+2. 保存未结束时保持当前卡片、输入和结果承接位置；不能通过卸载、清空、取消网络请求或重发
+   保存来修复。请求结束后仍按原成功、已知拒绝、未知结果/显式核实路径处理，正常未保存
+   关闭继续沿用存储现有放弃语义。
+3. 补充从真实添加/编辑入口触发保存、等待期间点击遮罩和外沿的回归。证明请求仍只发一次、
+   卡片不消失、输入保留；结束后分别验证成功返回、已知失败留在表单及未知结果的原核实入口。
+   用可控请求门闩等待明确状态，不靠固定睡眠猜测保存是否开始。至少一个真实 Python 浏览器
+   用例承接该问题，并检查桌面/窄屏的实际遮罩点击；不新增测试服务。
+4. 运行原 Required Tests 中新增/变更及直接受影响测试与静态检查，报告精确新 checkpoint 和
+   实际结果，重新交 READY FOR B REVIEW。B 在修正候选先复验本阻塞，再完成其适用完整 T4
+   和剩余浏览器验收；Developer 不承担全仓回归或 B 的证据工作。
+
+### 本轮实际检查和限制
+
+- 仓库根 `python3 scripts/check_governance.py` → PASS。
+- 仓库根 `git diff --check f24dce7a..HEAD` → PASS。
+- `web/`：`npm run build` → PASS（既有 chunk 大小提示）；`npm run typecheck` → PASS。
+- `web/`：`npm run test -- run src/shared/ui/modal-card.test.tsx
+  src/features/storage/StorageManagementPage.test.tsx` → **2 files / 47 tests passed**，4.70s；
+  jsdom 输出既有 `Window.scrollTo` 未实现提示，不能用它代替实际滚动验收。
+- 仓库根 `node .git/validation-evidence/9c608a40/b-review-20261106/probe.mjs` → 退出码 0，
+  **成功复现上述阻塞，产品行为不通过**；最终结果两入口 `CancelDisabled=true` 且
+  `DialogsAfterBackdropWhilePending=0`，`realSaveReadback=true`。脚本退出码仅表示调查完成。
+- 已检查上述桌面截图。完整 T4、390px、自动化动态/滚动条、其他失败/恢复组合及包装门禁
+  本轮没有运行/完成；因已证实产品阻塞提前 FIX REQUIRED，不作为 PASS 或豁免。
+- 本轮测试执行仅为短时构建/类型检查、4.70s 定向测试及两次浏览器复现；主要时间用于契约、
+  完整差异和真实入口审查、结果定位与交接。测试执行用时小于本轮总用时 50%。
+
+### 全 Slice 结果重评
+
+| Required Outcome | 当前判断 |
+|---|---|
+| RO-1 任务详情卡片/可读性 | 本 Task 未实施，仍待后续交付。 |
+| RO-2 存储三卡片/更多菜单 | 候选已实施，保存中遮罩退出阻塞待修正；其他完整验收仍待完成。 |
+| RO-3 两种库去目录树、库菜单与配置卡片 | 本 Task 未实施，仍待后续交付。 |
+| RO-4 自动化新建/编辑稳定性 | 候选已有修复，B 的完整动态验收尚未完成。 |
+| RO-4 侧栏主页面切换/两种库加载 | 本 Task 未实施，仍待后续交付。 |
+
+Slice50 保持 ACTIVE；本 Task 不 PASS，不提交 Slice Closure Packet，不变更 A 的合同边界、
+Roadmap 或 Progress 接受账本，不启动其他结果的实施。
