@@ -61,11 +61,14 @@ that are no longer consumed, while preserving exact library-kind/path identity, 
 folder/parent/root navigation, selection, search, list/grid, refresh and bounded paging. Do not
 remove state still required by ordinary commands or organizing return paths. Shared Shell global
 navigation remains. Apply the shared page transition only between the main pages reached through
-existing V2 sidebar entries. In-page tabs, detail subpages/deep links, library/path changes and card
-open/close do not trigger that page transition; retain existing navigation/return/authentication
-compatibility and handle selected cards through their own overlay transitions. Coordinate the
-existing Router/Query lifecycle with separate library-list/directory loading states; undefined data
-is not an empty list. Preserve same-query refresh content and authoritative errors, reject stale
+existing V2 sidebar entries, based on destination-page identity rather than link origin or every URL
+change. Tabs, detail subroutes (including their deep links), library/path changes and card open/close
+within the same main page do not replay that page transition; retain existing navigation/return/
+authentication compatibility and legitimate local motion. Handle selected cards through their own
+overlay transitions. Coordinate the existing Router/Query lifecycle with separate library-list/
+directory loading states; undefined data is not an empty list. Show placeholders only where data is
+actually pending; fast responses/valid cache may show content directly, without forced playback or
+serial requests for animation. Preserve same-query refresh content and authoritative errors, reject stale
 cross-library/path responses, respect reduced-motion, and do not remount/replay business commands
 for animation.
 

@@ -45,9 +45,10 @@ added Automation create/edit card jitter correction; the original eight requirem
 Activation, a formal B implementation Task and code implementation are not authorized
 by this planning checkpoint; [TASK.md](../TASK.md) remains NO ACTIVE IMPLEMENTATION TASK.
 Page transitions cover only the main pages reached through existing V2 sidebar entries, as clarified
-by the user. In-page tabs, detail subpages/deep links, library/path changes and card open/close do not
-trigger that page transition; library loading and selected card transitions/stability retain their own
-requirements. Other pages' business redesign is not in scope.
+by the user; main-page identity determines a transition. Tabs, detail subroutes (including their deep
+links), library/path changes and card open/close within the same main page do not replay that page
+transition. Existing local motion, library loading and selected card transitions/stability retain
+their own requirements. Other pages' business redesign is not in scope.
 
 ## Accepted boundary references
 
