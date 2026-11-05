@@ -205,6 +205,7 @@ npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/a
 
 ```text
 本轮修正 checkpoint: 22618d708a68eeb076d9ed42755a69bf996656df
+补充真实浏览器回归: cb3b64362f869c315d782fcefcd5cd813384a9a1
 初次实现 checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
 分支: main
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
@@ -265,9 +266,11 @@ B 的审查范围是 Task Base..本报告提交 HEAD；实现源码身份为上�
   tests/e2e/automation-create-dialog.python.spec.ts tests/e2e/storage-dialog.python.spec.ts` →
   **19 passed**（自动化 14、存储 5）。新增存储用例从真实添加/编辑入口持有请求，在
   `aria-busy=true` 且取消禁用后分别点击 1536×1024 背景遮罩/卡片外沿与 390px 遮罩，证明卡片
-  不消失、输入在确认摘要中保留、POST/PUT 各一次；放行后真实保存读回成功。其余用例继续覆盖
-  慢读取关闭竞态、重复拒绝、菜单键盘/边界和精确读回。
-- 本轮测试执行约 100 秒，低于本轮实际用时 30%；未执行 B 的完整 T4、wheel/Docker/发布门禁。
+  不消失、输入在确认摘要中保留、POST/PUT 各一次；放行后真实保存读回成功。同一用例继续在
+  390px 对重复 ID 再次持有请求、点击遮罩并放行，证明真实 409 拒绝留在表单、输入可导航回读
+  且无自动重发。其余用例继续覆盖慢读取关闭竞态、重复拒绝、菜单键盘/边界和精确读回。
+- 本轮自动化测试执行累计约 2 分钟，低于本轮实际用时 30%；未执行 B 的完整 T4、
+  wheel/Docker/发布门禁。
 
 ### 已知风险与剩余工作
 
