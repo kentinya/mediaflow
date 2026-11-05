@@ -42,9 +42,10 @@ only in [the development workflow](development-workflow.md).
 [Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **ACTIVE**.
 The user authorized planning and related documentation for the original eight requests and explicitly
 added Automation create/edit card jitter correction; the original eight requirements remain intact.
-The user has now authorized activation and the first B Task plan by the same agent after the A
-activation checkpoint. The current plan is in [TASK.md](../TASK.md); this turn stops before code
-implementation, with no self-acceptance or A Final Review.
+The user authorized Slice activation and the first B Task plan by the same agent, then explicitly
+activated Task50.1. [TASK.md](../TASK.md) is the sole current implementation Task, PLANNED and
+awaiting Developer implementation. This turn activates the Task only; no code implementation,
+self-acceptance or A Final Review has started.
 Page transitions cover only the main pages reached through existing V2 sidebar entries, as clarified
 by the user; main-page identity determines a transition. Tabs, detail subroutes (including their deep
 links), library/path changes and card open/close within the same main page do not replay that page

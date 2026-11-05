@@ -1,7 +1,8 @@
 # 文档导航与职责
 
-当前 [Slice50](../SLICE.md) 为 **ACTIVE**，用户授权激活并由同一代理承担 B 的首个 Task 规划；
-当前计划见 [TASK.md](../TASK.md)，本轮不开始代码实施。Slice49 的 PASS / CLOSED 保留。
+当前 [Slice50](../SLICE.md) 为 **ACTIVE**；用户已激活 [Task50.1](../TASK.md)，状态
+**PLANNED（待实施）**，作为唯一活动实施 Task。本轮仅完成激活，尚未开始代码实施。
+Slice49 的 PASS / CLOSED 保留。
 最近独立自动化界面修正已由 B 验收 PASS，固定审查指针见 Slice Contract；大版本接受事实不变。
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
 开发过程留在 Git。`docs/history/` 是 LEGACY / READ ONLY，不作为当前指令，也不继续追加归档。

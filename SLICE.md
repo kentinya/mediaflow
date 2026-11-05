@@ -8,7 +8,7 @@ Status: ACTIVE
 Base SHA: 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVATION AND FIRST B TASK PLANNING; NO CODE IMPLEMENTATION IN THIS TURN
+Development Authorization: TASK 50.1 ONLY; THIS TURN TASK ACTIVATION ONLY
 Risk: High
 Final Test Level: T4
 Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
@@ -22,9 +22,10 @@ Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
 用户进一步明确：第 8 项的页面切换仅指左侧侧栏入口对应的主页面之间切换；同一主页面内
 的标签、详情子路由（含其深链）、切库/目录与弹卡进出不属于这项整页切换动画，加载与
 弹卡要求分别保留。按主页面身份判断切换，不把链接来源或每次 URL 变化等同于切页。
-用户现明确授权“激活 Slice 并代替 B 规划第一个 Task”。本轮先由 A 激活并 checkpoint，
-再由同一代理按用户授权承担 B 的首次 Task 规划；该角色授权不包含自我验收或 A 终审。
-本轮止于激活和规划，不改产品代码，不推送或部署。
+用户已明确授权“激活 Slice 并代替 B 规划第一个 Task”，由同一代理先完成 A 激活 checkpoint，
+再承担 B 的首次 Task 规划。用户随后明确授权激活 Task50.1；当前唯一活动实施 Task 见
+[TASK.md](TASK.md)，状态 PLANNED（待实施）。该角色授权不包含自我验收或 A 终审。
+本轮仅完成 Task 激活，不自动启动 Developer，不改产品代码，不推送或部署。
 生命周期与测试分工遵循
 [Development Workflow](docs/development-workflow.md)。
 
@@ -244,8 +245,9 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 
 建议按完整行为组织约四个 Task：存储弹卡/菜单（含必要共享呈现）、任务详情弹卡/
 可读性、两种库布局/配置交互、侧栏主页面切换/两种库加载。自动化新建/编辑稳定性作为共享弹卡
-呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。这是分组建议，不是正式
-Task 或额外范围；B 按真实依赖决定顺序/粒度，不按原八项或补充原因机械拆任务。
+呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。首个正式活动 Task50.1 见
+[TASK.md](TASK.md)；其余分组仍为建议，不是额外范围或已规划的活动 Task。B 按真实依赖
+决定顺序/粒度，不按原八项或补充原因机械拆任务。
 
 整体验收 T4：跨共享 Shell、存储/库 Active 配置与任务/危险操作入口，需证明呈现改变未改变
 权限/命令/并发语义。Developer 仅跑新增/修改/直接受影响测试；B 按

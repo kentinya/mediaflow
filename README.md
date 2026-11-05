@@ -50,12 +50,13 @@ completion neither proves file success nor grants replay.
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
-[TASK.md](TASK.md) records the current Slice50 Task plan; the latest independent B review remains
+[TASK.md](TASK.md) records the activated Task50.1, PLANNED and awaiting Developer implementation;
+the latest independent B review remains
 at [`8a37d1a1:TASK.md`](https://github.com/kentinya/mediaflow/blob/8a37d1a17526347116df528dcba0467f0fdfe766/TASK.md);
 [Progress](docs/progress.md) preserves original large-Slice Base/Head, closure evidence and deferrals.
 [Slice50](SLICE.md) is ACTIVE for the user's original eight dialog/readability/navigation UX requests
 and the explicitly added Automation create/edit card jitter correction;
-the user has authorized activation and the first B Task plan. This turn stops before code implementation.
+the user has activated Task50.1 after Slice activation and planning. This turn activates the Task only.
 Its [TARGET requirements](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)
 are not delivered behavior. Earlier acceptance remains unreleased V2 development acceptance.
 

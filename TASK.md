@@ -1,17 +1,12 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Slice50 已在 `f24dce7a0a97e035078879e2a93855de02d74f54` 激活。以下为用户授权的第一个
-B Task 完整计划，状态 **PLANNED / 规划稿**；本轮止于规划，未授权代码实施。
-按 [Development Workflow](docs/development-workflow.md#2-roles) 与
-[Task 模板](Task/TEMPLATE.md)，规划稿留在本 notice 下，不自动启动 Developer 或其他代理。
-收到实施指令后沿用本计划的 Task ID、Base 和范围，移除此 notice 并进入正常 Task 生命周期；
-不因纯文档提交重设 Base。未完成项仍留在 Slice50，未宣告 Task PASS 或 Slice 关闭。
-
-## Task 50.1 — 稳定共享弹卡并完成存储卡片与更多菜单
+# Task 50.1 — 稳定共享弹卡并完成存储卡片与更多菜单
 
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
-再承担 B 首次规划；不包含实现、自我验收或 A Final Review。
+再承担 B 首次规划，并已明确授权激活 Task50.1。此文档现为 Slice50 唯一活动实施 Task，
+状态 **PLANNED（待实施）**；Developer 开始实施时转为 IN PROGRESS。
+本轮仅完成激活，不自动启动 Developer、其他代理、自我验收或 A Final Review。
+沿用已规划的 Task ID、Base、范围及验收澄清，不因纯文档提交重设 Base；其他 Slice 必需
+结果仍保留，未宣告 Task PASS 或 Slice 关闭。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
 
@@ -141,7 +136,7 @@ Planner / Reviewer: B
 ## Required Tests
 
 遵循 [workflow §6](docs/development-workflow.md#6-test-levels) 的所有权分工。以下是实施后的
-计划命令，本次规划没有执行产品测试或产生修复验收结果。所有数据使用隔离临时根/SQLite、
+计划命令，本次规划/激活没有执行产品测试或产生修复验收结果。所有数据使用隔离临时根/SQLite、
 fake/local server 与合成 Provider，不读取用户配置/媒体或连接生产服务。
 
 ### Developer — affected tests
@@ -216,4 +211,4 @@ npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/a
 
 尚未提交实现候选；未执行 B acceptance/full gates，未作 PASS / FIX REQUIRED 判断。
 实施后按模板记录 Reviewed Base..Head、实际验收、Task blockers、全部 Slice outcomes 是否
-满足及下一步；不得以本规划稿替代独立审查或 A Final Review。
+满足及下一步；不得以本 Task 文档替代独立审查或 A Final Review。
