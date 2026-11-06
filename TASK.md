@@ -16,7 +16,7 @@ Task Type: SLICE
 Parent Slice: 50
 Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: ec3dbc3b052c5d35b9ff67304c6d61143fd49d15
+Candidate: fd4df8ea36fefb59f003f494f06724b35ccc9d2e
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -394,7 +394,7 @@ ACTIVE，修复留在 Task50.3，不规划下一 Task，不交 Closure Packet，
 
 ### Developer Fix Report — 2026-11-06 (B50.3-02)
 
-**READY FOR B REVIEW。** 修正候选为 `ec3dbc3b052c5d35b9ff67304c6d61143fd49d15`，在 `main` 上单个实现 checkpoint；
+**READY FOR B REVIEW。** 修正候选为 `fd4df8ea36fefb59f003f494f06724b35ccc9d2e`，在 `main` 上两个实现 checkpoint（`ec3dbc3b` 恢复旅程 + `fd4df8ea` 按入口保留待核对上下文）；
 Task Base 仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
 
 实现事实：
@@ -414,9 +414,10 @@ Task Base 仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部
   “当前 Active 已是本次提交的配置”，以唯一“关闭”退出；当前不同则列出名称、Storage、
   根路径与状态，保留输入并把刚读到的 Active 身份配给下一次显式保存；Add 的
   `*_not_found` 证明未发布并允许显式重试；Edit 的对象已消失时给出唯一合法退出。
-- 关闭/重开：未确认保存跨关闭保留，重开同一库/添加入口直接恢复提交候选及其 Storage
-  选项，不读投影、不重发；确定冲突在关闭后清除，重开编辑照常读取当前投影。核对结束
-  后焦点交给底部仍可用的主操作（显式保存或唯一关闭）。
+- 关闭/重开：未确认保存按精确入口（一个添加槽位、每个编辑库一个）保留并跨关闭恢复，
+  重开同一库/添加入口直接显示提交候选及其 Storage 选项，不读投影、不重发；无关库的
+  成功保存不会清除或替换该上下文。确定冲突在关闭后清除，重开编辑照常读取当前投影。
+  核对结束后焦点交给底部仍可用的主操作（显式保存或唯一关闭）。
 - 显式继续时使用刚核对的 `expectedRevisionId/expectedVersion/expectedDigest` 与保留
   候选一起提交；不自动 rebase、合并、覆盖别人变更或重发。未加后端能力、产品路由或
   新入口；正常成功、无效输入、禁用、绑定变化与物理文件保留语义不变。
@@ -453,8 +454,8 @@ Task Base 仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部
 
 剩余风险：重开未确认 Add 时 Storage 下拉使用当前已启用集合，提交的 Storage ID 仍是
 候选原值；若该 Storage 期间被停用，Save 仍被核对门禁挡住，B 可复核该边缘。确定冲突的
-上下文在关闭后清除（下次编辑读取当前投影）；未确认上下文只跨关闭/重开保留，不跨整页
-重载，因为本轮未引入新的持久客户端记录或后端能力。核对只证明当前配置，不证明原命令
+上下文在关闭后清除（下次编辑读取当前投影）；未确认上下文按页面内精确入口保留并跨
+关闭/重开恢复，但不跨整页重载，因为本轮未引入新的持久客户端记录或后端能力。核对只证明当前配置，不证明原命令
 历史成功，文案保持该边界。窄屏动态过程与 reduced-motion 仍由 B 的 T4 验收覆盖。
 
 本轮从约 `2026-11-06T13:14Z` 开始，约 `13:50Z` 交接（约 36 分钟）；测试执行约
