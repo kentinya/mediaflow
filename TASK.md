@@ -3,7 +3,7 @@
 Authority：已提交 `575898ebaae593568be59699bb40116f9e6f2d91:SLICE.md` 的 RO-1、
 AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workflow.md) 与
 [Task 模板](Task/TEMPLATE.md)。用户于 2026-11-06 明确授权激活 Task50.2，作为当前唯一
-活动实施 Task。当前已收到修复候选；B 上一轮独立复核结论为 FIX REQUIRED，两项 P1 已在本 Task 内修复并进入新一轮复核。
+活动实施 Task。B 已复核修复候选：原滚动及决定在途重开复现通过；确认成功的迟到响应仍会强制离开已返回列表，结论继续 FIX REQUIRED。
 
 激活前现场：分支 `main`，HEAD `5b5f319b1d77b9673a447bf60c5d7a21fcbcc956`；治理预检 PASS，
 仓库与 Git 可写。Task Base 保持原值，纯文档提交不重设它。预存 `mediaflow/.DS_Store` 修改
@@ -13,7 +13,7 @@ AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workfl
 Task ID: 50.2
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Activation: USER AUTHORIZED — 2026-11-06
 Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
 Difficulty: High
@@ -30,7 +30,7 @@ Task50.1 保持 **PASS**，B 已审完整范围
 
 | Slice Required Outcome | 当前结果 |
 |---|---|
-| RO-1 任务详情卡片/可读性 | 已有居中卡片候选；B 复核发现返回位置与原生条目在途状态两项阻塞，未验收。 |
+| RO-1 任务详情卡片/可读性 | 原两项复现已修复；原生确认迟到成功后仍强制跳转，Task50.2 未验收。 |
 | RO-2 存储三卡片/更多菜单 | Task50.1 已验收。 |
 | RO-3 两种库去树/菜单/配置卡片 | 未交付，待后续规划。 |
 | RO-4 自动化新建/编辑稳定性补充 | Task50.1 已验收。 |
@@ -437,3 +437,84 @@ B 的原始 `recovery-probe.mjs` 在修复后停在重开面板的 `Special` rad
   场景；1536×1024 的全量截图/视觉验收仍由 B 执行。
 - 原生条目四类共享实现的完整全排列不再重复；本轮覆盖决定在途/未知、精确摘要确认在途/
   未知和条目隔离。其余四类与完整 T4、wheel/源码外消费、最终视觉/安全验收仍由 B 执行。
+
+
+## B Review Result — 修复候选 d911995f
+
+**FIX REQUIRED — 2026-11-06。** 同一 Task50.2、同一 B50.2-02 的关闭后结果处理仍有残留，
+不新增 Task、不重开已通过的原复现。
+
+```text
+Reviewed Base: 575898ebaae593568be59699bb40116f9e6f2d91
+Reviewed Head: d911995f49eed4fad34bd3123439e573b152b85b
+本轮修复增量: ddec4856..d911995f
+Branch: main
+Next Action: DEVELOPER FIXES THE SAME TASK; NO PUSH / DEPLOYMENT
+```
+
+结合前次完整审查，核对全部 Base..Head 的 18 个文件；本轮独立审查全部修复增量，追踪
+原生决定、继续、准备/确认与父层导航回调，保留原 Task Base。预存 `.DS_Store`、日志、
+`15`、`output/` 等未动、未暂存，本轮只修改本 Task 的复核记录。
+
+### 已修复的原复现
+
+- **B50.2-01 通过本轮关键复验：** 390px 从既有任务名打开/关闭，fake 的
+  `scrollY=461/461/461`，真实 Python/SQLite 为 `526/526/526`；入口焦点返回。
+  原生首个小列表不产生滚动，因此后续通过已有 `seed-task-center-problems` 增加真实测试
+  任务再复验；不把 `0/0/0` 当作已滚动证明，也未修改页面高度或制造新入口。
+- **B50.2-02 的决定在途/未知重开通过：** 从识别恢复的问题文件进入原生条目表单，仅
+  延迟真实 `/recovery/decision`；重开保持 busy、radio 禁用；未知结果保留核对并继续禁用。
+  再关闭/重开、显式核对后恢复合法选项，全程 POST 仍为 1。
+
+### 唯一已证实的剩余阻塞（P1，B50.2-02）
+
+**完整用户旅程：** 任务中心 → 识别恢复 → 查看问题文件 → 条目证据 → 选择 Special →
+保存决定并继续分析 → Worker 完成零变更分析 → 本界面生成新计划摘要 → 确认继续整理 1 项。
+网络仍在等待时点击“关闭详情”，用户已回到原问题列表；成功响应迟到后，页面却自动跳到
+“整理执行情况”，打断刚恢复的列表阅读。关闭本身合法，并不取消已受理整理。
+
+B 在真实 Python API、临时 SQLite/Local 与合成 Provider 下走完上述现有入口，只在浏览器
+延迟实际确认请求的 **真实 202 成功响应**，没有伪造成功或构造新入口。确认 POST 仅 1 次；
+关闭后 URL 是 `/ui-v2/operations?view=recognition&problemRun=…`；释放响应后自动变为
+`/ui-v2/operations/organize/execution/…?returnOps=…`。截图已人工打开检查。确认后没有再运行
+执行 Worker；本结论是导航/返回上下文阻塞，不声称重复执行或数据损失。
+
+**开发指导：**
+
+1. 修复 `TaskItemRecoveryPanel.tsx` 的确认成功回调及其父层导航归属。结果照常写入精确
+   条目会话并刷新真实持久读回；只有原处理界面仍是当前有效操作上下文时才沿用正常成功
+   跳转。卡片已关闭或用户已切换任务/条目时，迟到结果不能再替用户导航。
+2. 关闭后保留原列表/问题文件上下文；用户重新打开原条目时可看见实际受理结果，并通过
+   既有明确链接主动查看执行。正常保持卡片打开时的成功旅程、未知核对、原权限/pins 与
+   非重放不变，不增加关闭限制、重复确认、通用框架或后端能力。
+3. 在真实卡片/父层 Router 接入下补“确认在途 → 关闭 → 成功响应迟到”的回归，验证 URL/
+   选定任务不被旧回调改写、确认 POST 仅 1 次、重开能读到原结果；组合一次切换任务或条目
+   以验证归属。现有 `RecoveryPanelHarness` 未传导航回调，其未知响应测试不能覆盖这个
+   成功跳转分支。Developer 运行新增/失败及直接受影响测试后提交新 checkpoint。
+
+### 本轮实际门禁、时间与证据
+
+本地 ignored 目录：`.git/validation-evidence/d911995f/B50.2-review/`，含脚本、实际日志、
+前/开/关及迟到成功截图、构建与证据 SHA256 manifest；仅本机可取。
+
+- 根目录 `python3 scripts/check_governance.py`、`git diff --check 575898eb..d911995f`：PASS；
+  本记录更新后再次检查治理和 whitespace。
+- `web/` `npm run build`：PASS（既存 chunk 大小提示）；`npm run format:check`：PASS。
+  首次构建日志重定向路径错误，构建未执行；修正路径后重新构建成功，不使用旧产物。
+- 根目录运行上述证据目录的 `detail-probe.mjs`、`detail-native-probe.mjs`、
+  `recovery-probe.mjs`：正常完成，结果如上。
+- 同目录 `late-confirm-probe.mjs`：正常真实旅程完成，证实确认迟到成功后强制跳转；
+  `late-confirm-probe.log` 与 `confirm-closed.png` / `confirm-late.png` 保存原始证据。
+- 现场起始 `05:00:32 UTC`，至截图检查 `05:04:08 UTC` 已工作至少 3 分 36 秒；构建、格式
+  和全部探测的执行墙钟保守上界 45 秒，小于该已记录工作时段的 21%，满足本轮低于 50%
+  的限制。未靠空等凑比例。
+
+已有真实 P1，按 workflow §6 提前 FIX REQUIRED；完整 T4、Python/Web/E2E 全回归、
+wheel/源码外消费及最终视觉/安全门禁仍待 B 在修复候选上执行，未豁免，也不交给 Developer。
+本轮没有把 Developer 报告算作 B 的独立门禁。
+
+### 全 Slice 重评
+
+RO-1 仍未完成验收；RO-2 与自动化稳定性补充保持 Task50.1 已接受事实；RO-3 两种库及
+RO-4 主页面切换/库加载仍未交付。Slice50 保持 ACTIVE；不规划下一 Task、不提交 Closure
+Packet、不进行 A 终审或关闭。下一步只修本 Task 上述剩余返回行为。
