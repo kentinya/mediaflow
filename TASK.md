@@ -3,7 +3,8 @@
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
 再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的存储三卡片
-退出过渡修正，状态 **READY FOR B REVIEW**（未自审 PASS）；Task Base、范围与验收不变。
+退出过渡修正；B 已复验两个界面阻塞通过，当前状态 **FIX REQUIRED（新增测试文件的
+ESLint / Prettier 检查失败）**。Task Base、范围与验收不变。
 Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
@@ -13,7 +14,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -280,100 +281,88 @@ Developer 未作出 PASS/FIX REQUIRED 判断，交给 B 独立审查。
 
 ## B Review Result
 
-**Decision: FIX REQUIRED — 2026-11-06。保存中退出问题已修复；存储三卡片的退出体验仍未完成。**
+**Decision: FIX REQUIRED — 2026-11-06。两项界面阻塞已修复；新增测试文件的必需静态检查未通过。**
 
 ```text
 Reviewed Base: f24dce7a0a97e035078879e2a93855de02d74f54
-Reviewed Head: 50233ce47bc69b2e0ccddcd95249a6e39764994c
-本轮增量: e5df56ca..50233ce4
-修正源码: 22618d708a68eeb076d9ed42755a69bf996656df
-补充回归: cb3b64362f869c315d782fcefcd5cd813384a9a1
+Reviewed Head: 8b16ba6fdfe9e2133e587665f85f97c78ba782fc
+本轮增量: 53e892c4..8b16ba6f
+本轮实现: 736aa5dfe0cbe7b23546fc88e970949a0eba2912
 Branch: main
 ```
 
-结合前轮完整差异审查，重新核对整个 Task Base..本候选及本轮全部增量；Task Base 不变。
-原有 `.DS_Store`、日志、`15`、`output/` 等工作区变更均保留。本轮只更新本 Task 的复核结果，
-未改产品实现、Slice 合同、Roadmap 或 Progress。
+在前轮完整差异审查基础上，核对整个 Task Base..本候选和本轮全部源码/测试/报告增量。
+Task Base、范围与验收不变。原有 `.DS_Store`、日志、`15`、`output/` 等变更均保持原样；
+B 本轮仅更新审查记录，没有修改产品或测试实现，没有推送。
 
-### 上次阻塞：已修复并独立复验通过
+### 两项原产品阻塞：均已独立复验通过
 
-`ModalCardShell` 现以所有者传入的 `closeDisabled` 同时约束遮罩、外沿和关闭按钮，存储仍
-使用原 `saving` 状态。真实 Python 浏览器聚焦用例通过：桌面添加/390px 编辑保存中点遮罩，
-卡片保留、请求只发一次，放行后真实保存并读回；重复 ID 的真实拒绝仍保留表单与输入。
-新增/变更的共享和存储组件用例 52 项通过，包含未知结果核实入口。本次不把旧阻塞继续列为
-未修复，也未发现该修正增加新业务状态或命令。
+- **保存保护：** 真实应用的添加/编辑保存中点击遮罩仍保留卡片，POST/PUT 各一次，完成后
+  正确读回；重复 ID 的真实拒绝保留输入。未因退出动画重新放开在途关闭。
+- **退出过渡：** 真实存储查看、添加、编辑在正常动效偏好下均先淡出再返回列表；桌面
+  1536×1024 和 390px 已与自动化新建基准逐帧对照并检查截图。取消/关闭回焦、滚动锁释放、
+  reduced-motion 立即关闭和退出结束后重开均有真实应用用例通过。没有再要求产品行为修改。
 
-### 当前阻塞：P1 — 存储查看、添加、编辑关闭时直接消失，退出过渡没有接入
+用户例子：打开存储 Source 的“查看”后关闭，现在卡片和遮罩平顺淡出，再回到原查看入口；
+添加、编辑取消同样完成退出。点击保存后误触灰色区域，卡片继续等待原请求结果。
+这两项此前的 FIX REQUIRED 不再作为未修复问题。
 
-**用户完整操作例子：** 从存储管理点击 Source 的“查看”，读完详情后点击右上角关闭；
-卡片和灰色遮罩立即消失。点击“添加存储”后取消，或打开 Source 的“编辑”后取消，也是
-同样结果。随后进入已有自动化列表，打开“新建自动化任务”再取消，可见卡片与遮罩平顺淡出。
-在正常动效偏好下，存储三个入口没有与该基准协调的退出过程。桌面 1536×1024 和 390px
-均复现；这不是 reduced-motion 下应有的立即关闭。
+### 当前候选阻塞：新增测试文件未通过原 Task 必需检查
 
-**为何阻塞：** Goal/验收第一项要求存储三卡片“进出一致”，实施步骤 2/3 要复用共享呈现；
-Slice RO-2、适用产品旅程和架构同时要求与自动化协调的进出体验。当前只完成入场，退出仍
-缺失，因此属于原要求未交付，不是要求新增动效设置、精确时长或可选美化。
+这不是新增的用户功能缺陷，也不标作产品 P1；它是 Task 原 Required Tests 中实际失败的
+质量门禁。交接报告称 `lint` / `format:check` 全部通过，但精确候选的本轮实测为：
 
-**实际原因：** `StorageManagementPage.tsx:842` 的查看卡片、`StorageEditDrawer.tsx:338/393`
-的加载/错误及表单卡片都固定 `closing={false}`。查看关闭直接 `setDetailId(null)`，表单
-`closeDrawer`（1753 行）直接设置 `open:false`，当次渲染就卸载。`styles.css:7548` 已存在
-退出样式，但这些真实入口永远不进入退出状态。该缺口始于初次实现
-`b7636a874d643c36fabc90b51080aa67a1c8c543`（2026-11-06 01:32:12 +0800），
-不是本轮保存保护修正引入；前轮尚未完成这一原生体验验收，本轮继续整体复核时确认。
+1. `web/` 执行 `npm run lint` → **exit 1**：
+   `tests/e2e/storage-dialog.python.spec.ts:438:9`，
+   `'stopped' is never reassigned. Use 'const' instead`，规则 `prefer-const`。
+2. `web/` 执行 `npm run format:check` → **exit 1**：
+   同一 `tests/e2e/storage-dialog.python.spec.ts` 存在 Prettier 格式问题。
 
-**独立证据：** 生产构建、仓库已有 Python harness、临时 SQLite/Local 根，正常动效偏好；
-从上述真实按钮操作，同时记录关闭后逐帧实际透明度/动效和截图。两个视口中存储三卡片
-关闭后的首个绘制帧都已完全消失；自动化在相同操作中仍有逐步降低的透明度和退出动效。
-这用于证明可见过程缺失，不把帧数、毫秒、CSS 类名或 DOM 存续时间规定成产品合同。
+新增采样器段由 `736aa5df`（2026-11-06 08:02:58 +0800）引入。检查由仓库既有 npm 命令
+直接触发，无新入口、故障注入或猜测性探测。界面复验通过不能替代这些必需检查，也不能据
+未完成的 T4 宣告 Task PASS。
 
-### 给 Developer 的修正指导
+### 给 Developer 的最小修正指导
 
-1. 为存储三卡片接入现有退出呈现：合法关闭请求先进入退出状态，正常偏好下完成协调的
-   卡片/遮罩退出后再交由各所有者关闭；reduced-motion 按偏好直接或减少动态地完成。
-   可在现有无业务共享呈现内复用必要生命周期，不引入通用命令框架，不依赖自动化业务。
-2. 将关闭按钮、取消、遮罩、外沿、Escape 及读取失败的返回操作接到同一退出路径。
-   保存中继续保持本轮已经修好的退出禁止；结束后成功关闭也应与呈现协调，已知失败/
-   未知结果继续留在原有处理路径，不取消/重发保存，不清掉未决结果来播放动画。
-3. 退出期间保持原背景、焦点约束和滚动锁，结束后准确释放并回到合法入口；连续关闭/
-   重开及慢读取晚返回不能让旧退出结束回调关闭新卡片。使用原有真实状态做最小改动，
-   不新增存储未保存确认、业务字段、后端能力或延迟数据读取。
-4. 补真实入口的退出回归：查看、添加、编辑均检查正常动效下实际退出过程和最终返回；
-   桌面/390px 按风险组合，另验 reduced-motion、快速关闭重开和保存中遮罩保护。
-   检查可见效果及零额外命令，不只断言存在退出 CSS，也不绑定固定毫秒/像素。
-5. Developer 跑新增/变更及直接受影响测试和相关静态检查后提交精确 checkpoint，重新交
-   READY FOR B REVIEW。B 对修正候选先复验阻塞，再执行剩余验收与适用完整 T4。
-   同一 Task 修正，不规划下一 Task，不把全仓回归或 B 证据工作交给 Developer。
+1. 在 `web/tests/e2e/storage-dialog.python.spec.ts` 把从未重新赋值的 `stopped` 改为 `const`，
+   按现有规则整理同一文件格式，例如在 `web/` 执行：
+   `npx prettier --write tests/e2e/storage-dialog.python.spec.ts`。
+   保留当前测试意图、断言和采样行为，不关闭规则、不删退出/保存保护用例，也不修改产品逻辑。
+2. 在 `web/` 重新执行 `npm run lint`、`npm run format:check`、`npm run typecheck`，并运行
+   `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/storage-dialog.python.spec.ts`。
+   根目录执行 `python3 scripts/check_governance.py` 和 `git diff --check`。
+   交接精确新 checkpoint、实际命令和结果，改正报告中的静态检查通过声明。
+3. 仍在 Task50.1 内交 READY FOR B REVIEW。这里只需修正该测试文件，不增加功能、测试服务
+   或新 Task。完整 Python/Web/默认 E2E、包装及其余验收继续由 B 承担，不交给 Developer。
 
-### 本轮实际验证与限制
+### 本轮实际验证与证据
 
-本机稳定 ignored 证据：`.git/validation-evidence/50233ce4/b-review-20261106/`，仅本机可取。
+本机稳定 ignored 路径：`.git/validation-evidence/8b16ba6f/b-review-20261106/`，仅本机可取。
 
-| cwd | 实际命令/操作 | 结果与证据 |
+| cwd | 实际命令/操作 | 结果 |
 |---|---|---|
 | 根目录 | `python3 scripts/check_governance.py` | PASS |
-| 根目录 | `git diff --check f24dce7a..50233ce4` | PASS |
+| 根目录 | `git diff --check f24dce7a..8b16ba6f` | PASS |
 | `web/` | `npm run build` | PASS，既有 chunk 大小提示 |
-| `web/` | `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/storage-dialog.python.spec.ts --grep 'keeps in-flight'` | 1 passed，3.02s 总进程用时；`critical-e2e.log` / `.result.json` |
-| `web/` | `npm run test -- run src/shared/ui/modal-card.test.tsx src/features/storage/StorageManagementPage.test.tsx` | 2 files / 52 tests passed，5.37s 总进程用时；`focused-unit.log`。jsdom 仍有既有 scrollTo 未实现提示，不作为实际滚动证据。 |
-| 根目录 | `.venv/bin/python scripts/operations_inventory_harness.py --port 4183` + `node .git/validation-evidence/50233ce4/b-review-20261106/exit-probe.mjs` | 两视口各完成三种存储卡片和自动化基准的打开/关闭；`exit-frames.json`、`exit-probe.log` 和 `*-open.png` / `*-closing.png`，已检查截图；产品退出体验不通过。 |
+| `web/` | `npm run typecheck` | PASS |
+| `web/` | `npm run lint` | FAIL，上述 1 个 prefer-const 错误 |
+| `web/` | `npm run format:check` | FAIL，上述 1 个测试文件格式问题 |
+| `web/` | `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/storage-dialog.python.spec.ts tests/e2e/automation-create-dialog.python.spec.ts` | **22 passed**，进程 29.11s；`real-e2e.log` / `real-e2e.result.json`。包含自动化慢读取/滚动稳定、未知核对、保存/退出保护及存储三卡片、菜单、退出/reduced-motion。 |
+| 根目录 | `.venv/bin/python scripts/operations_inventory_harness.py --port 4183` + `node .git/validation-evidence/8b16ba6f/b-review-20261106/exit-probe.mjs` | PASS：真实 API/临时 SQLite/Local 根；两视口存储三入口与自动化基准正常淡出。`exit-frames.json`、`exit-probe.log` 及 `*-open.png` / `*-closing.png`；已检查截图。 |
 
-初次退出调查脚本把侧栏可见中文当成精确 accessible name，定位超时；这是调查选择器错误，
-非产品失败。改用仓库既有自动化页面入口后完整调查成功，未构造新业务入口。
-本轮测试含这次无效等待仍小于总用时 50%；主要工作为契约、完整差异、根因与开发交接审查。
-已发现确定产品阻塞，按 workflow §6 提前 FIX REQUIRED；完整 Python/Web/默认 E2E、其余
-真实应用/动态滚动条、wheel/安装消费者及适用生产门禁尚未完成，本轮不声明 T4 PASS。
-这些验收仍由 B 承担，不因 Developer 的交接报告标为已完成或豁免。
+本轮源码审查与上述实际结果未发现新的产品阻塞；不把静态检查失败说成存储功能再次损坏。
+完整 T4、剩余原生失败/拒绝组合、完整滚动条证据及适用打包/安装消费者门禁尚未完成，
+仍由 B 在修正候选上执行。本次已运行的真实应用结果保留，但不能代替后续完整门禁。
+测试执行（包括真实浏览器交互）低于本轮总用时 50%；未运行昂贵全量门禁来掩盖已知失败。
 
 ### 全 Slice 结果重评
 
 | Required Outcome | 当前判断 |
 |---|---|
 | RO-1 任务详情卡片/可读性 | 本 Task 未实施，仍待后续交付。 |
-| RO-2 存储三卡片/更多菜单 | 候选已实施；保存中退出已修复，三卡片退出过渡仍阻塞，剩余完整验收待完成。 |
+| RO-2 存储三卡片/更多菜单 | 两项已知产品阻塞复验通过；候选静态检查失败，完整验收待完成。 |
 | RO-3 两种库去目录树、库菜单与配置卡片 | 本 Task 未实施，仍待后续交付。 |
-| RO-4 自动化新建/编辑稳定性 | 候选已有修复，B 的完整动态验收尚未完成。 |
+| RO-4 自动化新建/编辑稳定性 | 本轮真实应用受影响用例通过，B 剩余完整验收待完成。 |
 | RO-4 侧栏主页面切换/两种库加载 | 本 Task 未实施，仍待后续交付。 |
 
-Slice50 保持 ACTIVE，Task50.1 保持同一 Base 和范围。下一步修正本 Task 的退出呈现；
-不宣告 Task PASS、Slice ready/closed，不启动其他 Slice 结果。
+Slice50 保持 ACTIVE，Task50.1 不 PASS，不宣告 Slice ready/closed，不规划或实施其他结果。
