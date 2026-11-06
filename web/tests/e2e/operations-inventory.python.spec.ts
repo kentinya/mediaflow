@@ -3077,6 +3077,11 @@ test("time filter: an old All link never keeps its removed hidden filters", asyn
   await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
 
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "关闭详情" })
+    .click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   for (const label of [
     "进行中",
