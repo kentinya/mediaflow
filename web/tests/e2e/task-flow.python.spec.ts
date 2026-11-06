@@ -153,7 +153,7 @@ test("a mixed file population completes the flow with independent file facts", a
   // The run detail keeps both facts readable: the ended processing progress
   // reached the whole admitted population while the failed file stays failed.
   await endedRow.getByRole("button", { name: /电影/ }).click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail.waitFor();
   // Processing progress reached the whole admitted population (2/2) while
   // the file-failure count stays independently readable.
@@ -205,7 +205,7 @@ test("a mixed file population completes the flow with independent file facts", a
     record!.recordOutcome.statement,
   );
   await connectOn(page, `/ui-v2/operations?run=${taskId}`);
-  const reopenedDetail = page.getByRole("region", {
+  const reopenedDetail = page.getByRole("dialog", {
     name: "运行详情",
   });
   await reopenedDetail.waitFor();
@@ -359,7 +359,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await expect(endedRow.getByText("失败", { exact: true })).toBeVisible();
   await expect(endedRow.getByText(/成功 2/)).toBeVisible();
   await endedRow.getByRole("button", { name: /电影/ }).click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail.waitFor();
   await expect(detail.getByText("失败", { exact: true })).toBeVisible();
   await expect(detail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
@@ -465,7 +465,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   expect(reopenedRecord!.status).toBe("failed");
   expect(reopenedRecord!.recordOutcome.status).toBe("failed");
   await connectOn(page, `/ui-v2/operations?run=${taskId}`);
-  const reopenedDetail = page.getByRole("region", { name: "运行详情" });
+  const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
   await reopenedDetail.waitFor();
   await expect(reopenedDetail.getByText("失败", { exact: true })).toBeVisible();
 
@@ -474,7 +474,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // same deep-link continuation journey the shell provides.
   await page.setViewportSize({ width: 390, height: 844 });
   await connectOn(page, `/ui-v2/operations?run=${taskId}`);
-  const narrowDetail = page.getByRole("region", { name: "运行详情" });
+  const narrowDetail = page.getByRole("dialog", { name: "运行详情" });
   await narrowDetail.waitFor();
   await expect(narrowDetail.getByText("失败", { exact: true })).toBeVisible();
   await expect(narrowDetail.getByText(/已完成（恢复成功）/)).toHaveCount(0);

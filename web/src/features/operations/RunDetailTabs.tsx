@@ -620,8 +620,8 @@ export function RunDetailTabs({
       </nav>
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
-          <ProgressCard progress={progress} />
           {facts}
+          <ProgressCard progress={progress} />
           <RunItemsSection
             key={JSON.stringify([
               runId,

@@ -4558,16 +4558,19 @@ button.mf-grid-button {
 tr[aria-selected="true"] {
   background: rgba(31, 95, 191, 0.06);
 }
-.mf-run-detail {
+/* The beside-list problem-file panel keeps the established two-column
+   surface; the selected run's detail itself is the centered modal card
+   (Slice50 RO-1) and never narrows the list. */
+.mf-problem-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 16px;
   margin-top: 0;
   background: var(--panel);
 }
-/* One grid for filters + table + detail: the list keeps the wide left
-   column while an explicitly selected run becomes the right detail column;
-   without a selection the list stays full width. */
+/* One grid for filters + table + problem panel: the list keeps the wide left
+   column while an opened problem-file panel becomes the right column;
+   without it the list stays full width. */
 .mf-run-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -4581,23 +4584,23 @@ tr[aria-selected="true"] {
 .mf-run-main {
   min-width: 0;
 }
-/* Desktop detail stays in view while the list scrolls, below the sticky
-   topbar (z-index 30/40) and above the page content. */
+/* Desktop problem panel stays in view while the list scrolls, below the
+   sticky topbar (z-index 30/40) and above the page content. */
 @media (min-width: 1081px) {
-  .mf-run-layout.mf-run-has-detail .mf-run-detail {
+  .mf-run-layout.mf-run-has-detail .mf-problem-panel {
     position: sticky;
     top: 70px;
     max-height: calc(100vh - 90px);
     overflow-y: auto;
   }
 }
-/* Narrow layouts give the selection a complete full-viewport detail with the
-   close control always visible above the sticky topbar. */
+/* Narrow layouts give the problem-file panel the complete full-viewport
+   surface with its return control always visible. */
 @media (max-width: 1080px) {
   .mf-run-layout.mf-run-has-detail {
     grid-template-columns: minmax(0, 1fr);
   }
-  .mf-run-detail {
+  .mf-problem-panel {
     position: fixed;
     inset: 0;
     z-index: 60;
@@ -4609,6 +4612,90 @@ tr[aria-selected="true"] {
 }
 
 /* --- Selected-run detail: 任务详情 / 操作记录 (Slice 42 RO-3) --- */
+
+/* The centered run-detail card (Slice50 RO-1): wider than the Storage form
+   card so the item/record tables stay readable, with the same stable height,
+   bounded internal scroll and coordinated entry/exit as the shared shell.
+   The doubled selector outranks the later shared `.mf-modal-card` width. */
+.mf-modal-card.mf-run-detail-card {
+  width: min(1080px, 100%);
+}
+
+/* Inside the card the bounded facts read as a dense two-column list; the
+   full-width rows remain available on narrow cards. */
+.mf-run-detail-card .mf-dashboard-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 24px;
+}
+.mf-run-detail-card .mf-dashboard-facts dd {
+  overflow-wrap: anywhere;
+}
+
+/* Readable fact hierarchy inside the card: the flow/status strip first,
+   then the bounded fact list; technical diagnostics collapse. */
+.mf-run-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mf-run-fact-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  background: #f8fafd;
+}
+.mf-run-fact-flow p {
+  margin: 0;
+}
+.mf-run-flow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.mf-run-flow-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.mf-run-flow-line > span:not(.mf-run-flow-label) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mf-run-flow-value {
+  font-weight: 600;
+}
+.mf-run-problem-line > span:not(.mf-run-flow-label) {
+  color: #8a4b0f;
+  font-weight: 600;
+}
+.mf-run-fact-continuation h4 {
+  margin: 0 0 4px;
+}
+.mf-run-fact-continuation p {
+  margin: 0 0 4px;
+}
+.mf-run-fact-diagnostics {
+  border: 1px dashed var(--line, #e2e7ef);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.mf-run-fact-diagnostics summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.mf-run-fact-diagnostics[open] summary {
+  margin-bottom: 6px;
+}
+.mf-run-fact-diagnostics .mf-dashboard-facts {
+  margin: 0;
+}
 
 .mf-run-detail-tabs {
   display: flex;

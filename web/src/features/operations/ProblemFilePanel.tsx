@@ -342,7 +342,7 @@ export function ProblemFilePanel({
   }, [onClose]);
 
   return (
-    <section className="mf-run-detail" aria-label="问题文件处理">
+    <section className="mf-problem-panel" aria-label="问题文件处理">
       <header className="mf-dashboard-head">
         <h3 tabIndex={-1} ref={headingRef}>
           {RUN_PROBLEM_LABELS[problem]} — 文件清单

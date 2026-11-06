@@ -583,7 +583,7 @@ describe("Operations run inventory landing", () => {
         "&command=manual&attention=true&cursor=old-scope&run=task-001",
     );
 
-    await screen.findByRole("region", { name: "运行详情" });
+    await screen.findByRole("dialog", { name: "运行详情" });
     await waitFor(() => {
       const search = router.history.location.search;
       expect(search).not.toContain("q=");
@@ -685,7 +685,7 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     await waitFor(() => expect(overviewRead).toBe(true));
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(await within(detail).findByText("手动")).toBeVisible();
     // The disposition filter option shares the status label text, so the
     // bounded presence check uses the All* variant over the detail panel.
@@ -707,7 +707,7 @@ describe("Operations run inventory landing", () => {
 
     await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
     await waitFor(() =>
-      expect(screen.queryByRole("region", { name: "运行详情" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
     );
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -728,7 +728,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001&view=running");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(
       (await within(detail).findAllByText(/进行中/)).length,
     ).toBeGreaterThan(0);
@@ -1646,7 +1646,7 @@ describe("Operations run inventory landing", () => {
     expect(within(recoveredRow).getByText("已完成（恢复成功）")).toBeVisible();
 
     // The selected mixed run never explains itself as an all-item success.
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(within(detail).getAllByText("失败").length).toBeGreaterThan(0);
     expect(
       within(detail).queryByText(/每个必要条目都有精确关联的真实成功证据/),
@@ -1655,7 +1655,7 @@ describe("Operations run inventory landing", () => {
     await user.click(
       within(recoveredRow).getByRole("button", { name: /恢复完成/ }),
     );
-    const recoveredDetail = await screen.findByRole("region", {
+    const recoveredDetail = await screen.findByRole("dialog", {
       name: "运行详情",
     });
     expect(
@@ -1687,7 +1687,7 @@ describe("Operations run inventory landing", () => {
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
-    await screen.findByRole("region", { name: "运行详情" });
+    await screen.findByRole("dialog", { name: "运行详情" });
     const overviewReads = () =>
       requested.filter((url) => url.startsWith("/api/v1/operations/runs/"))
         .length;
@@ -1727,16 +1727,18 @@ describe("Operations run inventory landing", () => {
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await waitFor(() =>
       expect(router.history.location.search).toContain("run=task-001"),
     );
-    // The detail is the right column of the detail-aware two-column layout.
-    expect(detail.closest(".mf-run-layout.mf-run-has-detail")).not.toBeNull();
+    // The selection opens the centered card over the list: the card is a
+    // modal layer, and the list is never narrowed by a detail column.
+    expect(detail.closest(".mf-modal-layer")).not.toBeNull();
+    expect(document.querySelector(".mf-run-has-detail")).toBeNull();
 
     router.history.back();
     await waitFor(() =>
-      expect(screen.queryByRole("region", { name: "运行详情" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
     );
     await waitFor(() =>
       expect(router.history.location.search).not.toContain("run="),
@@ -1768,5 +1770,256 @@ describe("Operations run inventory landing", () => {
     await waitFor(() =>
       expect(router.history.location.search).toContain("run=admitted-task-1"),
     );
+  });
+
+  /** The backend-advertised cancellation the overview read publishes. */
+  function lifecycleDocument(): Record<string, unknown> {
+    return {
+      objectType: "task",
+      objectId: "task-001",
+      state: "running",
+      version: "2026-08-22T12:06:00+00:00",
+      executionPath: "operator_workflow",
+      terminal: false,
+      permitted: true,
+      permission: "cancel_job",
+      knownEffects: "no Storage effect is recorded",
+      nextAction: "refresh the Task",
+      effectCertainty: "none",
+      resultsObserved: 0,
+      resultsComplete: true,
+      uncertainResults: 0,
+      pauseRequested: false,
+      cancellationRequested: false,
+      commandKind: null,
+      actions: [
+        {
+          action: "cancel",
+          label: "取消运行",
+          method: "POST",
+          path: "/api/v1/tasks/task-001/cancel",
+          available: true,
+          unavailableReason: null,
+          confirmationRequired: false,
+          cooperative: true,
+          durableOutcome: "a durable cancellation request is stored",
+          sideEffects: "no Storage mutation",
+          retrySafe: false,
+          nextAction: "refresh the Task to read the durable state",
+          recovery: null,
+        },
+      ],
+    };
+  }
+
+  it("keeps a slow overview read inside the coordinated card", async () => {
+    const user = userEvent.setup();
+    let releaseOverview!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      releaseOverview = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return gate;
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    // The card itself is the coordinated loading state: it exists while the
+    // overview read is in flight and invents no flow/file result.
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findByText("正在加载运行详情");
+    expect(within(detail).getByText("正在读取该运行的概览。")).toBeTruthy();
+    expect(within(detail).queryByText(/已处理/)).toBeNull();
+
+    releaseOverview(jsonResponse(runDocument()));
+    await within(detail).findByText("Movies");
+    expect(within(detail).queryByText("正在加载运行详情")).toBeNull();
+  });
+
+  it("never lets a late overview response reopen a closed card", async () => {
+    const user = userEvent.setup();
+    let releaseOverview!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      releaseOverview = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return gate;
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    // The overview response arrives after the card closed: it must not
+    // resurrect the selection or the card.
+    releaseOverview(jsonResponse(runDocument()));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    expect(router.history.location.search).not.toContain("run=");
+  });
+
+  it("keeps an unknown control outcome locked across card close and reopen", async () => {
+    const user = userEvent.setup();
+    const posted: string[] = [];
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") === "POST") {
+        posted.push(url);
+      }
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(runDocument({ lifecycle: lifecycleDocument() }));
+      }
+      if (url === "/api/v1/tasks/task-001/cancel") {
+        // The request never reached a decision: the transport failed, so the
+        // outcome is unknown and every control of this run must stay locked.
+        throw new TypeError("network unreachable");
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const controls = await within(detail).findByRole("region", {
+      name: "运行控制",
+    });
+    await user.click(
+      within(controls).getByRole("button", { name: "取消运行" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(controls).getByRole("button", { name: "取消运行" }),
+      ).toBeDisabled(),
+    );
+    expect(within(controls).getByText(/控制结果未知/)).toBeTruthy();
+
+    // Closing the card must not drop the unresolved request's context.
+    await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const reopened = await screen.findByRole("dialog", { name: "运行详情" });
+    const reopenedControls = await within(reopened).findByRole("region", {
+      name: "运行控制",
+    });
+    expect(within(reopenedControls).getByText(/控制结果未知/)).toBeTruthy();
+    expect(
+      within(reopenedControls).getByRole("button", {
+        name: /刷新核对持久状态/,
+      }),
+    ).toBeEnabled();
+    expect(
+      within(reopenedControls).getByRole("button", { name: "取消运行" }),
+    ).toBeDisabled();
+    // The locked reopen never resubmits: still exactly one cancel POST.
+    expect(posted).toEqual(["/api/v1/tasks/task-001/cancel"]);
+  });
+
+  it("shows only the reopened run's evidence after switching runs", async () => {
+    const user = userEvent.setup();
+    let releaseFirstOverview!: (response: Response) => void;
+    const slowFirst = new Promise<Response>((resolve) => {
+      releaseFirstOverview = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(
+          pageDocument({
+            items: [
+              runDocument(),
+              runDocument({
+                run_id: "task-002",
+                source_scope: "Shows",
+              }),
+            ],
+            total: 2,
+          }),
+        );
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return slowFirst;
+      }
+      if (url === "/api/v1/operations/runs/task-002") {
+        return jsonResponse(
+          runDocument({
+            run_id: "task-002",
+            source_scope: "Shows",
+            target_scope: "Media/Shows",
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，预览详情" }),
+    );
+    await screen.findByRole("dialog", { name: "运行详情" });
+    // Switching runs goes through the same real entries: close, then select
+    // the other row while the first overview read is still in flight.
+    await user.click(
+      within(screen.getByRole("dialog", { name: "运行详情" })).getByRole(
+        "button",
+        { name: "关闭详情" },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    await user.click(
+      within(table).getByRole("button", { name: "Shows，预览详情" }),
+    );
+    const second = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(second).findByText("Media/Shows");
+    // The late first-run response can never leak into the open card.
+    releaseFirstOverview(jsonResponse(runDocument()));
+    await waitFor(() =>
+      expect(within(second).queryByText("Movies")).toBeNull(),
+    );
+    expect(within(second).getByText("Media/Shows")).toBeTruthy();
   });
 });

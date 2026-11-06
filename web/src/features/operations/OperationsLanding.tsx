@@ -17,7 +17,7 @@
  * replaces it.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -42,6 +42,11 @@ import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
 import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import {
+  ModalCardShell,
+  useModalCardExit,
+  useModalLayer,
+} from "../../shared/ui/modal-card";
 import {
   RUN_PROBLEM_LABELS,
   RUN_PROBLEM_TYPES,
@@ -111,6 +116,59 @@ interface ProblemPageState {
   readonly cursor: string | null;
   readonly direction: "forward" | "backward";
 }
+
+/**
+ * The per-run lifecycle-control session one card open/close cycle must
+ * preserve. An unknown control outcome locks every control of that exact run
+ * until one explicit reconciliation read succeeds, so closing and reopening
+ * the same run's card still reconciles the original request instead of
+ * offering a resubmission whose effect is unknown.
+ */
+export interface RunControlSession {
+  readonly pendingAction: string | null;
+  readonly result: LifecycleMutationResult | null;
+  readonly locked: boolean;
+}
+
+const EMPTY_RUN_CONTROL_SESSION: RunControlSession = {
+  pendingAction: null,
+  result: null,
+  locked: false,
+};
+
+/**
+ * The per-run remaining-scope confirmation session preserved across card
+ * close/reopen: the operator's reviewed subset, its destructive choices, the
+ * exact unknown admission awaiting reconciliation and the admitted execution
+ * identity. A lost confirmation response is reconciled from *this* request;
+ * it is never replayed and never guessed from the most recent run.
+ */
+export interface RunRemainingSession {
+  readonly selection: readonly string[] | null;
+  readonly overwrite: boolean;
+  readonly cleanup: boolean;
+  readonly submitted: {
+    readonly previewId: string;
+    readonly itemIds: readonly string[];
+    readonly intentVersion: number;
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  } | null;
+  readonly admitted: {
+    readonly previewId: string;
+    readonly executionId: string;
+  } | null;
+  readonly message: string | null;
+}
+
+const EMPTY_RUN_REMAINING_SESSION: RunRemainingSession = {
+  selection: null,
+  overwrite: false,
+  cleanup: false,
+  submitted: null,
+  admitted: null,
+  message: null,
+};
 
 const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
   recognition: "识别仍有待核对项；打开文件记录查看候选与识别依据。",
@@ -374,6 +432,39 @@ export function OperationsLanding() {
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
+  // Per-run control and remaining-scope sessions outlive the card: closing or
+  // switching away and reopening the same run still reconciles the exact
+  // original request instead of offering an unknown-effect resubmission.
+  const [controlSessions, setControlSessions] = useState<
+    Readonly<Record<string, RunControlSession>>
+  >({});
+  const [remainingSessions, setRemainingSessions] = useState<
+    Readonly<Record<string, RunRemainingSession>>
+  >({});
+  const updateControlSession = useCallback(
+    (runId: string, patch: Partial<RunControlSession>) => {
+      setControlSessions((previous) => ({
+        ...previous,
+        [runId]: {
+          ...(previous[runId] ?? EMPTY_RUN_CONTROL_SESSION),
+          ...patch,
+        },
+      }));
+    },
+    [],
+  );
+  const updateRemainingSession = useCallback(
+    (runId: string, patch: Partial<RunRemainingSession>) => {
+      setRemainingSessions((previous) => ({
+        ...previous,
+        [runId]: {
+          ...(previous[runId] ?? EMPTY_RUN_REMAINING_SESSION),
+          ...patch,
+        },
+      }));
+    },
+    [],
+  );
   // A recovery view owns its problem type. The overlapping attention view has
   // no single type: it uses the operator's explicit choice, so a Task that
   // carries several current problems never guesses one and never leaves the
@@ -601,6 +692,11 @@ export function OperationsLanding() {
   const page: RunInventoryPage | null =
     query.data?.ok === true ? query.data.model : null;
 
+  // The problem-file panel keeps its established beside-list surface; the
+  // selected run's detail is the centered card and never narrows the list.
+  const problemPanelOpen =
+    selectedId === "" && problemRunId !== "" && problemFileType !== null;
+
   // An Automation record's "打开任务中心运行" carries the exact record list it
   // came from, so the task center offers one explicit return that restores the
   // same `执行记录` tab/filters/page instead of losing the context.
@@ -632,7 +728,7 @@ export function OperationsLanding() {
     <div className="mf-dashboard mf-operations-inventory">
       <header className="mf-dashboard-head">
         <div>
-          <h2>任务中心</h2>
+          <h2 id="mf-operations-heading">任务中心</h2>
           <p className="mf-dashboard-meta">
             跟踪整理进度，集中处理问题，查看每个文件的结果。
           </p>
@@ -668,7 +764,7 @@ export function OperationsLanding() {
               <ViewNavigation view={view} onSelectView={selectView} />
               <div
                 className={
-                  selectedId !== ""
+                  problemPanelOpen
                     ? "mf-run-layout mf-run-has-detail"
                     : "mf-run-layout"
                 }
@@ -756,62 +852,77 @@ export function OperationsLanding() {
                     />
                   )}
                 </div>
-                {selectedId !== "" && (
-                  <RunDetailPanel
-                    // A different selected run is a different control object:
-                    // remounting resets the pending/result/reconciliation state
-                    // so a lock or an accepted outcome can never carry over to
-                    // another run's controls.
-                    key={selectedId}
-                    query={overviewQuery}
-                    onClose={closeRun}
-                    detailState={detailState}
-                    onDetailStateChange={applyDetailState}
-                    onOpenLinkedAnalysis={(taskId, itemId) =>
-                      void navigate({
-                        to: "/operations/tasks/$taskId",
-                        params: { taskId },
-                        search: {
-                          returnOps: operationsReturnContextFromSearch({
-                            ...listSearch(selectedId),
-                            ...runDetailStateSearch(detailState),
-                          }),
-                          ...runDetailStateSearch(
-                            readRunDetailState({ tab: "detail", item: itemId }),
-                          ),
-                        },
-                      })
-                    }
-                    onOpenRecoveryExecution={(executionId) =>
-                      void navigate({
-                        to: "/operations/organize/execution/$executionId",
-                        params: { executionId },
-                        search: operationsReturnSearch(
-                          operationsReturnContextFromSearch({
-                            ...listSearch(selectedId),
-                            ...runDetailStateSearch(detailState),
-                          }),
-                        ),
-                      })
-                    }
-                    onSelectRun={selectRun}
+                {problemPanelOpen && (
+                  <ProblemFilePanel
+                    key={`${problemRunId}:${problemFileType}`}
+                    runId={problemRunId}
+                    problem={problemFileType}
+                    cursor={problemPage.cursor}
+                    onPage={turnProblemPage}
+                    onOpenEvidence={openProblemItemEvidence}
+                    onClose={closeProblemRun}
                   />
                 )}
-                {selectedId === "" &&
-                  problemRunId !== "" &&
-                  problemFileType !== null && (
-                    <ProblemFilePanel
-                      key={`${problemRunId}:${problemFileType}`}
-                      runId={problemRunId}
-                      problem={problemFileType}
-                      cursor={problemPage.cursor}
-                      onPage={turnProblemPage}
-                      onOpenEvidence={openProblemItemEvidence}
-                      onClose={closeProblemRun}
-                    />
-                  )}
               </div>
             </div>
+            {/* The selected run's centered detail card overlays the full-width
+                list; the per-run control/remaining-scope sessions live in the
+                landing so close/reopen keeps every unresolved request's
+                reconciliation context. */}
+            {selectedId !== "" && (
+              <RunDetailPanel
+                // A different selected run is a different control object:
+                // remounting resets the in-flight flags so a pending action or
+                // a reconciliation read can never carry over to another run's
+                // controls; the durable session store keeps each run's own
+                // unknown outcomes and confirmations isolated by run id.
+                key={selectedId}
+                query={overviewQuery}
+                onClose={closeRun}
+                detailState={detailState}
+                onDetailStateChange={applyDetailState}
+                controlSession={
+                  controlSessions[selectedId] ?? EMPTY_RUN_CONTROL_SESSION
+                }
+                onControlSession={(patch) =>
+                  updateControlSession(selectedId, patch)
+                }
+                remainingSession={
+                  remainingSessions[selectedId] ?? EMPTY_RUN_REMAINING_SESSION
+                }
+                onRemainingSession={(patch) =>
+                  updateRemainingSession(selectedId, patch)
+                }
+                onOpenLinkedAnalysis={(taskId, itemId) =>
+                  void navigate({
+                    to: "/operations/tasks/$taskId",
+                    params: { taskId },
+                    search: {
+                      returnOps: operationsReturnContextFromSearch({
+                        ...listSearch(selectedId),
+                        ...runDetailStateSearch(detailState),
+                      }),
+                      ...runDetailStateSearch(
+                        readRunDetailState({ tab: "detail", item: itemId }),
+                      ),
+                    },
+                  })
+                }
+                onOpenRecoveryExecution={(executionId) =>
+                  void navigate({
+                    to: "/operations/organize/execution/$executionId",
+                    params: { executionId },
+                    search: operationsReturnSearch(
+                      operationsReturnContextFromSearch({
+                        ...listSearch(selectedId),
+                        ...runDetailStateSearch(detailState),
+                      }),
+                    ),
+                  })
+                }
+                onSelectRun={selectRun}
+              />
+            )}
           </>
         )}
       </AuthorizedReadBoundary>
@@ -1234,6 +1345,10 @@ function RunDetailPanel({
   onClose,
   detailState,
   onDetailStateChange,
+  controlSession,
+  onControlSession,
+  remainingSession,
+  onRemainingSession,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
@@ -1242,22 +1357,27 @@ function RunDetailPanel({
   readonly onClose: () => void;
   readonly detailState: RunDetailState;
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
+  /** This exact run's preserved lifecycle-control session. */
+  readonly controlSession: RunControlSession;
+  /** Persist one control-session change (submission outcome, lock) in the
+   * landing so it survives this card closing and reopening. */
+  readonly onControlSession: (patch: Partial<RunControlSession>) => void;
+  /** This exact run's preserved remaining-scope confirmation session. */
+  readonly remainingSession: RunRemainingSession;
+  /** Persist one remaining-scope session change in the landing. */
+  readonly onRemainingSession: (patch: Partial<RunRemainingSession>) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
 }) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const token = useAuthToken();
   const queryClient = useQueryClient();
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [controlResult, setControlResult] =
-    useState<LifecycleMutationResult | null>(null);
-  // An unknown control outcome locks every control until one explicit,
-  // successful reconciliation read proves the durable state again. The lock is
-  // never cleared by a poll, a cache event or a second submission attempt.
-  const [locked, setLocked] = useState(false);
+  // In-flight flags only: the submission outcomes themselves live in the
+  // landing's per-run session store, so closing the card mid-request never
+  // loses an unknown outcome or its reconciliation context.
   const [reconciling, setReconciling] = useState(false);
+  const [remainingBusy, setRemainingBusy] = useState(false);
   // The paused-run remaining-scope continuation is reviewed and confirmed in
   // this same panel (RO-3/AC-6): a withheld Continue first admits the exact
   // zero-mutation remaining-scope Preview, and the operator then selects the
@@ -1269,37 +1389,6 @@ function RunDetailPanel({
   // is never re-posted: the same discovery identity is polled, so a refresh,
   // reconnect or restart resumes the same work instead of starting another.
   const [remainingDiscoveryId] = useState<string | null>(null);
-  const [remainingSelection, setRemainingSelection] = useState<
-    readonly string[] | null
-  >(null);
-  const [remainingOverwrite, setRemainingOverwrite] = useState(false);
-  const [remainingCleanup, setRemainingCleanup] = useState(false);
-  const [remainingBusy, setRemainingBusy] = useState(false);
-  // Only the outcome of an explicit operator action (a refused confirmation, a
-  // lost confirmation response, a reconciliation result) is stored here.  The
-  // ordinary preparation lifecycle is derived from the bounded discovery read
-  // below, so no effect copies server state into component state.
-  const [remainingMessageState, setRemainingMessage] = useState<string | null>(
-    null,
-  );
-  // The exact remaining-scope admission this page submitted, so a lost
-  // response can be reconciled against *this* request rather than guessed from
-  // the most recent run.
-  const [remainingSubmitted, setRemainingSubmitted] = useState<{
-    readonly previewId: string;
-    readonly itemIds: readonly string[];
-    readonly intentVersion: number;
-    readonly allowOverwrite: boolean;
-    readonly allowSourceCleanup: boolean;
-  } | null>(null);
-  // The exact recovery context this page already admitted.  It binds the
-  // suppression of the confirmable summary to the admitted Preview so a cached
-  // discovery read cannot reopen execution, and never treats another run's
-  // historical execution as the current admission.
-  const [remainingAdmitted, setRemainingAdmitted] = useState<{
-    readonly previewId: string;
-    readonly executionId: string;
-  } | null>(null);
   // The durable exact-Preview recovery the run overview already exposes is the
   // read authority for a paused remaining-scope confirmation.  A refresh,
   // reconnect or restart restores the same summary (no execution yet) or the
@@ -1315,33 +1404,31 @@ function RunDetailPanel({
       ? durableRecovery.executionId
       : null;
 
-  useEffect(() => {
-    const opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    headingRef.current?.focus();
-    return () => {
-      if (opener !== null && document.contains(opener)) {
-        opener.focus();
-      }
-    };
-  }, []);
+  // The shared centered-card presentation: backdrop, scroll lock, inert
+  // background, focus trap, Escape/exit coordination and focus return. The
+  // invoking row button stays mounted, so closing returns focus to it; a
+  // deep link without an opener falls back to the page heading.
+  const { pendingAction, result: controlResult, locked } = controlSession;
+  const exit = useModalCardExit();
+  const modal = useModalLayer({
+    onEscape: () => exit.beginClose(onClose),
+    fallbackFocusId: "mf-operations-heading",
+  });
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+    // Move keyboard focus into the card on open, matching the V2 Storage and
+    // Automation cards' stable first focus target.
+    modal.layerRef.current
+      ?.querySelector<HTMLElement>(".mf-modal-close")
+      ?.focus({ preventScroll: true });
+  }, [modal.layerRef]);
 
   // Exactly one authenticated POST per deliberate click, carrying the version
   // of the projection that was rendered at click time. There is no retry
   // policy: an unknown or refused outcome requires the operator to reconcile
-  // and act again deliberately.
+  // and act again deliberately. The outcome lands in the landing's per-run
+  // session store, so even a card closed while the request was in flight
+  // reopens with the same recorded result and lock.
   const lifecycleMutation = useMutation({
     mutationFn: (request: {
       readonly action: LifecycleAction;
@@ -1356,44 +1443,54 @@ function RunDetailPanel({
         expectedVersion: request.expectedVersion,
       }),
     retry: false,
-    onMutate: (request) => {
-      setPendingAction(request.action.action);
-      setControlResult(null);
-    },
-    onSuccess: (result) => {
-      setControlResult(result);
-      if (result.ok) {
-        // The accepted control changed durable state: re-read the overview
-        // (which carries the new projection/version) and invalidate the open
-        // detail tabs' bounded reads. Nothing is replayed.
-        void query.refetch();
-        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-        void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
-        return;
-      }
-      if (isUnknownLifecycleOutcome(result)) {
-        setLocked(true);
-      }
-    },
-    onSettled: () => setPendingAction(null),
   });
 
+  const invokeLifecycle = async (
+    action: LifecycleAction,
+    expectedVersion: string,
+  ) => {
+    onControlSession({ pendingAction: action.action, result: null });
+    const result = await lifecycleMutation.mutateAsync({
+      action,
+      objectType: "task",
+      objectId: overview?.lifecycle?.objectId ?? overview?.runId ?? "",
+      expectedVersion,
+    });
+    if (result.ok) {
+      // The accepted control changed durable state: re-read the overview
+      // (which carries the new projection/version) and invalidate the open
+      // detail tabs' bounded reads. Nothing is replayed.
+      onControlSession({ pendingAction: null, result });
+      void query.refetch();
+      void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+      void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
+      return;
+    }
+    // An unknown outcome locks every control of this exact run until one
+    // explicit reconciliation read proves the durable state again. The lock
+    // is never cleared by a poll, a cache event or a second submission.
+    onControlSession({
+      pendingAction: null,
+      result,
+      locked: isUnknownLifecycleOutcome(result) ? true : controlSession.locked,
+    });
+  };
+
   /** One explicit reconciliation read; the lock clears only on success. */
-  const reconcile = () => {
+  const reconcile = async () => {
     setReconciling(true);
-    void query
-      .refetch()
-      .then((outcome) => {
-        if (outcome.data !== undefined && outcome.data.ok) {
-          setLocked(false);
-          setControlResult(null);
-          void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-          void queryClient.invalidateQueries({
-            queryKey: [runRecordsQueryKey],
-          });
-        }
-      })
-      .finally(() => setReconciling(false));
+    try {
+      const outcome = await query.refetch();
+      if (outcome.data !== undefined && outcome.data.ok) {
+        onControlSession({ locked: false, result: null });
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+        void queryClient.invalidateQueries({
+          queryKey: [runRecordsQueryKey],
+        });
+      }
+    } finally {
+      setReconciling(false);
+    }
   };
 
   // The bounded read of the exact admitted preparation.  It polls only while
@@ -1474,6 +1571,13 @@ function RunDetailPanel({
       remainingPreparation.status === "partial_success");
   const linkedRemainingPreviewId =
     remainingPreparation?.previewId ?? durableRecoveryPreviewId;
+  const {
+    selection: remainingSelection,
+    overwrite: remainingOverwrite,
+    cleanup: remainingCleanup,
+    submitted: remainingSubmitted,
+    admitted: remainingAdmitted,
+  } = remainingSession;
   const admittedRemainingPreviewId =
     remainingAdmitted?.previewId ??
     (durableRecoveryPreviewId !== null && durableRecoveryExecutionId !== null
@@ -1523,7 +1627,7 @@ function RunDetailPanel({
   // the honest state, so a transport/503 failure is never shown as ordinary
   // progress or as an empty state.
   const remainingMessage =
-    remainingMessageState ??
+    remainingSession.message ??
     (remainingPreparation === undefined ||
     remainingReadFailure !== null ||
     effectiveRemainingScope !== null
@@ -1542,7 +1646,7 @@ function RunDetailPanel({
       return;
     }
     setRemainingBusy(true);
-    setRemainingMessage(null);
+    onRemainingSession({ message: null });
     try {
       let intentVersion = effectiveRemainingScope.intentVersion;
       if (intentVersion <= 0) {
@@ -1553,9 +1657,10 @@ function RunDetailPanel({
           effectiveRemainingScope.previewId,
         );
         if (!detail.ok || detail.model.intentVersion === null) {
-          setRemainingMessage(
-            "无法读取该剩余范围摘要的当前版本；未提交确认。请刷新后重试。 ",
-          );
+          onRemainingSession({
+            message:
+              "无法读取该剩余范围摘要的当前版本；未提交确认。请刷新后重试。 ",
+          });
           return;
         }
         intentVersion = detail.model.intentVersion;
@@ -1568,15 +1673,15 @@ function RunDetailPanel({
         allowSourceCleanup: remainingCleanup,
       });
       if (result.ok) {
-        setRemainingSelection(null);
-        setRemainingSubmitted(null);
-        setRemainingAdmitted({
-          previewId: effectiveRemainingScope.previewId,
-          executionId: result.model.executionId,
+        onRemainingSession({
+          selection: null,
+          submitted: null,
+          admitted: {
+            previewId: effectiveRemainingScope.previewId,
+            executionId: result.model.executionId,
+          },
+          message: `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
         });
-        setRemainingMessage(
-          `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
-        );
         void query.refetch();
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
         onOpenRecoveryExecution(result.model.executionId);
@@ -1585,20 +1690,21 @@ function RunDetailPanel({
           // A lost response must not be described as a proven zero effect.  Keep
           // the exact submitted admission so the operator can explicitly re-read
           // whether this request was admitted; never guess from the latest run.
-          setRemainingSubmitted({
-            previewId: effectiveRemainingScope.previewId,
-            itemIds: remainingSelection,
-            intentVersion,
-            allowOverwrite: remainingOverwrite,
-            allowSourceCleanup: remainingCleanup,
+          onRemainingSession({
+            submitted: {
+              previewId: effectiveRemainingScope.previewId,
+              itemIds: remainingSelection,
+              intentVersion,
+              allowOverwrite: remainingOverwrite,
+              allowSourceCleanup: remainingCleanup,
+            },
+            message:
+              "确认响应未送达，暂时无法判断是否已受理。请先核对本次确认的持久状态，再决定是否继续。 ",
           });
-          setRemainingMessage(
-            "确认响应未送达，暂时无法判断是否已受理。请先核对本次确认的持久状态，再决定是否继续。 ",
-          );
         } else {
-          setRemainingMessage(
-            `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
-          );
+          onRemainingSession({
+            message: `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
+          });
         }
       }
     } finally {
@@ -1614,6 +1720,7 @@ function RunDetailPanel({
    * summary available for a deliberate retry.
    */
   const reconcileRemainingScope = async () => {
+    const { submitted: remainingSubmitted } = remainingSession;
     if (remainingSubmitted === null) {
       return;
     }
@@ -1627,30 +1734,35 @@ function RunDetailPanel({
         allowSourceCleanup: remainingSubmitted.allowSourceCleanup,
       });
       if (result.ok && result.model.outcome === "known") {
-        setRemainingSubmitted(null);
-        setRemainingSelection(null);
-        if (result.model.executionId !== null) {
-          setRemainingAdmitted({
-            previewId: remainingSubmitted.previewId,
-            executionId: result.model.executionId,
-          });
-        }
-        setRemainingMessage(
-          "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
-        );
+        onRemainingSession({
+          submitted: null,
+          selection: null,
+          ...(result.model.executionId !== null
+            ? {
+                admitted: {
+                  previewId: remainingSubmitted.previewId,
+                  executionId: result.model.executionId,
+                },
+              }
+            : {}),
+          message:
+            "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
+        });
         void query.refetch();
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
       } else if (result.ok && result.model.outcome === "not_admitted") {
         // The submission did not commit; the same durable summary is safe to
         // confirm again deliberately.
-        setRemainingSubmitted(null);
-        setRemainingMessage(
-          "本次确认未获受理；已读回同一剩余范围摘要，可重新检查后再次确认。 ",
-        );
+        onRemainingSession({
+          submitted: null,
+          message:
+            "本次确认未获受理；已读回同一剩余范围摘要，可重新检查后再次确认。 ",
+        });
       } else {
-        setRemainingMessage(
-          "尚未读回本次确认的持久状态；保持提交锁定，恢复读取后再检查。 ",
-        );
+        onRemainingSession({
+          message:
+            "尚未读回本次确认的持久状态；保持提交锁定，恢复读取后再检查。 ",
+        });
       }
     } finally {
       setRemainingBusy(false);
@@ -1658,22 +1770,27 @@ function RunDetailPanel({
   };
 
   return (
-    <section className="mf-run-detail" aria-label="运行详情">
-      <header className="mf-dashboard-head">
-        <h3 tabIndex={-1} ref={headingRef}>
-          运行详情
-        </h3>
-        <button
-          type="button"
-          className="mf-button mf-button-secondary"
-          onClick={onClose}
-        >
-          关闭详情
-        </button>
-      </header>
+    <ModalCardShell
+      layerRef={modal.layerRef}
+      closing={exit.closing}
+      busy={query.isPending}
+      title={
+        overview === null
+          ? "运行详情"
+          : (overview.sourceScope ?? commandLabelOf(overview))
+      }
+      titleId="mf-run-detail-title"
+      accessibleName="运行详情"
+      description="该运行的流程状态、逐文件结果与操作记录。"
+      closeLabel="关闭详情"
+      closeDisabled={exit.closing}
+      onRequestClose={() => exit.beginClose(onClose)}
+      cardClassName="mf-run-detail-card"
+      bodyClassName="mf-modal-body-scroll"
+    >
       {/* The overview read shares the shell's read boundary, so 401/403/
           unavailable/malformed overview failures stay distinct and actionable
-          instead of leaving the panel stuck on its loading state. */}
+          instead of leaving the card stuck on its loading state. */}
       <AuthorizedReadBoundary query={query} unavailableTitle="运行详情暂不可用">
         {({ data }) => {
           if (data === undefined) {
@@ -1710,12 +1827,7 @@ function RunDetailPanel({
                   reconciling={reconciling}
                   onReconcile={reconcile}
                   onInvoke={(action, expectedVersion) =>
-                    lifecycleMutation.mutate({
-                      action,
-                      objectType: run.lifecycle?.objectType ?? "task",
-                      objectId: run.lifecycle?.objectId ?? run.runId,
-                      expectedVersion,
-                    })
+                    void invokeLifecycle(action, expectedVersion)
                   }
                 />
               )}
@@ -1822,11 +1934,17 @@ function RunDetailPanel({
                     token={token}
                     previewId={effectiveRemainingScope.previewId}
                     selected={remainingSelection}
-                    onSelected={setRemainingSelection}
+                    onSelected={(selection) =>
+                      onRemainingSession({ selection })
+                    }
                     allowOverwrite={remainingOverwrite}
-                    onAllowOverwrite={setRemainingOverwrite}
+                    onAllowOverwrite={(overwrite) =>
+                      onRemainingSession({ overwrite })
+                    }
                     allowCleanup={remainingCleanup}
-                    onAllowCleanup={setRemainingCleanup}
+                    onAllowCleanup={(cleanup) =>
+                      onRemainingSession({ cleanup })
+                    }
                     busy={remainingBusy || remainingSubmitted !== null}
                     onConfirm={() => void confirmRemainingScope()}
                     heading="剩余范围计划摘要（零变更）"
@@ -1884,7 +2002,7 @@ function RunDetailPanel({
           );
         }}
       </AuthorizedReadBoundary>
-    </section>
+    </ModalCardShell>
   );
 }
 
@@ -1979,6 +2097,16 @@ function continuationStatusLabel(status: string): string {
   return labels[status] ?? status;
 }
 
+/**
+ * The selected run's readable fact hierarchy (Slice50 RO-1 / V2-UX-006).
+ *
+ * The first block answers "流程到哪一步、有什么要处理": the durable flow status
+ * with its honesty annotations, the bounded current stage and the run's real
+ * business problems. The bounded facts list keeps the scope/time/item
+ * evidence; the technical identifiers (Worker, fixed configuration snapshot)
+ * collapse into a bounded diagnostics group, and the continuation evidence
+ * stays visible because it carries the operator's legal next action.
+ */
 function RunDetailFacts({
   run,
   onSelectRun,
@@ -1987,96 +2115,120 @@ function RunDetailFacts({
   readonly onSelectRun: (runId: string) => void;
 }) {
   const detail = detailLinkOf(run);
+  const hasDiagnostics =
+    run.workerId !== null || run.configurationSnapshotId !== null;
   return (
-    <dl className="mf-dashboard-facts">
-      <div>
-        <dt>业务名称</dt>
-        <dd>
-          {commandLabelOf(run)}
-          {run.libraryKind !== null &&
-            `（${run.libraryKind === "media" ? "媒体库" : "资源库"}）`}
-          {!run.recognizedCommand && "（未识别的历史命令）"}
-        </dd>
-      </div>
-      <div>
-        <dt>状态</dt>
-        <dd>
-          {run.recoveredCompletion
-            ? "已完成（恢复成功）"
-            : RUN_STATUS_LABELS[run.status]}
-          {run.recoveredCompletion &&
-            "：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。"}
-          {run.pauseRequested && "（已请求暂停，等待确认）"}
-          {run.status === "unknown" && "（证据不足，未知状态）"}
-        </dd>
-      </div>
-      <div>
-        <dt>触发方式</dt>
-        <dd>{RUN_TRIGGER_LABELS[run.trigger]}</dd>
-      </div>
-      <div>
-        <dt>范围</dt>
-        <dd>{run.sourceScope ?? "历史范围证据不可用"}</dd>
-      </div>
-      <div>
-        <dt>目标范围</dt>
-        <dd>{run.targetScope ?? "历史目标范围证据不可用"}</dd>
-      </div>
-      <div>
-        <dt>创建时间</dt>
-        <dd>{formatDate(run.createdAt)}</dd>
-      </div>
-      <div>
-        <dt>更新时间</dt>
-        <dd>{formatDate(run.updatedAt)}</dd>
-      </div>
-      {run.totalItems !== null && (
+    <div className="mf-run-facts">
+      <section className="mf-run-fact-flow" aria-label="状态与流程">
+        <p className="mf-run-flow-line">
+          <span className="mf-run-flow-label">状态</span>
+          <span
+            className={
+              run.attention
+                ? "mf-run-flow-value mf-run-attention"
+                : "mf-run-flow-value"
+            }
+          >
+            {run.recoveredCompletion
+              ? "已完成（恢复成功）"
+              : RUN_STATUS_LABELS[run.status]}
+          </span>
+          {run.recoveredCompletion && (
+            <span className="mf-run-flow-note">
+              ：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。
+            </span>
+          )}
+          {run.pauseRequested && (
+            <span className="mf-run-flow-note">（已请求暂停，等待确认）</span>
+          )}
+          {run.status === "unknown" && (
+            <span className="mf-run-flow-note">（证据不足，未知状态）</span>
+          )}
+        </p>
+        {run.currentStage !== null && (
+          <p className="mf-run-flow-line">
+            <span className="mf-run-flow-label">当前阶段</span>
+            <span>{RUN_CURRENT_STAGE_LABELS[run.currentStage]}</span>
+          </p>
+        )}
+        {run.problemTypes.length > 0 && (
+          <p className="mf-run-flow-line mf-run-problem-line">
+            <span className="mf-run-flow-label">当前业务问题</span>
+            <span>
+              {run.problemTypes
+                .map((type) => RUN_PROBLEM_LABELS[type])
+                .join("、")}
+              ——在对应的识别/元数据/分类/冲突列表里逐项处理，保存决定后仍需显式继续安全分析。
+            </span>
+          </p>
+        )}
+      </section>
+      <dl className="mf-dashboard-facts">
         <div>
-          <dt>条目</dt>
-          <dd>
-            共 {run.totalItems}；已处理 {run.completedItems ?? 0}；失败{" "}
-            {run.failedOnlyItems ?? 0}
-            {run.status === "running" &&
-              "（已处理数是已结束的处理项，不代表整理成功）"}
-          </dd>
+          <dt>触发方式</dt>
+          <dd>{RUN_TRIGGER_LABELS[run.trigger]}</dd>
         </div>
-      )}
-      {run.workerId !== null && (
         <div>
-          <dt>Worker</dt>
-          <dd>{run.workerId}</dd>
+          <dt>目标范围</dt>
+          <dd>{run.targetScope ?? "历史目标范围证据不可用"}</dd>
         </div>
-      )}
-      {run.configurationSnapshotId !== null && (
         <div>
-          <dt>固定配置</dt>
-          <dd>{run.configurationSnapshotId}</dd>
+          <dt>创建时间</dt>
+          <dd>{formatDate(run.createdAt)}</dd>
         </div>
-      )}
+        <div>
+          <dt>更新时间</dt>
+          <dd>{formatDate(run.updatedAt)}</dd>
+        </div>
+        {run.totalItems !== null && (
+          <div>
+            <dt>条目</dt>
+            <dd>
+              共 {run.totalItems}；已处理 {run.completedItems ?? 0}；失败{" "}
+              {run.failedOnlyItems ?? 0}
+              {run.status === "running" &&
+                "（已处理数是已结束的处理项，不代表整理成功）"}
+            </dd>
+          </div>
+        )}
+        {detail !== null && (
+          <div>
+            <dt>更详细证据</dt>
+            <dd>
+              <Link to="/operations" search={{ run: run.runId }}>
+                在任务中心查看该运行的详情
+              </Link>
+            </dd>
+          </div>
+        )}
+      </dl>
       {run.continuation !== null && (
-        <div>
-          <dt>剩余范围继续记录</dt>
-          <dd>
-            {run.continuation.recoveryKind === "exact_preview" ? (
-              <p>
-                零变更计划摘要已关联到此运行，状态为
-                {continuationStatusLabel(run.continuation.status)}
-                。执行任务会计入原运行的范围和条目上限。
-              </p>
-            ) : (
-              <p>
-                该运行已把自己的剩余范围交给一次持久继续(
-                {continuationStatusLabel(run.continuation.status)}
-                )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
-              </p>
-            )}
-            {run.continuation.recoveryPreviewId !== null && (
-              <p>
-                该运行的完整零变更计划摘要显示在本运行详情内；请在此选择就绪子集并明确确认，
-                无需跳转到其他页面。
-              </p>
-            )}
-            {run.continuation.newTaskId !== null ? (
+        <section
+          className="mf-run-fact-continuation"
+          aria-label="剩余范围继续记录"
+        >
+          <h4>剩余范围继续记录</h4>
+          {run.continuation.recoveryKind === "exact_preview" ? (
+            <p>
+              零变更计划摘要已关联到此运行，状态为
+              {continuationStatusLabel(run.continuation.status)}
+              。执行任务会计入原运行的范围和条目上限。
+            </p>
+          ) : (
+            <p>
+              该运行已把自己的剩余范围交给一次持久继续(
+              {continuationStatusLabel(run.continuation.status)}
+              )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
+            </p>
+          )}
+          {run.continuation.recoveryPreviewId !== null && (
+            <p>
+              该运行的完整零变更计划摘要显示在本运行详情内；请在此选择就绪子集并明确确认，
+              无需跳转到其他页面。
+            </p>
+          )}
+          {run.continuation.newTaskId !== null ? (
+            <div className="mf-actions">
               <button
                 type="button"
                 className="mf-button mf-button-secondary"
@@ -2084,33 +2236,31 @@ function RunDetailFacts({
               >
                 打开链接的继续运行
               </button>
-            ) : run.continuation.recoveryPreviewId === null ? (
-              <p>{run.continuation.nextAction}</p>
-            ) : null}
-          </dd>
-        </div>
+            </div>
+          ) : run.continuation.recoveryPreviewId === null ? (
+            <p>{run.continuation.nextAction}</p>
+          ) : null}
+        </section>
       )}
-      {run.problemTypes.length > 0 && (
-        <div>
-          <dt>当前业务问题</dt>
-          <dd>
-            {run.problemTypes
-              .map((type) => RUN_PROBLEM_LABELS[type])
-              .join("、")}{" "}
-            ——在对应的识别/元数据/分类/冲突列表里逐项处理，保存决定后仍需显式继续安全分析。
-          </dd>
-        </div>
+      {hasDiagnostics && (
+        <details className="mf-run-fact-diagnostics">
+          <summary>技术诊断</summary>
+          <dl className="mf-dashboard-facts">
+            {run.workerId !== null && (
+              <div>
+                <dt>Worker</dt>
+                <dd>{run.workerId}</dd>
+              </div>
+            )}
+            {run.configurationSnapshotId !== null && (
+              <div>
+                <dt>固定配置</dt>
+                <dd>{run.configurationSnapshotId}</dd>
+              </div>
+            )}
+          </dl>
+        </details>
       )}
-      {detail !== null && (
-        <div>
-          <dt>更详细证据</dt>
-          <dd>
-            <Link to="/operations" search={{ run: run.runId }}>
-              在任务中心查看该运行的详情
-            </Link>
-          </dd>
-        </div>
-      )}
-    </dl>
+    </div>
   );
 }

@@ -265,7 +265,7 @@ test.describe("manual organize journey", () => {
     ).toBeVisible();
     await expect(page).not.toHaveURL(/[?&](command|status)=/);
     await expect(page).toHaveURL(/run=organize-task-e2e-001/);
-    await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
     evidence = await manualEvidence(page);
     expect(

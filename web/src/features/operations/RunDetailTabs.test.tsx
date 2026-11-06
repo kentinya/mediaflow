@@ -849,7 +849,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const progress = await within(detail).findByRole("region", {
       name: "整理进度",
     });
@@ -877,7 +877,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
 
     await user.selectOptions(screen.getByLabelText("状态筛选"), "waiting");
@@ -905,7 +905,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await user.click(
       await within(detail).findByRole("button", { name: "操作记录" }),
     );
@@ -929,7 +929,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
     const inspectButtons = within(detail).getAllByRole("button", {
       name: "查看证据",
@@ -973,7 +973,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
     const inspectButtons = within(detail).getAllByRole("button", {
       name: "查看证据",
@@ -1078,7 +1078,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001&item=item-9");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const evidence = await within(detail).findByRole("region", {
       name: "条目证据",
     });
@@ -1130,7 +1130,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const exportButton = await within(detail).findByRole("button", {
       name: "导出结果 JSON",
     });
@@ -1187,7 +1187,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const exportButton = await within(detail).findByRole("button", {
       name: "导出结果 JSON",
     });
@@ -1388,7 +1388,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
     await within(items).findByText(/broken\.mkv/);
     expect(
@@ -1840,7 +1840,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
-    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
     await user.click(
       await within(detail).findByRole("button", { name: "操作记录" }),

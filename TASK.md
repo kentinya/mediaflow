@@ -189,8 +189,82 @@ Developer 不承担完整 Python/Web/E2E 或发布矩阵。
 
 ## Developer Completion Report
 
-实施后填写：完整 checkpoint SHA、READY FOR B REVIEW、关键变化、实际受影响
-测试结果、已知失败/风险和剩余工作。完整验收待 B，不要求完整回归证据册。
+状态：**READY FOR B REVIEW**（Task50.2 实现完成，Developer 交接，未自审 PASS）。
+
+```text
+实现 checkpoint: 本报告所在提交（单个实现 checkpoint）
+分支: main
+Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
+B 审查范围: Task Base..本报告提交 HEAD
+本轮工作/测试时间: 全轮约 78 分钟；测试运行墙钟合计约 11 分钟（约 14%，并行取区间并集）
+```
+
+工作区预存的 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/`
+等均保持原样，未纳入本次 checkpoint。共享 `modal-card.tsx` 未修改，故未触发存储/
+自动化共享外壳附加回归（按 Task 要求免跑）。
+
+### 关键变化
+
+- **居中详情卡（AC-1）：** `RunDetailPanel` 由列表旁 34% 右列改为复用
+  `ModalCardShell`+`useModalLayer`+`useModalCardExit` 的居中卡片（`accessibleName="运行详情"`，
+  `cardClassName="mf-run-detail-card"` 宽 min(1080px,100%)，`mf-modal-body-scroll` 有界正文滚动）。
+  列表保持完整宽度：`mf-run-has-detail` 布局仅保留给问题文件面板
+  （`ProblemFilePanel` 类名改为 `mf-problem-panel`，原桌面 sticky/窄屏全屏 CSS 重命名后原样保留）。
+  关闭按钮/遮罩/外沿/Escape 走共享退出（160ms，reduced-motion 立即），退出后 `closeRun`
+  替换 URL 并作废 overview 缓存；打开时焦点落关闭按钮（与存储卡一致），关闭回焦触发行按钮，
+  深链无原入口时回焦页面标题 `mf-operations-heading`；浏览器返回照旧直接丢弃选择。
+  旧面板自有 Escape 监听/回焦 effect 已移除，与外壳不重复响应。
+- **信息层级（AC-2）：** 卡片标题=业务名称（sourceScope，缺失时回退操作名），描述=操作说明；
+  正文顺序为运行控制→剩余范围→选项卡→`状态与流程`（状态+诚实注记、当前阶段、当前业务问题，
+  新区块）→两列事实表（触发方式/目标范围/时间/条目/更详细证据）→折叠的`技术诊断`（Worker/
+  固定配置）→进度→条目表（`RunDetailTabs` 中 facts 移到进度之前）。删除与标题重复的
+  业务名称/范围行；其余既有业务信息与证据保持可达。
+- **核对保留（AC-10）：** 生命周期控制与剩余范围确认的会话状态提升到 landing 按 runId 存储
+  （`RunControlSession`/`RunRemainingSession`）：未知控制结果锁、提交结果、未决确认身份、
+  已受理执行标识、已选子集与破坏性选择在卡片关闭/重开后保留，仍核对原请求而非重发；
+  提交改用 `mutateAsync`+显式会话写入，卡片在请求在途时关闭也不丢结果。换任务按 runId 隔离。
+- **测试同步：** 旧“桌面右列/窄屏全屏”几何断言替换为居中卡+列表宽度断言；全部 68 处
+  `region 运行详情` 查询改为 `dialog 运行详情`（含 task-flow/manual-organize 等直接受影响 spec）。
+
+### 实际执行结果（cwd、命令、结果）
+
+- 仓库根：`python3 scripts/check_governance.py` → PASS（实施前与提交前各一次）；
+  `git diff --check` → 无输出。
+- `web/`：`npm run typecheck` → PASS；`npm run lint` → PASS；`npm run format:check` → PASS；
+  `npm run build` → PASS（仅既存 chunk >500 kB 提示）。
+- `web/` 指定受影响单元/组件（7 文件 79 用例）：`npm run test -- run src/features/operations/
+  OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/
+  RunLifecycleControls.test.tsx src/features/operations/run-detail-state.test.ts
+  src/shared/navigation/operations-return.test.ts src/features/operations/OperationsRouter.test.tsx`
+  → 79 passed。含新增 4 用例：慢读取协调卡、关闭后迟到响应不重开、未知控制结果跨关闭/重开
+  锁定且不重发（仅 1 次 POST）、换任务后旧任务结果不串。
+- `web/` 全量单元套件（B 回归前的额外 sanity，非替代 B 全回归）：`npm run test -- run`
+  → 94 文件 1356 用例全部通过。
+- `web/` Node E2E（构建产物+fake API）：`npm run test:e2e -- tests/e2e/operations.spec.ts`
+  → 25 passed（含新居中卡几何用例）；`tests/e2e/task-center-layout.spec.ts` → 11 passed；
+  `tests/e2e/manual-organize.spec.ts`、`dashboard.spec.ts`、`deep-link.spec.ts` → 全部通过。
+- `web/` 真实 Python 栈 E2E（`playwright.python.config.ts --workers=1`）：指定 grep 子集
+  （detail reads/filter context/21-file/native 四类恢复/Metadata correction/overwrite）
+  → 9 passed；`operations-task-center-visual.python.spec.ts` → 2 passed；
+  `task-flow.python.spec.ts` 抽取 2 用例（已确认取消、保存后失败含 390px 断言）→ 2 passed。
+- 视觉抽查：fake API+构建产物下 1536×1024 与 390×844 卡片截图人工检查——居中、宽度、
+  状态条、两列事实、折叠诊断、窄屏可读均符合；产物仅为本地 /tmp 截图，未存为验收证据。
+
+### 已知失败
+
+无。首轮 Node E2E 曾因 dist 未重建而 13 failed（旧构建产物），重建后全部通过，非产品缺陷。
+
+### 剩余风险与留给 B 的验收点
+
+- `task-flow.python.spec.ts` 3 个用例中仅实跑 2 个（选择器已全部同步为 dialog）；
+  `operations-inventory.python.spec.ts` 其余用例与全量 Web/Python 回归按分工归 B。
+- 打开卡片时背景 inert：卡片开着时侧栏/列表不可点（与自动化/存储卡一致）；
+  `task-center-layout` 的侧栏 Files 用例已改为先 Escape 关卡再导航。
+- 卡片打开时首焦点为关闭按钮（存储卡同款）；信息排列为开发者按内容设计，
+  满足 AC-2 的“用户能读懂”验收需 B 以真实截图/交互判定。
+- 剩余范围确认会话仅在 landing 生命周期内保留（页面刷新丢失，刷新后以服务器持久
+  continuation 证据为准）；与既有重挂载语义一致，未跨页持久化。
 
 ## B Review Result
 

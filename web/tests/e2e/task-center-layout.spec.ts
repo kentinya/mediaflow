@@ -256,7 +256,7 @@ test("long scopes stay inside their columns and remain readable by hover or keyb
   await nameButton.focus();
   await expect(nameButton).toBeFocused();
   await page.keyboard.press("Enter");
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(detail.getByText(longScope, { exact: true })).toBeVisible();
   await page.screenshot({
@@ -294,8 +294,13 @@ test("shared sidebar Files stays ordinary from default, filtered and selected ce
   const inventory = page.getByRole("table", { name: "运行清单" });
   await expect(inventory).toBeVisible();
   await inventory.getByRole("button").first().click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  // The open card overlays the page; the sidebar link keeps its ordinary
+  // destination, and closing the card (Escape) restores ordinary navigation.
   await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  await page.keyboard.press("Escape");
+  await expect(detail).toHaveCount(0);
   await filesLink.click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
   await expect(page.getByRole("link", { name: "返回任务中心" })).toHaveCount(0);
@@ -405,7 +410,7 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
   const firstRun = inventory.getByRole("button").first();
   await firstRun.focus();
   await page.keyboard.press("Enter");
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(
     detail.getByRole("button", { name: "关闭详情" }),
@@ -564,10 +569,10 @@ for (const viewport of [
       .getByRole("button")
       .first();
     await firstRun.click();
-    await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
     await expect(
       page
-        .getByRole("region", { name: "运行详情" })
+        .getByRole("dialog", { name: "运行详情" })
         .getByText("目标范围", { exact: true }),
     ).toBeVisible();
     if (viewport.width >= 1280) await checkLayout(false);
@@ -576,7 +581,7 @@ for (const viewport of [
       path: testInfo.outputPath(`compact-detail-${viewport.width}.png`),
     });
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
     await clear.click();
     await expect(page).not.toHaveURL(/from=|to=/);
     await expect(from).toHaveValue("");

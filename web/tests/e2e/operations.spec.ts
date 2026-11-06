@@ -114,7 +114,7 @@ async function openCenterRun(page: Page, runId: string) {
     await page.getByLabel("API token").fill(VIEWER_TOKEN);
     await page.getByRole("button", { name: "Connect" }).click();
   }
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 }
 
 test("任务中心 inventory shows the run list, views and workspace links", async ({
@@ -149,7 +149,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
     page.getByRole("link", { name: "Files", exact: true }),
   ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
   // Entry has no selection: the detail panel is closed.
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
 });
 
 test("the submitted creation-date range survives reload and re-authentication", async ({
@@ -254,7 +254,7 @@ test("an organizing legacy deep link resolves to the exact Task run", async ({
   // retired Job admission is never used as the run identity, and reading the
   // legacy link submits no command and reads no second collection.
   await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-001/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   expect(
     requested.filter(
       (url) =>
@@ -429,7 +429,7 @@ test("Dashboard counts and recent failures link to exact Operations state", asyn
     .getByRole("link", { name: "Open this Task in the Task Center" })
     .click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-004$/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 });
 
 test("the 媒体库 entry and Operations workspace cross-link without a retired route", async ({
@@ -571,7 +571,7 @@ test("inventory count card applies its server filter and the run overview opens 
     .getByRole("button")
     .first()
     .click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
@@ -581,7 +581,7 @@ test("inventory count card applies its server filter and the run overview opens 
 
   // Closing the detail returns to the same filtered list context.
   await detail.getByRole("button", { name: "关闭详情" }).click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await expect(page).not.toHaveURL(/status=/);
   await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
   await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
@@ -595,61 +595,68 @@ test("inventory count card applies its server filter and the run overview opens 
     .first()
     .click();
   await expect(page).toHaveURL(/run=job-005/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await page.goBack();
   await expect(page).not.toHaveURL(/status=/);
   await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
   await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
   await expect(page).not.toHaveURL(/run=/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 });
 
-test("the selected run detail is a right column on desktop and a full overlay when narrow", async ({
+test("the selected run detail is a centered card and the list keeps its width", async ({
   page,
 }) => {
   await connect(page);
   await openOperations(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  // The selected run's detail adds its own item table, so the layout proof
-  // measures the inventory table explicitly.
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await expect(inventoryTable).toBeVisible();
+  const openListBox = await inventoryTable.boundingBox();
+  expect(openListBox).not.toBeNull();
 
   await inventoryTable.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
-  // The panel is the right column of the detail-aware two-column layout.
-  await expect(
-    page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
-  ).toHaveCount(1);
+  // The card is the shared centered modal layer over the page, not a detail
+  // column of the list layout.
+  expect(await detail.evaluate((node) => node.className)).toContain(
+    "mf-modal-card",
+  );
+  await expect(page.locator(".mf-run-has-detail")).toHaveCount(0);
 
-  const tableBox = await inventoryTable.boundingBox();
-  const detailBox = await detail.boundingBox();
-  expect(tableBox).not.toBeNull();
-  expect(detailBox).not.toBeNull();
-  const table = tableBox as NonNullable<typeof tableBox>;
-  const panel = detailBox as NonNullable<typeof detailBox>;
-  // Distinct x ranges: the detail sits to the right of the table...
-  expect(panel.x).toBeGreaterThanOrEqual(table.x + table.width - 2);
-  expect(panel.width).toBeGreaterThan(200);
-  // ...with an overlapping y range, so both stay visible side by side.
-  const overlapY =
-    Math.min(table.y + table.height, panel.y + panel.height) -
-    Math.max(table.y, panel.y);
-  expect(overlapY).toBeGreaterThan(0);
+  const cardBox = await detail.boundingBox();
+  expect(cardBox).not.toBeNull();
+  const card = cardBox as NonNullable<typeof cardBox>;
+  // The card is horizontally centered in the viewport.
+  const centerDrift = Math.abs(card.x + card.width / 2 - 1440 / 2);
+  expect(centerDrift).toBeLessThanOrEqual(2);
+  // The list behind the card keeps its open-state width: the selection never
+  // narrows the inventory into a side column.
+  const behindBox = await inventoryTable.boundingBox();
+  expect(behindBox).not.toBeNull();
+  expect(
+    Math.abs(
+      (behindBox as NonNullable<typeof behindBox>).width -
+        (openListBox as NonNullable<typeof openListBox>).width,
+    ),
+  ).toBeLessThanOrEqual(2);
 
-  // Narrow layout: the selection takes over the viewport as a complete
-  // full-screen detail with its close control visible.
+  // The card content scrolls inside its own bounded body; close stays
+  // reachable.
+  await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
+  const statusSection = detail.getByRole("region", { name: "状态与流程" });
+  await expect(statusSection).toBeVisible();
+
+  // Narrow layout: the same card fills the viewport with bounded content.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(detail).toBeVisible();
   const narrowBox = await detail.boundingBox();
   expect(narrowBox).not.toBeNull();
   const overlay = narrowBox as NonNullable<typeof narrowBox>;
-  expect(overlay.x).toBeLessThanOrEqual(1);
-  expect(overlay.y).toBeLessThanOrEqual(1);
-  expect(overlay.width).toBeGreaterThanOrEqual(388);
-  expect(overlay.height).toBeGreaterThanOrEqual(840);
+  expect(overlay.x).toBeLessThanOrEqual(9);
+  expect(overlay.width).toBeGreaterThanOrEqual(372);
   await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
 });
 
@@ -664,7 +671,7 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
   await expect(page).not.toHaveURL(/status=/);
   await expect(page).toHaveURL(/run=job-005/);
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   // A failed read never means zero runs: the filtered table still shows data.
@@ -684,7 +691,7 @@ test("the selected run detail shows truthful progress and its accounting basis",
     .getByRole("button")
     .first()
     .click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
   // The 任务详情 tab carries the durable progress projection: a processed
@@ -721,7 +728,7 @@ test("item and record filters page on the server and survive a reload", async ({
     .getByRole("button")
     .first()
     .click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
   // The disposition filter is submitted to the server (never merged in the
@@ -767,7 +774,7 @@ test("item and record filters page on the server and survive a reload", async ({
   await expect(page).toHaveURL(/rkind=log/);
   await expect(page).toHaveURL(/istat=success/);
   await expect(page).toHaveURL(/run=job-001/);
-  const detailAfter = page.getByRole("region", { name: "运行详情" });
+  const detailAfter = page.getByRole("dialog", { name: "运行详情" });
   await expect(detailAfter).toBeVisible();
   const records = page.getByRole("region", { name: "操作记录", exact: true });
   await expect(records).toBeVisible();
@@ -784,7 +791,7 @@ test("one item's evidence opens through exact links and closes again", async ({
     .getByRole("button")
     .first()
     .click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("item-001")).toBeVisible();
 
@@ -825,7 +832,7 @@ test("the native action downloads the eligible linked Task's result package", as
     .getByRole("button")
     .first()
     .click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
@@ -853,7 +860,7 @@ test("a retired pre-Task Job run identity stays bounded unavailable", async ({
     methods.push(`${request.method()} ${request.url()}`);
   });
   await openCenterRun(page, "job-002");
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   // A pre-Task Job has no Task identity and is retired. Its old identity gets
   // the ordinary bounded not-found answer, never fabricated progress, an empty

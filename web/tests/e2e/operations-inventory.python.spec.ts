@@ -146,7 +146,7 @@ async function openNativeRecovery(
   await expect(sourceItem).toHaveCount(1);
   await sourceItem.getByRole("button").click();
   const recovery = page
-    .getByRole("region", { name: "运行详情" })
+    .getByRole("dialog", { name: "运行详情" })
     .getByRole("region", { name: "条目审核与恢复" });
   await expect(recovery).toBeVisible();
 }
@@ -316,7 +316,7 @@ async function runNativeRecoveryJourney(
   const seeded = await seedNativeRecovery(request, kind);
   await openNativeRecovery(page, seeded);
   const recovery = page
-    .getByRole("region", { name: "运行详情" })
+    .getByRole("dialog", { name: "运行详情" })
     .getByRole("region", { name: "条目审核与恢复" });
   await expect(recovery.getByRole("heading", { name: heading })).toBeVisible();
   const metadataSearches: string[] = [];
@@ -390,7 +390,7 @@ async function selectRichRun(page: Page): Promise<void> {
   const richRow = page.getByRole("row").filter({ hasText: RICH_RUN_SCOPE });
   await expect(richRow).toHaveCount(1);
   await richRow.getByRole("button").first().click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await expect(page).toHaveURL(/run=/);
 }
 
@@ -463,7 +463,7 @@ test("reads are side-effect free: only GET requests leave the landing", async ({
 
   // Select one run (a read), open its overview (a read) and refresh (a read).
   await page.getByRole("table").getByRole("button").first().click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await page.getByRole("button", { name: "刷新" }).first().click();
   await page.waitForTimeout(750);
 
@@ -488,7 +488,7 @@ test("server-side filtered selection and return keep the list context", async ({
 
   // Select the failed run into its bounded overview of durable facts.
   await failedRow.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
@@ -497,7 +497,7 @@ test("server-side filtered selection and return keep the list context", async ({
   // and the full All view still reopens the complete population — every step
   // was a bounded server-side read.
   await detail.getByRole("button", { name: "关闭详情" }).click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expectRunTotal(page, SEEDED_RUN_TOTAL);
 });
@@ -551,7 +551,7 @@ test("the selected run follows polling, header refresh and history navigation", 
   const activeRow = page.getByRole("row").filter({ hasText: "待处理" }).first();
   await expect(activeRow).toBeVisible();
   await activeRow.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   expect(overviewReads()).toBeGreaterThanOrEqual(1);
 
@@ -573,17 +573,23 @@ test("the selected run follows polling, header refresh and history navigation", 
   await expect(page).toHaveURL(/run=/);
   await page.goBack();
   await expect(page).not.toHaveURL(/run=/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
 
-  // At a desktop width the selection is the right column of the two-column
-  // inventory layout, never a block stacked under the list.
+  // At a desktop width the selection opens the centered modal card over the
+  // full-width list, never a block stacked under or beside the list.
   await page.setViewportSize({ width: 1440, height: 900 });
   await activeRow.getByRole("button").first().click();
+  const desktopDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(desktopDetail).toBeVisible();
+  await expect(page.locator(".mf-run-has-detail")).toHaveCount(0);
+  const cardBox = await desktopDetail.boundingBox();
+  expect(cardBox).not.toBeNull();
+  const card = cardBox as NonNullable<typeof cardBox>;
+  expect(Math.abs(card.x + card.width / 2 - 1440 / 2)).toBeLessThanOrEqual(2);
   await expect(
-    page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
+    desktopDetail.getByRole("button", { name: "关闭详情" }),
   ).toBeVisible();
-  await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
 });
 
 // -- Task 42.2: native run detail, progress and operation evidence ----------
@@ -596,7 +602,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await openInventory(page);
   await selectRichRun(page);
 
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
 
   // 任务详情 (the default tab) publishes the durable organize accounting: a
   // reconciling partition, the confirmed/uncertain success split of the two
@@ -707,7 +713,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // adding one of its own.
   await page.goBack();
   await expect(page).not.toHaveURL(/run=/);
-  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await expectRunTotal(page, 1);
 });
 
@@ -719,7 +725,7 @@ test("the eligible run exports its bounded result package as a real download", a
   await openInventory(page);
   await selectRichRun(page);
 
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   // A standalone Task run anchors on its own Task ID, so the task-scoped
   // result package resolves from the selected run's durable link.
   const runId = new URL(page.url()).searchParams.get("run");
@@ -802,7 +808,7 @@ test("an indeterminate run states an unknown total instead of inventing one", as
     .first();
   await expect(runningRow).toBeVisible();
   await runningRow.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
   const progress = detail.getByRole("region", { name: "整理进度" });
@@ -824,7 +830,7 @@ test("the detail tab and filter context survives a reload through auth continuat
   await openInventory(page);
   await selectRichRun(page);
 
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail.getByRole("button", { name: "操作记录" }).click();
   await expect(page).toHaveURL(/tab=records/);
   const records = detail.getByRole("region", {
@@ -850,7 +856,7 @@ test("the detail tab and filter context survives a reload through auth continuat
   await expect(page).toHaveURL(/tab=records/);
   await expect(page).toHaveURL(/rkind=log/);
 
-  const restored = page.getByRole("region", { name: "运行详情" });
+  const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
   await expect(page.getByLabel("类型筛选")).toHaveValue("log");
   const restoredRecords = restored.getByRole("region", {
@@ -901,7 +907,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByRole("row")).toHaveCount(2); // header + one item
@@ -1033,7 +1039,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
   await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
-  const reloadedDetail = page.getByRole("region", { name: "运行详情" });
+  const reloadedDetail = page.getByRole("dialog", { name: "运行详情" });
   await expect(reloadedDetail).toBeVisible();
   const reloadedEvidence = reloadedDetail.getByRole("region", {
     name: "条目证据",
@@ -1189,7 +1195,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await expect(page).toHaveURL(/run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   expect(exactExecutePosts()).toHaveLength(1);
   expect(
     api.filter(
@@ -1206,7 +1212,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(workerRun.ok()).toBeTruthy();
@@ -1217,7 +1223,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     itemCount: 1,
   });
   await page.getByRole("button", { name: "刷新" }).first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Three.2003.mkv")).toBeVisible();
@@ -1260,7 +1266,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
-  const restored = page.getByRole("region", { name: "运行详情" });
+  const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
   const restoredEvidence = restored.getByRole("region", { name: "条目证据" });
   await expect(
@@ -1543,7 +1549,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect
     .poll(() => new URL(page.url()).searchParams.get("run"))
     .toBe(run.runId);
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
   const items = detail.getByRole("region", { name: "主条目" });
@@ -1649,7 +1655,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
   await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
   const reloadedEvidence = page
-    .getByRole("region", { name: "运行详情" })
+    .getByRole("dialog", { name: "运行详情" })
     .getByRole("region", { name: "条目证据" });
   await expect(
     reloadedEvidence.getByText(run.sourcePath, { exact: true }),
@@ -1772,7 +1778,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await expect(page).toHaveURL(/run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   expect(
     api.filter(
       (entry) =>
@@ -1810,7 +1816,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   // The real Worker completes the admitted run; the selected detail shows
   // its durable C identity with the A downstream policies.
@@ -1823,7 +1829,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     itemCount: 1,
   });
   await page.getByRole("button", { name: "刷新" }).first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Four.2004.mkv")).toBeVisible();
   const evidenceResponse = page.waitForResponse(
@@ -1867,7 +1873,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
-  const restored = page.getByRole("region", { name: "运行详情" });
+  const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
   // The same bounded item region as before the restart, so the assertion
   // addresses exactly the run's primary item and not the detail's other
@@ -1924,7 +1930,7 @@ test("a paused run's retired resume control is refused with no new work", async 
   await expect(pausedRow).toHaveCount(1);
   await expect(pausedRow).toContainText("已暂停");
   await pausedRow.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const controls = detail.getByRole("region", { name: "运行控制" });
   await expect(controls).toBeVisible();
@@ -2024,7 +2030,7 @@ test("the retired remaining-scope entry rejects without inspecting a historical 
   const row = page.getByRole("row").filter({ hasText: "AuthorityMissingPin" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   const controls = detail.getByRole("region", { name: "运行控制" });
   await expect(
     controls.getByRole("button", { name: "继续剩余范围" }),
@@ -2088,7 +2094,7 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   const runRow = page.getByRole("row").filter({ hasText: "TaskCenter/Mixed" });
   await expect(runRow).toHaveCount(1);
   await runRow.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
   const technicalRow = items
     .getByRole("row")
@@ -2160,7 +2166,7 @@ test("the retired batch continuation is a bounded refusal while the center offer
   const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(
     detail
@@ -2223,7 +2229,7 @@ test("the exact undecided batch item is reachable read-only without a generic re
   const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items).toBeVisible();
@@ -2364,7 +2370,7 @@ test("the eight views and the exact Task/type problem file list work natively", 
     .filter({ hasText: "TaskCenter/Mixed" });
   await expect(mixedHistoryRow).toHaveCount(1);
   await mixedHistoryRow.getByRole("button", { name: /详情/ }).first().click();
-  const mixedDetail = page.getByRole("region", { name: "运行详情" });
+  const mixedDetail = page.getByRole("dialog", { name: "运行详情" });
   await expect(mixedDetail).toBeVisible();
   await expect(
     mixedDetail.getByText(/UnknownEffect\.mkv/).first(),
@@ -2466,9 +2472,9 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
     .getByRole("button", { name: "查看该文件证据与恢复记录" })
     .click();
   await expect(page).toHaveURL(new RegExp("run=" + seeded.taskId));
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await page
-    .getByRole("region", { name: "运行详情" })
+    .getByRole("dialog", { name: "运行详情" })
     .getByRole("button", { name: "关闭详情" })
     .click();
   await expect(page).toHaveURL(/view=metadata/);
@@ -2981,10 +2987,10 @@ test("time filter: pages, returns from detail, and survives reconnect", async ({
   // Selecting the exact run opens its durable overview; closing it returns to
   // the same time range and server page, not page one or another range.
   await firstRow.getByRole("button").first().click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await expect(page).toHaveURL(/run=/);
   await page
-    .getByRole("region", { name: "运行详情" })
+    .getByRole("dialog", { name: "运行详情" })
     .getByRole("button", { name: "关闭详情" })
     .click();
   await expect(page).toHaveURL(/cursor=/);
@@ -3033,7 +3039,7 @@ test("time filter: an old All link never keeps its removed hidden filters", asyn
       `&attention=true&run=${seeded.taskIds[0]}`,
   );
   await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`run=${seeded.taskIds[0]}`));
   await expect(page).not.toHaveURL(/q=|status=|source=|command=|attention=/);
   await expectRunTotal(page, defaultTotal);
@@ -3133,7 +3139,7 @@ test("time filter: running, ended and business views preserve their own dated po
   await expect(file).toHaveCount(1);
   await file.getByRole("button", { name: "查看该文件证据与恢复记录" }).click();
   await expect(page).toHaveURL(new RegExp(`run=${business.taskId}`));
-  const detail = page.getByRole("region", { name: "运行详情" });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page).toHaveURL(/problemRun=/);
@@ -3151,7 +3157,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   await openInventory(page);
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
   await page.getByRole("table").getByRole("button").first().click();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const context = page.url();
   const header = page.locator(".mf-operations-inventory > header");
   let release!: () => void;
@@ -3177,7 +3183,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   await header.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(header.getByRole("button", { name: "刷新中…" })).toBeDisabled();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await expect(page).toHaveURL(context);
   expect(reads).toBe(1);
   release();
