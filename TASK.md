@@ -1,7 +1,7 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
-用户于 2026-11-06 明确授权激活本 Task。Developer 已完成实现并交 READY FOR B
-REVIEW；下方验收清单仍待 B 独立复核，本轮不推送或部署。
+用户于 2026-11-06 明确授权激活本 Task。B 独立审查后给出 FIX REQUIRED：两种库的
+真实编辑入口尚有阻塞，按下方指导在同一 Task 修正；本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -13,14 +13,14 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: 07e6b89f
+Candidate: 04992b8cd2c690112f4fe009cb0560e7663746cc
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: TASK 50.3 ONLY; DEVELOPER IMPLEMENTATION COMPLETED
+Development Authorization: TASK 50.3 ONLY; SAME TASK FIX LOOP
 ```
 
 ### Goal 与完整用户旅程
@@ -191,7 +191,7 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 - 不增加 Provider/文件命令、任务/恢复类型、统计/缩略图、替代目录树、主题/动画设置，
   不重构后端配置/权限/队列或引入自动未知重放，不推送/部署。
 - 当前：RO-1 已由 Task50.2 PASS；RO-2 与自动化稳定性由 Task50.1 PASS；RO-3 及两种库
-  加载待本 Task；RO-4 侧栏主页面切换仍未交付。此次没有新实现需要 PASS/FIX REQUIRED。
+  加载待本 Task 完整验收；RO-4 侧栏主页面切换仍未交付。本轮两种库编辑未通过，需同 Task 修正。
   本 Task 未来 PASS 后再次核对全部结果；侧栏切换仍缺则不能提交 Slice Closure Packet。
 
 ### Developer Completion Report / B Review Result
@@ -243,6 +243,79 @@ ignored `web/test-results/`，动态进出过程与 reduced-motion 仍由 B 在�
 真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 7 分钟，约占本轮实际工作时间的 16%，低于 30%。
 
 B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
+
+### B Review Result — 2026-11-06
+
+```text
+Reviewed Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
+Reviewed Head: 04992b8cd2c690112f4fe009cb0560e7663746cc
+Decision: FIX REQUIRED
+Task blockers: B50.3-01 — 合法 Active 含未命名 Storage 时，两种库均无法进入编辑表单
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+已审完整 Base..Head 的 20 个文件，包括规划/激活文档、两页与共享菜单/加载/样式、组件
+和 E2E 的累计差异；B 未修改产品或测试。去树、四个卡片容器及加载分支已有实现，但
+RO-3 的完整编辑旅程尚不成立；当前记录不代表其他场景已完成独立验收。
+
+**B50.3-01 / P1：正常可浏览的库打不开编辑表单。**
+
+在现有 `playwright.direct-files.python.config.ts` 使用的真实 Python/API/SQLite/临时
+Local harness 中，Active 有一个合法未命名 Storage `media-target`。从文件页选择
+`source`，点库菜单 → 编辑资源库；或从媒体库页选择 `movies` → 编辑媒体库，后端编辑
+读取均返回 HTTP 200，卡片却显示“无法读取…请重新读取…确认权限和…状态”，没有名称
+字段或保存入口。分别点“重新读取”仍失败，取消可退出；两条旅程均未发出变更命令。
+这里没有伪造失败响应或输入，使用的是既有 harness 的已发布 Active 和正常库菜单。
+
+原因在 `api-client.ts` 的 `fetchLibraryEditProjection`：它要求返回的每个 Storage 名称
+必须为字符串；后端 `_edit_storage_projection` 对未填写名称的合法配置返回 `null`，
+客户端因此把整份投影判为 malformed。即使未命名 Storage 不是该资源库当前绑定对象，
+也会阻塞编辑。刷新或重新读取不改变这个合同差异，现有错误提示无法帮助用户完成目标。
+
+**Developer 修正指导（同一 Task）：**
+
+1. 对齐现有编辑投影与合法 Active 的显示名称语义。允许未填写的 Storage 显示名称，
+   在需要可读标签时使用其稳定 ID（参照既有 Storage 投影/显示惯例）；保留精确 Storage
+   ID、种类、路径、启用状态、Active fence 和其他已有校验。此修正只处理已支持配置的
+   显示合同，不要求用户先给无关 Storage 补名称，不因读卡片而改写或发布配置。
+2. 从两种库现有菜单验证：Active 含未命名 Storage（包括无关 Storage）时，编辑卡片
+   能读到正确原值，ID 仍只读；只改名称并保存后读取真实 Active，库启用状态、绑定、
+   根、未编辑配置与合法浏览位置保持原义，物理文件不变。保留真正拒绝/读失败的恢复。
+3. 补直接受影响的 API 适配测试及两种库原生入口覆盖；复用当前已能触发问题的隔离
+   fixture，不新增产品入口或一套验收平台。开发仅跑修改/直接受影响测试，交新精确
+   checkpoint；完整 T4、剩余原生配置/加载/视觉验收仍由 B 承担。
+
+API 适配受影响命令（cwd `web/`）：
+`npm run test -- run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts`。
+此外按上方 Developer 计划运行本次改变的组件/原生场景，并在交接记录实际文件与选择命令。
+
+历史来源：源码追踪到 `1ecb278120776f4844d78b394c50ae254d6e7ecf`（2026-09-25），
+这不是本 Task 新引入的回归。B 另用 Task Base 的原始 Web 源码构建产物，经同一真实 API/
+临时配置，从相同 `source`/`movies` 页面菜单独立复现两种库编辑失败；后端/harness 在
+Base..Head 无变化。这是当前未关闭 Slice/Task 必须交付的编辑结果缺口，留在本 Task 修正，
+不改写旧 Slice 的接受事实、不另开独立小 bug。
+
+**本轮 B 证据与门禁：**
+
+- 当前候选生产构建 PASS；当前两种库编辑入口阻塞各复现 1 次，并分别显式重新读取验证，
+  HTTP 200、字段数 0、变更命令数 0；已打开桌面/390px 窄屏错误截图检查。
+- Base 的两种库相同入口均复现相同失败；证据仅用于确定历史来源，不计作当前产品通过。
+- 首次计划验证保存结果的原生探测在进入资源库表单前就失败，未执行保存；首次 Base 探测
+  的媒体库未指定库而落在无表格的空库，命令失败。原日志保留，之后显式选择真实 `movies`
+  入口完成复现；没有修改断言、加重试或扩大超时。
+- 治理预检/记录更新后检查、完整差异 whitespace PASS；文档消费者 `test_release_security.py`
+  **8 tests / OK**。发现明确 P1 后提前 FIX REQUIRED，未运行完整
+  Python/Web/E2E、wheel 或其余原生门禁；不以 Developer 缺少这些结果作为产品阻塞。
+- 稳定本地证据：`.git/validation-evidence/04992b8c/B50.3-review/`。`build.json`、
+  `edit-read.json`、`base-build.json`、`base-edit-read.json`、首次失败 JSON/log、探测源码和
+  PNG 保留实际执行输入/结果；本地文件不宣称远程可取。计时及最终文档检查见 `review-timing.json`。
+  从 `12:31:36 UTC` 起至计时记录已工作约 501 秒，带起止记录的测试区间并集 15.67 秒；
+  加上环境准备/零散检查的保守 60 秒上界，总测试时间仍低于本轮 16%，满足小于 50%。
+
+**全 Slice 重评：** RO-1（Task50.2）、RO-2 和自动化稳定性（Task50.1）保留既有 B PASS；
+RO-3 本轮编辑阻塞，加载已有实现但待完整验收；RO-4 侧栏主页面切换仍未交付。Slice50
+保持 ACTIVE，不规划下一 Task，不交 Closure Packet，不宣告 Slice PASS / CLOSED。
 
 ### 激活基线与前序接受事实
 
