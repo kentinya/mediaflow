@@ -6,7 +6,8 @@ ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 最终实现 checkpoint 为 a7a2b669da4611efd84778aabd4435145bcfd159。
 用户已明确授权激活修订后的 Task50.4。本 Task 仍为唯一当前实施 Task，
 B 已复核实现候选 ad81eb6be204aee7baf91a1a48273675a554f872，结论 **FIX REQUIRED**。
-修正在同一 Task 内完成；原 Base、范围、验收及测试分工保持。
+B50.4-01 已在同一 Task 内修正并交回 **READY FOR B REVIEW**；原 Base、范围、验收及
+测试分工保持。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
@@ -16,14 +17,15 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 �
 Task ID: 50.4
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
+Candidate: 4c511fc7d18d66d01c70c7a695f88c77376135f6
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: TASK50.4 ONLY — EXPLICIT USER ACTIVATION
-Next Action: SAME TASK FIX LOOP — PREVENT SAME-PAGE CARD CLOSE FROM REPLAYING PAGE ENTRY
+Next Action: B REVIEWS FIX CANDIDATE 4c511fc7 — SAME-PAGE CARD CLOSE ENTRY REPLAY
 ```
 
 ### Goal 与真实代码缺口
@@ -180,12 +182,53 @@ Docker/重启等适用性依据最终差异说明，既有外部服务 skip 保�
 不增加动画设置、设计系统、Provider、后端能力、状态/恢复类型、队列或迁移；
 不将可选视觉调整、固定像素/时长或过程工具作为新阻塞。A 拥有 Slice 最终接受与关闭。
 
-### Developer Completion Report
+### Developer Completion Report — 2026-11-07 fix
 
-实现候选：ad81eb6be204aee7baf91a1a48273675a554f872（2026-11-06 23:53 +08:00）。
-提交包含主页面身份映射、共享内容淡入与单元/E2E 用例，共 6 个产品/测试文件。
-当前 Task 未随该提交记录 Developer 实际命令/结果，本报告不代填或推定通过。
-修正后补充精确 checkpoint、受影响测试实际结果及本轮测试时间，交 READY FOR B REVIEW。
+实现候选：`4c511fc7d18d66d01c70c7a695f88c77376135f6`（2026-11-07 00:20 +08:00），
+Task Base 仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`。原候选 ad81eb6b 的
+B50.4-01 在同一 Task 内修正；未重设 Base、未扩大范围、未推送或部署。本报告记录后由
+docs checkpoint 交回 **READY FOR B REVIEW**，不自行宣告 PASS。
+
+**修正事实**
+
+- `ShellPageSurface` 只在主页面挂载时渲染一次 `mf-page-surface-enter-start`；下一帧移除
+  该启动类，由 `mf-page-surface-entering` 触发一次 200ms opacity transition。启动类不会
+  因同页查询、标签、卡片或刷新重新添加。
+- `styles.css` 删除持久 `animation`/keyframes；`:has(...)` 在真实卡片/抽屉层存在时将本次
+  进入立即落到 opacity 1、transition none。层移除后 opacity/transition 不再变化，因此
+  不会重播；reduced-motion 下直接 opacity 1、transition none。
+- 扩展现有 `page-transition.spec.ts`：九个主页面逐页采样进入过程的 opacity/启动类；新增
+  自动化真实“新建→取消”两次（1536×1024）与存储真实“查看→关闭”两次（390×844）的关闭后
+  过程断言；保留 forward detail overlay、认证续转、键盘与 reduced-motion 用例。
+  `AppShell.test.tsx` 补充启动类只移除一次的单元断言。
+- 未改路由、权限、API、Storage、schema、业务命令或卡片业务；仅共享切页呈现与测试。
+
+**实际执行（cwd `web/`，除注明外）**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npx playwright test tests/e2e/page-transition.spec.ts -g "same-page card open and close never replays"`（修正前，当前 dist） | 失败：`automation.every(sample.opacity === 1)` 为 false，复现关闭后整页变浅；随后同命令在修正后通过 |
+| 同上（修正后） | 1 passed（4.9s） |
+| `npx playwright test tests/e2e/page-transition.spec.ts` | 5 passed（11.2s），含九页逐页采样、同页关闭、forward overlay、认证/键盘/reduced-motion |
+| `npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts src/routes/router.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/modal-card.test.tsx` | 5 files / 68 tests passed（3.64s） |
+| `npm run typecheck` | passed |
+| `npx eslint src/shared/ui/AppShell.tsx src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.ts src/shared/navigation/destination-model.test.ts src/routes/router.tsx tests/e2e/page-transition.spec.ts` | passed |
+| `npx prettier --check`（上述文件及 `styles.css`） | passed |
+| `npm run build` | passed（150ms；保留既有大 chunk 提示） |
+| `npx playwright test tests/e2e/dashboard.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/automation-presentation.spec.ts tests/e2e/task-center-layout.spec.ts` | 32 passed（14.9s） |
+| 根目录 `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+**测试时间**：本轮从 `2026-11-07 00:16:36 +08:00` 开始；可核实测试区间为
+00:17:11–00:17:14（修正前复现）、00:18:30–00:18:35（修正后回归）、
+00:18:39–00:18:50（完整 page-transition）、00:19:48–00:19:51（单元）、
+00:19:55–00:20:10（四个受影响 E2E），并集约 37 秒；构建/typecheck/静态检查发生在
+00:18:20–00:18:30 窗口，保守计入 10 秒，合计约 47 秒。按报告记录时点约 5.5 分钟
+工作窗口计，低于 30%（约 99 秒）。
+
+**剩余风险 / 未执行**：B 的全量 Web/Python 回归、完整默认 E2E、真实 Python 浏览器旅程、
+打包/安全/Slice 最终 T4 门禁未由 Developer 执行，不记为通过；浏览器证据来自 Playwright
+Chromium 1536×1024 与 390×844，B 仍须在最终候选上查看实际过程截图/trace 并完成其验收。
+未接触用户配置、运行数据库或生产媒体；预存 dirty/untracked 文件全部保留，不纳入 checkpoint。
 
 ### B Review Result — 2026-11-07
 
