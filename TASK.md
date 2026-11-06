@@ -4,25 +4,26 @@ Task50.3 已由 B 独立验收 **PASS**。完整报告及证据见
 ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d..a284c0135701d949afcae1cfe15fbba904eb16e0，
 最终实现 checkpoint 为 a7a2b669da4611efd84778aabd4435145bcfd159。
-用户已明确授权激活修订后的 Task50.4，本 Task 为唯一当前实施 Task，状态 PLANNED。
-本轮由 B 完成激活记录，待 Developer 实施，不自动启动 Developer，不推送或部署。
+用户已明确授权激活修订后的 Task50.4。本 Task 仍为唯一当前实施 Task，
+B 已复核实现候选 ad81eb6be204aee7baf91a1a48273675a554f872，结论 **FIX REQUIRED**。
+修正在同一 Task 内完成；原 Base、范围、验收及测试分工保持。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
-本次激活不改变 Slice 范围、Base、Task 验收或既有 Task 接受事实。
+本次复核不改变 Slice 范围、Base、Task 验收或既有 Task 接受事实。
 
 ```text
 Task ID: 50.4
 Task Type: SLICE
 Parent Slice: 50
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: TASK50.4 ONLY — EXPLICIT USER ACTIVATION
-Next Action: DEVELOPER IMPLEMENTS TASK50.4; THIS TURN ACTIVATION ONLY
+Next Action: SAME TASK FIX LOOP — PREVENT SAME-PAGE CARD CLOSE FROM REPLAYING PAGE ENTRY
 ```
 
 ### Goal 与真实代码缺口
@@ -179,17 +180,90 @@ Docker/重启等适用性依据最终差异说明，既有外部服务 skip 保�
 不增加动画设置、设计系统、Provider、后端能力、状态/恢复类型、队列或迁移；
 不将可选视觉调整、固定像素/时长或过程工具作为新阻塞。A 拥有 Slice 最终接受与关闭。
 
-### Developer Completion Report（待实施后填写）
+### Developer Completion Report
 
-精确 checkpoint / READY FOR B REVIEW、实际改动与取舍、受影响测试命令/结果、
-失败/风险和未完成项。测试时间与本轮总时间据实给出，无需全量验收材料包。
+实现候选：ad81eb6be204aee7baf91a1a48273675a554f872（2026-11-06 23:53 +08:00）。
+提交包含主页面身份映射、共享内容淡入与单元/E2E 用例，共 6 个产品/测试文件。
+当前 Task 未随该提交记录 Developer 实际命令/结果，本报告不代填或推定通过。
+修正后补充精确 checkpoint、受影响测试实际结果及本轮测试时间，交 READY FOR B REVIEW。
 
-### B Review Result
+### B Review Result — 2026-11-07
 
-尚无 Task50.4 实现候选，未进行本 Task 的 Base..Head 产品验收，不给出虚构 PASS。
-Task50.3 的 PASS 保持；Slice50 仍 ACTIVE：RO-1、RO-2、RO-3、RO-4 的库加载与自动化
-稳定性已有 B 接受记录，RO-4 的主页面过渡尚未交付。通过本 Task 后按上述 stop rule
-重评全部结果，完成最终门禁并交 A，不自动创建新 Task 或宣告 Slice CLOSED。
+```text
+Reviewed Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
+Reviewed Head: ad81eb6be204aee7baf91a1a48273675a554f872
+Decision: FIX REQUIRED
+Task blocker: B50.4-01 — 关闭同页弹卡重新播放整页淡入
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+已独立审查完整 Base..Head 累计 10 个文件（4 个规划/激活文档、6 个产品/测试文件），
+没有重设 Base 或扩大 Task。主页面身份覆盖九个既有侧栏入口，认证允许范围未更改；
+本轮先通过实际入口复现以下必需结果缺口，依据 workflow §6 提前返回修正，未运行昂贵门禁。
+
+**B50.4-01 / P1：同页关闭弹卡后，整个页面重新变浅再恢复。**
+
+用户旅程：连接隔离测试实例 → 首页 → 左侧“自动化” → “新建自动化任务” →
+不改输入，点击“取消” → 回到同一自动化列表。桌面 1536×1024 与窄屏 390×844
+各重复两次，四次关闭均触发 `mf-shell-page-enter`，主内容透明度从 0.2 恢复；
+侧栏/页头保持正常颜色，列表整片变浅。保持的是同一主页面和同一内容容器，
+并非正常跨页，也不是弹卡自身的退出动画；未发出业务写请求。
+不满足本 Task 的同页排除验收、Slice RO-4 / AC-8 与 V2-UX-012。
+
+引入点为候选实现 ad81eb6b。`ShellPageSurface` 保留进入类至该主页面卸载；
+styles.css 的 `:has(...)` 在卡片存在时将动画声明改为 `none`，卡片离开后恢复
+`mf-shell-page-enter`，浏览器重新播放。新 E2E 检查了卡片打开时的遮罩和容器存在，
+关闭后只等待卡片消失，没有检查之后的整页可见过程，因此不能证明同页排除已完成。
+
+### 本次修正开发指导（同一 Task）
+
+1. 将一次跨主页面的入场效果限制在该次进入过程。正常结束，以及为已有叠层停止/跳过
+   该次效果后，都不能因叠层移除而再次获得入场动画。保留立即开卡时的全屏遮罩、定位、
+   原有卡片动效和下次真正跨主页面时的过渡；由 Developer 选择最小呈现修正。
+2. 扩展现有 `tests/e2e/page-transition.spec.ts`，从上述真实入口完成打开、取消、重复
+   打开/关闭，观察关闭后的整页过程。至少覆盖自动化以及一个共享卡片入口，桌面和窄屏
+   按代表风险组合；跨主页面后仍有过渡、同页关闭没有整页淡入。以真实可见结果结合事件/
+   过程采样验证，不再只看元素存在或一直保留的 animationName，不增加固定耗时/像素门槛。
+3. 按原 Developer affected-test 计划运行受影响检查，并加入：
+
+       npm run test:e2e -- tests/e2e/page-transition.spec.ts
+
+   先确认本次失败旅程通过，再交回同一 Task。B 负责修正候选的完整 Web、指定原生旅程
+   和最终适用门禁；本次提前 FIX REQUIRED 不免除这些验收。
+
+### 本轮实际验证与证据
+
+本地证据目录（未发布到远程）：
+`.git/validation-evidence/ad81eb6b/B50.4-review/`。
+
+| 验证 | 实际结果 / 证据 |
+|---|---|
+| `python3 scripts/check_governance.py` | PASS（开始与记录前）；保留现有工作区杂项 |
+| `git diff --check ea8aad6..HEAD`、`git diff --check` | PASS |
+| 根目录 `npm --prefix web run build` | PASS，构建该候选生产资产；保留现有大 chunk 提示，build.log |
+| cwd web/，`node tests/fake-server.mjs`；`node ../.git/validation-evidence/ad81eb6b/B50.4-review/card-close-repro.mjs` | 真实 UI 复现，断言失败退出 1；1536/390 各 2 次关闭，4 次整页重播、0 次业务写请求。card-close-repro.log/json/mjs |
+| 桌面/窄屏实际过程图与 trace | 已查看 close-1536-1.png、close-390-1.png，确认整片内容变浅；close-1536-trace.zip、close-390-trace.zip 保留完整操作过程 |
+| 完整 Web 静态/单元/默认 E2E、指定 Python 浏览器、Slice 最终 T4/安全/打包 | 未运行，先修复已复现阻塞；不记为 PASS |
+
+测试计时：可核实记录窗口从本地 2026-11-07 00:07:21 开始（此前已完成文档及源码审查，
+未计入分母），结束见本目录 review-end.txt。构建 00:07:21–00:07:22、初次复现
+00:07:42.754–00:07:44.477、双视口复现 00:08:34.157–00:08:39.336，
+区间并集约 8 秒；计入治理/whitespace 等短检查后保守不足 15 秒，
+小于已记录有效工作窗口的 50%，未通过等待补足比例。
+
+### 全部 Slice 结果重评
+
+| Required Outcome / Surface | 当前判断 |
+|---|---|
+| RO-1：任务详情卡片、可读性和既有操作 | 保留 Task50.2 B PASS；本候选的共享呈现回归仍待纠正后验收 |
+| RO-2：存储卡片/菜单 | 保留 Task50.1 B PASS；共享卡片退出需纳入本次回归 |
+| RO-3：两种库布局、菜单、四个配置入口 | 保留 Task50.3 B PASS；最终候选原生/安全门禁待完成 |
+| RO-4：库加载与自动化新建/编辑稳定性 | 保留 Task50.1/50.3 已接受结果；本次整页重播由当前 Task 修正 |
+| RO-4：九个主页面过渡及同页排除 | 已有实现，但同页排除不满足，B50.4-01 阻塞 |
+| 最终 AC-11 与全部 Surface 的共同安全/打包/原生验证 | 未完成，尚不能提交 Closure Packet |
+
+继续同一 Task 修正；不创建新 Task，不更改 Slice/Roadmap 边界，不宣告 Slice READY 或 CLOSED。
 
 ### 规划基线与本次激活
 
