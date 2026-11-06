@@ -2330,25 +2330,33 @@ button.mf-grid-button {
 
 /* Shared main-page transition (Slice50 RO-4 / V2-UX-012). ------------------
    The surface is keyed by the existing sidebar destination identity, never by
-   every URL change. Only this entering class animates; after the animation
-   ends the base style is restored, so no lasting opacity/stacking context is
-   left around business content. A fade keeps geometry stable, so sticky
-   controls and the fixed card layers never move during the transition. */
+   every URL change. The mount-time start class lowers opacity for one frame;
+   removing it runs one opacity transition. It is never re-added, so a
+   same-page card/menu or a refresh cannot restart a finished or skipped
+   entry. A fade keeps geometry stable, so sticky controls and the fixed card
+   layers never move during the transition. */
 .mf-page-surface {
   min-width: 0;
 }
 
 .mf-page-surface-entering {
-  animation: mf-shell-page-enter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mf-page-surface-enter-start {
+  opacity: 0.2;
+  transition: none;
 }
 
 /*
  * Cards and drawers are rendered inside the business content and use fixed
  * viewport positioning. An opacity below 1 creates a stacking context that
  * could confine their layer while the page is settling. When one of the
- * existing overlay layers is present, drop the transient entry animation: the
- * card keeps its own animation, full-viewport backdrop, centering and stacking,
- * and the target page is immediately usable.
+ * existing overlay layers is present, finish the entry immediately at full
+ * opacity: the card keeps its own animation, full-viewport backdrop,
+ * centering and stacking, and the target page is immediately usable. Removing
+ * the overlay later changes neither opacity nor transition, so the entry
+ * cannot replay.
  */
 .mf-page-surface-entering:has(
   .mf-modal-layer,
@@ -2356,21 +2364,15 @@ button.mf-grid-button {
   .mf-dialog-overlay,
   .mf-rules-drawer-layer
 ) {
-  animation: none;
-}
-
-@keyframes mf-shell-page-enter {
-  from {
-    opacity: 0.2;
-  }
-  to {
-    opacity: 1;
-  }
+  opacity: 1;
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mf-page-surface-entering {
-    animation: none;
+  .mf-page-surface-entering,
+  .mf-page-surface-enter-start {
+    opacity: 1;
+    transition: none;
   }
 }
 

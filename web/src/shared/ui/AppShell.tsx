@@ -75,11 +75,11 @@ export function useStorageSearch(): StorageSearchContextValue {
  * It is keyed by the sidebar page identity, so a transition can only start by
  * mounting a new surface for a different main page. A same-page child route,
  * query, tab, filter, card or refresh keeps this element (and its business
- * content) mounted. The entering class is captured at mount: it persists for
- * that page's lifetime, so later query re-renders cannot cut the animation or
- * replay it. `:has(...)` in the stylesheet drops the transient
- * transform/opacity while one of the existing fixed overlay layers is open,
- * keeping the card, backdrop, viewport centering and menu stacking intact.
+ * content) mounted. The mount-time start class lowers opacity for one frame;
+ * the next frame removes it and the entering class runs one opacity
+ * transition. Because the start class is never re-added, a same-page overlay
+ * (which suppresses the transient opacity through `:has(...)` in the
+ * stylesheet) cannot replay the entry when it closes.
  */
 function ShellPageSurface({
   identity,
@@ -90,16 +90,23 @@ function ShellPageSurface({
   readonly entering: boolean;
   readonly children: ReactNode;
 }) {
-  const [startedWithTransition] = useState(entering);
+  const [starting, setStarting] = useState(entering);
+  useEffect(() => {
+    if (!starting) return;
+    const frame = window.requestAnimationFrame(() => setStarting(false));
+    return () => window.cancelAnimationFrame(frame);
+  }, [starting]);
   return (
     <div
-      className={
-        startedWithTransition
-          ? "mf-page-surface mf-page-surface-entering"
-          : "mf-page-surface"
-      }
+      className={[
+        "mf-page-surface",
+        entering ? "mf-page-surface-entering" : "",
+        starting ? "mf-page-surface-enter-start" : "",
+      ]
+        .filter((value) => value !== "")
+        .join(" ")}
       data-main-page={identity ?? "outside"}
-      data-page-transition={startedWithTransition ? "enter" : "initial"}
+      data-page-transition={entering ? "enter" : "initial"}
     >
       {children}
     </div>

@@ -88,7 +88,19 @@ describe("AppShell", () => {
     );
     expect(operationsSurface).not.toBeNull();
     expect(operationsSurface?.dataset.pageTransition).toBe("enter");
+    expect(
+      operationsSurface?.classList.contains("mf-page-surface-entering"),
+    ).toBe(true);
     expect(homeSurface?.isConnected).toBe(false);
+
+    // The mount-time start class lowers opacity for the first frame only.
+    // Removing it starts the one transition; it is never re-added for this
+    // mounted main page.
+    await waitFor(() =>
+      expect(
+        operationsSurface?.classList.contains("mf-page-surface-enter-start"),
+      ).toBe(false),
+    );
 
     // The closed task list is a real child of the task center: it keeps the
     // exact same surface/DOM and never replays the main-page transition.
@@ -100,6 +112,9 @@ describe("AppShell", () => {
       operationsSurface,
     );
     expect(operationsSurface?.dataset.pageTransition).toBe("enter");
+    expect(
+      operationsSurface?.classList.contains("mf-page-surface-enter-start"),
+    ).toBe(false);
 
     // A real sidebar page change replaces the surface with the entering state.
     await user.click(screen.getByRole("link", { name: "Library" }));
@@ -111,6 +126,14 @@ describe("AppShell", () => {
     );
     expect(librarySurface).not.toBeNull();
     expect(librarySurface?.dataset.pageTransition).toBe("enter");
+    expect(librarySurface?.classList.contains("mf-page-surface-entering")).toBe(
+      true,
+    );
+    await waitFor(() =>
+      expect(
+        librarySurface?.classList.contains("mf-page-surface-enter-start"),
+      ).toBe(false),
+    );
     expect(operationsSurface?.isConnected).toBe(false);
     expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
     expect(document.querySelector("[data-main-page]")).toBe(librarySurface);

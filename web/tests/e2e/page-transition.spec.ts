@@ -17,6 +17,8 @@ interface NavigationFrame {
   readonly mainPage: string | null;
   readonly pageTransition: string | null;
   readonly animationName: string;
+  readonly transitionDuration: string;
+  readonly startClass: boolean;
   readonly opacity: number;
   readonly transform: string;
   readonly sidebar: string;
@@ -41,6 +43,8 @@ async function startNavigationSampler(page: Page): Promise<void> {
       mainPage: string | null;
       pageTransition: string | null;
       animationName: string;
+      transitionDuration: string;
+      startClass: boolean;
       opacity: number;
       transform: string;
       sidebar: string;
@@ -66,6 +70,9 @@ async function startNavigationSampler(page: Page): Promise<void> {
         mainPage: surface?.dataset.mainPage ?? null,
         pageTransition: surface?.dataset.pageTransition ?? null,
         animationName: style?.animationName ?? "",
+        transitionDuration: style?.transitionDuration ?? "",
+        startClass:
+          surface?.classList.contains("mf-page-surface-enter-start") ?? false,
         opacity: style === null ? 1 : Number(style.opacity),
         transform: style?.transform ?? "",
         sidebar: box(document.querySelector(".mf-shell-sidebar")),
@@ -127,6 +134,23 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
       () => document.documentElement.scrollWidth - window.innerWidth,
     ),
   ).toBeLessThanOrEqual(1);
+}
+
+async function expectSurfaceSettled(page: Page, pageId: string): Promise<void> {
+  const surface = page.locator(`[data-main-page="${pageId}"]`);
+  await expect(surface).toHaveCount(1);
+  await expect
+    .poll(() =>
+      surface.evaluate((element) => getComputedStyle(element).opacity),
+    )
+    .toBe("1");
+  await expect
+    .poll(() =>
+      surface.evaluate((element) =>
+        element.classList.contains("mf-page-surface-enter-start"),
+      ),
+    )
+    .toBe(false);
 }
 
 async function openSidebarLink(page: Page, name: string): Promise<void> {
@@ -217,9 +241,8 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
     }
   });
 
-  for (const [index, destination] of DESTINATIONS.entries()) {
-    const sampling = index === 0;
-    if (sampling) await startNavigationSampler(page);
+  for (const destination of DESTINATIONS) {
+    await startNavigationSampler(page);
     await openSidebarLink(page, destination.name);
     await expect.poll(() => currentPath(page)).toBe(destination.path);
     await expect(
@@ -230,43 +253,41 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
         })
         .first(),
     ).toBeVisible();
-    // Let the destination's own first read finish its existing URL/state
-    // synchronization before the next click; the page transition is not a
-    // loading gate, but the journey itself still reads real data. The first
-    // page additionally waits for its frame sampler below.
-    if (!sampling) await page.waitForTimeout(220);
     const surface = page.locator(`[data-main-page="${destination.page}"]`);
     await expect(surface).toHaveCount(1);
     await expect(surface).toHaveAttribute("data-page-transition", "enter");
-    expect(
-      await surface.evaluate((element) =>
-        getComputedStyle(element).animationName.includes("mf-shell-page-enter"),
-      ),
-    ).toBe(true);
     await expect(
       page.getByRole("navigation", { name: "Primary" }),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
-    if (sampling) {
-      await page.waitForTimeout(280);
-      const samples = await stopNavigationSampler(page);
-      const entered = samples.filter((sample) => sample.mainPage === "files");
-      expect(entered.length).toBeGreaterThan(2);
-      expect(
-        entered.some(
-          (sample) =>
-            sample.animationName.includes("mf-shell-page-enter") &&
-            (sample.opacity < 1 || sample.transform !== "none"),
-        ),
-      ).toBe(true);
+    // Wait for the destination's first read and capture both the 200ms entry
+    // transition and its settled frame. The entry must actually lower
+    // opacity, then return to exactly 1. It is a transition, not a persistent
+    // animation, so a later same-page card cannot replay it.
+    await page.waitForTimeout(280);
+    const samples = await stopNavigationSampler(page);
+    const entered = samples.filter(
+      (sample) =>
+        sample.mainPage === destination.page &&
+        sample.pageTransition === "enter",
+    );
+    expect(entered.length).toBeGreaterThan(2);
+    expect(entered.some((sample) => sample.opacity < 1)).toBe(true);
+    expect(entered.at(-1)?.opacity).toBe(1);
+    expect(entered.at(-1)?.startClass).toBe(false);
+    expect(
+      entered.every(
+        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
+      ),
+    ).toBe(true);
+    expect(
+      Math.max(...entered.map((sample) => sample.overflow)),
+    ).toBeLessThanOrEqual(1);
+    expect(page.locator("[data-main-page]")).toHaveCount(1);
+    if (destination.page === "files") {
+      // The first cross-page entry is the representative stable-shell check.
       expect(new Set(entered.map((sample) => sample.sidebar)).size).toBe(1);
       expect(new Set(entered.map((sample) => sample.topbar)).size).toBe(1);
-      expect(
-        Math.max(...entered.map((sample) => sample.overflow)),
-      ).toBeLessThanOrEqual(1);
-      expect(
-        page.locator('[data-main-page="home"], [data-main-page="library"]'),
-      ).toHaveCount(0);
       await page.screenshot({
         path: testInfo.outputPath("main-page-transition-1536.png"),
       });
@@ -356,7 +377,7 @@ test("a forwarded detail card keeps its viewport overlay while the page enters",
   // real browser Forward twice. The second Forward re-enters the exact
   // selected-run URL, so the new page surface and its detail card exist in the
   // same frame; the fixed card/backdrop must not be transformed, clipped or
-  // confined by the page-entry animation.
+  // confined by the page-entry transition.
   await page.goBack();
   await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
   await page.goForward();
@@ -371,6 +392,9 @@ test("a forwarded detail card keeps its viewport overlay while the page enters",
   expect(withDetail.length).toBeGreaterThan(2);
   expect(withDetail.every((sample) => sample.transform === "none")).toBe(true);
   expect(withDetail.every((sample) => sample.opacity === 1)).toBe(true);
+  expect(withDetail.every((sample) => sample.transitionDuration === "0s")).toBe(
+    true,
+  );
   expect(
     withDetail.every(
       (sample) => !sample.animationName.includes("mf-shell-page-enter"),
@@ -459,6 +483,93 @@ test("unsaved automation input holds the current page until the operator discard
   expect(writes).toEqual([]);
 });
 
+test("same-page card open and close never replays the main-page entry", async ({
+  page,
+}) => {
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.url().includes("/api/") &&
+      request.method() !== "GET" &&
+      request.method() !== "HEAD"
+    ) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  await openSidebarLink(page, "Automation");
+  await expect(
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
+  ).toBeVisible();
+  await expectSurfaceSettled(page, "automation");
+
+  // Desktop: the real creation entry, opened and cancelled twice without any
+  // input. The list is the same main page throughout, so no frame after the
+  // card's own exit may fade the page again.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await startNavigationSampler(page);
+    await page.getByRole("link", { name: "新建自动化任务" }).click();
+    await expect(
+      page.getByRole("heading", { name: "新建自动化任务" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "取消" }).click();
+    await expect(
+      page.getByRole("heading", { name: "新建自动化任务" }),
+    ).toHaveCount(0);
+    await page.waitForTimeout(260);
+    const samples = await stopNavigationSampler(page);
+    const automation = samples.filter(
+      (sample) => sample.mainPage === "automation",
+    );
+    expect(automation.length).toBeGreaterThan(2);
+    expect(automation.every((sample) => sample.startClass === false)).toBe(
+      true,
+    );
+    expect(automation.every((sample) => sample.opacity === 1)).toBe(true);
+    expect(
+      automation.every(
+        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
+      ),
+    ).toBe(true);
+  }
+
+  // Narrow: the shared Storage detail card opened from the real inventory.
+  // It uses the shared modal layer, so the page surface must keep its stable
+  // full-opacity layer before, during and after the card.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSidebarLink(page, "Storage management");
+  await expect(
+    page.getByRole("heading", { name: "存储管理", exact: true }),
+  ).toBeVisible();
+  await expectSurfaceSettled(page, "storage");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await startNavigationSampler(page);
+    const view = page.getByRole("button", { name: "查看 本地媒体" });
+    await view.focus();
+    await page.keyboard.press("Enter");
+    const detail = page.getByRole("dialog", { name: "存储详情 本地媒体" });
+    await expect(detail).toBeVisible();
+    await detail.getByRole("button", { name: "关闭存储详情" }).click();
+    await expect(detail).toHaveCount(0);
+    await page.waitForTimeout(260);
+    const samples = await stopNavigationSampler(page);
+    const storage = samples.filter((sample) => sample.mainPage === "storage");
+    expect(storage.length).toBeGreaterThan(2);
+    expect(storage.every((sample) => sample.startClass === false)).toBe(true);
+    expect(storage.every((sample) => sample.opacity === 1)).toBe(true);
+    expect(
+      storage.every(
+        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
+      ),
+    ).toBe(true);
+  }
+
+  // Opening and closing these cards never submitted a command.
+  expect(writes).toEqual([]);
+});
+
 test("authentication continuation, narrow keyboard and reduced motion land on the target page", async ({
   page,
 }) => {
@@ -501,11 +612,11 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   await expect(reducedSurface).toHaveCount(1);
   expect(
     await reducedSurface.evaluate((element) => ({
-      animation: getComputedStyle(element).animationName,
+      transitionDuration: getComputedStyle(element).transitionDuration,
       opacity: getComputedStyle(element).opacity,
       transform: getComputedStyle(element).transform,
     })),
-  ).toEqual({ animation: "none", opacity: "1", transform: "none" });
+  ).toEqual({ transitionDuration: "0s", opacity: "1", transform: "none" });
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
