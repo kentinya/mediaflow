@@ -435,22 +435,19 @@ async function startExitSampler(page: Page): Promise<void> {
       backdropOpacity: number | null;
     }[] = [];
     const started = performance.now();
-    let stopped = false;
+    const stopped = false;
     const tick = () => {
       const layer = document.querySelector<HTMLElement>(".mf-modal-layer");
       const card = document.querySelector<HTMLElement>(".mf-modal-card");
-      const backdrop = document.querySelector<HTMLElement>(
-        ".mf-modal-backdrop",
-      );
+      const backdrop =
+        document.querySelector<HTMLElement>(".mf-modal-backdrop");
       samples.push({
         at: performance.now() - started,
         exiting: layer?.classList.contains("mf-modal-layer-exiting") ?? false,
         cardOpacity:
           card === null ? null : Number(getComputedStyle(card).opacity),
         backdropOpacity:
-          backdrop === null
-            ? null
-            : Number(getComputedStyle(backdrop).opacity),
+          backdrop === null ? null : Number(getComputedStyle(backdrop).opacity),
       });
       if (!stopped && performance.now() - started < 1_500) {
         requestAnimationFrame(tick);
@@ -465,8 +462,9 @@ async function startExitSampler(page: Page): Promise<void> {
 
 async function readExitSamples(page: Page): Promise<ExitFrameSample[]> {
   return page.evaluate(
-    () => (window as unknown as { __exitSampler: ExitSampler }).__exitSampler
-      .samples,
+    () =>
+      (window as unknown as { __exitSampler: ExitSampler }).__exitSampler
+        .samples,
   );
 }
 
@@ -487,15 +485,16 @@ function expectExitPlayed(samples: ExitFrameSample[]): void {
   expect(first.cardOpacity).not.toBeNull();
   expect(first.cardOpacity ?? 0).toBeGreaterThan(0);
   expect(last.cardOpacity ?? 1).toBeLessThan(first.cardOpacity ?? 1);
-  expect(last.backdropOpacity ?? 1).toBeLessThan(
-    first.backdropOpacity ?? 1,
-  );
+  expect(last.backdropOpacity ?? 1).toBeLessThan(first.backdropOpacity ?? 1);
 }
 
-function storageMutations(
-  requests: string[],
-): string[] {
-  return requests.filter((entry) => entry.startsWith("POST") || entry.startsWith("PUT") || entry.startsWith("DELETE"));
+function storageMutations(requests: string[]): string[] {
+  return requests.filter(
+    (entry) =>
+      entry.startsWith("POST") ||
+      entry.startsWith("PUT") ||
+      entry.startsWith("DELETE"),
+  );
 }
 
 test("closes view, add and edit cards through the shared visible exit", async ({
