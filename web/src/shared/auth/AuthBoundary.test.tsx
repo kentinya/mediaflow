@@ -72,12 +72,41 @@ describe("AuthBoundary", () => {
   });
 
   it("keeps a still-authenticated operator on the deep route", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") {
+        return jsonResponse({
+          surface: "media_libraries",
+          items: [],
+          total: 0,
+          sideEffects: "none",
+        });
+      }
+      if (url === "/api/v1/system/status") {
+        return jsonResponse({
+          system: {
+            configuration_valid: true,
+            configuration_authority: "MANAGED",
+            configuration_snapshot_id: "active-1",
+          },
+          storages: { total: 0, truncated: false, items: [] },
+          resource_libraries: { total: 0, truncated: false, items: [] },
+        });
+      }
+      throw new Error(`unexpected test request: ${url}`);
+    });
     authStore.setToken("boundary-token");
-    renderApp("/ui-v2/medialib/files");
+    const { router } = renderApp("/ui-v2/medialib/files");
     expect(authStore.getIntendedPath()).toBeNull();
+    // The explicit empty list is what produces the empty state; a still-pending
+    // library read is never treated as the deep-route success signal.
     expect(
       await screen.findByRole("heading", { name: "尚未添加媒体库" }),
     ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/medialib/files");
+    expect(authStore.getToken()).toBe("boundary-token");
+    expect(authStore.getIntendedPath()).toBeNull();
+    expect(screen.queryByLabelText("API token")).toBeNull();
   });
 
   it("replaces an earlier intention with the operator's newest route choice", async () => {
