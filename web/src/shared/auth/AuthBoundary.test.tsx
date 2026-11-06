@@ -6,9 +6,7 @@ import { renderApp } from "../../../tests/utils";
 
 const TOKEN = "boundary-connect-token";
 
-function stubFetch(
-  implementation: () => Promise<Response>,
-): ReturnType<typeof vi.fn> {
+function stubFetch(implementation: typeof fetch): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(implementation);
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
