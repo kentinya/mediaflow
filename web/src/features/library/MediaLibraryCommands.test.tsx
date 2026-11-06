@@ -993,7 +993,7 @@ describe("MediaLibrary Files command surface", () => {
     expect(dialogText(dialog)).toContain("请刷新目录核实实际状态");
   });
 
-  it("prunes a deleted directory from the tree and remaps a renamed entry", async () => {
+  it("prunes a deleted directory from the refreshed listing after visiting it", async () => {
     stubCommandSurface({
       commandResponses: [
         () =>
@@ -1020,12 +1020,12 @@ describe("MediaLibrary Files command surface", () => {
     });
     const user = userEvent.setup();
     await openPage();
-    const tree = screen.getByLabelText("目录", { exact: true });
-    expect(
-      within(tree).getByRole("button", { name: "Season 1" }),
-    ).toBeVisible();
-    // Enter the directory so it becomes visited memory, then go back to root.
-    await user.click(within(tree).getByRole("button", { name: "Season 1" }));
+    const folderRow = screen.getByRole("row", { name: "文件条目 Season 1" });
+    // Enter the directory through its visible folder row, then go back to root.
+    await user.click(
+      within(folderRow).getByRole("button", { name: "Season 1" }),
+    );
+    await screen.findByRole("row", { name: "文件条目 Season 1" });
     await user.click(screen.getByRole("button", { name: "返回媒体库根目录" }));
     await rowMenu(user, "Season 1");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
@@ -1035,13 +1035,10 @@ describe("MediaLibrary Files command surface", () => {
       expect(within(dialog).queryByRole("button", { name: "删除" })).toBeNull(),
     );
     await user.click(within(dialog).getByRole("button", { name: "关闭" }));
-    // The deleted directory leaves the tree memory instead of lingering.
+    // The refreshed live listing no longer contains the deleted directory.
     await waitFor(() =>
       expect(
-        within(screen.getByLabelText("目录", { exact: true })).queryByRole(
-          "button",
-          { name: "Season 1" },
-        ),
+        screen.queryByRole("row", { name: "文件条目 Season 1" }),
       ).toBeNull(),
     );
   });

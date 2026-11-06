@@ -217,14 +217,15 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 主要改动文件：`web/src/features/library/{StorageFilesPage.tsx,MediaLibraryFilesPage.tsx,
 LibraryCardStrip.tsx,library-loading.tsx}`、共享样式 `web/src/shared/ui/styles.css`，
-以及两页组件测试、媒体库配置弹卡测试和受布局替换直接影响的三份 fake E2E 与
-`operations-inventory.python.spec.ts` 的入口断言。
+以及两页组件测试、媒体库配置弹卡测试、媒体库命令测试和受布局替换直接影响的三份
+fake E2E 与 `operations-inventory.python.spec.ts` 的入口断言。
 
 **Developer 实际验证（cwd `web/`）：**
 
 | 命令 | 实际结果 |
 |---|---|
 | `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 4 files / 99 tests passed |
+| `npm run test -- run src/features/library`（直接受影响的整个库特性目录） | 7 files / 128 tests passed |
 | `npm run typecheck` | passed |
 | `npm run build` | passed |
 | `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts` | 79 passed |
@@ -239,7 +240,7 @@ ignored `web/test-results/`，动态进出过程与 reduced-motion 仍由 B 在�
 **未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files` 与 Storage/自动化原生
 模块、wheel/源码外 smoke、Docker/重启；这些不是 Developer 本轮失败的证据。剩余风险：
 窄屏表格列仍沿用既有压缩规则（本 Task 未重做表格）；分页/动画/迟到响应的更广组合和
-真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 4 分钟，低于本轮实际工作时间的 30%。
+真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 5 分钟，低于本轮实际工作时间的 30%。
 
 B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
 
