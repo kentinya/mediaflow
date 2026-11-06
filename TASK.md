@@ -3,7 +3,7 @@
 Authority：已提交 `575898ebaae593568be59699bb40116f9e6f2d91:SLICE.md` 的 RO-1、
 AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workflow.md) 与
 [Task 模板](Task/TEMPLATE.md)。用户于 2026-11-06 明确授权激活 Task50.2，作为当前唯一
-活动实施 Task。当前已收到实现候选；B 本轮独立复核结论为 FIX REQUIRED，修复仍在本 Task 内。
+活动实施 Task。当前已收到修复候选；B 上一轮独立复核结论为 FIX REQUIRED，两项 P1 已在本 Task 内修复并进入新一轮复核。
 
 激活前现场：分支 `main`，HEAD `5b5f319b1d77b9673a447bf60c5d7a21fcbcc956`；治理预检 PASS，
 仓库与 Git 可写。Task Base 保持原值，纯文档提交不重设它。预存 `mediaflow/.DS_Store` 修改
@@ -13,7 +13,7 @@ AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workfl
 Task ID: 50.2
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Activation: USER AUTHORIZED — 2026-11-06
 Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
 Difficulty: High
@@ -358,3 +358,82 @@ wheel/源码外消费及最终视觉/安全验收均 **待修复候选由 B 执�
 RO-1 仍未满足；RO-2 存储和 RO-4 自动化稳定性保持 Task50.1 的已接受事实；RO-3 两种库
 与 RO-4 主页面切换/库加载仍未交付。Slice50 保持 ACTIVE，本轮不另建 Task，不交 Closure
 Packet，不进行 A 终审或关闭。下一步为 Developer 在 **同一 Task50.2** 修复上述两项后重新交接。
+
+## Developer Completion Report — B50.2 修复轮
+
+状态：**READY FOR B REVIEW**（两项 B P1 已修复，Developer 交接，未自审 PASS）。
+
+```text
+实现 checkpoint: 本报告所在提交（单个修复 checkpoint）
+分支: main
+Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
+B 审查范围: Task Base..本报告提交 HEAD
+本轮工作/测试时间: 全轮约 35 分钟；测试运行墙钟合计约 2 分钟（含失败重跑、真实探测和并行命令，低于 30%）
+```
+
+工作区预存的 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 等保持原样，
+未暂存、未纳入 checkpoint。共享 `modal-card.tsx`、`AppShell`、存储和自动化生产代码未修改。
+
+### B50.2-01 — 列表滚动位置
+
+- 在 `OperationsLanding.tsx` 的真实打开/关闭链路使用 TanStack Router 已有局部保滚动方式：
+  `selectRun`、`closeRun`、`applyDetailState`、`openProblemRun`、`closeProblemRun`、
+  `turnProblemPage`、`openProblemItemEvidence` 均传 `resetScroll: false`。详情打开、卡片内
+  tab/filter/证据切换、关闭、问题文件打开证据与返回不再把页面导航回顶部；普通筛选、视图
+  切换和跨主页面导航保持原 reset 语义。未改共享滚动锁，也没有先回顶再滚回。
+- 新增 Node E2E：从已滚动列表实际点击 `Movies，手动整理详情`，在 1536×600 和 390×844
+  分别验证打开、关闭按钮/Escape、浏览器 Back 后 `scrollY` 仍为打开前的值、入口行仍在视口
+  且焦点回到入口。另新增组件回归：问题文件打开和“返回任务列表”期间不调用重置滚动的
+  `window.scrollTo`，URL 保留 `view` 并清除 `problemRun`。
+- B 的原始 fake 探测脚本在修复后得到 `before/opened/closed = 461/461/461`；入口焦点仍回到
+  原名称按钮。
+
+### B50.2-02 — 原生条目决定在途/未知的重开
+
+- 新增 landing 级 `task-item-recovery-session.tsx`，在可关闭卡片之上按
+  `principal + runId + taskId + itemId` 保存每项的请求生命周期：`busy`、`pendingAction`、
+  `message`、`repeatLocked`、`submittedPreparationId`。provider 由当前认证 token 作 key，
+  换主体即重建；换 Task/条目使用不同 key，迟到结果不会串入其他主体。
+- `TaskItemRecoveryPanel` 的决定、忽略、Metadata 搜索、继续分析、生成摘要和精确摘要确认
+  统一写入该会话。关闭卡片不会取消实际请求；重开时：
+  - 请求仍在途：显示“操作请求仍在进行”和原动作名称，表单、决定与确认按钮禁用；
+  - 未知结果：保留原核对入口和锁定，显式核对读回当前持久状态后才解锁；
+  - 成功/明确拒绝：显示实际结果；确认未知仍绑定原 `submittedPreparationId` 核对，
+    不会把另一份摘要当成原请求。
+  - “继续此条目的安全分析”现在也在请求期间置 busy，避免同一条目并发提交。
+- 新增组件回归覆盖：原生决定在途关闭/重开保持等待且迟到成功落到重开面板；未知决定
+  关闭/重开后保留核对入口并只发 1 次 POST；精确摘要确认在途关闭/重开后保持锁定，未知
+  响应后按原 preparation 核对并显示已受理；切换条目不会显示另一条目的未知状态。
+
+### 实际执行结果（cwd、命令、结果）
+
+- 根目录 `python3 scripts/check_governance.py` → PASS（实施前、提交前）；`git diff --check` → 无输出。
+- 根目录 `node .git/validation-evidence/46be457f/B50.2-review/detail-probe.mjs` → 正常完成，
+  `scrollY` 由修复前的 `461/0/0` 变为 `461/461/461`。
+- 根目录真实 Python/SQLite harness 下逐项探测（同 B 的 `seed-task-item-recovery?kind=recognition`
+  与原生入口，仅延迟实际 `/recovery/decision`）：在途重开 `saveEnabled=false`、
+  `radioEnabled=false`、核对入口 0、POST 1；释放为未知后 `saveEnabled=false`、核对入口 1、
+  POST 1；显式核对后显示“已重新读取此 TaskItem 的持久状态”，POST 仍为 1。
+- `web/`：`npm run test -- run` 指定 7 个受影响文件 → 83 passed（含新增 4 个用例）。
+- `web/`：`npm run typecheck` → PASS；`npm run lint` → PASS；`npm run format:check` → PASS；
+  `npm run build` → PASS（仅既存 chunk >500 kB 提示）。
+- `web/`：`npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts`
+  → 37 passed（含新增滚动回归）。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts --workers=1
+  tests/e2e/operations-inventory.python.spec.ts --grep 'the selected run detail reads|detail tab
+  and filter context|dated views and 21-file|native .*recovery|native Metadata correction|
+  policy-permitted overwrite'` → 9 passed。
+
+B 的原始 `recovery-probe.mjs` 在修复后停在重开面板的 `Special` radio，因为该控件现在按设计
+禁用，脚本未再尝试重选；这不代表产品失败。逐项探测使用同一真实入口与数据，只改为读取
+“正在保存…”按钮和核对入口。
+
+### 剩余风险与留给 B 的验收点
+
+- 会话只在任务中心 landing 生命周期内保留；关闭/重开卡片保留，离开任务中心页面再返回按
+  普通页面导航处理，不宣称跨路由持久化。表单草稿不持久化；在途/未知时表单禁用并给出
+  原请求提示。
+- 新的 Node E2E 桌面回归使用 1536×600（同桌面宽度、内容可滚动），390×844 使用 B 的窄屏
+  场景；1536×1024 的全量截图/视觉验收仍由 B 执行。
+- 原生条目四类共享实现的完整全排列不再重复；本轮覆盖决定在途/未知、精确摘要确认在途/
+  未知和条目隔离。其余四类与完整 T4、wheel/源码外消费、最终视觉/安全验收仍由 B 执行。

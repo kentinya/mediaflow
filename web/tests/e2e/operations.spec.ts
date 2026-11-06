@@ -605,6 +605,53 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 });
 
+test("opening and closing the centered detail keeps the scrolled list position and focus", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+  const table = page.getByRole("table", { name: "运行清单" });
+  const opener = table.getByRole("button", {
+    name: "Movies，手动整理详情",
+    exact: true,
+  });
+  for (const viewport of [
+    { width: 1536, height: 600 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await opener.scrollIntoViewIfNeeded();
+    await opener.focus();
+    const before = await page.evaluate(() => window.scrollY);
+    expect(before).toBeGreaterThan(0);
+    await opener.click();
+    const detail = page.getByRole("dialog", { name: "运行详情" });
+    await expect(detail).toBeVisible();
+    // Opening the card is not a list visit: the exact row the operator was
+    // reading stays put behind the card.
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(before);
+    if (viewport.width < 720) {
+      await page.keyboard.press("Escape");
+    } else {
+      await detail.getByRole("button", { name: "关闭详情" }).click();
+    }
+    await expect(detail).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(before);
+    await expect(opener).toBeFocused();
+    await expect(opener).toBeInViewport();
+  }
+
+  // Browser Back restores the same list entry instead of the page top.
+  await opener.click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  const beforeBack = await page.evaluate(() => window.scrollY);
+  await page.goBack();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(beforeBack);
+  await expect(opener).toBeFocused();
+  await expect(opener).toBeInViewport();
+});
+
 test("the selected run detail is a centered card and the list keeps its width", async ({
   page,
 }) => {

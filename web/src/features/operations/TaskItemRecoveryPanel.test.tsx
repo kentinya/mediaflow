@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
 import fixture from "../../entities/operations/__fixtures__/manual-operations.json";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
+import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 
 const checkpointVersion = "b".repeat(64);
 
@@ -98,6 +100,30 @@ afterEach(() => {
   authStore.clearToken();
   vi.unstubAllGlobals();
 });
+
+/** The real panel under the landing-scoped session store, with a card-like
+ * close/reopen toggle that keeps the provider mounted. */
+function RecoveryPanelHarness() {
+  const [open, setOpen] = useState(true);
+  return (
+    <TaskItemRecoverySessionProvider>
+      <button type="button" onClick={() => setOpen(false)}>
+        关闭卡片
+      </button>
+      <button type="button" onClick={() => setOpen(true)}>
+        重新打开卡片
+      </button>
+      {open && (
+        <TaskItemRecoveryPanel
+          taskId="task-1"
+          itemId="item-1"
+          runId="task-1"
+          active={false}
+        />
+      )}
+    </TaskItemRecoverySessionProvider>
+  );
+}
 
 describe("TaskItemRecoveryPanel", () => {
   it("saves one exact decision, then explicitly queues analysis without file execution", async () => {
@@ -623,6 +649,142 @@ describe("TaskItemRecoveryPanel", () => {
     await waitFor(() => {
       expect(
         within(panel).queryByRole("button", { name: /确认继续整理/ }),
+      ).toBeNull();
+    });
+    expect(confirmAttempts).toBe(1);
+  });
+
+  it("keeps an in-flight confirmation locked across close and reopen, then reconciles the exact preparation", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = completedRecovery({
+      preparation_id: "preparation-1",
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "prepared",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: null,
+      execution_id: null,
+      hasExecutionAuthority: false,
+      next_action: "review the current plan summary and confirm",
+    });
+    let confirmAttempts = 0;
+    let releaseConfirm: (() => void) | undefined;
+    const confirmGate = new Promise<void>((resolve) => {
+      releaseConfirm = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/manual-recovery-preparations/preparation-1/confirm"
+        ) {
+          confirmAttempts += 1;
+          await confirmGate;
+          currentRecovery = completedRecovery({
+            preparation_id: "preparation-1",
+            preview_id: "preview-1",
+            intent_id: "intent-1",
+            source_task_id: "task-1",
+            source_item_id: "item-1",
+            status: "confirmed",
+            checkpoint_version: checkpointVersion,
+            configuration_snapshot_id: "active-1",
+            configuration_snapshot_digest: "d".repeat(64),
+            authorization_id: "authorization-1",
+            execution_id: "execution-1",
+            hasExecutionAuthority: false,
+            next_action: "inspect the linked execution",
+          });
+          throw new TypeError("network down");
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(<RecoveryPanelHarness />);
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理 1 项/,
+      }),
+    );
+    expect(
+      within(summary).getByRole("button", { name: "正在受理…" }),
+    ).toBeDisabled();
+    expect(confirmAttempts).toBe(1);
+
+    // Close the card while the exact confirmation is still in flight.
+    await user.click(screen.getByRole("button", { name: "关闭卡片" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "条目审核与恢复" }),
+      ).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "重新打开卡片" }));
+    const reopened = await screen.findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    expect(await within(reopened).findByText(/请求尚未返回/)).toBeVisible();
+    const reopenedSummary = await within(reopened).findByRole("region", {
+      name: "新计划摘要",
+    });
+    expect(
+      within(reopenedSummary).getByRole("button", { name: "正在受理…" }),
+    ).toBeDisabled();
+    expect(confirmAttempts).toBe(1);
+
+    // The unknown outcome keeps the exact submitted preparation's lock and
+    // reconciliation entry after the late response.
+    releaseConfirm?.();
+    expect(await within(reopened).findByText(/请求响应未送达/)).toBeVisible();
+    expect(
+      within(reopened).getByRole("button", {
+        name: /重新读取条目后再继续/,
+      }),
+    ).toBeEnabled();
+    await user.click(
+      within(reopened).getByRole("button", {
+        name: /重新读取条目后再继续/,
+      }),
+    );
+    expect(
+      await within(reopened).findByRole("heading", {
+        name: "本次确认已经受理",
+      }),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        within(reopened).queryByRole("button", { name: /确认继续整理/ }),
       ).toBeNull();
     });
     expect(confirmAttempts).toBe(1);

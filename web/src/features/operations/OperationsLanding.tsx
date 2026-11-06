@@ -71,6 +71,7 @@ import { RunDetailTabs } from "./RunDetailTabs";
 import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { ProblemFilePanel } from "./ProblemFilePanel";
+import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
   readRunDetailState,
   runDetailStateSearch,
@@ -584,6 +585,10 @@ export function OperationsLanding() {
       to: "/operations",
       search: listSearch(runId),
       replace: false,
+      // Opening the card is not a list visit: the operator keeps the exact
+      // row/page position behind it. Preparing a page visit or restoring the
+      // position after paint would move the list the card is anchored to.
+      resetScroll: false,
     });
   };
 
@@ -596,7 +601,14 @@ export function OperationsLanding() {
       search["problemCursor"] = problemPage.cursor;
       search["problemDir"] = problemPage.direction;
     }
-    void navigate({ to: "/operations", search, replace: true });
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      // Closing restores the list the operator was reading, not the top of
+      // the page; the shared layer already returns focus with preventScroll.
+      resetScroll: false,
+    });
     // A closed selection drops its overview cache so a later selection of
     // the same run starts from a fresh bounded read.
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
@@ -613,11 +625,21 @@ export function OperationsLanding() {
     if (type !== null) {
       search["problemType"] = type;
     }
-    void navigate({ to: "/operations", search, replace: false });
+    void navigate({
+      to: "/operations",
+      search,
+      replace: false,
+      resetScroll: false,
+    });
   };
 
   const closeProblemRun = () => {
-    void navigate({ to: "/operations", search: listSearch(), replace: true });
+    void navigate({
+      to: "/operations",
+      search: listSearch(),
+      replace: true,
+      resetScroll: false,
+    });
   };
 
   const turnProblemPage = (
@@ -631,7 +653,12 @@ export function OperationsLanding() {
     }
     search["problemCursor"] = nextCursor;
     search["problemDir"] = nextDirection;
-    void navigate({ to: "/operations", search, replace: true });
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      resetScroll: false,
+    });
   };
 
   const openProblemItemEvidence = (taskId: string, itemId: string) => {
@@ -653,6 +680,7 @@ export function OperationsLanding() {
           readRunDetailState({ tab: "detail", item: itemId }),
         ),
       },
+      resetScroll: false,
     });
   };
 
@@ -684,7 +712,14 @@ export function OperationsLanding() {
     }
     search["run"] = selectedId;
     Object.assign(search, runDetailStateSearch({ ...detailState, ...next }));
-    void navigate({ to: "/operations", search, replace: true });
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      // Tab/filter/evidence changes stay inside the open card; the list
+      // behind it keeps the operator's reading position.
+      resetScroll: false,
+    });
   };
 
   const filtered = isFiltered(filters);
@@ -725,208 +760,217 @@ export function OperationsLanding() {
   };
 
   return (
-    <div className="mf-dashboard mf-operations-inventory">
-      <header className="mf-dashboard-head">
-        <div>
-          <h2 id="mf-operations-heading">任务中心</h2>
-          <p className="mf-dashboard-meta">
-            跟踪整理进度，集中处理问题，查看每个文件的结果。
-          </p>
-        </div>
-        <RefreshControl onRefresh={refreshAll} />
-      </header>
-      {automationReturn !== null && (
-        <div className="mf-dashboard-meta" role="note">
-          <p>本次运行来自自动化执行记录。</p>
-          <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() =>
-                void navigate({
-                  to: "/operations/automation",
-                  search: { returnAutomation: automationReturn },
-                })
-              }
-            >
-              返回自动化执行记录
-            </button>
+    <TaskItemRecoverySessionProvider key={token ?? "disconnected"}>
+      <div className="mf-dashboard mf-operations-inventory">
+        <header className="mf-dashboard-head">
+          <div>
+            <h2 id="mf-operations-heading">任务中心</h2>
+            <p className="mf-dashboard-meta">
+              跟踪整理进度，集中处理问题，查看每个文件的结果。
+            </p>
           </div>
-        </div>
-      )}
-      <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
-        {() => (
-          <>
-            {page !== null && (
-              <ViewSummary page={page} view={view} onSelectView={selectView} />
-            )}
-            <div className="mf-task-center-panel">
-              <ViewNavigation view={view} onSelectView={selectView} />
-              <div
-                className={
-                  problemPanelOpen
-                    ? "mf-run-layout mf-run-has-detail"
-                    : "mf-run-layout"
+          <RefreshControl onRefresh={refreshAll} />
+        </header>
+        {automationReturn !== null && (
+          <div className="mf-dashboard-meta" role="note">
+            <p>本次运行来自自动化执行记录。</p>
+            <div className="mf-actions">
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  void navigate({
+                    to: "/operations/automation",
+                    search: { returnAutomation: automationReturn },
+                  })
                 }
               >
-                <div className="mf-run-main">
-                  <section
-                    className="mf-count-section mf-run-filters"
-                    aria-label="运行筛选"
-                  >
-                    <div className="mf-run-filter-bar">
-                      <RunTimeRangeFields
-                        filters={filters}
-                        onApply={applyFilters}
-                        onClear={resetFilters}
-                      />
-                    </div>
-                  </section>
-                  {query.data === undefined ? (
-                    <StatusBanner variant="info" title="正在加载运行清单">
-                      <p>正在从 MediaFlow API 读取运行清单。</p>
-                    </StatusBanner>
-                  ) : !query.data.ok ? (
-                    <StatusBanner
-                      variant="error"
-                      title={query.data.failure.title}
+                返回自动化执行记录
+              </button>
+            </div>
+          </div>
+        )}
+        <AuthorizedReadBoundary
+          query={query}
+          unavailableTitle="任务中心暂不可用"
+        >
+          {() => (
+            <>
+              {page !== null && (
+                <ViewSummary
+                  page={page}
+                  view={view}
+                  onSelectView={selectView}
+                />
+              )}
+              <div className="mf-task-center-panel">
+                <ViewNavigation view={view} onSelectView={selectView} />
+                <div
+                  className={
+                    problemPanelOpen
+                      ? "mf-run-layout mf-run-has-detail"
+                      : "mf-run-layout"
+                  }
+                >
+                  <div className="mf-run-main">
+                    <section
+                      className="mf-count-section mf-run-filters"
+                      aria-label="运行筛选"
                     >
-                      <p>{query.data.failure.nextAction}</p>
-                      <div className="mf-actions">
-                        <RefreshControl
-                          onRefresh={() =>
-                            query.refetch({ cancelRefetch: false })
-                          }
+                      <div className="mf-run-filter-bar">
+                        <RunTimeRangeFields
+                          filters={filters}
+                          onApply={applyFilters}
+                          onClear={resetFilters}
                         />
-                        {filtered && (
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={resetFilters}
-                          >
-                            清除时间
-                          </button>
-                        )}
                       </div>
-                    </StatusBanner>
-                  ) : page === null ? null : page.items.length === 0 ? (
-                    <StatusBanner
-                      variant="info"
-                      title={filtered ? "没有匹配的运行" : "还没有运行记录"}
-                    >
-                      <p>
-                        {filtered
-                          ? "没有运行匹配已选择的创建时间范围。清除时间可以查看当前标签的全部获准任务。"
-                          : "当前没有已受理或历史整理任务。可从资源库文件页选择文件开始整理。"}
-                      </p>
-                      {filtered && (
+                    </section>
+                    {query.data === undefined ? (
+                      <StatusBanner variant="info" title="正在加载运行清单">
+                        <p>正在从 MediaFlow API 读取运行清单。</p>
+                      </StatusBanner>
+                    ) : !query.data.ok ? (
+                      <StatusBanner
+                        variant="error"
+                        title={query.data.failure.title}
+                      >
+                        <p>{query.data.failure.nextAction}</p>
                         <div className="mf-actions">
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={resetFilters}
-                          >
-                            清除时间
-                          </button>
+                          <RefreshControl
+                            onRefresh={() =>
+                              query.refetch({ cancelRefetch: false })
+                            }
+                          />
+                          {filtered && (
+                            <button
+                              type="button"
+                              className="mf-button mf-button-secondary"
+                              onClick={resetFilters}
+                            >
+                              清除时间
+                            </button>
+                          )}
                         </div>
-                      )}
-                    </StatusBanner>
-                  ) : (
-                    <RunTable
-                      page={page}
-                      selectedId={selectedId}
-                      direction={direction}
-                      view={view}
-                      onSelect={selectRun}
-                      onOpenProblem={openProblemRun}
-                      onForward={() => {
-                        if (page.nextCursor) {
-                          turnPage(page.nextCursor, "forward");
-                        }
-                      }}
-                      onBackward={() => {
-                        if (page.previousCursor) {
-                          turnPage(page.previousCursor, "backward");
-                        }
-                      }}
+                      </StatusBanner>
+                    ) : page === null ? null : page.items.length === 0 ? (
+                      <StatusBanner
+                        variant="info"
+                        title={filtered ? "没有匹配的运行" : "还没有运行记录"}
+                      >
+                        <p>
+                          {filtered
+                            ? "没有运行匹配已选择的创建时间范围。清除时间可以查看当前标签的全部获准任务。"
+                            : "当前没有已受理或历史整理任务。可从资源库文件页选择文件开始整理。"}
+                        </p>
+                        {filtered && (
+                          <div className="mf-actions">
+                            <button
+                              type="button"
+                              className="mf-button mf-button-secondary"
+                              onClick={resetFilters}
+                            >
+                              清除时间
+                            </button>
+                          </div>
+                        )}
+                      </StatusBanner>
+                    ) : (
+                      <RunTable
+                        page={page}
+                        selectedId={selectedId}
+                        direction={direction}
+                        view={view}
+                        onSelect={selectRun}
+                        onOpenProblem={openProblemRun}
+                        onForward={() => {
+                          if (page.nextCursor) {
+                            turnPage(page.nextCursor, "forward");
+                          }
+                        }}
+                        onBackward={() => {
+                          if (page.previousCursor) {
+                            turnPage(page.previousCursor, "backward");
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                  {problemPanelOpen && (
+                    <ProblemFilePanel
+                      key={`${problemRunId}:${problemFileType}`}
+                      runId={problemRunId}
+                      problem={problemFileType}
+                      cursor={problemPage.cursor}
+                      onPage={turnProblemPage}
+                      onOpenEvidence={openProblemItemEvidence}
+                      onClose={closeProblemRun}
                     />
                   )}
                 </div>
-                {problemPanelOpen && (
-                  <ProblemFilePanel
-                    key={`${problemRunId}:${problemFileType}`}
-                    runId={problemRunId}
-                    problem={problemFileType}
-                    cursor={problemPage.cursor}
-                    onPage={turnProblemPage}
-                    onOpenEvidence={openProblemItemEvidence}
-                    onClose={closeProblemRun}
-                  />
-                )}
               </div>
-            </div>
-            {/* The selected run's centered detail card overlays the full-width
+              {/* The selected run's centered detail card overlays the full-width
                 list; the per-run control/remaining-scope sessions live in the
                 landing so close/reopen keeps every unresolved request's
                 reconciliation context. */}
-            {selectedId !== "" && (
-              <RunDetailPanel
-                // A different selected run is a different control object:
-                // remounting resets the in-flight flags so a pending action or
-                // a reconciliation read can never carry over to another run's
-                // controls; the durable session store keeps each run's own
-                // unknown outcomes and confirmations isolated by run id.
-                key={selectedId}
-                query={overviewQuery}
-                onClose={closeRun}
-                detailState={detailState}
-                onDetailStateChange={applyDetailState}
-                controlSession={
-                  controlSessions[selectedId] ?? EMPTY_RUN_CONTROL_SESSION
-                }
-                onControlSession={(patch) =>
-                  updateControlSession(selectedId, patch)
-                }
-                remainingSession={
-                  remainingSessions[selectedId] ?? EMPTY_RUN_REMAINING_SESSION
-                }
-                onRemainingSession={(patch) =>
-                  updateRemainingSession(selectedId, patch)
-                }
-                onOpenLinkedAnalysis={(taskId, itemId) =>
-                  void navigate({
-                    to: "/operations/tasks/$taskId",
-                    params: { taskId },
-                    search: {
-                      returnOps: operationsReturnContextFromSearch({
-                        ...listSearch(selectedId),
-                        ...runDetailStateSearch(detailState),
-                      }),
-                      ...runDetailStateSearch(
-                        readRunDetailState({ tab: "detail", item: itemId }),
+              {selectedId !== "" && (
+                <RunDetailPanel
+                  // A different selected run is a different control object:
+                  // remounting resets the in-flight flags so a pending action or
+                  // a reconciliation read can never carry over to another run's
+                  // controls; the durable session store keeps each run's own
+                  // unknown outcomes and confirmations isolated by run id.
+                  key={selectedId}
+                  query={overviewQuery}
+                  onClose={closeRun}
+                  detailState={detailState}
+                  onDetailStateChange={applyDetailState}
+                  controlSession={
+                    controlSessions[selectedId] ?? EMPTY_RUN_CONTROL_SESSION
+                  }
+                  onControlSession={(patch) =>
+                    updateControlSession(selectedId, patch)
+                  }
+                  remainingSession={
+                    remainingSessions[selectedId] ?? EMPTY_RUN_REMAINING_SESSION
+                  }
+                  onRemainingSession={(patch) =>
+                    updateRemainingSession(selectedId, patch)
+                  }
+                  onOpenLinkedAnalysis={(taskId, itemId) =>
+                    void navigate({
+                      to: "/operations/tasks/$taskId",
+                      params: { taskId },
+                      search: {
+                        returnOps: operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(detailState),
+                        }),
+                        ...runDetailStateSearch(
+                          readRunDetailState({ tab: "detail", item: itemId }),
+                        ),
+                      },
+                    })
+                  }
+                  onOpenRecoveryExecution={(executionId) =>
+                    void navigate({
+                      to: "/operations/organize/execution/$executionId",
+                      params: { executionId },
+                      search: operationsReturnSearch(
+                        operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(detailState),
+                        }),
                       ),
-                    },
-                  })
-                }
-                onOpenRecoveryExecution={(executionId) =>
-                  void navigate({
-                    to: "/operations/organize/execution/$executionId",
-                    params: { executionId },
-                    search: operationsReturnSearch(
-                      operationsReturnContextFromSearch({
-                        ...listSearch(selectedId),
-                        ...runDetailStateSearch(detailState),
-                      }),
-                    ),
-                  })
-                }
-                onSelectRun={selectRun}
-              />
-            )}
-          </>
-        )}
-      </AuthorizedReadBoundary>
-    </div>
+                    })
+                  }
+                  onSelectRun={selectRun}
+                />
+              )}
+            </>
+          )}
+        </AuthorizedReadBoundary>
+      </div>
+    </TaskItemRecoverySessionProvider>
   );
 }
 

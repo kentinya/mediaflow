@@ -24,6 +24,8 @@ import {
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
+import { useTaskItemRecoverySession } from "./task-item-recovery-session";
+import type { TaskItemRecoveryPendingAction } from "./task-item-recovery-session";
 
 const DECISION_LABELS: Readonly<Record<TaskItemDecisionKind, string>> = {
   recognition: "识别",
@@ -31,6 +33,16 @@ const DECISION_LABELS: Readonly<Record<TaskItemDecisionKind, string>> = {
   metadata_correction: "元数据修正",
   classification: "分类",
   conflict: "目标冲突",
+};
+
+/** Operator-facing names for the exact request still awaiting its result. */
+const PENDING_ACTION_LABELS: Readonly<Record<string, string>> = {
+  decision: "保存决策",
+  continue: "继续安全分析",
+  ignore: "忽略条目",
+  search: "搜索元数据",
+  prepare: "生成计划摘要",
+  confirm: "确认计划摘要",
 };
 
 function outcomeMessage(code: string, status: number): string {
@@ -101,6 +113,30 @@ export function TaskItemRecoveryPanel({
   const query = useQuery(
     taskItemRecoveryQueryOptions(token, { taskId, itemId, runId, active }),
   );
+  // The request lifecycle belongs to the exact principal/run/Task/item and is
+  // preserved by the landing while this card is closed.  A reopened panel sees
+  // the same in-flight request or unresolved reconciliation instead of a fresh
+  // form that could submit the command again.
+  const recoverySession = useTaskItemRecoverySession({
+    token,
+    runId,
+    taskId,
+    itemId,
+  });
+  const { busy, pendingAction, message, repeatLocked, submittedPreparationId } =
+    recoverySession.state;
+  const updateRecoverySession = recoverySession.update;
+  const beginAction = (
+    action: TaskItemRecoveryPendingAction,
+    message: string | null = null,
+  ) =>
+    updateRecoverySession({
+      busy: true,
+      pendingAction: action,
+      message,
+    });
+  const finishAction = () =>
+    updateRecoverySession({ busy: false, pendingAction: null });
   const [selectedChoice, setSelectedChoice] = useState("");
   const [searchText, setSearchText] = useState("");
   const [correctedYear, setCorrectedYear] = useState("");
@@ -110,18 +146,12 @@ export function TaskItemRecoveryPanel({
     useState<MetadataSearchModel | null>(null);
   const [conflictStrategy, setConflictStrategy] = useState("");
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [repeatLocked, setRepeatLocked] = useState(false);
   const [preparation, setPreparation] = useState<{
     readonly preparationId: string;
     readonly previewId: string;
     readonly status: string;
     readonly checkpointVersion: string;
   } | null>(null);
-  const [submittedPreparationId, setSubmittedPreparationId] = useState<
-    string | null
-  >(null);
   const [confirmSelection, setConfirmSelection] = useState<
     readonly string[] | null
   >(null);
@@ -204,30 +234,47 @@ export function TaskItemRecoveryPanel({
   };
 
   const reportUnknown = async (code: string, status: number) => {
-    setRepeatLocked(isUnknown(status, code));
-    setMessage(outcomeMessage(code, status));
+    updateRecoverySession({
+      repeatLocked: isUnknown(status, code),
+      message: outcomeMessage(code, status),
+    });
   };
 
-  const continueAt = async (expectedCheckpointVersion: string) => {
-    const result = await continueTaskItemAnalysis(
-      token,
-      taskId,
-      itemId,
-      expectedCheckpointVersion,
-    );
-    if (result.ok) {
-      setMessage(
-        result.model.nativeAnalysis
-          ? "审核已保存；原 Task 已重新排入零变更分析，Storage 尚未修改。等待 Worker 后在此检查新的条目状态，并在同一 Task 的计划摘要中显式确认就绪子集。 "
-          : "审核已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 后检查新结果。 ",
-      );
-      setRepeatLocked(false);
-      refreshLinkedReads();
-      return true;
+  const continueAt = async (
+    expectedCheckpointVersion: string,
+    manageBusy = true,
+  ) => {
+    if (manageBusy) {
+      if (busy || repeatLocked) return false;
+      beginAction("continue");
+    } else {
+      // The save-decision request owns this session's busy flag; its explicit
+      // follow-up is part of the same operator action, not a second command.
+      updateRecoverySession({ pendingAction: "continue" });
     }
-    await reportUnknown(result.code, result.status);
-    refreshLinkedReads();
-    return false;
+    try {
+      const result = await continueTaskItemAnalysis(
+        token,
+        taskId,
+        itemId,
+        expectedCheckpointVersion,
+      );
+      if (result.ok) {
+        updateRecoverySession({
+          message: result.model.nativeAnalysis
+            ? "审核已保存；原 Task 已重新排入零变更分析，Storage 尚未修改。等待 Worker 后在此检查新的条目状态，并在同一 Task 的计划摘要中显式确认就绪子集。 "
+            : "审核已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 后检查新结果。 ",
+          repeatLocked: false,
+        });
+        refreshLinkedReads();
+        return true;
+      }
+      await reportUnknown(result.code, result.status);
+      refreshLinkedReads();
+      return false;
+    } finally {
+      if (manageBusy) finishAction();
+    }
   };
 
   const saveDecision = async (
@@ -235,8 +282,7 @@ export function TaskItemRecoveryPanel({
     fields: Record<string, unknown>,
   ) => {
     if (checkpoint === null || busy || repeatLocked) return;
-    setBusy(true);
-    setMessage(null);
+    beginAction("decision");
     try {
       const result = await submitTaskItemRecoveryDecision(
         token,
@@ -259,43 +305,44 @@ export function TaskItemRecoveryPanel({
         model: updated,
       });
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
-        await continueAt(updated.checkpoint.checkpointVersion);
+        await continueAt(updated.checkpoint.checkpointVersion, false);
       } else {
-        setMessage(
-          "决策已保存。此操作没有创建文件执行授权；请检查更新后的条目状态。 ",
-        );
+        updateRecoverySession({
+          message:
+            "决策已保存。此操作没有创建文件执行授权；请检查更新后的条目状态。 ",
+        });
         refreshLinkedReads();
       }
     } finally {
-      setBusy(false);
+      finishAction();
     }
   };
 
   const ignoreDecision = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
-    setBusy(true);
-    setMessage(null);
+    beginAction("ignore");
     try {
       const result = await ignoreTaskItemReview(token, taskId, itemId, {
         expectedCheckpointVersion: checkpoint.checkpointVersion,
       });
       if (result.ok) {
-        setMessage("条目已忽略并保留审核记录；没有执行文件操作。 ");
-        setRepeatLocked(false);
+        updateRecoverySession({
+          message: "条目已忽略并保留审核记录；没有执行文件操作。 ",
+          repeatLocked: false,
+        });
         refreshLinkedReads();
       } else {
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
       }
     } finally {
-      setBusy(false);
+      finishAction();
     }
   };
 
   const searchMetadata = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
-    setBusy(true);
-    setMessage(null);
+    beginAction("search");
     try {
       const result = await searchTaskItemMetadata(token, taskId, itemId, {
         expectedCheckpointVersion: checkpoint.checkpointVersion,
@@ -305,26 +352,28 @@ export function TaskItemRecoveryPanel({
       if (result.ok) {
         setMetadataResult(result.model);
         setSelectedProviderId("");
-        setMessage(
-          result.model.candidates.length === 0
-            ? "没有找到候选项。修改标题后再搜索。"
-            : null,
-        );
+        updateRecoverySession({
+          message:
+            result.model.candidates.length === 0
+              ? "没有找到候选项。修改标题后再搜索。"
+              : null,
+        });
       } else {
         // Search is a deliberate Provider read with no durable mutation. A lost
         // result can be searched again after checking that this item is current.
         await reportUnknown(result.code, result.status);
-        if (!isUnknown(result.status, result.code)) setRepeatLocked(false);
+        if (!isUnknown(result.status, result.code)) {
+          updateRecoverySession({ repeatLocked: false });
+        }
       }
     } finally {
-      setBusy(false);
+      finishAction();
     }
   };
 
   const prepareSummary = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
-    setBusy(true);
-    setMessage(null);
+    beginAction("prepare");
     try {
       const result = await prepareTaskItemRecoverySummary(
         token,
@@ -342,17 +391,18 @@ export function TaskItemRecoveryPanel({
         setConfirmSelection(null);
         setAllowOverwriteConfirm(false);
         setAllowCleanupConfirm(false);
-        setMessage(
-          "已在当前界面生成新的零变更计划摘要。检查下方来源、目标、附件与影响后，选择就绪子集并明确确认继续。",
-        );
-        setRepeatLocked(false);
+        updateRecoverySession({
+          message:
+            "已在当前界面生成新的零变更计划摘要。检查下方来源、目标、附件与影响后，选择就绪子集并明确确认继续。",
+          repeatLocked: false,
+        });
         refreshLinkedReads();
       } else {
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
       }
     } finally {
-      setBusy(false);
+      finishAction();
     }
   };
 
@@ -367,14 +417,13 @@ export function TaskItemRecoveryPanel({
     ) {
       return;
     }
-    const submittedPreparationId = activePreparation.preparationId;
-    setSubmittedPreparationId(submittedPreparationId);
-    setBusy(true);
-    setMessage(null);
+    const preparationId = activePreparation.preparationId;
+    beginAction("confirm");
+    updateRecoverySession({ submittedPreparationId: preparationId });
     try {
       const result = await confirmTaskItemRecoveryPreparation(
         token,
-        submittedPreparationId,
+        preparationId,
         {
           itemIds: confirmSelection,
           allowOverwrite: allowOverwriteConfirm,
@@ -382,12 +431,13 @@ export function TaskItemRecoveryPanel({
         },
       );
       if (result.ok) {
-        setMessage(
-          `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。可在关联执行中跟踪逐项结果。`,
-        );
+        updateRecoverySession({
+          message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。可在关联执行中跟踪逐项结果。`,
+          repeatLocked: false,
+          submittedPreparationId: null,
+        });
         setPreparation(null);
         setConfirmSelection(null);
-        setRepeatLocked(false);
         refreshLinkedReads();
         onOpenRecoveryExecution?.(result.model.executionId);
       } else {
@@ -396,17 +446,22 @@ export function TaskItemRecoveryPanel({
         // durable preparation, which reveals whether this exact confirmation
         // was admitted.
         await reportUnknown(result.code, result.status);
+        if (!isUnknown(result.status, result.code)) {
+          updateRecoverySession({ submittedPreparationId: null });
+        }
         refreshLinkedReads();
       }
     } finally {
-      setBusy(false);
+      finishAction();
     }
   };
 
   const reconcile = async () => {
     const result = await query.refetch();
     if (result.data?.ok !== true) {
-      setMessage("条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ");
+      updateRecoverySession({
+        message: "条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ",
+      });
       return;
     }
     const durable = result.data.model.manualRecoveryPreparation ?? null;
@@ -418,42 +473,47 @@ export function TaskItemRecoveryPanel({
         durable === null ||
         durable.preparationId !== submittedPreparationId
       ) {
-        setRepeatLocked(true);
-        setMessage(
-          "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
-        );
+        updateRecoverySession({
+          repeatLocked: true,
+          message:
+            "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
+        });
         return;
       }
       if (durable.status === "prepared") {
         // The admission did not commit; the same prepared summary is safe to
         // confirm again deliberately.
-        setRepeatLocked(false);
-        setSubmittedPreparationId(null);
-        setMessage(
-          "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
-        );
+        updateRecoverySession({
+          repeatLocked: false,
+          submittedPreparationId: null,
+          message:
+            "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
+        });
         return;
       }
       if (durable.status === "confirmed" && durable.executionId !== null) {
-        setRepeatLocked(false);
-        setSubmittedPreparationId(null);
-        setMessage(
-          "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 ",
-        );
+        updateRecoverySession({
+          repeatLocked: false,
+          submittedPreparationId: null,
+          message:
+            "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 ",
+        });
         return;
       }
-      setRepeatLocked(true);
-      setMessage(
-        "该计划摘要已被更新或不再可用；保持提交锁定，请刷新页面后按当前摘要重新处理。 ",
-      );
+      updateRecoverySession({
+        repeatLocked: true,
+        message:
+          "该计划摘要已被更新或不再可用；保持提交锁定，请刷新页面后按当前摘要重新处理。 ",
+      });
       return;
     }
-    setRepeatLocked(false);
-    setMessage(
-      durable?.status === "confirmed"
-        ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
-        : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
-    );
+    updateRecoverySession({
+      repeatLocked: false,
+      message:
+        durable?.status === "confirmed"
+          ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
+          : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
+    });
   };
 
   if (query.data === undefined) {
@@ -545,6 +605,14 @@ export function TaskItemRecoveryPanel({
           这是一个技术失败条目：任务中心只保留它的真实原因、阶段、已完成与不确定效果、
           结果、日志和导出，不提供通用修复、重试或核查流程。成功或效果未知的记录不会被重放。
         </p>
+      )}
+      {busy && pendingAction !== null && (
+        <StatusBanner variant="info" title="操作请求仍在进行">
+          <p>
+            “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
+            ”请求尚未返回；该条目的恢复操作保持等待，关闭或重新打开弹卡不会重发请求。结果返回后会显示在这里。
+          </p>
+        </StatusBanner>
       )}
       {message && (
         <StatusBanner

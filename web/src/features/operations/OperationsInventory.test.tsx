@@ -1748,6 +1748,148 @@ describe("Operations run inventory landing", () => {
     expect(document.querySelector(".mf-run-has-detail")).toBeNull();
   });
 
+  it("opens and returns from a problem-file list without resetting the route scroll", async () => {
+    const user = userEvent.setup();
+    const problemRun = runDocument({
+      run_id: "task-problem",
+      task_id: "task-problem",
+      source_scope: "Movies/Problem",
+      status: "failed",
+      attention: true,
+      problem_types: ["metadata"],
+      problem_file_counts: {
+        recognition: 0,
+        metadata: 1,
+        classification: 0,
+        conflict: 0,
+      },
+    });
+    const problemItems = {
+      run_id: "task-problem",
+      task_id: "task-problem",
+      problem: "metadata",
+      limit: 20,
+      items: [
+        {
+          item_id: "item-a",
+          task_id: "task-problem",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "Movies/a.mkv",
+          status: "failed",
+          stage: "metadata",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          failure: null,
+          checkpoint: {
+            status: "failed",
+            stage: "metadata",
+            raw_stage: "metadata",
+            blocker_kind: null,
+            blocker_id: null,
+            effect_certainty: "none",
+            retry_safety: "safe",
+            permitted_action_ids: ["retry"],
+            refusal_reason: null,
+            checkpoint_version: "a".repeat(64),
+            recovery_request: null,
+            recovery_continuation: null,
+          },
+        },
+      ],
+      total: 1,
+      matching_total: 1,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 1,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/problem-items")) {
+        return jsonResponse(problemItems);
+      }
+      if (url.startsWith("/api/v1/operations/runs")) {
+        return jsonResponse(
+          pageDocument({
+            items: [problemRun],
+            total: 1,
+            view: "metadata",
+            problem: "metadata",
+            status_counts: { failed: 1 },
+            attention_count: 1,
+            summary: summaryDocument({
+              total: 1,
+              running: 0,
+              attention: 1,
+              ended: 1,
+              problem_tasks: {
+                recognition: 0,
+                metadata: 1,
+                classification: 0,
+                conflict: 0,
+              },
+              problem_files: {
+                recognition: 0,
+                metadata: 1,
+                classification: 0,
+                conflict: 0,
+              },
+            }),
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?view=metadata");
+
+    const table = await screen.findByRole("table");
+    const row = within(table)
+      .getAllByRole("row")
+      .find((value) => value.textContent?.includes("Movies/Problem"));
+    if (row === undefined) {
+      throw new Error("the problem run row was not rendered");
+    }
+    const scrollTo = vi
+      .spyOn(window, "scrollTo")
+      .mockImplementation(() => undefined);
+    await user.click(within(row).getByRole("button", { name: "查看问题文件" }));
+    const panel = await screen.findByRole("region", { name: "问题文件处理" });
+    await waitFor(() =>
+      expect(router.history.location.search).toContain(
+        "problemRun=task-problem",
+      ),
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    await user.click(
+      within(panel).getByRole("button", { name: "返回任务列表" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "问题文件处理" })).toBeNull(),
+    );
+    expect(router.history.location.search).toContain("view=metadata");
+    expect(router.history.location.search).not.toContain("problemRun=");
+    expect(scrollTo).not.toHaveBeenCalled();
+    scrollTo.mockRestore();
+  });
+
   it("offers no center creation entry and keeps the bounded list context", async () => {
     // Task46.3 RO-2: the Task Center no longer offers a new-organize CTA, an
     // independent library picker, a manual-action section or a discovery section.

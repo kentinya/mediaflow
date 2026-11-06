@@ -583,6 +583,62 @@ function standaloneExecutionEvidenceDocument(
   });
 }
 
+/** One exact native item recovery the evidence panel reads below. */
+function recognitionRecoveryDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    task_id: "task-001",
+    item_id: "item-2",
+    checkpoint: {
+      status: "pending",
+      stage: "queued",
+      raw_stage: "recognition_resolved",
+      effects: { certainty: "none" },
+      retry_safety: "safe",
+      checkpoint_version: "b".repeat(64),
+      blocker: null,
+      permitted_action_ids: [],
+      refusal_reason: null,
+      next_action: "inspect the current item state",
+    },
+    decision: null,
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: "inspect the current item state",
+    ...overrides,
+  };
+}
+
+/** The same item before its recognition decision was saved. */
+function pendingRecognitionRecoveryDocument(): Record<string, unknown> {
+  return recognitionRecoveryDocument({
+    checkpoint: {
+      status: "waiting_recognition",
+      stage: "waiting_recognition",
+      raw_stage: "waiting_recognition",
+      effects: { certainty: "none" },
+      retry_safety: "unsafe",
+      checkpoint_version: "b".repeat(64),
+      blocker: { kind: "recognition", blocker_id: "review-1" },
+      permitted_action_ids: ["resolve_recognition", "ignore"],
+      refusal_reason: null,
+      next_action: "choose a RecognitionType",
+    },
+    decision: {
+      kind: "recognition",
+      review_id: "review-1",
+      status: "pending",
+      choices: [
+        {
+          recognition_type_id: "C",
+          name: "Special",
+          description: "Keep RecognitionType C",
+        },
+      ],
+    },
+    next_action: "choose a RecognitionType",
+  });
+}
+
 /** The evidence document of the successfully executed 手动整理 item-1. */
 function manualExecutionEvidenceDocument(
   overrides: Record<string, unknown> = {},
@@ -715,13 +771,31 @@ function exportPackageDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+interface DetailJourneyOptions {
+  /** The exact native recovery reads/commands of item-2, when a test drives
+   * them.  Without it the existing 404 fallback is unchanged. */
+  readonly recovery?: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>;
+}
+
 /** One fetch stub covering the whole selected-run detail journey. */
-function stubDetailJourney(requested: string[] = []) {
-  return stubFetch(async (input) => {
+function stubDetailJourney(
+  requested: string[] = [],
+  options: DetailJourneyOptions = {},
+) {
+  return stubFetch(async (input, init) => {
     const url = String(input);
     requested.push(url);
     if (url === "/api/v1/auth/principal") {
       return jsonResponse({ principal_id: "test-principal" });
+    }
+    if (url.startsWith("/api/v1/tasks/task-001/items/item-2/recovery")) {
+      if (options.recovery !== undefined) {
+        return options.recovery(input, init);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
     }
     if (url.startsWith("/api/v1/operations/runs?")) {
       return jsonResponse({
@@ -965,6 +1039,209 @@ describe("selected-run detail tabs", () => {
     await waitFor(() =>
       expect(screen.queryByText("条目证据:item-2")).toBeNull(),
     );
+  });
+
+  it("keeps an in-flight native decision waiting across card close and reopen", async () => {
+    const user = userEvent.setup();
+    let current = pendingRecognitionRecoveryDocument();
+    let decisionPosts = 0;
+    let releaseDecision: ((response: Response) => void) | undefined;
+    const decisionGate = new Promise<Response>((resolve) => {
+      releaseDecision = resolve;
+    });
+    stubDetailJourney([], {
+      recovery: async (_input, init) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return jsonResponse(current);
+        }
+        decisionPosts += 1;
+        return decisionGate;
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const recovery = await within(detail).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await user.click(
+      await within(recovery).findByRole("radio", { name: /Special/ }),
+    );
+    await user.click(
+      within(recovery).getByRole("button", {
+        name: "保存决策并继续安全分析",
+      }),
+    );
+    expect(
+      within(recovery).getByRole("button", {
+        name: /^正在保存…$/,
+      }),
+    ).toBeDisabled();
+    expect(decisionPosts).toBe(1);
+
+    // Closing the card does not release the request or its exact identity.
+    await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const reopened = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const reopenedRecovery = await within(reopened).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    // The original request is still in flight and the reopened panel waits
+    // with the form disabled instead of offering a second submission.
+    expect(
+      await within(reopenedRecovery).findByText(/请求尚未返回/),
+    ).toBeVisible();
+    expect(
+      within(reopenedRecovery).getByRole("button", {
+        name: /^正在保存…$/,
+      }),
+    ).toBeDisabled();
+    expect(decisionPosts).toBe(1);
+
+    // The late outcome lands in the reopened panel, not in the closed card.
+    current = recognitionRecoveryDocument();
+    await act(async () => {
+      releaseDecision?.(jsonResponse(current));
+    });
+    expect(
+      await within(reopenedRecovery).findByText(/决策已保存/),
+    ).toBeVisible();
+    expect(
+      within(reopenedRecovery).queryByRole("button", {
+        name: /重新读取条目后再继续/,
+      }),
+    ).toBeNull();
+    expect(decisionPosts).toBe(1);
+  });
+
+  it("keeps an unknown native decision reconcilable across card close and reopen", async () => {
+    const user = userEvent.setup();
+    let current = pendingRecognitionRecoveryDocument();
+    let decisionPosts = 0;
+    stubDetailJourney([], {
+      recovery: async (input, init) => {
+        if (String(input).includes("/items/item-1/recovery")) {
+          return jsonResponse(
+            recognitionRecoveryDocument({ item_id: "item-1" }),
+          );
+        }
+        if ((init?.method ?? "GET") === "GET") {
+          return jsonResponse(current);
+        }
+        decisionPosts += 1;
+        throw new TypeError("network down");
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const recovery = await within(detail).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await user.click(
+      await within(recovery).findByRole("radio", { name: /Special/ }),
+    );
+    await user.click(
+      within(recovery).getByRole("button", {
+        name: "保存决策并继续安全分析",
+      }),
+    );
+    expect(await within(recovery).findByText(/请求响应未送达/)).toBeVisible();
+    expect(decisionPosts).toBe(1);
+
+    await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const reopened = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const reopenedRecovery = await within(reopened).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    // The unknown outcome keeps its original reconciliation entry and lock.
+    expect(
+      await within(reopenedRecovery).findByText(/请求响应未送达/),
+    ).toBeVisible();
+    expect(
+      within(reopenedRecovery).getByRole("button", {
+        name: "保存决策并继续安全分析",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(reopenedRecovery).getByRole("button", {
+        name: /重新读取条目后再继续/,
+      }),
+    ).toBeEnabled();
+
+    // A different item has its own session: switching evidence does not show
+    // this item's unknown outcome, and returning keeps it isolated.
+    await user.click(
+      within(reopened).getByRole("button", { name: "关闭证据" }),
+    );
+    await user.click(
+      within(reopened).getAllByRole("button", { name: "查看证据" })[0]!,
+    );
+    const otherRecovery = await within(reopened).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await within(otherRecovery).findByText(/审核与恢复/);
+    expect(within(otherRecovery).queryByText(/请求响应未送达/)).toBeNull();
+    await user.click(
+      within(reopened).getByRole("button", { name: "关闭证据" }),
+    );
+    await user.click(
+      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const backToItem = await within(reopened).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    expect(await within(backToItem).findByText(/请求响应未送达/)).toBeVisible();
+
+    // The explicit reconciliation reads the current durable state; it never
+    // resubmits the original decision.
+    current = recognitionRecoveryDocument();
+    await user.click(
+      within(backToItem).getByRole("button", {
+        name: /重新读取条目后再继续/,
+      }),
+    );
+    expect(
+      await within(backToItem).findByText(/已重新读取此 TaskItem 的持久状态/),
+    ).toBeVisible();
+    expect(decisionPosts).toBe(1);
   });
 
   it("renders the durable reviewed plan, effects and section detail for a manually executed item", async () => {
