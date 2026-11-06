@@ -3,9 +3,9 @@
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
 再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的存储三卡片
-退出过渡修正；B 已复验两个界面阻塞通过，当前状态 **FIX REQUIRED（新增测试文件的
-ESLint / Prettier 检查失败）**。Task Base、范围与验收不变。
-Developer 本轮只实施本
+退出过渡修正；B 已复验两个界面阻塞通过，其指出的新增测试文件 ESLint / Prettier
+失败已由 Developer 修正，当前状态 **READY FOR B REVIEW**（未自审 PASS）。Task Base、
+范围与验收不变。Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
@@ -14,7 +14,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -203,10 +203,12 @@ npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/a
 
 ## Developer Completion Report
 
-状态：**READY FOR B REVIEW**（存储三卡片退出过渡修正完成，Developer 交接，未自审 PASS）。
+状态：**READY FOR B REVIEW**（存储三卡片退出过渡与测试静态检查修正完成，Developer
+交接，未自审 PASS）。
 
 ```text
-本轮修正 checkpoint: 736aa5dfe0cbe7b23546fc88e970949a0eba2912
+静态检查修正 checkpoint: 5b390581e013134e20e3d2853e0cf873d28fcb4e
+存储退出过渡修正 checkpoint: 736aa5dfe0cbe7b23546fc88e970949a0eba2912
 初次实现 checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
 保存保护修正 checkpoint: 22618d708a68eeb076d9ed42755a69bf996656df
 补充回归 checkpoint: cb3b64362f869c315d782fcefcd5cd813384a9a1
@@ -215,9 +217,11 @@ Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 B 审查范围: Task Base..本报告提交 HEAD
 ```
 
-B 的审查范围仍是 Task Base..本报告提交 HEAD；本轮唯一新增源码 checkpoint 为
-`736aa5df`。工作区既有的 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、
-`output/` 调查产物均保持原样，未纳入本次 checkpoint。
+B 的审查范围仍是 Task Base..本报告提交 HEAD。本轮新增 checkpoint `5b390581` 只修改
+`web/tests/e2e/storage-dialog.python.spec.ts` 的 `prefer-const` 与 Prettier 格式，
+未改产品源码或测试意图；先前 `736aa5df` 的存储退出过渡实现保持不变。工作区既有的
+`mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 调查产物均保持
+原样，未纳入本次 checkpoint。
 
 ### 本轮修正（B 审查阻塞项：存储三卡片缺少退出过渡）
 
@@ -241,8 +245,10 @@ B 的审查范围仍是 Task Base..本报告提交 HEAD；本轮唯一新增源�
 以下均为本候选源码实际执行结果：
 
 - 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出。
-- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
-  全部通过（build 仅有既存 chunk >500 kB 提示）。
+- `web/`（前轮 `736aa5df` 候选）：`npm run typecheck`、`npm run build` 通过（build 仅有
+  既存 chunk >500 kB 提示）。当时交接声称 `npm run lint`、`npm run format:check` 通过，
+  但 B 在 `8b16ba6f` 实测两者因本 Task 新增的 `storage-dialog.python.spec.ts` 失败
+  （`prefer-const` 与 Prettier）；该错误声明在本轮修正，实际结果见下节。
 - `web/` 单元/组件（10 个文件）：`npm run test -- run src/features/storage/StorageManagementPage.test.tsx
   src/entities/storage/storage-form.test.ts src/entities/storage/storage-management.test.ts
   src/shared/api/storage-management-api.test.ts src/features/operations/AutomationCreateDialog.test.tsx
@@ -263,9 +269,28 @@ B 的审查范围仍是 Task Base..本报告提交 HEAD；本轮唯一新增源�
   关闭；退出完成后立即重开为全新稳定卡片。本轮测试执行（单元/静态/构建/两级 E2E）
   累计约 5 分钟，低于本轮实际用时 30%；未执行 B 的完整 T4、wheel/Docker/发布门禁。
 
+### 本轮修正（B FIX REQUIRED：测试文件静态检查）
+
+- **原因：** `736aa5df` 新增的 `startExitSampler` 使用从未重新赋值的 `let stopped`，
+  且同一文件未按仓库 Prettier 规则格式化；这使 `npm run lint` 与 `npm run format:check`
+  在 `8b16ba6f` 实测失败，前轮交接的“通过”声明不成立。
+- **修正：** 仅把 `stopped` 改为 `const`，并对该测试文件执行 Prettier 格式化。采样时长、
+  断言、退出/保存保护用例、页面对象与产品逻辑均未改动，未关闭规则、未删除用例。
+- **实际执行（本轮）：**
+  - `web/`：`npm run lint`、`npm run format:check`、`npm run typecheck` → 全部通过。
+  - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts --workers=1
+    tests/e2e/storage-dialog.python.spec.ts` → **8 passed（12.9s）**；日志保留在本地
+    ignored 路径 `.git/validation-evidence/5b390581/task50.1-static-fix/storage-dialog.python.log`。
+  - 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出。
+- **范围与产物：** 本轮测试时间（静态检查 + 8 个真实 Python 浏览器用例）约 1 分钟，
+  低于本轮实际用时 30%；产品源码自 `736aa5df` 后未变，真实 E2E 沿用该候选已构建且
+  源码不新于产物的 `web/dist`，未重跑全量 T4/build。
+- **未改变：** 存储三卡片、更多菜单、自动化新建/编辑、后端/API、权限、命令、发布与
+  未知核对均未变；未推送、未部署。
+
 ### 已知风险与剩余工作
 
-- B 须在精确候选复验本阻塞，并执行适用完整 T4 与原生 1536×1024 / 390px 动态、
+- B 须在修正候选复验静态门禁，并执行适用完整 T4 与原生 1536×1024 / 390px 动态、
   reduced-motion 及截图验收；Developer 未执行 B 的完整回归、wheel/Docker/发布门禁。
 - 退出期间（160ms）迟到 Authority/投影读取仍按同一 intent 更新卡片内容后随卡片消失；
   背景 inert 与焦点圈使退出期间无法从列表开启新意图，故不存在旧退出回调关闭新卡片的
