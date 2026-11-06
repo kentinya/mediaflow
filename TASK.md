@@ -2,9 +2,9 @@
 
 Authority：已提交的 [Slice50](SLICE.md)，以及
 [Development Workflow](docs/development-workflow.md)。用户明确授权同一代理先承担 A 激活、
-再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的保存中遮罩退出
-修正；B 已复验该问题通过，整体验收仍为 **FIX REQUIRED（存储三卡片缺少退出过渡）**。
-Task Base、范围与验收不变。Developer 本轮只实施本
+再承担 B 首次规划，并已明确授权激活 Task50.1。Developer 已完成 B 指出的存储三卡片
+退出过渡修正，状态 **READY FOR B REVIEW**（未自审 PASS）；Task Base、范围与验收不变。
+Developer 本轮只实施本
 Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结果，也未推送或部署。
 执行前阅读对应的 [B](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer](docs/agent-experience/developer-implementation-role.md) 经验。
@@ -13,7 +13,7 @@ Task，未自审 PASS、未执行 B 的完整 T4、未继续其他 Slice50 结�
 Task ID: 50.1
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 Difficulty: High
 Test Level: T4
@@ -202,86 +202,78 @@ npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/a
 
 ## Developer Completion Report
 
-状态：**READY FOR B REVIEW**（B P1 修正完成，Developer 交接，未自审 PASS）。
+状态：**READY FOR B REVIEW**（存储三卡片退出过渡修正完成，Developer 交接，未自审 PASS）。
 
 ```text
-本轮修正 checkpoint: 22618d708a68eeb076d9ed42755a69bf996656df
-补充真实浏览器回归: cb3b64362f869c315d782fcefcd5cd813384a9a1
+本轮修正 checkpoint: 736aa5dfe0cbe7b23546fc88e970949a0eba2912
 初次实现 checkpoint: b7636a874d643c36fabc90b51080aa67a1c8c543
+保存保护修正 checkpoint: 22618d708a68eeb076d9ed42755a69bf996656df
+补充回归 checkpoint: cb3b64362f869c315d782fcefcd5cd813384a9a1
 分支: main
 Task Base: f24dce7a0a97e035078879e2a93855de02d74f54
 B 审查范围: Task Base..本报告提交 HEAD
 ```
 
-B 的审查范围是 Task Base..本报告提交 HEAD；实现源码身份为上述两个 checkpoint。工作区既有的
-`mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 调查产物均保持原样，
-未纳入本次 checkpoint。
+B 的审查范围仍是 Task Base..本报告提交 HEAD；本轮唯一新增源码 checkpoint 为
+`736aa5df`。工作区既有的 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、
+`output/` 调查产物均保持原样，未纳入本次 checkpoint。
 
-### 本轮 P1 修正（B 审查阻塞项）
+### 本轮修正（B 审查阻塞项：存储三卡片缺少退出过渡）
 
-- **原因：** `ModalCardShell` 的遮罩与层外沿 `onMouseDown` 无条件调用 `onRequestClose`，
-  `closeDisabled` 只约束右上角关闭按钮。存储保存中取消按钮、关闭按钮与 Escape 已禁止退出，
-  但点击卡片外灰遮罩仍会卸载卡片；保存请求继续完成。
-- **修正：** 共享呈现只执行所有者传入的退出许可。`closeDisabled` 现在同时阻止遮罩、层外沿
-  和关闭按钮的关闭请求；存储所有者继续以同一 `saving`（`saveMutation.isPending`）传入该
-  许可，Escape 沿用既有 `escapeDisabled`。未改变任何存储/自动化业务规则、字段、命令、
-  请求顺序或保存状态处理，也未新增确认步骤。
-- **结果：** 保存未结束时卡片保持挂载，输入与结果承接位置不丢失；请求仍只发送一次，不会
-  因遮罩点击卸载、取消、清空或重发。成功、已知拒绝和未知结果继续走原有返回/核对路径。
-
-### 实际变更（累计 Task 候选）
-
-- 共享呈现：新增 `web/src/shared/ui/modal-card.tsx` 的居中卡片/遮罩/标题/正文/底部结构、
-  滚动锁定与滚动条占位、inert 背景、Tab 焦点圈和 `preventScroll` 回焦；本轮补齐遮罩/层外沿
-  的保存中退出许可。
-- 自动化新建/编辑：叠层路由保留背景滚动，列表按之前可见位置恢复；稳定卡片几何与加载骨架，
-  权限/定义读取、失败和完整表单共用同一布局；关闭/错误/拒绝回焦且不滚动背景。
-- 存储查看/添加/编辑：改为同一共享居中卡片；查看保留详情、引用、检查证据与显式检查；
-  添加/编辑保留四步 Provider 字段、精确投影/fence、迟到读取丢弃和既有 Save/核对逻辑。
-- 存储“更多”：正确行锚定的 fixed 菜单、视口钳制、普通/危险层级、键盘焦点与 busy 状态；
-  复制/启停/检查/移除的业务、权限、确认和未知核对未改。
-- 测试：更新旧抽屉结构断言；新增共享卡片退出许可、存储慢读取/输入保留/菜单焦点、真实
-  Python 存储卡片聚焦 spec 和自动化打开中间帧证据。本轮新增保存中遮罩/外沿回归（真实
-  添加/编辑入口、桌面与 390px、显式请求门闩、单次命令、成功/已知拒绝/未知核对）。
-- 未修改后端、API、Schema、Task 生命周期、发布/权限/媒体执行语义或 CURRENT 产品/架构
-  Contract 文本；Slice50 其余 RO-1/RO-3/RO-4 仍未实施，本 Task 不宣告 Slice 完成。
+- **原因：** 查看/添加/编辑三张卡片的 `ModalCardShell` 都固定 `closing={false}`，
+  所有者关闭（`setDetailId(null)` / `closeDrawer` / 保存成功直接置 `open:false`）
+  当次渲染即卸载卡片；`styles.css` 已有的共享退出样式从未被真实入口使用。
+- **共享呈现：** `modal-card.tsx` 新增无业务依赖的 `useModalCardExit`：合法关闭请求先
+  进入退出状态并播放既有共享卡片/遮罩退出（与自动化基准相同的 160ms；reduced-motion
+  立即完成），退出结束后才调用所有者关闭回调卸载卡片并释放滚动锁、inert 背景和回焦。
+  退出已在进行时忽略重复请求；计时器不超出所有者生命周期，页面卸载即清理。
+- **接入路径：** 存储查看的关闭按钮、遮罩、外沿、Escape 与读取失败的“返回存储列表”；
+  添加/编辑的关闭按钮、取消、遮罩、外沿、Escape 与读取失败返回；checked Save 成功
+  关闭也走同一退出，退出后仍由原 `closeDrawer` 作废迟到读取并清理意图。保存中退出
+  禁止保持上一轮已修复的 `closeDisabled` 语义；退出期间取消/上一步/下一步/保存/步骤
+  轨/重读等命令按钮禁用，成功后的退出窗口内保存不可再次提交，无重发。
+- **未改变：** 表单字段、校验、精确投影/fence、迟到读取丢弃、Save/核对、菜单业务、
+  RBAC、命令语义与请求顺序均不变；不新增确认步骤、业务字段、后端能力或延迟读取。
 
 ### 实际执行结果（cwd、命令、结果）
 
 以下均为本候选源码实际执行结果：
 
 - 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出。
-- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 全部通过
-  （build 仅有既存 chunk >500 kB 提示）。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
+  全部通过（build 仅有既存 chunk >500 kB 提示）。
 - `web/` 单元/组件（10 个文件）：`npm run test -- run src/features/storage/StorageManagementPage.test.tsx
   src/entities/storage/storage-form.test.ts src/entities/storage/storage-management.test.ts
   src/shared/api/storage-management-api.test.ts src/features/operations/AutomationCreateDialog.test.tsx
   src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationRouter.test.tsx
   src/features/operations/AutomationListCopy.test.tsx src/features/operations/AutomationListRunOnce.test.tsx
-  src/shared/ui/modal-card.test.tsx` → **10 files / 188 tests passed**。其中焦点回归 2 文件
-  **52 tests passed**，覆盖保存中 Escape、遮罩/层外沿、单次 POST/PUT、输入保留、已知拒绝与
-  未知核对入口。
+  src/shared/ui/modal-card.test.tsx` → **10 files / 195 tests passed**。新增 7 个用例：
+  共享退出先呈现后交权、退出中重复请求忽略、reduced-motion 立即关闭、卸载清理计时器，
+  以及真实入口的查看/取消/保存成功退出（退出类呈现期间卡片保持、背景锁保持、命令
+  禁用、结束后回焦/释放、零额外读取与单次 POST）。
 - `web/` 默认 E2E：`npm run test:e2e -- tests/e2e/storage-management.spec.ts
   tests/e2e/automation-presentation.spec.ts` → **31 passed**。
-- `web/` 真实 Python E2E：`npm run test:e2e -- --config=playwright.python.config.ts --workers=1
-  tests/e2e/automation-create-dialog.python.spec.ts tests/e2e/storage-dialog.python.spec.ts` →
-  **19 passed**（自动化 14、存储 5）。新增存储用例从真实添加/编辑入口持有请求，在
-  `aria-busy=true` 且取消禁用后分别点击 1536×1024 背景遮罩/卡片外沿与 390px 遮罩，证明卡片
-  不消失、输入在确认摘要中保留、POST/PUT 各一次；放行后真实保存读回成功。同一用例继续在
-  390px 对重复 ID 再次持有请求、点击遮罩并放行，证明真实 409 拒绝留在表单、输入可导航回读
-  且无自动重发。其余用例继续覆盖慢读取关闭竞态、重复拒绝、菜单键盘/边界和精确读回。
-- 本轮自动化测试执行累计约 2 分钟，低于本轮实际用时 30%；未执行 B 的完整 T4、
-  wheel/Docker/发布门禁。
+- `web/` 真实 Python E2E：`npm run test:e2e -- --config=playwright.python.config.ts
+  --workers=1 tests/e2e/automation-create-dialog.python.spec.ts
+  tests/e2e/storage-dialog.python.spec.ts` → **22 passed**（自动化 14、存储 8）。新增
+  存储退出用例从真实查看/添加/编辑入口点击真实关闭控件，逐帧采样计算透明度：桌面
+  1536×1024 三入口与 390px 编辑均证明退出期间卡片/遮罩按帧淡出、无中间空档，结束后
+  回到调用入口、滚动锁释放、零配置/媒体命令；reduced-motion 下无部分透明度帧且立即
+  关闭；退出完成后立即重开为全新稳定卡片。本轮测试执行（单元/静态/构建/两级 E2E）
+  累计约 5 分钟，低于本轮实际用时 30%；未执行 B 的完整 T4、wheel/Docker/发布门禁。
 
 ### 已知风险与剩余工作
 
-- B 仍须在精确候选复验本 P1，并执行适用完整 T4、原生 1536×1024 / 390px 动态与截图验收；
-  Developer 未执行 B 的完整回归、wheel/Docker/发布门禁。
-- 自动化卡片的经典滚动条动态证据由测试侧 same-origin 样式强制；真实浏览器占位滚动条和无
-  占位滚动条仍应由 B 的原生证据确认。
-- 存储添加 authority 失败时卡片内保存按钮禁用并提供重试；B 应结合慢/拒绝/缺失响应复核。
-- 本 Task 只覆盖 RO-2 与 RO-4 的自动化新建/编辑稳定性补充；RO-1、RO-3、RO-4 其余结果仍
-  等待后续 Task，不能据此宣告 Slice50 完成。
+- B 须在精确候选复验本阻塞，并执行适用完整 T4 与原生 1536×1024 / 390px 动态、
+  reduced-motion 及截图验收；Developer 未执行 B 的完整回归、wheel/Docker/发布门禁。
+- 退出期间（160ms）迟到 Authority/投影读取仍按同一 intent 更新卡片内容后随卡片消失；
+  背景 inert 与焦点圈使退出期间无法从列表开启新意图，故不存在旧退出回调关闭新卡片的
+  路径；跨行切换视图卡片不卸载组件，焦点回退仍指向首次挂载时的入口（既有行为，
+  非本轮引入）。
+- 读取失败分支的“返回存储列表”与关闭按钮共用同一退出路径，本轮用例以关闭按钮与
+  取消为真实入口；该失败分支的浏览器级退出证据留给 B 的完整动态验收。
+- 本 Task 只覆盖 RO-2 与 RO-4 的自动化新建/编辑稳定性补充；RO-1、RO-3、RO-4 其余
+  结果仍未实施，不能据此宣告 Slice50 完成。
 - CURRENT 文档未提前改写为已验收事实；Task PASS 或 A closure 时再按实际验收统一对账。
 
 Developer 未作出 PASS/FIX REQUIRED 判断，交给 B 独立审查。
