@@ -240,7 +240,7 @@ ignored `web/test-results/`，动态进出过程与 reduced-motion 仍由 B 在�
 **未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files` 与 Storage/自动化原生
 模块、wheel/源码外 smoke、Docker/重启；这些不是 Developer 本轮失败的证据。剩余风险：
 窄屏表格列仍沿用既有压缩规则（本 Task 未重做表格）；分页/动画/迟到响应的更广组合和
-真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 5 分钟，低于本轮实际工作时间的 30%。
+真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 7 分钟，约占本轮实际工作时间的 16%，低于 30%。
 
 B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
 
