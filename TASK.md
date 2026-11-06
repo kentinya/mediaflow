@@ -1,31 +1,28 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task50.4 — V2 侧栏主页面切换体验
 
 Task50.3 已由 B 独立验收 **PASS**。完整报告及证据见
 ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d..a284c0135701d949afcae1cfe15fbba904eb16e0，
 最终实现 checkpoint 为 a7a2b669da4611efd84778aabd4435145bcfd159。
-本轮按用户的 B 角色规划要求提供下一 Task 草案，尚未授权激活或实施。
-不启动 Developer，不推送或部署。
-
-## Task50.4 规划草案 — V2 侧栏主页面切换体验
+用户已明确授权激活修订后的 Task50.4，本 Task 为唯一当前实施 Task，状态 PLANNED。
+本轮由 B 完成激活记录，待 Developer 实施，不自动启动 Developer，不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
-本草案不改变 Slice 范围、Base 或既有 Task 接受事实。
+本次激活不改变 Slice 范围、Base、Task 验收或既有 Task 接受事实。
 
 ```text
 Task ID: 50.4
 Task Type: SLICE
 Parent Slice: 50
 Status: PLANNED
-Planning State: DRAFT ONLY — NOT ACTIVATED
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: NONE — PLANNING ONLY
-Next Action: USER ACTIVATES TASK50.4; NO AUTOMATIC IMPLEMENTATION
+Development Authorization: TASK50.4 ONLY — EXPLICIT USER ACTIVATION
+Next Action: DEVELOPER IMPLEMENTS TASK50.4; THIS TURN ACTIVATION ONLY
 ```
 
 ### Goal 与真实代码缺口
@@ -37,7 +34,7 @@ Next Action: USER ACTIVATES TASK50.4; NO AUTOMATIC IMPLEMENTATION
 整页过渡；从“文件”进入“自动化”则播放。这只是动效分组，不改变页面、权限或路由。
 慢读、无权限或读取失败仍显示目标页真实状态与原有恢复操作，动效不遮住错误。
 
-本草案依据当前 Base 源码，未构造新入口或假设缺陷：
+本 Task 依据原 Base 源码；截至本次激活，仅有规划文档变化，未构造新入口或假设缺陷：
 
 - web/src/shared/ui/AppShell.tsx 直接渲染 children，尚无主页面切换呈现；
   web/src/routes/router.tsx 的 RootRoute 在共享 Shell 下放置 AuthBoundary 与 Outlet。
@@ -194,10 +191,11 @@ Task50.3 的 PASS 保持；Slice50 仍 ACTIVE：RO-1、RO-2、RO-3、RO-4 的库
 稳定性已有 B 接受记录，RO-4 的主页面过渡尚未交付。通过本 Task 后按上述 stop rule
 重评全部结果，完成最终门禁并交 A，不自动创建新 Task 或宣告 Slice CLOSED。
 
-### 规划基线与本次修订
+### 规划基线与本次激活
 
-原 Task Base 保持 ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749；本次修订起点为 main /
-14038a3789249ccd71c6414b2563e17bf754b36e，workspace/Git 可写，修订前治理检查 PASS。
+原 Task Base 保持 ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749；本次激活起点为 main /
+66c165e710065fb6ee0a169a2858da6a975af019，workspace/Git 可写，激活前治理检查 PASS。
 预存 mediaflow/.DS_Store 修改、各层 .DS_Store、根目录日志和 15、
 output/ 下数据库参考/图片/HTML/预览等未跟踪产物全部保留，不纳入 checkpoint。
-本轮仅维护 TASK.md；Slice/Roadmap/Progress 的旧激活指针不构成新的实施授权。
+本轮仅激活本 Task 并同步 Slice/Roadmap/Progress 的事实指针；范围、验收和测试分工
+沿用已修订计划。未开始产品实现或 Task50.4 验收，不宣告 Slice 完成。

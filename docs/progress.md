@@ -9,10 +9,10 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 [Slice50](../SLICE.md) is **ACTIVE**, retaining the original eight UX changes and Automation
-create/edit card jitter correction. Task50.1 and Task50.2 passed B review; the user has activated
-[Task50.3](../TASK.md) (both libraries' browsing layout, configuration cards and loading) as the
+create/edit card jitter correction. Task50.1–50.3 passed B review; the user has activated
+[Task50.4](../TASK.md) (V2 sidebar main-page transitions) as the
 sole current implementation Task, **PLANNED** and awaiting Developer implementation.
-This turn records activation only; no Task50.3
+This turn records activation only; no Task50.4
 implementation/acceptance or Slice50 closure is claimed.
 Slice49 remains PASS / CLOSED. The accepted closure ledger below is unchanged.
 
