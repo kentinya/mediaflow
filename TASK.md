@@ -1,8 +1,8 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
 用户于 2026-11-06 明确授权激活本 Task。未命名 Storage、保存恢复及核对期间/完成后的
-只读状态均已通过 B 复验。当前 FIX REQUIRED：全量 Web 单元测试中，既有认证测试仍依赖
-加载时的假空态，需在同一 Task 修正该直接受影响的断言；本轮不推送或部署。
+只读状态均已通过 B 复验。当前认证测试已按 B 的直接受影响修正指导更新并交回
+READY FOR B REVIEW；本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -14,9 +14,9 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: 37465bd4f3f2724e5143befe485c2a82b855cc0a
+Candidate: 5d60aae6f49e4219db7ce4a47f0841c8ed81dd2a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -193,7 +193,7 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
   不重构后端配置/权限/队列或引入自动未知重放，不推送/部署。
 - 当前：RO-1 已由 Task50.2 PASS；RO-2 与自动化稳定性由 Task50.1 PASS；RO-3 及两种库
   加载待本 Task 完整验收；RO-4 侧栏主页面切换仍未交付。本轮核对与当前输入的一致性已通过；直接受影响的认证
-  测试尚未适配加载语义，需同 Task 修正。
+  测试已按加载语义修正，待 B 复验。
   本 Task 未来 PASS 后再次核对全部结果；侧栏切换仍缺则不能提交 Slice Closure Packet。
 
 ### Developer Completion Report / B Review Result
@@ -349,6 +349,40 @@ class 消费者，未触发该原生模块重跑，未将未执行记为通过�
 RO-3 的上述交互检查通过，库加载的原生慢目录视觉证据待 B 补完；Task50.3 的 T4 门禁
 尚未全部通过；RO-4 侧栏主页面切换仍未交付。Slice50 保持 ACTIVE，同 Task 修正；不自动规划下一 Task，不交
 Closure Packet，不宣告 Slice PASS / CLOSED。
+
+### Developer Fix Report — 2026-11-06 (B50.3-01 auth test)
+
+**READY FOR B REVIEW。** 修正候选为 `5d60aae6f49e4219db7ce4a47f0841c8ed81dd2a`，
+在 `main` 上单个测试 checkpoint；Task Base 仍为
+`073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- `AuthBoundary.test.tsx` 的 `keeps a still-authenticated operator on the deep route`
+  现为页面实际请求的 `/api/v1/media-libraries` 返回合法空列表，为
+  `/api/v1/system/status` 返回合法状态；未命中测试请求会直接失败，不隐藏额外调用。
+- “尚未添加媒体库”仍在显式空列表返回后断言，不再充当读取未完成时的路由成功标志。
+  同时断言真实 router 停留于 `/medialib/files`、token 保留、intended path 为空且
+  未回到 API token 连接入口。
+- 未改产品加载分支、认证/恢复语义或其他测试；`MediaLibraryFilesPage.test.tsx` 中
+  的“等待期间无假空态、空列表返回后才出现空态”断言保持不变。
+
+**本轮实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/shared/auth/AuthBoundary.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx` | 2 files / 24 tests passed |
+| `npx eslint src/shared/auth/AuthBoundary.test.tsx` | passed |
+| `npx prettier --check src/shared/auth/AuthBoundary.test.tsx` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+**未执行（B 自有门禁）：** 全量 Web/Python 套件、typecheck/build、E2E 与原生模块；
+本修正只改测试 fixture/断言，未改产品代码，不把这些门禁记为 Developer 通过或失败。
+剩余风险：测试中的空列表响应为立即完成，真实 pending 与迟到场景继续由既有
+`MediaLibraryFilesPage` 测试和 B 的完整门禁覆盖。
+
+本轮从约 `22:50 +08:00` 开始，约 `22:59 +08:00` 交接；测试执行约 4 秒，连同
+静态检查约 8 秒，低于本轮实际用时的 30%。预存 dirty/untracked 全部保留。
 
 ### Developer Fix Report — 2026-11-06
 
