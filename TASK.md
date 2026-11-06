@@ -1,8 +1,8 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
 用户于 2026-11-06 明确授权激活本 Task。未命名 Storage 的编辑阻塞已由 B 复核消除；
-继续验收发现保存结果未知/并发冲突的核对与继续旅程仍未完成，当前 FIX REQUIRED。
-修正留在同一 Task，本轮不推送或部署。
+保存结果未知/并发冲突的核对与继续阻塞已由 Developer 在同一 Task 修正并交回
+READY FOR B REVIEW；本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -14,14 +14,14 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: bb75221cfc4e3ad6115a021b2d190535dc7ee508
+Candidate: ec3dbc3b052c5d35b9ff67304c6d61143fd49d15
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: TASK 50.3 ONLY; SAME TASK FIX LOOP
+Development Authorization: TASK 50.3 ONLY; SAME TASK FIX LOOP COMPLETED
 ```
 
 ### Goal 与完整用户旅程
@@ -391,6 +391,74 @@ ACTIVE，修复留在 Task50.3，不规划下一 Task，不交 Closure Packet，
 
 本轮从 `2026-11-06T12:48:52Z` 开始，约 `12:56Z` 交接（约 7 分钟）；测试执行约
 100 秒（含失败重跑与直接受影响 E2E），约占本轮实际用时的 24%，低于 30%。
+
+### Developer Fix Report — 2026-11-06 (B50.3-02)
+
+**READY FOR B REVIEW。** 修正候选为 `ec3dbc3b052c5d35b9ff67304c6d61143fd49d15`，在 `main` 上单个实现 checkpoint；
+Task Base 仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- 新增共享 `library-save-recovery.tsx`：保存结果按 `definite / unknown / conflict` 区分。
+  收到明确 `candidateState: not_*` 的 5xx 仍算确定拒绝；`transport_unavailable`、
+  `malformed_response`、`internal_error`、`service_unavailable`、status 0 或缺少候选
+  状态的 5xx 算未确认；`configuration_conflict` / `configuration_version_conflict`
+  单列。卡片内提示复用现有 `mf-storage-verify` 呈现，只提供“核对当前配置”一个读取。
+- 两种库的 Save 失败映射新增 `outcome` 与可选 `status`。未确认消息改为“响应没有送达
+  或无法解读，候选…可能已经发布…不会自动重发…请核对当前 Active”；不再声称旧 Active
+  未被替换。冲突消息改为“请核对当前配置后再决定是否保存”。卡片说明与确认提示由
+  “失败时”改为“被拒绝时”，避免把未确认结果说成已证明未发布。
+- 两页 Add/Edit 保存：未确认/冲突时保留提交候选、编辑身份、原绑定 baseline 与提交时
+  Storage 选项；普通 Save 被禁用并给出原因，核对前不会重复提交。核对复用既有精确
+  `/edit` 投影：读取失败保留输入和待核对状态；成功且当前配置等于提交内容时只陈述
+  “当前 Active 已是本次提交的配置”，以唯一“关闭”退出；当前不同则列出名称、Storage、
+  根路径与状态，保留输入并把刚读到的 Active 身份配给下一次显式保存；Add 的
+  `*_not_found` 证明未发布并允许显式重试；Edit 的对象已消失时给出唯一合法退出。
+- 关闭/重开：未确认保存跨关闭保留，重开同一库/添加入口直接恢复提交候选及其 Storage
+  选项，不读投影、不重发；确定冲突在关闭后清除，重开编辑照常读取当前投影。核对结束
+  后焦点交给底部仍可用的主操作（显式保存或唯一关闭）。
+- 显式继续时使用刚核对的 `expectedRevisionId/expectedVersion/expectedDigest` 与保留
+  候选一起提交；不自动 rebase、合并、覆盖别人变更或重发。未加后端能力、产品路由或
+  新入口；正常成功、无效输入、禁用、绑定变化与物理文件保留语义不变。
+
+**新增/修改测试：** 两页组件测试覆盖未确认 Add、编辑未知结果的关闭/重开、核对读取
+失败与恢复、冲突后读取当前值再显式保存（断言 PUT 携带新 Active 身份）；媒体库卡片
+测试覆盖核对块、Save 门禁、核对失败提示、已核对后的唯一退出；共享分类与候选匹配
+（规则/稳定性）各有断言。原生 `direct-files.python.spec.ts` 新增四个真实场景：两种库
+各覆盖（a）Add 与 Edit 的真实 API 已完成、仅浏览器成功响应被中断，候选保留、Save
+门禁、核对证明当前 Active、关闭/重开保留、核对读取 503 后重试恢复；（b）两个真实
+浏览器上下文先后保存，A 收到真实 409、保留输入、核对到获胜名称后显式保存成功。
+后端确实发布，只截断浏览器响应，未伪造 API/数据库。
+
+**本轮实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 4 files / 109 tests passed |
+| `npm run test -- run src/features/library` | 7 files / 138 tests passed |
+| `npm run typecheck` | passed |
+| `npm run build` | passed |
+| `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts` | 79 passed |
+| `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'library save recovery\|reopens its own durable operation status\|confirms once, waits for the real Worker'` | 8 passed（4 新增 + 4 既有） |
+| `npx eslint <实际改动文件>`、`npx prettier --check <实际改动文件>` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+实际查看了 1536×1024 与 390px 媒体库添加卡片的未确认状态截图（ignored
+`web/test-results/`）：候选值、核对动作与底部操作均在视口内可达。失败的早期探测保留在
+本地 ignored 结果目录，未删除断言、未加重试或放宽超时。
+
+**未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files`、Storage/自动化原生
+模块、wheel/源码外 smoke、Docker/重启及完整 T4 视觉/加载验收；这些不是 Developer
+本轮失败的证据。
+
+剩余风险：重开未确认 Add 时 Storage 下拉使用当前已启用集合，提交的 Storage ID 仍是
+候选原值；若该 Storage 期间被停用，Save 仍被核对门禁挡住，B 可复核该边缘。确定冲突的
+上下文在关闭后清除（下次编辑读取当前投影）；未确认上下文只跨关闭/重开保留，不跨整页
+重载，因为本轮未引入新的持久客户端记录或后端能力。核对只证明当前配置，不证明原命令
+历史成功，文案保持该边界。窄屏动态过程与 reduced-motion 仍由 B 的 T4 验收覆盖。
+
+本轮从约 `2026-11-06T13:14Z` 开始，约 `13:50Z` 交接（约 36 分钟）；测试执行约
+6.5 分钟（含失败运行与重跑），约占本轮实际用时的 18%，低于 30%。
 
 ### 激活基线与前序接受事实
 
