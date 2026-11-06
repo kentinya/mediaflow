@@ -7,7 +7,8 @@ ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 用户已明确授权激活修订后的 Task50.4。本 Task 仍为唯一当前实施 Task，
 B 已复核修正候选 4c511fc7d18d66d01c70c7a695f88c77376135f6 及交付 Head
 733250e836615317340c563f603efea41492987f，结论 **FIX REQUIRED**。B50.4-01 已解决；
-B50.4-02 的认证续转及跨页 URL 回归留在同一 Task 修正，原 Base、范围、验收及测试分工保持。
+B50.4-02 的认证续转及跨页 URL 回归已在同一 Task 修正，当前实现候选为
+ad40d23538cb3bf30d416ae7cefb6920d2375f5b，交回 B 复核。原 Base、范围、验收及测试分工保持。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
@@ -17,15 +18,15 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 �
 Task ID: 50.4
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
-Candidate: 4c511fc7d18d66d01c70c7a695f88c77376135f6
+Candidate: ad40d23538cb3bf30d416ae7cefb6920d2375f5b
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: TASK50.4 ONLY — EXPLICIT USER ACTIVATION
-Next Action: SAME TASK FIX — B50.4-02 AUTH CONTINUATION AND CROSS-PAGE URL
+Next Action: B REVIEW — B50.4-02 AUTH CONTINUATION AND CROSS-PAGE URL
 ```
 
 ### Goal 与真实代码缺口
@@ -349,3 +350,59 @@ operations.spec.ts:184、:492、:710（未出现连接表单）及 :435（跨页
 output/ 下数据库参考/图片/HTML/预览等未跟踪产物全部保留，不纳入 checkpoint。
 本轮仅激活本 Task 并同步 Slice/Roadmap/Progress 的事实指针；范围、验收和测试分工
 沿用已修订计划。未开始产品实现或 Task50.4 验收，不宣告 Slice 完成。
+
+### Developer Completion Report — 2026-11-07 B50.4-02 fix
+
+实现候选：`ad40d23538cb3bf30d416ae7cefb6920d2375f5b`（2026-11-07 00:49 +08:00）。
+Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设 Base、未扩大范围、
+未推送或部署。本报告记录后交回 **READY FOR B REVIEW**，不自行宣告 PASS。
+
+**根因与修正**
+
+- B50.4-02 根因确认：`ShellPageSurface` 以主页面身份作 `key`，把 `AuthBoundary` 与
+  Router `Outlet` 一起重挂。导航交接期间旧业务页的挂载副作用参与新 location，造成
+  未连接深链不进入连接页、媒体库参数写入文件/任务中心 URL。
+- 修正只改共享呈现边界：移除身份 `key`，同一 DOM 包装和其内路由子树持续挂载；
+  `entryVersion` 仅在 `shellPageForPath` 到达身份变化时递增，驱动一次启动类→下一帧
+  移除→200ms opacity transition。同页 query/标签/卡片/刷新不递增，不重播。
+- `AuthBoundary` 恢复普通 Router 生命周期；未给业务页面增加路径判断，未加延迟/重试，
+  未禁用筛选规范化、认证续转或库地址同步，未改权限、API、Storage、schema、路由或业务命令。
+  Task50.1–50.3 的卡片、库加载/返回和 reduced-motion 行为保留。
+
+**测试改动（真实入口）**
+
+- `AppShell.test.tsx`：主页切换后断言仍是同一个 `[data-main-page]` 包装（不是新 key
+  节点），同页子路由保持同一节点，真正切页仍进入一次。
+- `page-transition.spec.ts`：九页真实侧栏导航前标记当前包装，逐步断言标记跨九页保留；
+  reduced-motion 下从存储进入媒体库后断言精确的
+  `/ui-v2/medialib/files?mediaLibraryId=movies`，不残留上一页 search。
+- `operations.spec.ts`：未连接的任务中心精确深链继续断言自动进入连接页、连接后
+  `view=ended&run=job-005` 的任务详情；媒体库→任务中心断言目标 URL 不含
+  `mediaLibraryId`。
+- `medialib-files.spec.ts`：媒体库→文件仍断言精确 `/ui-v2/resourcelib/files`，并显式
+  断言不带入 `mediaLibraryId`。
+
+**实际执行（cwd `web/`，除注明外）**
+
+| 命令 | 实际结果 |
+|---|---|
+| 修正前 `npx playwright test tests/e2e/operations.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/page-transition.spec.ts` | 6 failed / 38 passed（90.2s），复现 B 列出的连接页与跨页 URL 失败 |
+| 修正后同一三模块命令 | 44 passed（27.5s） |
+| `npx playwright test ... -g "all nine sidebar\|...\|authentication continuation"` | 5 passed（6.1s），含新增包装持久标记与精确 URL 断言 |
+| `npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts src/routes/router.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/modal-card.test.tsx` | 5 files / 68 tests passed（3.67s，最终格式后复跑） |
+| `npm run typecheck` | passed |
+| `npx eslint`（上述源文件及三个改动 E2E spec） | passed |
+| `npx prettier --check`（上述源文件、`styles.css` 及三个改动 E2E spec） | passed（一次格式修正后复检） |
+| `npm run build` | passed；`dist/assets/index-BBNz3k9m.js`、`dist/assets/index-BUcXw9MU.css`，既有大 chunk 提示保留 |
+| `npx playwright test tests/e2e/dashboard.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/automation-presentation.spec.ts tests/e2e/task-center-layout.spec.ts` | 32 passed（15.7s） |
+| 根目录 `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+**测试计时**：本轮从 `2026-11-07 00:42:39 +08:00` 开始；可核实测试/静态检查区间并集
+约 186.5 秒（含修正前复现 90.2 秒、修正后三模块 27.8+27.9 秒、四模块 15.7 秒、
+定向 6.1 秒、单元 3.6+3.7 秒及 typecheck/lint/prettier/build 约 12.9 秒），低于本轮
+总用时的 30%。未空等凑比例。
+
+**剩余风险 / 未执行**：B 的全量 Web/Python 回归、完整默认 E2E、真实 Python 浏览器旅程、
+打包/安全/Slice 最终 T4 门禁未由 Developer 执行，不记为通过；B 仍须在最终候选上查看
+实际过程截图/trace，确认九页过程、认证续转、快速导航及同页排除。未接触用户配置、
+运行数据库或生产媒体；预存 dirty/untracked 文件全部保留，不纳入 checkpoint。
