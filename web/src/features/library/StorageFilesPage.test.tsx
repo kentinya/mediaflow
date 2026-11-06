@@ -18,6 +18,7 @@ import { authStore } from "../../shared/api/auth-store";
 import type { SaveResourceLibraryOptions } from "../../shared/api/api-client";
 import {
   AddResourceLibraryDrawer,
+  resourceLibraryCandidateMatches,
   resourceLibrarySaveFailure,
   StorageFilesPage,
 } from "./StorageFilesPage";
@@ -203,6 +204,61 @@ describe("AddResourceLibraryDrawer", () => {
     expect(failure.message).toContain("本次候选未保存");
     expect(failure.message).not.toContain("旧 Active 仍在使用");
     expect(failure.refreshAuthoritativeState).toBe(true);
+    expect(failure.outcome).toBe("conflict");
+  });
+
+  it("does not describe an unreadable success body as a proven non-publication", () => {
+    for (const code of ["transport_unavailable", "malformed_response"]) {
+      const failure = resourceLibrarySaveFailure(code, undefined, 0);
+      expect(failure.outcome).toBe("unknown");
+      expect(failure.message).toContain("可能已经发布");
+      expect(failure.message).not.toContain("未被本次操作替换");
+      expect(failure.refreshAuthoritativeState).toBe(true);
+    }
+    expect(
+      resourceLibrarySaveFailure("service_unavailable", undefined, 503).outcome,
+    ).toBe("unknown");
+  });
+
+  it("compares only the policy a Save actually publishes", () => {
+    const base: SaveResourceLibraryOptions = {
+      resourceLibraryId: "lib-a",
+      name: "Library A",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "lib-a",
+    };
+    // An untouched hidden policy never turns a matching name-only edit into a
+    // mismatch.
+    expect(
+      resourceLibraryCandidateMatches(base, {
+        ...base,
+        includeRules: ["*.mkv"],
+        stability: { minimumAgeSeconds: 30 },
+      }),
+    ).toBe(true);
+    // A submitted policy is compared by meaning, including stored objects.
+    expect(
+      resourceLibraryCandidateMatches(
+        { ...base, includeRules: ["*.mkv"] },
+        { ...base, includeRules: [{ kind: "glob", pattern: "*.mkv" }] },
+      ),
+    ).toBe(true);
+    expect(
+      resourceLibraryCandidateMatches(
+        { ...base, includeRules: ["*.mkv"] },
+        { ...base, includeRules: ["*.mp4"] },
+      ),
+    ).toBe(false);
+    expect(
+      resourceLibraryCandidateMatches(
+        { ...base, stability: { minimumAgeSeconds: 30 } },
+        { ...base, stability: { minimumAgeSeconds: 60 } },
+      ),
+    ).toBe(false);
+    expect(
+      resourceLibraryCandidateMatches(base, { ...base, name: "Library B" }),
+    ).toBe(false);
   });
 
   it("refreshes unavailable Active state without losing the failed Save form", async () => {
@@ -583,6 +639,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
       | ((body: Record<string, unknown>) => Promise<Response>);
     /** The durable projection read for one admitted transfer Task. */
     onTransferProjection?: (taskId: string) => Response;
+    /** The ResourceLibrary Save/edit POST or PUT. */
+    onSave?:
+      | ((body: Record<string, unknown>) => Response)
+      | ((body: Record<string, unknown>) => Promise<Response>);
+    /** The exact ResourceLibrary edit projection read. */
+    onEdit?:
+      | ((libraryId: string) => Response)
+      | ((libraryId: string) => Promise<Response>);
   }) {
     const deleteProjections = new Map<string, Record<string, unknown>>();
     let generatedDeleteTask = 0;
@@ -590,6 +654,25 @@ describe("Files entry state and ResourceLibrary strip", () => {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(options.status);
+      if (
+        /\/resource-libraries\/[^/]+\/edit$/.test(url) &&
+        init?.method === undefined
+      ) {
+        const libraryId = decodeURIComponent(url.split("/")[4] ?? "");
+        if (options.onEdit) return await options.onEdit(libraryId);
+        throw new Error(`unexpected edit read: ${url}`);
+      }
+      if (
+        (url === "/api/v1/resource-libraries" && init?.method === "POST") ||
+        (/\/resource-libraries\/[^/]+$/.test(url) && init?.method === "PUT")
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        if (options.onSave) return await options.onSave(body);
+        throw new Error(`unexpected Save: ${url}`);
+      }
       if (/\/files\/organize-work(\?|$)/.test(url)) {
         const query = new URLSearchParams(url.split("?")[1] ?? "");
         // The Files page's own readback (RO-2): the removed Task Center discovery
@@ -3880,6 +3963,327 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(within(card).getByLabelText("资源库 ID *")).toHaveValue("lib-a");
 
     await user.click(within(card).getByRole("button", { name: "取消" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "编辑资源库" })).toBeNull(),
+    );
+  });
+
+  /** The exact edit projection both the Edit card and verification read. */
+  const editProjection = (
+    name: string,
+    revisionId: string,
+    version: number,
+  ) => ({
+    resourceLibrary: {
+      id: "lib-a",
+      name,
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "lib-a",
+    },
+    storages: [
+      {
+        id: "local-1",
+        name: "Storage local-1",
+        type: "local",
+        readOnly: false,
+        enabled: true,
+      },
+    ],
+    active: {
+      revisionId,
+      revisionSequence: version,
+      digest: `digest-${version}`,
+    },
+    sideEffects: "none",
+  });
+
+  it("keeps an unconfirmed Add candidate and verifies it from the exact Active without resending", async () => {
+    const user = userEvent.setup();
+    const savePosts: Record<string, unknown>[] = [];
+    let editReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onSave: (body) => {
+          savePosts.push(body);
+          // The real API published; only the browser's success body is lost.
+          return new Response('{"resourceLibrary":', {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        onEdit: () => {
+          editReads += 1;
+          return jsonResponse({
+            ...editProjection("New library", "active-2", 2),
+            resourceLibrary: {
+              id: "lib-b",
+              name: "New library",
+              enabled: true,
+              storageId: "local-1",
+              storagePath: "media/incoming",
+            },
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByText("notes.txt");
+    await user.click(screen.getByRole("button", { name: "+ 添加资源库" }));
+    const card = await screen.findByRole("dialog", { name: "添加资源库" });
+    await user.type(within(card).getByLabelText("名称 *"), "New library");
+    await user.type(within(card).getByLabelText("资源库 ID *"), "lib-b");
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "保存" }));
+
+    // A lost success body is an unconfirmed publication, never "not saved".
+    expect(await within(card).findByText("保存结果待核对")).toBeVisible();
+    expect(within(card).getByText(/可能已经发布/)).toBeVisible();
+    expect(within(card).queryByText(/当前 Active 未被本次操作替换/)).toBeNull();
+    expect(within(card).getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(within(card).getByText("New library")).toBeVisible();
+    expect(savePosts).toHaveLength(1);
+    expect(savePosts[0]).toMatchObject({
+      resourceLibraryId: "lib-b",
+      name: "New library",
+    });
+
+    await user.click(
+      within(card).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(
+      await within(card).findByText(
+        /已核对：当前 Active 中的资源库已是本次提交的配置/,
+      ),
+    ).toBeVisible();
+    expect(editReads).toBe(1);
+    // Verification is a read only: the Save command was never resent.
+    expect(savePosts).toHaveLength(1);
+    expect(within(card).queryByRole("button", { name: "保存" })).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "添加资源库" })).toBeNull(),
+    );
+  });
+
+  it("retains an unconfirmed edit across close/reopen, survives a failed verification and saves only on explicit intent", async () => {
+    const user = userEvent.setup();
+    const puts: Record<string, unknown>[] = [];
+    let editReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onSave: (body) => {
+          puts.push(body);
+          if (puts.length === 1) {
+            throw new TypeError("simulated lost Save response");
+          }
+          return jsonResponse({
+            resourceLibrary: {
+              id: "lib-a",
+              name: "Renamed by me",
+              enabled: true,
+              storageId: "local-1",
+              storagePath: "lib-a",
+            },
+            active: { status: "active", revisionId: "active-3" },
+            sideEffects: "configuration_only",
+          });
+        },
+        onEdit: () => {
+          editReads += 1;
+          if (editReads === 1) {
+            return jsonResponse(editProjection("资源库A", "active-1", 1));
+          }
+          if (editReads === 2) {
+            return jsonResponse(
+              { error: { code: "service_unavailable" } },
+              503,
+            );
+          }
+          return jsonResponse(editProjection("Renamed by peer", "active-2", 2));
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByText("notes.txt");
+    await user.click(
+      screen.getByRole("button", { name: "资源库操作 资源库A" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "编辑资源库" }),
+    );
+    const card = await screen.findByRole("dialog", { name: "编辑资源库" });
+    await user.clear(await within(card).findByLabelText("名称 *"));
+    await user.type(within(card).getByLabelText("名称 *"), "Renamed by me");
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+    expect(await within(card).findByText("保存结果待核对")).toBeVisible();
+    expect(puts).toHaveLength(1);
+
+    // Closing does not drop the unconfirmed submission or resend it.
+    await user.click(within(card).getByRole("button", { name: "取消" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "编辑资源库" })).toBeNull(),
+    );
+    expect(puts).toHaveLength(1);
+    await user.click(
+      screen.getByRole("button", { name: "资源库操作 资源库A" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "编辑资源库" }),
+    );
+    const reopened = await screen.findByRole("dialog", { name: "编辑资源库" });
+    // The retained candidate is shown again, and reopening read no projection.
+    expect(await within(reopened).findByLabelText("名称 *")).toHaveValue(
+      "Renamed by me",
+    );
+    expect(within(reopened).getByText("保存结果待核对")).toBeVisible();
+    expect(editReads).toBe(1);
+    expect(puts).toHaveLength(1);
+
+    // A failed verification keeps both the input and the pending state.
+    await user.click(
+      within(reopened).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(await within(reopened).findByText(/无法核对当前配置/)).toBeVisible();
+    expect(within(reopened).getByText("保存结果待核对")).toBeVisible();
+    // The retained input is still the operator's, and Save stays gated.
+    await user.click(within(reopened).getByRole("button", { name: "下一步" }));
+    await user.click(within(reopened).getByRole("button", { name: "下一步" }));
+    expect(
+      within(reopened).getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+
+    // A successful verification states the current values and pairs the
+    // retained candidate with that freshly read Active identity.
+    await user.click(
+      within(reopened).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(
+      await within(reopened).findByText(
+        /已核对当前 Active：名称“Renamed by peer”/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(reopened).getByRole("button", { name: "保存并激活" }),
+    ).toBeEnabled();
+    expect(puts).toHaveLength(1);
+    await user.click(
+      within(reopened).getByRole("button", { name: "保存并激活" }),
+    );
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toMatchObject({
+      resourceLibraryId: "lib-a",
+      name: "Renamed by me",
+      expectedRevisionId: "active-2",
+      expectedVersion: 2,
+      expectedDigest: "digest-2",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "编辑资源库" })).toBeNull(),
+    );
+  });
+
+  it("reads the winning Active after a version conflict and saves only on explicit intent", async () => {
+    const user = userEvent.setup();
+    const puts: Record<string, unknown>[] = [];
+    let editReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onSave: (body) => {
+          puts.push(body);
+          if (puts.length === 1) {
+            return jsonResponse(
+              {
+                error: {
+                  code: "configuration_version_conflict",
+                  message: "private version diagnostic",
+                  details: {
+                    durableState: "active_winner_preserved",
+                    candidateState: "not_published",
+                  },
+                },
+              },
+              409,
+            );
+          }
+          return jsonResponse({
+            resourceLibrary: {
+              id: "lib-a",
+              name: "My explicit name",
+              enabled: true,
+              storageId: "local-1",
+              storagePath: "lib-a",
+            },
+            active: { status: "active", revisionId: "active-3" },
+            sideEffects: "configuration_only",
+          });
+        },
+        onEdit: () => {
+          editReads += 1;
+          return jsonResponse(
+            editReads === 1
+              ? editProjection("资源库A", "active-1", 1)
+              : editProjection("Peer name", "active-2", 2),
+          );
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByText("notes.txt");
+    await user.click(
+      screen.getByRole("button", { name: "资源库操作 资源库A" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "编辑资源库" }),
+    );
+    const card = await screen.findByRole("dialog", { name: "编辑资源库" });
+    await user.clear(await within(card).findByLabelText("名称 *"));
+    await user.type(within(card).getByLabelText("名称 *"), "My explicit name");
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+
+    expect(
+      await within(card).findByText("Active 已被其他变更替换"),
+    ).toBeVisible();
+    expect(within(card).getByText(/当前获胜的 Active 仍为权威/)).toBeVisible();
+    expect(
+      within(card).getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+    // The local intent is retained, not replaced by the winning values.
+    expect(within(card).getByText("My explicit name")).toBeVisible();
+
+    await user.click(
+      within(card).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(
+      await within(card).findByText(/已核对当前 Active：名称“Peer name”/),
+    ).toBeVisible();
+    expect(puts).toHaveLength(1);
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toMatchObject({
+      resourceLibraryId: "lib-a",
+      name: "My explicit name",
+      expectedRevisionId: "active-2",
+      expectedVersion: 2,
+      expectedDigest: "digest-2",
+    });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "编辑资源库" })).toBeNull(),
     );

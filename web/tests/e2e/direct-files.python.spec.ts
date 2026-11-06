@@ -1892,3 +1892,363 @@ test("both library edit cards accept a legal Active with an unnamed Storage and 
     expect(filesAfter).toEqual(filesBefore);
   }
 });
+
+/**
+ * Task50.3 B50.3-02 recovery journeys.  Both library kinds publish through the
+ * real Python API: the browser loses only the success response (the server
+ * request completes), and a second window produces a real checked-Save
+ * conflict.  The card must retain the submitted candidate, verify the exact
+ * current Active and only then continue on explicit intent.
+ */
+type RecoveryKind = "resource" | "media";
+
+const RECOVERY_KINDS: Record<
+  RecoveryKind,
+  {
+    readonly pagePath: string;
+    readonly namespace: "resource-libraries" | "media-libraries";
+    readonly libraryKey: "resourceLibrary" | "mediaLibrary";
+    readonly heading: string;
+    readonly addLabel: string;
+    readonly addDialog: string;
+    readonly idLabel: string;
+    readonly storageId: string;
+    readonly rootLabel: string;
+    readonly rootPath: string;
+    readonly menuLabel: (name: string) => string;
+    readonly editLabel: string;
+    readonly pathField: "storagePath" | "rootPath";
+  }
+> = {
+  resource: {
+    pagePath: "/ui-v2/resourcelib/files?resourceLibraryId=source",
+    namespace: "resource-libraries",
+    libraryKey: "resourceLibrary",
+    heading: "文件",
+    addLabel: "+ 添加资源库",
+    addDialog: "添加资源库",
+    idLabel: "资源库 ID *",
+    storageId: "source-storage",
+    rootLabel: "资源库根路径 *",
+    rootPath: "",
+    menuLabel: (name) => `资源库操作 ${name}`,
+    editLabel: "编辑资源库",
+    pathField: "storagePath",
+  },
+  media: {
+    pagePath: "/ui-v2/medialib/files?mediaLibraryId=movies",
+    namespace: "media-libraries",
+    libraryKey: "mediaLibrary",
+    heading: "媒体库",
+    addLabel: "+ 添加媒体库",
+    addDialog: "添加媒体库",
+    idLabel: "媒体库 ID *",
+    storageId: "media-target",
+    rootLabel: "媒体库根路径 *",
+    rootPath: "Movies",
+    menuLabel: (name) => `媒体库操作 ${name}`,
+    editLabel: "编辑媒体库",
+    pathField: "rootPath",
+  },
+};
+
+async function openRecoveryLibraryPage(
+  page: Page,
+  kind: RecoveryKind,
+  libraryId?: string,
+): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const basePath =
+    kind === "resource" ? "/ui-v2/resourcelib/files" : "/ui-v2/medialib/files";
+  const selectedId = libraryId ?? (kind === "resource" ? "source" : "movies");
+  const search =
+    kind === "resource"
+      ? `?resourceLibraryId=${selectedId}`
+      : `?mediaLibraryId=${selectedId}`;
+  await page.goto(basePath + search);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: RECOVERY_KINDS[kind].heading,
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+
+async function fillRecoveryAddCard(
+  page: Page,
+  kind: RecoveryKind,
+  id: string,
+  name: string,
+): Promise<void> {
+  const spec = RECOVERY_KINDS[kind];
+  await page.getByRole("button", { name: spec.addLabel }).click();
+  const card = page.getByRole("dialog", { name: spec.addDialog });
+  await expect(card).toBeVisible();
+  await card.getByLabel("名称 *").fill(name);
+  await card.getByLabel(spec.idLabel).fill(id);
+  await card.getByRole("button", { name: "下一步" }).click();
+  await card.getByLabel("Storage *").selectOption(spec.storageId);
+  await card.getByLabel(spec.rootLabel).fill(spec.rootPath);
+  await card.getByRole("button", { name: "下一步" }).click();
+}
+
+async function readRecoveryProjection(
+  page: Page,
+  kind: RecoveryKind,
+  id: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const spec = RECOVERY_KINDS[kind];
+  const response = await page.request.get(
+    `/api/v1/${spec.namespace}/${id}/edit`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(response.ok()).toBe(true);
+  return (await response.json()) as Record<string, Record<string, unknown>>;
+}
+
+for (const kind of ["resource", "media"] as const) {
+  test(`library save recovery: ${kind} Add and Edit survive a lost success body and a failed verification`, async ({
+    page,
+  }) => {
+    const spec = RECOVERY_KINDS[kind];
+    const id = `recovery-${kind}`;
+    const addedName = `Recovery ${kind} library`;
+    const editedName = `Recovered ${kind} edit`;
+    let addPosts = 0;
+    await page.route(
+      new RegExp(`/api/v1/${spec.namespace}$`),
+      async (route) => {
+        if (route.request().method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+        addPosts += 1;
+        // The real API publishes first; only the browser's success body is lost.
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        await route.abort("failed");
+      },
+    );
+    await openRecoveryLibraryPage(page, kind);
+    await fillRecoveryAddCard(page, kind, id, addedName);
+    const addCard = page.getByRole("dialog", { name: spec.addDialog });
+    await addCard.getByRole("button", { name: "保存" }).click();
+
+    // Unconfirmed, not "not saved": the candidate stays visible and Save is
+    // gated on an explicit read.
+    await expect(addCard.getByText("保存结果待核对")).toBeVisible();
+    await expect(addCard.getByText(/可能已经发布/)).toBeVisible();
+    await expect(addCard.getByText(/未被本次操作替换/)).toHaveCount(0);
+    await expect(addCard.getByRole("button", { name: "保存" })).toBeDisabled();
+    await expect(addCard.getByText(addedName, { exact: true })).toBeVisible();
+    expect(addPosts).toBe(1);
+    const published = await readRecoveryProjection(page, kind, id);
+    expect(published[spec.libraryKey]).toMatchObject({
+      id,
+      name: addedName,
+      enabled: true,
+      storageId: spec.storageId,
+      [spec.pathField]: spec.rootPath,
+    });
+
+    await addCard.getByRole("button", { name: "核对当前配置" }).click();
+    await expect(
+      addCard.getByText(/已核对：当前 Active 中的.+已是本次提交的配置/),
+    ).toBeVisible();
+    // Verification only read; the Save command was never resent.
+    expect(addPosts).toBe(1);
+    await expect(addCard.getByRole("button", { name: "保存" })).toHaveCount(0);
+    await addCard.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: spec.addDialog }),
+    ).toHaveCount(0);
+    await page.unroute(new RegExp(`/api/v1/${spec.namespace}$`));
+
+    // Edit with a lost success body, then close/reopen the retained candidate.
+    let editReads = 0;
+    let editPuts = 0;
+    await page.route(
+      new RegExp(`/api/v1/${spec.namespace}/${id}/edit$`),
+      async (route) => {
+        editReads += 1;
+        if (editReads === 2) {
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: {
+                code: "service_unavailable",
+                message: "harness read fault",
+              },
+            }),
+          });
+          return;
+        }
+        await route.fallback();
+      },
+    );
+    await page.route(
+      new RegExp(`/api/v1/${spec.namespace}/${id}$`),
+      async (route) => {
+        if (route.request().method() !== "PUT") {
+          await route.fallback();
+          return;
+        }
+        editPuts += 1;
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        await route.abort("failed");
+      },
+    );
+    await page.getByRole("button", { name: spec.menuLabel(addedName) }).click();
+    await page.getByRole("menuitem", { name: spec.editLabel }).click();
+    const editCard = page.getByRole("dialog", { name: spec.editLabel });
+    await expect(editCard.getByLabel("名称 *")).toHaveValue(addedName);
+    await editCard.getByLabel("名称 *").fill(editedName);
+    await editCard.getByRole("button", { name: "下一步" }).click();
+    await editCard.getByRole("button", { name: "下一步" }).click();
+    await editCard.getByRole("button", { name: "保存并激活" }).click();
+    await expect(editCard.getByText("保存结果待核对")).toBeVisible();
+    expect(editPuts).toBe(1);
+    expect(editReads).toBe(1);
+
+    // Closing keeps the unconfirmed submission; reopening shows it again and
+    // performs no new projection read or Save.
+    await editCard.getByRole("button", { name: "取消" }).click();
+    await expect(
+      page.getByRole("dialog", { name: spec.editLabel }),
+    ).toHaveCount(0);
+    // The lost success body was only a browser-side loss: the real publication
+    // already renamed the strip entry, so reopen that exact library.
+    await page
+      .getByRole("button", { name: spec.menuLabel(editedName) })
+      .click();
+    await page.getByRole("menuitem", { name: spec.editLabel }).click();
+    const reopened = page.getByRole("dialog", { name: spec.editLabel });
+    await expect(reopened.getByLabel("名称 *")).toHaveValue(editedName);
+    await expect(reopened.getByText("保存结果待核对")).toBeVisible();
+    expect(editPuts).toBe(1);
+    expect(editReads).toBe(1);
+
+    // A failed verification keeps the input and the pending state.
+    await reopened.getByRole("button", { name: "核对当前配置" }).click();
+    await expect(reopened.getByText(/无法核对当前配置/)).toBeVisible();
+    await expect(reopened.getByText("保存结果待核对")).toBeVisible();
+
+    // The real read proves the submitted candidate is already the Active.
+    await reopened.getByRole("button", { name: "核对当前配置" }).click();
+    await expect(
+      reopened.getByText(/已核对：当前 Active 中的.+已是本次提交的配置/),
+    ).toBeVisible();
+    expect(editPuts).toBe(1);
+    await expect(
+      reopened.getByRole("button", { name: "保存并激活" }),
+    ).toHaveCount(0);
+    await reopened.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: spec.editLabel }),
+    ).toHaveCount(0);
+    const edited = await readRecoveryProjection(page, kind, id);
+    expect(edited[spec.libraryKey]).toMatchObject({ id, name: editedName });
+  });
+
+  test(`library save recovery: ${kind} two windows read the competing Active before continuing`, async ({
+    browser,
+    page,
+  }) => {
+    const spec = RECOVERY_KINDS[kind];
+    const id = `conflict-${kind}`;
+    const addedName = `Conflict ${kind} library`;
+    const winnerName = `Winner ${kind}`;
+    const mineName = `Mine ${kind}`;
+    await openRecoveryLibraryPage(page, kind);
+    await fillRecoveryAddCard(page, kind, id, addedName);
+    const addCard = page.getByRole("dialog", { name: spec.addDialog });
+    await addCard.getByRole("button", { name: "保存" }).click();
+    await expect(
+      page.getByRole("dialog", { name: spec.addDialog }),
+    ).toHaveCount(0);
+
+    // A second real browser context reads the same Active revision.
+    const otherContext = await browser.newContext({
+      baseURL: "http://127.0.0.1:4185",
+    });
+    const other = await otherContext.newPage();
+    await openRecoveryLibraryPage(other, kind, id);
+    await page.getByRole("button", { name: spec.menuLabel(addedName) }).click();
+    await page.getByRole("menuitem", { name: spec.editLabel }).click();
+    const card = page.getByRole("dialog", { name: spec.editLabel });
+    await expect(card.getByLabel("名称 *")).toHaveValue(addedName);
+    await other
+      .getByRole("button", { name: spec.menuLabel(addedName) })
+      .click();
+    await other.getByRole("menuitem", { name: spec.editLabel }).click();
+    const otherCard = other.getByRole("dialog", { name: spec.editLabel });
+    await expect(otherCard.getByLabel("名称 *")).toHaveValue(addedName);
+
+    // The other window publishes first.
+    await otherCard.getByLabel("名称 *").fill(winnerName);
+    await otherCard.getByRole("button", { name: "下一步" }).click();
+    await otherCard.getByRole("button", { name: "下一步" }).click();
+    await otherCard.getByRole("button", { name: "保存并激活" }).click();
+    await expect(
+      other.getByRole("dialog", { name: spec.editLabel }),
+    ).toHaveCount(0);
+
+    const putStatuses: number[] = [];
+    page.on("response", (response) => {
+      if (
+        response.request().method() === "PUT" &&
+        response.url().endsWith(`/api/v1/${spec.namespace}/${id}`)
+      ) {
+        putStatuses.push(response.status());
+      }
+    });
+    await card.getByLabel("名称 *").fill(mineName);
+    await card.getByRole("button", { name: "下一步" }).click();
+    await card.getByRole("button", { name: "下一步" }).click();
+    await card.getByRole("button", { name: "保存并激活" }).click();
+    await expect(card.getByText("Active 已被其他变更替换")).toBeVisible();
+    await expect(card.getByText(/本次候选未保存/)).toBeVisible();
+    await expect(
+      card.getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+    // The local intent is retained, not replaced by the winning values.
+    await expect(card.getByText(mineName, { exact: true })).toBeVisible();
+    await expect
+      .poll(
+        async () =>
+          (await readRecoveryProjection(page, kind, id))[spec.libraryKey]?.[
+            "name"
+          ],
+      )
+      .toBe(winnerName);
+    expect(putStatuses).toEqual([409]);
+
+    // The explicit read states the winning values; only then can the retained
+    // candidate be saved against that exact Active identity.
+    await card.getByRole("button", { name: "核对当前配置" }).click();
+    await expect(
+      card.getByText(new RegExp(`已核对当前 Active：名称“${winnerName}”`)),
+    ).toBeVisible();
+    await expect(
+      card.getByRole("button", { name: "保存并激活" }),
+    ).toBeEnabled();
+    await card.getByRole("button", { name: "保存并激活" }).click();
+    await expect(
+      page.getByRole("dialog", { name: spec.editLabel }),
+    ).toHaveCount(0);
+    await expect
+      .poll(
+        async () =>
+          (await readRecoveryProjection(page, kind, id))[spec.libraryKey]?.[
+            "name"
+          ],
+      )
+      .toBe(mineName);
+    expect(putStatuses).toEqual([409, 200]);
+    await otherContext.close();
+  });
+}

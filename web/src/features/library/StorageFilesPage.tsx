@@ -48,6 +48,12 @@ import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
 import { LibraryCardStrip } from "./LibraryCardStrip";
 import { LibraryLoadingPanel } from "./library-loading";
+import {
+  LibrarySaveRecoveryPanel,
+  classifyLibrarySaveFailure,
+  type LibrarySaveOutcome,
+  type LibrarySaveRecoveryView,
+} from "./library-save-recovery";
 import { DeleteResourceLibraryDialog } from "./DeleteResourceLibraryDialog";
 import {
   DeleteImpactDialog,
@@ -201,12 +207,31 @@ function isSafeRelativePath(value: string): boolean {
 export interface ResourceLibrarySaveFailureView {
   readonly message: string;
   readonly refreshAuthoritativeState: boolean;
+  /** Proven refusal, unconfirmed outcome, or a lost competing-Active race. */
+  readonly outcome: LibrarySaveOutcome;
 }
 
 export function resourceLibrarySaveFailure(
   code: string,
   details?: AutomationMutationFailureDetails,
+  status?: number,
 ): ResourceLibrarySaveFailureView {
+  const outcome = classifyLibrarySaveFailure(code, status, details);
+  if (outcome === "unknown") {
+    return {
+      message:
+        "响应没有送达或无法解读，候选资源库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
+      refreshAuthoritativeState: true,
+      outcome,
+    };
+  }
+  return { ...resourceLibraryRefusal(code, details), outcome };
+}
+
+function resourceLibraryRefusal(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): { message: string; refreshAuthoritativeState: boolean } {
   const durableState = details?.durableState;
   if (
     code === "configuration_unavailable" ||
@@ -252,8 +277,8 @@ export function resourceLibrarySaveFailure(
       return {
         message:
           durableState === "active_winner_preserved"
-            ? "保存失败：Active 已被其他变更替换，本次候选未保存；当前获胜的 Active 仍为权威。状态已刷新，请检查后重试。"
-            : "保存失败：Active 配置已变化，本次候选未保存；请刷新当前状态后重试。",
+            ? "保存失败：Active 已被其他变更替换，本次候选未保存；当前获胜的 Active 仍为权威。系统不会自动覆盖它；请核对当前配置后再决定是否保存。"
+            : "保存失败：Active 配置已变化，本次候选未保存；请核对当前配置后再决定是否保存。",
         refreshAuthoritativeState: true,
       };
     case "resource_library_storage_unavailable":
@@ -279,6 +304,99 @@ export function resourceLibrarySaveFailure(
         refreshAuthoritativeState: code === "transport_unavailable",
       };
   }
+}
+
+/** One Save whose publication still needs the operator's explicit read. */
+interface PendingResourceLibrarySave {
+  readonly mode: "unknown" | "conflict";
+  readonly message: string;
+  readonly candidate: SaveResourceLibraryOptions;
+  readonly editing: boolean;
+  /** The binding the Edit form started from; `null` for an Add. */
+  readonly baseline: {
+    readonly storageId: string;
+    readonly storagePath: string;
+  } | null;
+  /** The exact Storage options the submitted form was filled from. */
+  readonly storages: readonly SystemStorage[];
+}
+
+/** Canonical rule text, so stored and submitted shapes compare by meaning. */
+function resourceLibraryRulesKey(
+  rules?: readonly (string | ResourceLibraryScanRule)[],
+): string {
+  if (rules === undefined) return "";
+  return rules
+    .map((rule) =>
+      typeof rule === "string"
+        ? `glob:${rule}`
+        : `${rule.kind ?? "glob"}:${rule.pattern}`,
+    )
+    .join("\n");
+}
+
+/**
+ * Whether the exact current Active already is the submitted candidate.
+ *
+ * Only fields the candidate actually published are compared: an untouched
+ * hidden policy never turns a matching name-only edit into a mismatch, and a
+ * differing visible field is never reported as the submitted value.
+ */
+export function resourceLibraryCandidateMatches(
+  candidate: SaveResourceLibraryOptions,
+  current: SaveResourceLibraryOptions,
+): boolean {
+  if (
+    candidate.name !== current.name ||
+    candidate.enabled !== current.enabled ||
+    candidate.storageId !== current.storageId ||
+    candidate.storagePath !== current.storagePath
+  ) {
+    return false;
+  }
+  if (
+    candidate.includeRules !== undefined &&
+    resourceLibraryRulesKey(candidate.includeRules) !==
+      resourceLibraryRulesKey(current.includeRules)
+  ) {
+    return false;
+  }
+  if (
+    candidate.excludeRules !== undefined &&
+    resourceLibraryRulesKey(candidate.excludeRules) !==
+      resourceLibraryRulesKey(current.excludeRules)
+  ) {
+    return false;
+  }
+  if (candidate.stability !== undefined) {
+    const stability = current.stability ?? {};
+    if (
+      (candidate.stability.minimumAgeSeconds ?? 0) !==
+        (stability.minimumAgeSeconds ?? 0) ||
+      (candidate.stability.modifiedThresholdSeconds ?? 0) !==
+        (stability.modifiedThresholdSeconds ?? 0) ||
+      (candidate.stability.stableSizeDurationSeconds ?? 0) !==
+        (stability.stableSizeDurationSeconds ?? 0)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The secret-free current values a verification read can actually prove. */
+function describeResourceLibrary(
+  library: SaveResourceLibraryOptions,
+  storages: readonly SystemStorage[],
+): string {
+  const storage = storages.find((item) => item.id === library.storageId);
+  const storageLabel =
+    storage === undefined || storage.name === library.storageId
+      ? library.storageId
+      : `${storage.name}（${library.storageId}）`;
+  const root =
+    library.storagePath === "" ? "/（Storage 根目录）" : library.storagePath;
+  return `名称“${library.name}”，Storage ${storageLabel}，根路径“${root}”，状态${library.enabled ? "启用" : "停用"}`;
 }
 
 export function removalFailureMessage(
@@ -1532,6 +1650,14 @@ interface AddResourceLibraryDrawerProps {
   readonly onRefreshAuthority?: () => void;
   /** True between a legal close request and the shared card exit finishing. */
   readonly closing?: boolean;
+  /** A Save whose publication still needs the operator's explicit read. */
+  readonly recovery?: LibrarySaveRecoveryView | null;
+  readonly verifying?: boolean;
+  readonly verifyError?: string | null;
+  readonly onVerify?: () => void;
+  /** A verification result that ends this form with a legal exit. */
+  readonly verified?: "published" | "unavailable" | null;
+  readonly verifiedNotice?: string | null;
 }
 
 /**
@@ -1560,6 +1686,12 @@ function ResourceLibraryConfigCard({
   onRetryRead,
   onRefreshAuthority,
   closing = false,
+  recovery = null,
+  verifying = false,
+  verifyError = null,
+  onVerify,
+  verified = null,
+  verifiedNotice = null,
 }: AddResourceLibraryDrawerProps) {
   const card = useModalLayer({
     onEscape: onClose,
@@ -1680,6 +1812,30 @@ function ResourceLibraryConfigCard({
     }
     firstFieldRef.current?.focus({ preventScroll: true });
   }, [card.layerRef, formReady]);
+
+  // An unconfirmed or competing Save moves focus to its one verification
+  // action, so the retained input and the read stay reachable on every step.
+  useEffect(() => {
+    if (recovery === null) return;
+    card.layerRef.current
+      ?.querySelector<HTMLElement>(".mf-library-save-recovery button")
+      ?.focus();
+  }, [card.layerRef, recovery]);
+
+  // When the verification block ends, its focused button is gone; hand focus
+  // to the footer's remaining primary action (Save or the single legal exit).
+  const hadRecoveryRef = useRef(false);
+  useEffect(() => {
+    if (recovery !== null) {
+      hadRecoveryRef.current = true;
+      return;
+    }
+    if (!hadRecoveryRef.current) return;
+    hadRecoveryRef.current = false;
+    card.layerRef.current
+      ?.querySelector<HTMLElement>(".mf-modal-footer .mf-button-primary")
+      ?.focus({ preventScroll: true });
+  }, [card.layerRef, recovery]);
 
   const validateBasics = (): boolean => {
     if (name.trim() === "") {
@@ -1885,6 +2041,20 @@ function ResourceLibraryConfigCard({
         ))}
       </ol>
       <div className="mf-files-drawer-body">
+        {recovery !== null && (
+          <LibrarySaveRecoveryPanel
+            recovery={recovery}
+            verifying={verifying}
+            verifyError={verifyError}
+            closing={closing}
+            onVerify={() => onVerify?.()}
+          />
+        )}
+        {verifiedNotice !== null && (
+          <p className="mf-storage-card-notice" role="status">
+            {verifiedNotice}
+          </p>
+        )}
         {validationError !== null && (
           <p className="mf-files-drawer-error" role="alert">
             {validationError}
@@ -2081,7 +2251,7 @@ function ResourceLibraryConfigCard({
             </dl>
             <p className="mf-files-drawer-note">
               保存会验证并激活这个
-              ResourceLibrary。失败时候选配置不会发布，Storage
+              ResourceLibrary。被拒绝时候选配置不会发布，Storage
               不会被修改；页面会说明当前 Active 状态和下一步操作。
             </p>
           </div>
@@ -2093,51 +2263,67 @@ function ResourceLibraryConfigCard({
     <ModalCardShell
       layerRef={card.layerRef}
       closing={closing}
-      busy={saving || reading}
+      busy={saving || reading || verifying}
       title={title}
       titleId="mf-library-config-title"
       accessibleName={title}
       description={
         editing
-          ? "编辑只提交当前读到的精确 Active 配置；失败时旧 Active 与 Storage 内容均保持不变。"
-          : "保存会验证并激活完整的 ResourceLibrary 配置；失败时候选配置不会发布，Storage 内容不受影响。"
+          ? "编辑只提交当前读到的精确 Active 配置；被拒绝时旧 Active 与 Storage 内容均保持不变。"
+          : "保存会验证并激活完整的 ResourceLibrary 配置；被拒绝时候选配置不会发布，Storage 内容不受影响。"
       }
       closeLabel={editing ? "关闭编辑资源库" : "关闭添加资源库"}
       closeDisabled={saving || closing}
       onRequestClose={requestClose}
       size="form"
       footer={
-        <>
+        verified !== null ? (
           <button
             type="button"
-            className="mf-button mf-button-secondary"
+            className="mf-button mf-button-primary"
             onClick={requestClose}
-            disabled={saving || closing}
+            disabled={closing}
           >
-            取消
+            关闭
           </button>
-          {formReady &&
-            (step < 3 ? (
-              <button
-                type="button"
-                className="mf-button mf-button-primary"
-                onClick={goNext}
-                disabled={saving}
-              >
-                下一步
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="mf-button mf-button-primary"
-                onClick={save}
-                disabled={saving}
-                aria-busy={saving}
-              >
-                {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
-              </button>
-            ))}
-        </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={requestClose}
+              disabled={saving || closing}
+            >
+              取消
+            </button>
+            {formReady &&
+              (step < 3 ? (
+                <button
+                  type="button"
+                  className="mf-button mf-button-primary"
+                  onClick={goNext}
+                  disabled={saving}
+                >
+                  下一步
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="mf-button mf-button-primary"
+                  onClick={save}
+                  disabled={saving || recovery !== null}
+                  aria-busy={saving}
+                  title={
+                    recovery === null
+                      ? undefined
+                      : "请先核对当前配置，再决定是否保存"
+                  }
+                >
+                  {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
+                </button>
+              ))}
+          </>
+        )
       }
     >
       {cardBody}
@@ -2199,6 +2385,28 @@ export function StorageFilesPage() {
       }
     | undefined
   >();
+  // One Save whose publication still needs an explicit read.  An unconfirmed
+  // publication survives closing the card, so reopening the same entry resumes
+  // the verification instead of losing the submitted candidate.  A definite
+  // conflict is cleared on close because reopening an Edit already reads the
+  // exact current projection.
+  const [saveRecovery, setSaveRecovery] =
+    useState<PendingResourceLibrarySave | null>(null);
+  const saveRecoveryRef = useRef<PendingResourceLibrarySave | null>(null);
+  const [verifyReading, setVerifyReading] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verifiedNotice, setVerifiedNotice] = useState<string | null>(null);
+  const [verified, setVerified] = useState<"published" | "unavailable" | null>(
+    null,
+  );
+  // Fences a verification read that outlives its card/context.
+  const verifyRequestRef = useRef(0);
+  // The exact binding the operator's Edit form started from, so a published
+  // binding change returns to the correct root even after a verification read.
+  const editBaselineRef = useRef<{
+    readonly storageId: string;
+    readonly storagePath: string;
+  } | null>(null);
   // A proven Tasks/run deep link pre-selects the exact local operation *and*
   // its exact originating library.  The browser hint only selects; the durable
   // read under that library's own authority still decides whether the operation
@@ -2467,23 +2675,45 @@ export function StorageFilesPage() {
     updateLibraryRouteState(id);
   };
 
+  const updateSaveRecovery = (next: PendingResourceLibrarySave | null) => {
+    saveRecoveryRef.current = next;
+    setSaveRecovery(next);
+  };
+
+  const resetRecoveryPresentation = () => {
+    verifyRequestRef.current += 1;
+    setVerifyReading(false);
+    setVerifyError(null);
+    setVerifiedNotice(null);
+    setVerified(null);
+  };
+
   const openDrawer = (invokerId: string) => {
     editRequestRef.current += 1;
+    resetRecoveryPresentation();
     setDrawerInvokerId(invokerId);
     setSaveError(null);
     setSaveNotice(null);
     setEditTargetId(null);
     setEditReading(false);
     setEditReadError(null);
-    setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
+    editBaselineRef.current = null;
+    // An unconfirmed Add resumes its exact submitted candidate; reopening the
+    // Add entry never presents a blank form as if nothing was pending.
+    const retained =
+      saveRecoveryRef.current !== null && !saveRecoveryRef.current.editing
+        ? saveRecoveryRef.current
+        : null;
+    setEditInitial(retained?.candidate);
     setDrawerOpen(true);
   };
 
   /** Immediate close: clears intent and returns focus to the invoking control. */
   const closeDrawer = () => {
     editRequestRef.current += 1;
+    resetRecoveryPresentation();
     setSaveError(null);
     setEditTargetId(null);
     setEditReading(false);
@@ -2491,7 +2721,13 @@ export function StorageFilesPage() {
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
+    editBaselineRef.current = null;
     setDrawerOpen(false);
+    // An unconfirmed Save stays retained for its verification; a definite
+    // conflict is re-read by the next explicit Edit.
+    if (saveRecoveryRef.current?.mode === "conflict") {
+      updateSaveRecovery(null);
+    }
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
     } else {
@@ -2503,17 +2739,68 @@ export function StorageFilesPage() {
   /** Every close gesture plays the shared card exit before unmounting. */
   const beginDrawerClose = () => drawerExit.beginClose(closeDrawer);
 
+  const applyPublishedLibraryState = (
+    model: {
+      readonly id: string;
+      readonly name: string;
+      readonly enabled: boolean;
+    },
+    candidate: SaveResourceLibraryOptions,
+    baseline: {
+      readonly storageId: string;
+      readonly storagePath: string;
+    } | null,
+  ) => {
+    const savedId = model.enabled ? model.id : "";
+    setSelectedLibraryId(savedId);
+    setInvalidPath(false);
+    const bindingChanged =
+      baseline !== null &&
+      (baseline.storageId !== candidate.storageId ||
+        baseline.storagePath !== candidate.storagePath);
+    const nextPath = model.enabled && !bindingChanged ? path : "";
+    setPath(nextPath);
+    resetBrowseState();
+    updateLibraryRouteState(savedId);
+    updateDirectoryRouteState(nextPath);
+    setSaveNotice(
+      model.enabled
+        ? null
+        : `资源库“${model.name}”已保存，但当前为停用状态：不会出现在文件列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
+    );
+    void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+    void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+  };
+
   const saveLibraryMutation = useMutation({
     mutationFn: (candidate: SaveResourceLibraryOptions) =>
-      editExpected &&
-      editInitial?.resourceLibraryId === candidate.resourceLibraryId
+      editTargetId !== null &&
+      editExpected !== undefined &&
+      editTargetId === candidate.resourceLibraryId
         ? editResourceLibrary(token, { ...candidate, ...editExpected })
         : saveResourceLibrary(token, candidate),
     retry: false,
     onSuccess: (result, candidate) => {
       if (!result.ok) {
-        const failure = resourceLibrarySaveFailure(result.code, result.details);
-        setSaveError(failure.message);
+        const failure = resourceLibrarySaveFailure(
+          result.code,
+          result.details,
+          result.status,
+        );
+        if (failure.outcome === "definite") {
+          setSaveError(failure.message);
+        } else {
+          setSaveError(null);
+          updateSaveRecovery({
+            mode: failure.outcome,
+            message: failure.message,
+            candidate,
+            editing: editTargetId !== null,
+            baseline: editBaselineRef.current,
+            storages:
+              editTargetId === null ? eligibleStorages : (editStorages ?? []),
+          });
+        }
         if (failure.refreshAuthoritativeState) {
           void queryClient.invalidateQueries({ queryKey: ["system-status"] });
           void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
@@ -2521,24 +2808,13 @@ export function StorageFilesPage() {
         return;
       }
       setSaveError(null);
-      const wasEditing = editInitial !== undefined;
+      updateSaveRecovery(null);
+      const wasEditing = editTargetId !== null;
       const editInvoker = editDrawerInvokerRef.current;
-      const savedId = result.model.enabled ? result.model.id : "";
-      setSelectedLibraryId(savedId);
-      setInvalidPath(false);
-      const bindingChanged =
-        editInitial !== undefined &&
-        (editInitial.storageId !== candidate.storageId ||
-          editInitial.storagePath !== candidate.storagePath);
-      const nextPath = result.model.enabled && !bindingChanged ? path : "";
-      setPath(nextPath);
-      resetBrowseState();
-      updateLibraryRouteState(savedId);
-      updateDirectoryRouteState(nextPath);
-      setSaveNotice(
-        result.model.enabled
-          ? null
-          : `资源库“${result.model.name}”已保存，但当前为停用状态：不会出现在文件列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
+      applyPublishedLibraryState(
+        result.model,
+        candidate,
+        editBaselineRef.current,
       );
       // A successful Save also returns through the shared exit; the handoff
       // for a disabled library focuses the existing enable entry once the card
@@ -2553,17 +2829,91 @@ export function StorageFilesPage() {
             ?.focus();
         });
       });
-      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
-      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
-    onError: () => {
-      setSaveError(
-        "保存结果未知，未自动重试；候选配置未被确认发布。请刷新 Active 状态后再决定是否重试。",
-      );
+    onError: (_error, candidate) => {
+      setSaveError(null);
+      updateSaveRecovery({
+        mode: "unknown",
+        message:
+          "响应没有送达或无法解读，候选资源库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
+        candidate,
+        editing: editTargetId !== null,
+        baseline: editBaselineRef.current,
+        storages:
+          editTargetId === null ? eligibleStorages : (editStorages ?? []),
+      });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
+
+  // Explicit verification of one Save: read the same exact Active projection an
+  // Edit uses, then state only what that read proves.  It never resends Save,
+  // never replaces the retained candidate and never asserts that "current value
+  // is equal" proves the original command's history.
+  const verifySaveRecovery = async () => {
+    const recovery = saveRecoveryRef.current;
+    if (recovery === null || verifyReading) return;
+    const requestId = ++verifyRequestRef.current;
+    setVerifyReading(true);
+    setVerifyError(null);
+    const result = await fetchResourceLibraryEdit(
+      token,
+      recovery.candidate.resourceLibraryId,
+    );
+    if (verifyRequestRef.current !== requestId) return;
+    if (saveRecoveryRef.current !== recovery) return;
+    setVerifyReading(false);
+    if (!result.ok) {
+      if (result.code === "resource_library_not_found") {
+        updateSaveRecovery(null);
+        if (recovery.editing) {
+          setVerifiedNotice(
+            "已核对：该资源库已不在当前 Active 中（可能已被移除），本次提交未发布；你的输入已保留。请关闭卡片并刷新资源库列表。",
+          );
+          setVerified("unavailable");
+          return;
+        }
+        setVerifiedNotice(
+          "已核对：当前 Active 中没有该资源库 ID，本次添加未发布。你的输入已保留，可明确再次保存。",
+        );
+        return;
+      }
+      setVerifyError(
+        "无法核对当前配置：读取未成功，本次保存结果仍未确认。你的输入和待核对状态已保留，请稍后再次核对。",
+      );
+      return;
+    }
+    const current = result.model.library;
+    if (resourceLibraryCandidateMatches(recovery.candidate, current)) {
+      updateSaveRecovery(null);
+      setVerifiedNotice(
+        `已核对：当前 Active 中的资源库已是本次提交的配置（${describeResourceLibrary(current, result.model.storages)}）。当前配置无需再次保存；关闭卡片即可继续。`,
+      );
+      setVerified("published");
+      applyPublishedLibraryState(
+        {
+          id: current.resourceLibraryId,
+          name: current.name,
+          enabled: current.enabled,
+        },
+        recovery.candidate,
+        recovery.baseline,
+      );
+      return;
+    }
+    updateSaveRecovery(null);
+    setVerifiedNotice(
+      `已核对当前 Active：${describeResourceLibrary(current, result.model.storages)}。它与本次提交不同；你的输入已保留。如要继续，请明确保存：它会以刚核对到的 Active 版本为基准。`,
+    );
+    if (recovery.editing) {
+      setEditExpected({
+        expectedRevisionId: result.model.activeRevisionId,
+        expectedVersion: result.model.activeVersion,
+        expectedDigest: result.model.activeDigest,
+      });
+    }
+  };
 
   const openResourceLibraryEdit = async (id: string) => {
     const requestId = ++editRequestRef.current;
@@ -2572,15 +2922,33 @@ export function StorageFilesPage() {
         ? document.activeElement
         : null;
     setDrawerInvokerId(null);
+    resetRecoveryPresentation();
     setSaveError(null);
     setSaveNotice(null);
     setEditTargetId(id);
     setEditReadError(null);
-    setEditReading(true);
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
+    editBaselineRef.current = null;
     setDrawerOpen(true);
+    const retained =
+      saveRecoveryRef.current !== null &&
+      saveRecoveryRef.current.editing &&
+      saveRecoveryRef.current.candidate.resourceLibraryId === id
+        ? saveRecoveryRef.current
+        : null;
+    if (retained !== null) {
+      // Resume the retained submission itself: the exact candidate and its
+      // Storage options reappear, no projection read re-seeds the form and no
+      // Save is resent.
+      setEditReading(false);
+      setEditInitial(retained.candidate);
+      setEditStorages(retained.storages);
+      editBaselineRef.current = retained.baseline;
+      return;
+    }
+    setEditReading(true);
     const result = await fetchResourceLibraryEdit(token, id);
     if (editRequestRef.current !== requestId) return;
     setEditReading(false);
@@ -2604,6 +2972,10 @@ export function StorageFilesPage() {
     }
     setEditInitial(result.model.library);
     setEditStorages(result.model.storages);
+    editBaselineRef.current = {
+      storageId: result.model.library.storageId,
+      storagePath: result.model.library.storagePath,
+    };
     setEditExpected({
       expectedRevisionId: result.model.activeRevisionId,
       expectedVersion: result.model.activeVersion,
@@ -3198,6 +3570,18 @@ export function StorageFilesPage() {
     return subscribeToQueryChange(() => setSelectedFiles(new Set()));
   }, [subscribeToQueryChange]);
 
+  // Only the Save that belongs to this card's exact target is presented; an
+  // unconfirmed Save for another library stays retained without blocking this
+  // entry.
+  const cardRecovery: LibrarySaveRecoveryView | null =
+    saveRecovery !== null &&
+    (editTargetId === null
+      ? !saveRecovery.editing
+      : saveRecovery.editing &&
+        saveRecovery.candidate.resourceLibraryId === editTargetId)
+      ? { mode: saveRecovery.mode, message: saveRecovery.message }
+      : null;
+
   return (
     <div className="mf-files-page">
       {operationsReturn !== null && (
@@ -3643,6 +4027,7 @@ export function StorageFilesPage() {
           onClose={beginDrawerClose}
           onSave={(candidate) => {
             setSaveError(null);
+            resetRecoveryPresentation();
             saveLibraryMutation.mutate(candidate);
           }}
           saving={saveLibraryMutation.isPending}
@@ -3658,6 +4043,12 @@ export function StorageFilesPage() {
               : () => void openResourceLibraryEdit(editTargetId)
           }
           onRefreshAuthority={() => void statusQuery.refetch()}
+          recovery={cardRecovery}
+          verifying={verifyReading}
+          verifyError={verifyError}
+          onVerify={() => void verifySaveRecovery()}
+          verified={verified}
+          verifiedNotice={verifiedNotice}
         />
       )}
       {dialog?.kind === "create_folder" && (

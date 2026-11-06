@@ -417,6 +417,129 @@ describe("AddMediaLibraryDrawer", () => {
     await user.click(within(card).getByRole("button", { name: "取消" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("gates Save on the in-card verification of an unconfirmed Save", async () => {
+    const user = userEvent.setup();
+    const onVerify = vi.fn();
+    const onSave = vi.fn();
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={onSave}
+        saving={false}
+        saveError={null}
+        recovery={{
+          mode: "unknown",
+          message:
+            "响应没有送达或无法解读，候选媒体库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
+        }}
+        verifying={false}
+        verifyError={null}
+        onVerify={onVerify}
+        verified={null}
+        verifiedNotice={null}
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    expect(within(card).getByRole("alert")).toHaveTextContent("保存结果待核对");
+    expect(within(card).getByText(/可能已经发布/)).toBeVisible();
+    expect(within(card).queryByText(/当前 Active 未被本次操作替换/)).toBeNull();
+    // The submitted input is still visible while the outcome is unconfirmed.
+    expect(within(card).getByLabelText("名称 *")).toHaveValue("电影库");
+
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    expect(
+      within(card).getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+    await user.click(
+      within(card).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(onVerify).toHaveBeenCalledTimes(1);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed verification while keeping the pending candidate", () => {
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        recovery={{
+          mode: "conflict",
+          message:
+            "保存失败：Active 已被其他变更替换，本次候选未保存；当前获胜的 Active 仍为权威。系统不会自动覆盖它；请核对当前配置后再决定是否保存。",
+        }}
+        verifying={false}
+        verifyError="无法核对当前配置：读取未成功，本次保存结果仍未确认。"
+        onVerify={vi.fn()}
+        verified={null}
+        verifiedNotice={null}
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    expect(within(card).getByText("Active 已被其他变更替换")).toBeVisible();
+    expect(within(card).getByText(/当前获胜的 Active 仍为权威/)).toBeVisible();
+    expect(within(card).getByText(/无法核对当前配置/)).toBeVisible();
+    expect(
+      within(card).getByRole("button", { name: "核对当前配置" }),
+    ).toBeEnabled();
+  });
+
+  it("ends a verified Save with one legal exit instead of another Save", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={onClose}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        recovery={null}
+        verified="published"
+        verifiedNotice="已核对：当前 Active 中的媒体库已是本次提交的配置（名称“电影库”）。当前配置无需再次保存；关闭卡片即可继续。"
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    expect(within(card).getByRole("status")).toHaveTextContent("已核对");
+    expect(
+      within(card).queryByRole("button", { name: "保存并激活" }),
+    ).toBeNull();
+    expect(within(card).queryByRole("button", { name: "取消" })).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("DeleteMediaLibraryDialog", () => {
@@ -613,6 +736,7 @@ describe("MediaLibrary failure mapping", () => {
       message:
         "保存失败：当前没有可用的 Active 配置，候选媒体库未保存；请先激活有效配置后重试。",
       refreshAuthoritativeState: true,
+      outcome: "definite",
     });
     expect(
       mediaLibrarySaveFailure("runtime_not_configured", {
@@ -639,6 +763,32 @@ describe("MediaLibrary failure mapping", () => {
     });
     expect(failure.refreshAuthoritativeState).toBe(true);
     expect(failure.message).toContain("当前获胜的 Active 仍为权威");
+  });
+
+  it("separates an unconfirmed response from a proven refusal and a conflict", () => {
+    for (const code of [
+      "transport_unavailable",
+      "malformed_response",
+      "internal_error",
+      "service_unavailable",
+    ]) {
+      const failure = mediaLibrarySaveFailure(code);
+      expect(failure.outcome).toBe("unknown");
+      expect(failure.refreshAuthoritativeState).toBe(true);
+      expect(failure.message).toContain("可能已经发布");
+      expect(failure.message).not.toContain("未被本次操作替换");
+    }
+    expect(
+      mediaLibrarySaveFailure("configuration_version_conflict").outcome,
+    ).toBe("conflict");
+    expect(mediaLibrarySaveFailure("invalid_request").outcome).toBe("definite");
+    // A received 5xx envelope that states the candidate was not published is
+    // still a proven refusal, not an unconfirmed outcome.
+    expect(
+      mediaLibrarySaveFailure("service_unavailable", {
+        candidateState: "not_published",
+      }).outcome,
+    ).toBe("definite");
   });
 
   it("keeps Storage and runtime failures free of a false Active claim", () => {

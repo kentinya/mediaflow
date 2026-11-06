@@ -702,6 +702,153 @@ describe("MediaLibrary Files journey", () => {
     expect(screen.queryByText("文件条目 Breaking Bad")).toBeNull();
     expect(screen.getByRole("row", { name: "文件条目 电影" })).toBeVisible();
   });
+
+  it("retains an unconfirmed media edit and saves only after reading the competing Active", async () => {
+    const user = userEvent.setup();
+    const puts: Array<Record<string, unknown>> = [];
+    let editReads = 0;
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/v1/system/status") {
+        return jsonResponse({
+          system: {
+            configuration_valid: true,
+            configuration_authority: "MANAGED",
+            configuration_snapshot_id: "rev-1",
+          },
+          storages: { total: 1, truncated: false, items: [] },
+          resource_libraries: { total: 0, truncated: false, items: [] },
+        });
+      }
+      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+        return jsonResponse(
+          filesDocument("movies", "", [entry("poster.jpg", "poster.jpg")]),
+        );
+      }
+      if (
+        url === "/api/v1/media-libraries/movies/edit" &&
+        init?.method === undefined
+      ) {
+        editReads += 1;
+        const name = editReads === 1 ? "115网盘" : "Peer name";
+        const version = editReads === 1 ? 1 : 2;
+        return jsonResponse({
+          mediaLibrary: {
+            id: "movies",
+            name,
+            enabled: true,
+            storageId: "cloud-1",
+            rootPath: "Movies",
+          },
+          storages: [
+            {
+              id: "cloud-1",
+              name: "115 Storage",
+              type: "openlist",
+              readOnly: false,
+              enabled: true,
+            },
+          ],
+          active: {
+            revisionId: `rev-${version}`,
+            revisionSequence: version,
+            digest: `digest-${version}`,
+          },
+          sideEffects: "none",
+        });
+      }
+      if (url === "/api/v1/media-libraries/movies" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        puts.push(body);
+        if (puts.length === 1) {
+          return jsonResponse(
+            {
+              error: {
+                code: "configuration_version_conflict",
+                message: "private version diagnostic",
+                details: {
+                  durableState: "active_winner_preserved",
+                  candidateState: "not_published",
+                },
+              },
+            },
+            409,
+          );
+        }
+        return jsonResponse({
+          mediaLibrary: {
+            id: "movies",
+            name: "My media name",
+            storageId: "cloud-1",
+            rootPath: "Movies",
+            enabled: true,
+          },
+          active: {
+            status: "active",
+            revisionId: "rev-3",
+            version: 3,
+            digest: "digest-3",
+          },
+          configuration: {
+            authority: "MANAGED",
+            revisionId: "rev-3",
+            version: 3,
+            digest: "digest-3",
+          },
+          sideEffects: "configuration_only",
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    expect(await screen.findByText("poster.jpg")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "媒体库操作 115网盘" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "编辑媒体库" }),
+    );
+    const card = await screen.findByRole("dialog", { name: "编辑媒体库" });
+    await user.clear(await within(card).findByLabelText("名称 *"));
+    await user.type(within(card).getByLabelText("名称 *"), "My media name");
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+
+    expect(
+      await within(card).findByText("Active 已被其他变更替换"),
+    ).toBeVisible();
+    expect(
+      within(card).getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+    expect(within(card).getByText("My media name")).toBeVisible();
+
+    await user.click(
+      within(card).getByRole("button", { name: "核对当前配置" }),
+    );
+    expect(
+      await within(card).findByText(/已核对当前 Active：名称“Peer name”/),
+    ).toBeVisible();
+    expect(puts).toHaveLength(1);
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toMatchObject({
+      mediaLibraryId: "movies",
+      name: "My media name",
+      expectedRevisionId: "rev-2",
+      expectedVersion: 2,
+      expectedDigest: "digest-2",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "编辑媒体库" })).toBeNull(),
+    );
+  });
 });
 
 describe("retired Library routes", () => {

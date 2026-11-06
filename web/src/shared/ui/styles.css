@@ -7756,6 +7756,28 @@ tr[aria-selected="true"] {
   color: #b42318;
 }
 
+/* In-card verification for an unconfirmed or competing library Save.  It opens
+   the scrolling step body, so the retained input and the one read stay
+   together with the form. */
+.mf-library-save-recovery {
+  margin: 0 0 10px;
+}
+
+.mf-library-save-recovery-error {
+  color: #b42318;
+}
+
+.mf-library-save-recovery-notice {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid #c7d7ef;
+  border-radius: 8px;
+  background: #f3f7fe;
+  color: #274b8f;
+  font-size: 13px;
+  line-height: 19px;
+}
+
 @media (max-width: 1080px) {
   .mf-storage-card-grid {
     grid-template-columns: minmax(0, 1fr);
