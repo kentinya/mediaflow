@@ -138,9 +138,10 @@ Activation Status: NOT AUTHORIZED FOR IMPLEMENTATION
 
 ### Goal 与完整用户旅程
 
-用户从侧栏进入“文件”或“媒体库”，先看见真实等待区域的加载反馈，再在去掉目录树后的
-完整宽度内浏览文件。点击文件夹进入、用面包屑/上一级/根目录返回，继续搜索、选择、
-切换列表/网格和分页。通过“添加资源库/添加媒体库”或选中库的菜单打开居中配置卡片，
+用户从侧栏进入“文件”或“媒体库”，在去掉目录树后的完整宽度内浏览文件；实际等待读取时
+显示对应区域的加载反馈，数据已就绪时直接显示内容。点击文件夹进入、用面包屑/上一级/
+根目录返回，继续搜索、选择、切换列表/网格和分页。通过“添加资源库/添加媒体库”或
+选中库的菜单打开居中配置卡片，
 填写/编辑并保存，读回真实 Active 后返回正确库/目录；通过库菜单移除配置时，能看懂对象、
 引用限制和文件保留结果。失败保留输入或真实读取状态，使用现有刷新/纠正/核对入口继续。
 
@@ -181,7 +182,8 @@ TARGET，替换对应旧树/抽屉几何，既有业务约束继续适用。
    根目录或刷新。共享 CSS 中抽屉类也被 Rules 消费，修改前查清消费者，只移除本页失效规则。
 2. **替换四个配置入口的呈现。** 在两页原 Add/Edit 状态和表单模型上使用共享居中卡片；
    按内容组织字段/步骤、固定可达的标题/关闭/底部操作和有界正文。保留全部输入、编辑只读
-   ID、精确投影与 Storage 选项、隐藏配置、验证及原 Save 调用；不搬入自动化业务模型。
+   ID、精确投影与 Storage 选项、隐藏配置、验证及现有保存语义和后端权威边界；允许卡片
+   所需的前端接线调整，不搬入自动化业务模型。
    显式编辑的读取过程有可见反馈，成功才允许用该投影保存；读失败给原合法刷新/重开路径。
 3. **收好进出与提交状态。** 复用共享焦点/背景锁定/进出能力，关闭、取消、Escape、页面
    离开和回焦遵循现有未保存输入/在途规则。保存失败保留输入，冲突刷新真实 Active 后由
@@ -197,8 +199,8 @@ TARGET，替换对应旧树/抽屉几何，既有业务约束继续适用。
    刷新状态；切库/路径的反馈属于新上下文，不将迟到旧响应展示成新内容。沿用各自查询 key
    和认证边界，reduced-motion 提供静态反馈。
 6. **从真实入口补验证。** 更新受布局替换直接影响的断言，保留其业务结果断言；在既有
-   fake server、现有两种库组件及原生 harness 上补最少必要场景。原生新增场景统一用
-   `Slice50` 名称前缀便于单独运行；由正常库菜单/添加按钮、文件夹与真实 API 完成旅程。
+   fake server、现有两种库组件及原生 harness 上补最少必要场景。测试名称和文件组织按
+   实际职责安排，交接记录实际运行命令；由正常库菜单/添加按钮、文件夹与真实 API 完成旅程。
    慢读/迟到响应仅控制真实读取的返回时机，不捏造产品路由、命令或不可达状态。
 7. **提交一个完整候选。** 更新直接受影响的文档事实，不改 Slice 边界/大版本状态；报告
    实现 SHA、改动、受影响测试实际结果和剩余问题，交 READY FOR B REVIEW。不要自验收。
@@ -209,7 +211,8 @@ TARGET，替换对应旧树/抽屉几何，既有业务约束继续适用。
   路径/边界空格、面包屑/上一级/根、搜索、刷新、视图、选择和有界分页可完成原浏览。
   例如进入子目录后名称编辑仍留该目录，根绑定变更则读正确新根。
 - [ ] 添加/编辑资源库、添加/编辑媒体库四入口全部是与已接受自动化/存储协调的居中卡片。
-  全部已有字段和原值可读可改，资源库规则/稳定性及隐藏配置保留，编辑 ID 不变。
+  已有可编辑字段继续可编辑且准确回填，包括资源库规则/稳定性；编辑 ID 保持只读，
+  未展示配置原样保留。
   正常入口/刷新/认证续转不自行打开配置卡片或保存。
 - [ ] 一次显式保存发布真实 Active，成功后可浏览正确库；无效/重复输入、已存在的并发
   拒绝、读/保存失败和未知结果保持真实状态、可修正输入和原合法下一步。禁用能沿现有
@@ -224,7 +227,9 @@ TARGET，替换对应旧树/抽屉几何，既有业务约束继续适用。
   加载/就绪/关闭过程，正文有界滚动、底部/关闭可达，背景滚动和宽度稳定；焦点/键盘与
   reduced-motion 可用。动态证据与实际截图都要查看，不以固定 CSS/像素值代替用户结果。
 - [ ] 原普通文件维护、当前页面操作状态及资源库整理/返回继续可达且归属正确；同名库 ID
-  不混种类。开关卡片/菜单、浏览和加载不准入或重放变更；保持独立成功/失败/未知效果、
+  不混种类。关闭卡片不取消任务；成功刷新不重放成功项，并保留仍有效的无关选择。例如
+  两个文件已选中，其中一个操作成功并刷新后，另一个仍有效且不受该操作影响的选择保留。
+  开关卡片/菜单、浏览和加载不准入或重放变更；保持独立成功/失败/未知效果、
   原 pins/权限与 C 使用 A 命名/分类仍为 C 的已有自动化覆盖。
 
 ### Required Tests
@@ -243,13 +248,16 @@ npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/
 npm run typecheck
 npm run build
 npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts
-npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'Slice50|reopens its own durable operation status|confirms once, waits for the real Worker'
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'reopens its own durable operation status|confirms once, waits for the real Worker'
 ```
 
-覆盖两页浏览/配置/加载、操作状态及基本 Worker 往返。若改共享卡片，追加
-`npm run test -- run src/shared/ui/modal-card.test.tsx src/features/storage/StorageManagementPage.test.tsx`；
-共享样式/外壳改动还运行直接受影响的既有存储/自动化场景。ESLint/Prettier 只检查实际
-改动文件（`npx eslint <实际文件>`、`npx prettier --check <实际文件>`），根目录运行
+以上覆盖既有两页浏览/配置、操作状态及基本 Worker 往返；新增/修改的场景必须运行，若不在
+上述命令选集内，按实际文件/名称另加命令并记入交接，不依赖统一前缀或固定测试文件。
+若改共享卡片逻辑，追加 `npm run test -- run src/shared/ui/modal-card.test.tsx`；若影响
+存储消费者，追加 `npm run test -- run src/features/storage/StorageManagementPage.test.tsx`。
+共享样式/外壳改动按实际影响补既有消费者场景；仅新增库页局部样式不自动要求存储/自动化
+原生回归。ESLint/Prettier 只检查实际改动文件（`npx eslint <实际文件>`、
+`npx prettier --check <实际文件>`），根目录运行
 `.venv/bin/python scripts/check_governance.py`、`git diff --check`。修改 Python harness 时
 补对应 Ruff/compile 检查与受影响原生场景；不要求 Developer 全量 Python/Web/E2E。
 
@@ -262,17 +270,19 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
    服务重启矩阵在仅前端呈现且未改部署/后端/schema/常驻合同的候选不适用，不能因此声称
    生产发布验证通过；若实际越过此边界，先重评范围与门禁。
 3. cwd `web/`，生产构建后以下原生命令分别启动新临时环境，避免共享 fixture 被前一模块
-   改动；完整 direct-files 覆盖真实配置卡片新增用例与既有普通操作/结果归属，live-files
-   覆盖两种库实时有界读取、精确路径和零变更。新增配置场景需在 direct-files 模块证明
-   两种库各自的真实 Add/Edit/移除与 Active 读回、物理文件保留；需要的合成数据复用既有
-   harness，不建立另一套应用入口。
+   改动；完整 direct-files 覆盖既有普通操作/结果归属，live-files 覆盖两种库实时有界读取、
+   精确路径和零变更。另须运行新增/修改的配置卡片与加载场景，证明两种库各自的真实
+   Add/Edit/移除与 Active 读回、物理文件保留及本 Task 加载验收；可扩展既有模块或按职责
+   组织测试文件，在评审记录写明实际命令和覆盖。需要的合成数据复用既有 harness，
+   不建立另一套应用入口。
 
 ```sh
 npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts
 ```
 
-共享卡片/样式改变时，另外各自新环境运行已接受消费者的原生模块：
+若共享卡片逻辑或共享样式实际影响存储/自动化消费者，按受影响对象运行以下原生模块，
+各自使用新环境；仅库页局部改动不触发这些模块：
 
 ```sh
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/storage-dialog.python.spec.ts
