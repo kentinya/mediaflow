@@ -13,9 +13,11 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 ## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
 
 [Slice50](../SLICE.md) selects the original eight `V2-UX-005–012` and the explicitly added
-Automation create/edit stability requirement `V2-UX-013` as active targets. Activation and the first
-B Task plan are authorized; code implementation is not performed in this turn. This is not delivered
-CURRENT behavior. The target changes presentation of Task detail,
+Automation create/edit stability requirement `V2-UX-013`. Task50.1 passed B review at
+`8573445f13a3f67cc434a576ee87e1d048d8362a`: Storage cards/menu and Automation create/edit
+stability are delivered within the presentation boundary below. Task detail, both libraries and
+sidebar-page transitions/library loading remain TARGET; the whole Slice is not accepted or closed.
+The full target changes presentation of Task detail,
 Storage and both library configuration surfaces, removes the two page-local directory trees, and
 coordinates transitions between existing V2 sidebar destination pages plus Files/MediaLibrary loading,
 and fixes Automation create/edit card opening jitter. It does not introduce a backend capability,
