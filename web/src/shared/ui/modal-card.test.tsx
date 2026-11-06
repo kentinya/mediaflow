@@ -1,9 +1,17 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  act,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  MODAL_CARD_EXIT_MS,
   ModalCardShell,
   useBodyScrollLock,
+  useModalCardExit,
   type ModalCardShellProps,
 } from "./modal-card";
 
@@ -136,5 +144,74 @@ describe("ModalCardShell close permission", () => {
     fireEvent.mouseDown(layer);
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+  });
+});
+
+function ExitHarness({ onClose }: { readonly onClose: () => void }) {
+  const exit = useModalCardExit();
+  return (
+    <button type="button" onClick={() => exit.beginClose(onClose)}>
+      {exit.closing ? "closing" : "idle"}
+    </button>
+  );
+}
+
+describe("useModalCardExit", () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  it("hands control to the owner only after the coordinated exit and ignores re-entry", () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn();
+      render(<ExitHarness onClose={onClose} />);
+      const trigger = screen.getByRole("button", { name: "idle" });
+      fireEvent.click(trigger);
+      expect(
+        screen.getByRole("button", { name: "closing" }),
+      ).toBeInTheDocument();
+      // A second close gesture while the exit runs schedules no second
+      // completion.
+      fireEvent.click(screen.getByRole("button", { name: "closing" }));
+      act(() => {
+        vi.advanceTimersByTime(MODAL_CARD_EXIT_MS);
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes immediately under reduced motion", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({ matches: true } as MediaQueryList),
+    );
+    try {
+      const onClose = vi.fn();
+      render(<ExitHarness onClose={onClose} />);
+      fireEvent.click(screen.getByRole("button", { name: "idle" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "idle" })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("never completes after the owner unmounts mid-exit", () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn();
+      const { unmount } = render(<ExitHarness onClose={onClose} />);
+      fireEvent.click(screen.getByRole("button", { name: "idle" }));
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(MODAL_CARD_EXIT_MS * 2);
+      });
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

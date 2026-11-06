@@ -2227,6 +2227,154 @@ describe("Storage centered cards and More menu", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     expect(invoker).toHaveFocus();
   });
+
+  it("closes the detail card through the shared exit and returns to the invoker", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input);
+      if (url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
+      }
+      if (url.endsWith("/storage/local-source")) {
+        return jsonResponse(detailPayload(STORAGE_LOCAL));
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    const invoker = await screen.findByRole("button", {
+      name: "查看 Local source",
+    });
+    await userEvent.click(invoker);
+    const card = await screen.findByRole("dialog", {
+      name: "存储详情 Local source",
+    });
+    const detailReads = () =>
+      (fetchMock.mock.calls as unknown as [string][]).filter(([url]) =>
+        String(url).endsWith("/storage/local-source"),
+      ).length;
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "关闭存储详情" }),
+    );
+    // A legal close first plays the shared exit: the card stays mounted on
+    // the same locked background, and closing issues no further read.
+    await waitFor(() =>
+      expect(card.closest(".mf-modal-layer")).toHaveClass(
+        "mf-modal-layer-exiting",
+      ),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "存储详情 Local source" }),
+    ).toBeVisible();
+    expect(document.body.style.overflow).toBe("hidden");
+    const readsBeforeExit = detailReads();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.body.style.overflow).toBe("");
+    expect(invoker).toHaveFocus();
+    expect(detailReads()).toBe(readsBeforeExit);
+  });
+
+  it("closes the Add card through the shared exit on cancel without any command", async () => {
+    const fetchMock = stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await userEvent.type(form.getByLabelText("名称 *"), "退出中的草稿");
+
+    await userEvent.click(form.getByRole("button", { name: "取消" }));
+    const card = screen.getByRole("dialog", { name: "添加存储" });
+    await waitFor(() =>
+      expect(card.closest(".mf-modal-layer")).toHaveClass(
+        "mf-modal-layer-exiting",
+      ),
+    );
+    // The exit keeps the retained input visible and disables the commands;
+    // cancel during the exit is already running and cannot restart it.
+    expect(form.getByLabelText("名称 *")).toHaveValue("退出中的草稿");
+    expect(form.getByRole("button", { name: "取消" })).toBeDisabled();
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
+    );
+    expect(document.activeElement?.getAttribute("id")).toBe(
+      "mf-add-storage-button",
+    );
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(0);
+  });
+
+  it("keeps one checked Save while the successful close plays the shared exit", async () => {
+    const deferred = deferredSave();
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_LOCAL],
+      onSave: () => deferred.result,
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await fillLocalAdd(form, "exit-save");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "添加存储" })).toHaveAttribute(
+        "aria-busy",
+        "true",
+      ),
+    );
+
+    deferred.release([200, saveResponsePayload({ id: "exit-save" })]);
+    // The success close uses the same exit; Save stays disabled until the
+    // card is gone, so the settled outcome cannot be submitted again.
+    await waitFor(() => {
+      const card = screen.getByRole("dialog", { name: "添加存储" });
+      expect(card.closest(".mf-modal-layer")).toHaveClass(
+        "mf-modal-layer-exiting",
+      );
+      expect(within(card).getByRole("button", { name: "保存" })).toBeDisabled();
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull(),
+    );
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it("closes the detail card immediately under reduced motion", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = String(input);
+        if (url.startsWith(INVENTORY_PATH)) {
+          return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
+        }
+        if (url.endsWith("/storage/local-source")) {
+          return jsonResponse(detailPayload(STORAGE_LOCAL));
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({ matches: true } as MediaQueryList),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    const invoker = await screen.findByRole("button", {
+      name: "查看 Local source",
+    });
+    await userEvent.click(invoker);
+    const card = await screen.findByRole("dialog", {
+      name: "存储详情 Local source",
+    });
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "关闭存储详情" }),
+    );
+    // The reduced-motion preference closes without waiting for the exit.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(invoker).toHaveFocus();
+  });
 });
 
 describe("Storage More command boundary", () => {

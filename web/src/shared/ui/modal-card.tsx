@@ -9,7 +9,14 @@
  * command and no Storage or Automation business rule.
  */
 
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 let bodyLockCount = 0;
 let savedBodyStyle: {
@@ -67,6 +74,70 @@ export function useBodyScrollLock(): void {
       }
     };
   }, []);
+}
+
+/**
+ * Coordinated exit duration for the shared card/backdrop exit CSS below
+ * (`.mf-modal-layer-exiting`), matching the Automation baseline's 160ms.
+ */
+export const MODAL_CARD_EXIT_MS = 160;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+export interface ModalCardExit {
+  /** True between a close request and the coordinated exit finishing. */
+  readonly closing: boolean;
+  /**
+   * Begin the shared card/backdrop exit; `close` runs when it finishes
+   * (immediately under reduced motion). A request while an exit is already
+   * running is ignored, so repeated close gestures cannot schedule a second
+   * completion.
+   */
+  readonly beginClose: (close: () => void) => void;
+}
+
+/**
+ * The shared exit lifecycle for owners of one modal card.
+ *
+ * A legal close request first plays the shared exit presentation and only
+ * then hands control back to the owner, whose state change unmounts the card
+ * and releases the layer's scroll lock, inert background and focus return.
+ * The pending timer never outlives the owner: unmounting clears it, so a
+ * navigation away mid-exit cannot fire the completion into a dead component.
+ */
+export function useModalCardExit(): ModalCardExit {
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  const beginClose = useCallback((close: () => void) => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    const finish = () => {
+      timerRef.current = null;
+      closingRef.current = false;
+      setClosing(false);
+      close();
+    };
+    if (prefersReducedMotion()) {
+      finish();
+      return;
+    }
+    timerRef.current = window.setTimeout(finish, MODAL_CARD_EXIT_MS);
+  }, []);
+  return { closing, beginClose };
 }
 
 export interface ModalLayerOptions {

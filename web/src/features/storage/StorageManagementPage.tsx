@@ -28,7 +28,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-import { ModalCardShell, useModalLayer } from "../../shared/ui/modal-card";
+import {
+  ModalCardShell,
+  useModalCardExit,
+  useModalLayer,
+} from "../../shared/ui/modal-card";
 import {
   PROVIDER_ROOT_LABEL,
   STORAGE_FAMILIES,
@@ -800,6 +804,7 @@ function StorageDetailCard({
   reading,
   failed,
   canManage,
+  closing,
   onRetry,
   onClose,
 }: {
@@ -807,6 +812,7 @@ function StorageDetailCard({
   readonly reading: boolean;
   readonly failed: boolean;
   readonly canManage: boolean;
+  readonly closing: boolean;
   readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
@@ -839,7 +845,7 @@ function StorageDetailCard({
   return (
     <ModalCardShell
       layerRef={card.layerRef}
-      closing={false}
+      closing={closing}
       busy={reading}
       title={title}
       titleId="mf-storage-detail-title"
@@ -852,7 +858,7 @@ function StorageDetailCard({
       }
       description={description}
       closeLabel="关闭存储详情"
-      closeDisabled={false}
+      closeDisabled={closing}
       onRequestClose={onClose}
       size="detail"
       bodyClassName="mf-modal-body-scroll"
@@ -874,6 +880,7 @@ function StorageDetailCard({
               type="button"
               className="mf-button mf-button-primary"
               onClick={onRetry}
+              disabled={closing}
             >
               重新读取
             </button>
@@ -881,6 +888,7 @@ function StorageDetailCard({
               type="button"
               className="mf-button mf-button-secondary"
               onClick={onClose}
+              disabled={closing}
             >
               返回存储列表
             </button>
@@ -1750,6 +1758,20 @@ export function StorageManagementPage() {
     refreshInventoryAuthority();
   }, [token, refreshInventoryAuthority]);
 
+  // Both cards play the shared modal exit before their owner state unmounts
+  // them: the close button, cancel, backdrop, layer edge, Escape and the
+  // read-failure return all route through the same exit, while the in-flight
+  // save keeps its existing exit refusal (closeDisabled).
+  const detailExit = useModalCardExit();
+  const editExit = useModalCardExit();
+  const closeDetailCard = useCallback(() => {
+    detailExit.beginClose(() => {
+      setDetailId(null);
+      setCheckBlocked(null);
+      checkMutation.reset();
+    });
+  }, [detailExit, checkMutation]);
+
   const closeDrawer = useCallback(() => {
     // Invalidate any in-flight Add authority / Edit projection read so a late
     // response can never reopen the card or overwrite a newer intent. Focus
@@ -1764,6 +1786,13 @@ export function StorageManagementPage() {
     setSaveError(null);
     setAwaitingVerification(false);
   }, []);
+
+  // Every close gesture of the Add/Edit card (close button, cancel, backdrop,
+  // layer edge, Escape, read-failure return and the successful checked Save)
+  // plays the same exit; closeDrawer then fences late reads and clears intent.
+  const beginDrawerExit = useCallback(() => {
+    editExit.beginClose(closeDrawer);
+  }, [editExit, closeDrawer]);
 
   const loadAddAuthority = useCallback(
     async (requestId: number) => {
@@ -1928,8 +1957,7 @@ export function StorageManagementPage() {
       }
       setSaveError(null);
       setAwaitingVerification(false);
-      drawerRequestRef.current += 1;
-      setDrawer((current) => ({ ...current, open: false }));
+      beginDrawerExit();
       refreshInventoryAuthority();
       setSavedNotice(
         result.model.values.enabled
@@ -2290,11 +2318,8 @@ export function StorageManagementPage() {
                   onRetry={() => {
                     void detailQuery.refetch();
                   }}
-                  onClose={() => {
-                    setDetailId(null);
-                    setCheckBlocked(null);
-                    checkMutation.reset();
-                  }}
+                  onClose={closeDetailCard}
+                  closing={detailExit.closing}
                   canManage={data.canManage && !saveMutation.isPending}
                 />
               )}
@@ -2314,7 +2339,8 @@ export function StorageManagementPage() {
                     void verifySaveState();
                   }}
                   onRetryRead={retryDrawerRead}
-                  onClose={closeDrawer}
+                  onClose={beginDrawerExit}
+                  closing={editExit.closing}
                   onSave={submitDrawer}
                 />
               )}

@@ -86,6 +86,8 @@ interface Props {
   /** The exact Active fence for this candidate is available. */
   readonly authorityReady: boolean;
   readonly saving: boolean;
+  /** The card is playing its shared exit; close gestures and commands wait. */
+  readonly closing: boolean;
   readonly saveError: string | null;
   /** True after an outcome the browser cannot confirm; Save blocks until verified. */
   readonly awaitingVerification: boolean;
@@ -173,6 +175,7 @@ export function StorageEditCard({
   readError,
   authorityReady,
   saving,
+  closing,
   saveError,
   awaitingVerification,
   onVerify,
@@ -335,7 +338,7 @@ export function StorageEditCard({
     return (
       <ModalCardShell
         layerRef={card.layerRef}
-        closing={false}
+        closing={closing}
         busy={reading}
         title={reading ? "编辑存储" : "无法编辑存储"}
         titleId="mf-storage-edit-title"
@@ -346,7 +349,7 @@ export function StorageEditCard({
             : "未提交任何修改；输入没有丢失。"
         }
         closeLabel="关闭编辑存储"
-        closeDisabled={saving}
+        closeDisabled={saving || closing}
         onRequestClose={onClose}
         size="form"
       >
@@ -370,6 +373,7 @@ export function StorageEditCard({
                 type="button"
                 className="mf-button mf-button-primary"
                 onClick={onRetryRead}
+                disabled={closing}
               >
                 重新读取
               </button>
@@ -378,6 +382,7 @@ export function StorageEditCard({
               type="button"
               className="mf-button mf-button-secondary"
               onClick={onClose}
+              disabled={closing}
             >
               返回存储列表
             </button>
@@ -390,14 +395,14 @@ export function StorageEditCard({
   return (
     <ModalCardShell
       layerRef={card.layerRef}
-      closing={false}
+      closing={closing}
       busy={saving}
       title={editing ? "编辑存储" : "添加存储"}
       titleId="mf-storage-edit-title"
       accessibleName={editing ? `编辑存储 ${content.values.id}` : "添加存储"}
       description="保存会验证并激活完整配置；失败时旧 Active 与 Storage 内容均保持不变。"
       closeLabel={editing ? "关闭编辑存储" : "关闭添加存储"}
-      closeDisabled={saving}
+      closeDisabled={saving || closing}
       onRequestClose={onClose}
       size="form"
       cardClassName="mf-storage-drawer"
@@ -407,7 +412,7 @@ export function StorageEditCard({
             type="button"
             className="mf-button mf-button-secondary"
             onClick={onClose}
-            disabled={saving}
+            disabled={saving || closing}
           >
             取消
           </button>
@@ -416,7 +421,7 @@ export function StorageEditCard({
               type="button"
               className="mf-button mf-button-secondary"
               onClick={goBack}
-              disabled={saving}
+              disabled={saving || closing}
             >
               上一步
             </button>
@@ -426,7 +431,7 @@ export function StorageEditCard({
               type="button"
               className="mf-button mf-button-primary"
               onClick={goNext}
-              disabled={saving}
+              disabled={saving || closing}
             >
               下一步
             </button>
@@ -435,7 +440,9 @@ export function StorageEditCard({
               type="button"
               className="mf-button mf-button-primary"
               onClick={save}
-              disabled={saving || awaitingVerification || !authorityReady}
+              disabled={
+                saving || closing || awaitingVerification || !authorityReady
+              }
               aria-busy={saving}
               title={
                 awaitingVerification
@@ -478,7 +485,7 @@ export function StorageEditCard({
               >
                 <button
                   type="button"
-                  disabled={saving}
+                  disabled={saving || closing}
                   onClick={() => goToStep(number)}
                 >
                   <span>{number}</span> {label}

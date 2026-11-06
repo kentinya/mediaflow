@@ -9,8 +9,10 @@ import { expect, test, type Page } from "@playwright/test";
  * SQLite runtime and temporary Local roots. It proves the three real entries
  * (查看/添加/编辑), exact checked Save readback, a rejected duplicate that keeps
  * the card and input, and that opening/viewing/more-menu interaction performs
- * no configuration or media command. No production Storage, credential or
- * external provider is used.
+ * no configuration or media command. It also proves the shared coordinated
+ * exit of the three cards from their real close controls (normal motion and
+ * reduced motion) with zero extra configuration or media command.
+ * No production Storage, credential or external provider is used.
  */
 
 const ADMIN_TOKEN = "harness-admin-token";
@@ -405,4 +407,221 @@ test("More is keyboard reachable, row-anchored and returns focus on Escape", asy
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(invoker).toBeFocused();
+});
+
+interface ExitFrameSample {
+  readonly at: number;
+  readonly exiting: boolean;
+  readonly cardOpacity: number | null;
+  readonly backdropOpacity: number | null;
+}
+
+interface ExitSampler {
+  readonly samples: ExitFrameSample[];
+}
+
+/**
+ * Record real animation frames from the shared modal card and backdrop, so a
+ * missing or invisible exit becomes visible instead of being hidden by a
+ * settled final screenshot. The sampler observes computed opacity only; it
+ * binds no millisecond, pixel or class-name product contract.
+ */
+async function startExitSampler(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const samples: {
+      at: number;
+      exiting: boolean;
+      cardOpacity: number | null;
+      backdropOpacity: number | null;
+    }[] = [];
+    const started = performance.now();
+    let stopped = false;
+    const tick = () => {
+      const layer = document.querySelector<HTMLElement>(".mf-modal-layer");
+      const card = document.querySelector<HTMLElement>(".mf-modal-card");
+      const backdrop = document.querySelector<HTMLElement>(
+        ".mf-modal-backdrop",
+      );
+      samples.push({
+        at: performance.now() - started,
+        exiting: layer?.classList.contains("mf-modal-layer-exiting") ?? false,
+        cardOpacity:
+          card === null ? null : Number(getComputedStyle(card).opacity),
+        backdropOpacity:
+          backdrop === null
+            ? null
+            : Number(getComputedStyle(backdrop).opacity),
+      });
+      if (!stopped && performance.now() - started < 1_500) {
+        requestAnimationFrame(tick);
+      }
+    };
+    (window as unknown as { __exitSampler: ExitSampler }).__exitSampler = {
+      samples,
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+async function readExitSamples(page: Page): Promise<ExitFrameSample[]> {
+  return page.evaluate(
+    () => (window as unknown as { __exitSampler: ExitSampler }).__exitSampler
+      .samples,
+  );
+}
+
+/** The card is fully unmounted after its coordinated exit has finished. */
+async function waitCardDetached(page: Page): Promise<void> {
+  await page.locator(".mf-modal-layer").waitFor({ state: "detached" });
+}
+
+/**
+ * The shared exit actually played: several frames show the exiting layer with
+ * the card and backdrop fading from a visible opacity towards the background.
+ */
+function expectExitPlayed(samples: ExitFrameSample[]): void {
+  const exiting = samples.filter((sample) => sample.exiting);
+  expect(exiting.length).toBeGreaterThan(1);
+  const first = exiting[0];
+  const last = exiting[exiting.length - 1];
+  expect(first.cardOpacity).not.toBeNull();
+  expect(first.cardOpacity ?? 0).toBeGreaterThan(0);
+  expect(last.cardOpacity ?? 1).toBeLessThan(first.cardOpacity ?? 1);
+  expect(last.backdropOpacity ?? 1).toBeLessThan(
+    first.backdropOpacity ?? 1,
+  );
+}
+
+function storageMutations(
+  requests: string[],
+): string[] {
+  return requests.filter((entry) => entry.startsWith("POST") || entry.startsWith("PUT") || entry.startsWith("DELETE"));
+}
+
+test("closes view, add and edit cards through the shared visible exit", async ({
+  page,
+}) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (
+      ["POST", "PUT", "DELETE", "PATCH"].includes(request.method()) &&
+      request.url().includes("/api/v1/storages")
+    ) {
+      mutations.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openStorage(page);
+
+  // 查看 closes from its real close control through the same visible exit as
+  // the Automation baseline, then hands focus back to the invoking row entry.
+  const viewEntry = page.getByRole("button", { name: "查看 Source" });
+  await viewEntry.click();
+  const detail = card(page, "存储详情 Source");
+  await expect(detail).toBeVisible();
+  await startExitSampler(page);
+  await detail.getByRole("button", { name: "关闭存储详情" }).click();
+  await waitCardDetached(page);
+  expectExitPlayed(await readExitSamples(page));
+  await expect(viewEntry).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+
+  // 添加 cancels through the same exit with the invoking entry restored.
+  const addEntry = page.getByRole("button", { name: "+ 添加存储" });
+  await addEntry.click();
+  const add = card(page, "添加存储");
+  await expect(add).toBeVisible();
+  await startExitSampler(page);
+  await add.getByRole("button", { name: "取消" }).click();
+  await waitCardDetached(page);
+  expectExitPlayed(await readExitSamples(page));
+  await expect(addEntry).toBeFocused();
+
+  // 编辑 cancels through the same exit on the desktop viewport.
+  const editEntry = page.getByRole("button", { name: "编辑 Source" });
+  await editEntry.click();
+  const edit = card(page, "编辑存储 source-storage");
+  await expect(edit).toBeVisible();
+  await startExitSampler(page);
+  await edit.getByRole("button", { name: "取消" }).click();
+  await waitCardDetached(page);
+  expectExitPlayed(await readExitSamples(page));
+  await expect(editEntry).toBeFocused();
+  expect(storageMutations(mutations)).toEqual([]);
+
+  // The narrow viewport keeps the same coordinated exit for the edit card.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(editEntry).toBeVisible();
+  await editEntry.click();
+  const narrowEdit = card(page, "编辑存储 source-storage");
+  await expect(narrowEdit).toBeVisible();
+  await startExitSampler(page);
+  await narrowEdit.getByRole("button", { name: "取消" }).click();
+  await waitCardDetached(page);
+  expectExitPlayed(await readExitSamples(page));
+  await expect(editEntry).toBeFocused();
+  expect(storageMutations(mutations)).toEqual([]);
+});
+
+test("closes storage cards immediately under reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openStorage(page);
+
+  const viewEntry = page.getByRole("button", { name: "查看 Source" });
+  await viewEntry.click();
+  const detail = card(page, "存储详情 Source");
+  await expect(detail).toBeVisible();
+  await startExitSampler(page);
+  await detail.getByRole("button", { name: "关闭存储详情" }).click();
+  await waitCardDetached(page);
+  // The reduced-motion preference closes without a visible fade: no frame
+  // shows the card or backdrop at a partial opacity.
+  const samples = await readExitSamples(page);
+  expect(
+    samples.filter(
+      (sample) =>
+        (sample.cardOpacity !== null &&
+          sample.cardOpacity > 0 &&
+          sample.cardOpacity < 1) ||
+        (sample.backdropOpacity !== null &&
+          sample.backdropOpacity > 0 &&
+          sample.backdropOpacity < 1),
+    ),
+  ).toEqual([]);
+  await expect(viewEntry).toBeFocused();
+
+  // The Add card closes immediately through the same preference.
+  const addEntry = page.getByRole("button", { name: "+ 添加存储" });
+  await addEntry.click();
+  const add = card(page, "添加存储");
+  await expect(add).toBeVisible();
+  await add.getByRole("button", { name: "取消" }).click();
+  await expect(add).toHaveCount(0);
+  await expect(addEntry).toBeFocused();
+});
+
+test("reopening after a completed exit shows a fresh stable card", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openStorage(page);
+  const viewEntry = page.getByRole("button", { name: "查看 Source" });
+  await viewEntry.click();
+  const detail = card(page, "存储详情 Source");
+  await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: "关闭存储详情" }).click();
+  await waitCardDetached(page);
+  // An immediate reopen after the finished exit starts a fresh card with the
+  // real detail content again, and closes through the same path once more.
+  await viewEntry.click();
+  const reopened = card(page, "存储详情 Source");
+  await expect(reopened).toBeVisible();
+  await expect(reopened.getByText("引用情况")).toBeVisible();
+  await reopened.getByRole("button", { name: "关闭存储详情" }).click();
+  await expect(reopened).toHaveCount(0);
+  await expect(viewEntry).toBeFocused();
 });
