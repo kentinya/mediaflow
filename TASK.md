@@ -3,7 +3,7 @@
 Authority：已提交 `575898ebaae593568be59699bb40116f9e6f2d91:SLICE.md` 的 RO-1、
 AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workflow.md) 与
 [Task 模板](Task/TEMPLATE.md)。用户于 2026-11-06 明确授权激活 Task50.2，作为当前唯一
-活动实施 Task，状态 PLANNED，等待 Developer 实施。本轮仅激活，不启动开发、推送或部署。
+活动实施 Task。当前已收到实现候选；B 本轮独立复核结论为 FIX REQUIRED，修复仍在本 Task 内。
 
 激活前现场：分支 `main`，HEAD `5b5f319b1d77b9673a447bf60c5d7a21fcbcc956`；治理预检 PASS，
 仓库与 Git 可写。Task Base 保持原值，纯文档提交不重设它。预存 `mediaflow/.DS_Store` 修改
@@ -13,7 +13,7 @@ AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workfl
 Task ID: 50.2
 Task Type: SLICE
 Parent Slice: 50
-Status: PLANNED
+Status: FIX REQUIRED
 Activation: USER AUTHORIZED — 2026-11-06
 Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
 Difficulty: High
@@ -30,7 +30,7 @@ Task50.1 保持 **PASS**，B 已审完整范围
 
 | Slice Required Outcome | 当前结果 |
 |---|---|
-| RO-1 任务详情卡片/可读性 | 未交付，由当前 Task50.2 实施。 |
+| RO-1 任务详情卡片/可读性 | 已有居中卡片候选；B 复核发现返回位置与原生条目在途状态两项阻塞，未验收。 |
 | RO-2 存储三卡片/更多菜单 | Task50.1 已验收。 |
 | RO-3 两种库去树/菜单/配置卡片 | 未交付，待后续规划。 |
 | RO-4 自动化新建/编辑稳定性补充 | Task50.1 已验收。 |
@@ -268,5 +268,93 @@ B 审查范围: Task Base..本报告提交 HEAD
 
 ## B Review Result
 
-Task50.2 已激活、尚未实施，无实现候选，待 Developer 交接后由 B 独立验收。后续须记录完整
-Base..Head、实际门禁、阻塞及其用户影响、全部 Slice 结果和下一步。
+**FIX REQUIRED — 2026-11-06，B 独立审查。**
+
+- Task Base：`575898ebaae593568be59699bb40116f9e6f2d91`（保持不变）。
+- 候选 Head：`46be457f5d415efdea4fe7090774d3146f58253c`。
+- 现场：分支 `main`，工作区/Git 可写；预存 `.DS_Store`、日志、`15`、`output/` 等
+  未触碰、未暂存。本轮只更新 `TASK.md`，没有产品实现或推送。
+- 审查完整 Base..Head 的 15 个文件：规划/激活文档、全部生产改动、组件测试和 E2E 改动，
+  并追踪共享外壳、Router、条目恢复及真实 Python harness 消费链路。未将 Developer 的
+  测试报告当作 B 的独立验收。
+- 已实现居中卡片、列表不再因详情挤窄、状态/事实/诊断分层及取消控制会话保留；以下两个
+  必需结果仍不满足，均为 P1，留在 Task50.2 修复。未发现或声称媒体已重复执行。
+
+### B50.2-01 — 打开详情后返回丢失原列表位置
+
+**用户旅程：** 在 390px 窄屏的任务中心向下浏览，点击任务名称，查看详情再关闭。
+预期继续阅读原来的行；候选打开时背景已回到页顶，关闭后仍在页顶，需重新寻找任务。
+
+B 从现有 UI 名称按钮操作，未增加入口或修改页面高度：
+
+- fake API 的真实 `Movies，手动整理详情` 行：打开前 `scrollY=461`，打开后/关闭后均为 `0`。
+- 真实 Python/SQLite harness 的列表行：打开前 `scrollY=329`，打开后/关闭后均为 `0`。
+- reduced-motion 下同样发生；入口焦点虽已返回，所在列表位置未恢复。
+
+**开发指导与修复验收：**
+
+1. 在 `OperationsLanding.tsx` 的真实详情打开、关闭及同卡片内 URL 状态切换链路，采用已有
+   局部保滚动导航方式。连同问题文件打开证据/关闭返回检查，保留其真实列表/分页上下文。
+   普通跨主页面导航维持原语义，不能全局关滚动重置或先回顶再滚回。
+2. 从已滚动列表实际点击任务名，检查首帧/读取/正文/关闭/Escape/浏览器返回；增加桌面和
+   390px 回归，验证原列表可见位置、日期/页及焦点。断言用户仍能接着阅读原行，不以停稳
+   后卡片居中或单一 CSS 断言替代。精确链接/认证续转的合法返回保持。
+
+### B50.2-02 — 原生条目决定在途时，关闭重开又允许保存
+
+**用户旅程：** 任务中心 → 识别恢复 → 查看问题文件 → 查看该文件证据与恢复记录 → 选择
+Special → 保存决策并继续安全分析。网络仍在等待时关闭卡片，再从原问题文件入口重开，
+重新选择 Special。原请求仍未返回，候选却重新开放保存；没有原请求的在途/核对提示。
+
+B 使用现有 `seed-task-item-recovery?kind=recognition` 隔离数据及真实 Python API/SQLite，
+仅延迟浏览器实际发出的 `/recovery/decision` 请求：已发 POST 1 次、仍在途，重开后
+`saveEnabled=true`、核对入口数 `0`。没有点击第二次保存，也没有调用执行器或用户媒体。
+
+**开发指导与修复验收：**
+
+1. 沿 `RunDetailTabs → 条目证据 → TaskItemRecoveryPanel` 修复真实四类处理会话生命周期。
+   当前 landing 提升的是取消控制与旧剩余范围会话，不能据此认定原生条目决定/继续/确认
+   已覆盖。让实际在途请求及未决核对信息跨允许的关闭/重开保留，绑定当前主体及精确
+   Task/条目/请求或准备身份；换任务、换条目不混用。
+2. 同一请求未结束时重开保持等待；结果未知时保留原核对入口，成功/明确拒绝则展示其实际
+   结果。迟到响应不能把用户带回已关闭的旧卡片或丢失结果。复用现有持久读回与原权限/
+   checkpoint/pin，不新建通用命令框架，不增加自动重试或重放。
+3. 在原生入口添加“在途关闭重开”及“未知结果关闭重开后核对”的回归，覆盖决定与精确
+   摘要确认的实际状态归属，并组合验证切换条目/任务隔离。保持原 POST 次数，明确核对后
+   才能按实际结果决定后续；成功兄弟与未知效果不重放。按现有四类共享实现选择必要代表
+   场景，不要求无意义的全排列，不探测退役 Pause/剩余范围入口。
+
+### 本轮验证与证据
+
+稳定本地证据：`.git/validation-evidence/46be457f/B50.2-review/`（ignored，本地可取，
+不宣称远程可取）。含三个探测脚本、实际日志、原生窄屏前/开/关截图及桌面条目重开截图；
+B 已打开检查原生截图。它们证明上述阻塞，**不是完整视觉验收或 T4 PASS**。
+
+| cwd / 命令 | B 实际结果 |
+|---|---|
+| 根目录 `python3 scripts/check_governance.py` | 复核前与文档更新后均 PASS。 |
+| `web/` `npm run build` | PASS，既存大 chunk 提示保留；核对生产 JS/CSS 构建产物。 |
+| 根目录 `node .git/validation-evidence/46be457f/B50.2-review/detail-probe.mjs` | 正常入口完成；记录 fake 列表位置丢失。 |
+| 根目录 `node .git/validation-evidence/46be457f/B50.2-review/detail-native-probe.mjs` | 正常入口完成；真实 Python 重现列表位置丢失。 |
+| 根目录 `node .git/validation-evidence/46be457f/B50.2-review/recovery-probe.mjs` | 正常原生决定入口完成；重开误开放保存，保留 1 次在途 POST。 |
+| 根目录 `git diff --check` | 文档更新后 PASS。 |
+
+首次 fake 探测因窄屏侧栏折叠而等待链接超时，随后按现有 E2E 先在桌面进入再转窄屏；首次
+条目探测仍查找保存前按钮文案，但提交后实际变为“正在保存…”，发生断言超时，修正选择器
+后完成真实旅程，初次日志保留为 `recovery-probe-selector-failure.log`。这两次均是探测脚本
+问题，不作为产品阻塞或已通过测试。最终脚本没有增加重试或放宽超时。
+
+时间分配：复核在 `03:47:21 UTC` 已记录现场时间，至 `03:50:39 UTC` 已超过 3 分 18 秒，
+此前阅读及后续记录另计；构建及所有成功/失败探测的执行墙钟保守上界 60 秒，低于这一
+已可核对工作时段的 31%，故本轮测试时间小于总工作时间的 50%。未空等凑比例。
+
+按 workflow §6，已有真实 P1 阻塞，本轮提前 FIX REQUIRED。完整 T4、完整 Python/Web/E2E、
+wheel/源码外消费及最终视觉/安全验收均 **待修复候选由 B 执行**；未豁免、未声称通过，也不
+把这些 B 工作转交 Developer。Developer 跑本 Task 原有受影响计划及本轮新增/失败用例后，
+提交新的完整修复 checkpoint，不能改写已审提交。
+
+### 全 Slice 结果与下一步
+
+RO-1 仍未满足；RO-2 存储和 RO-4 自动化稳定性保持 Task50.1 的已接受事实；RO-3 两种库
+与 RO-4 主页面切换/库加载仍未交付。Slice50 保持 ACTIVE，本轮不另建 Task，不交 Closure
+Packet，不进行 A 终审或关闭。下一步为 Developer 在 **同一 Task50.2** 修复上述两项后重新交接。
