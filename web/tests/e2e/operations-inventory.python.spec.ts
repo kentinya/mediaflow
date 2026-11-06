@@ -84,6 +84,11 @@ function recordApiCalls(
 }
 
 async function openInventory(page: Page): Promise<void> {
+  const selectedDetail = page.getByRole("dialog", { name: "运行详情" });
+  if ((await selectedDetail.count()) > 0) {
+    await selectedDetail.getByRole("button", { name: "关闭详情" }).click();
+    await expect(selectedDetail).toHaveCount(0);
+  }
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
@@ -1651,7 +1656,11 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   ).toBeVisible();
 
   // Refresh keeps the same durable facts — the run is not recomputed.
-  await itemEvidence.getByRole("button", { name: "刷新", exact: true }).click();
+  await itemEvidence
+    .locator(".mf-run-items-head")
+    .first()
+    .getByRole("button", { name: "刷新", exact: true })
+    .click();
   await expect(
     itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
   ).toHaveCount(1);

@@ -160,7 +160,7 @@ npx prettier --check src/features/operations/OperationsLanding.tsx src/features/
 及 `storage-dialog.python.spec.ts` / `automation-create-dialog.python.spec.ts` 的直接受影响用例。
 Developer 不承担完整 Python/Web/E2E 或发布矩阵。
 
-### B — acceptance / full regression
+### B — acceptance and full regression
 
 1. 独立审查完整 Task Base..候选 Head，先从真实名称/原精确链接验证关键旅程，含关闭返回、
    五态/文件结果、四类处理、在途/未知后重开。实际阻塞留在同一 Task 修复。
