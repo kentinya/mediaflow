@@ -1,8 +1,8 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
 用户于 2026-11-06 明确授权激活本 Task。未命名 Storage、保存恢复及核对期间/完成后的
-只读状态均已通过 B 复验。当前认证测试已按 B 的直接受影响修正指导更新并交回
-READY FOR B REVIEW；本轮不推送或部署。
+只读状态均已通过 B 复验，原生慢目录视觉验收已补完。认证测试的运行断言已通过，
+但新回调与辅助函数签名不一致，类型检查失败；当前 FIX REQUIRED，同 Task 修正测试类型。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -14,9 +14,9 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: 5d60aae6f49e4219db7ce4a47f0841c8ed81dd2a
+Candidate: 66ac0f06c3d7b2d63263626c3713335057ad8e3d
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -192,8 +192,8 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 - 不增加 Provider/文件命令、任务/恢复类型、统计/缩略图、替代目录树、主题/动画设置，
   不重构后端配置/权限/队列或引入自动未知重放，不推送/部署。
 - 当前：RO-1 已由 Task50.2 PASS；RO-2 与自动化稳定性由 Task50.1 PASS；RO-3 及两种库
-  加载待本 Task 完整验收；RO-4 侧栏主页面切换仍未交付。本轮核对与当前输入的一致性已通过；直接受影响的认证
-  测试已按加载语义修正，待 B 复验。
+  加载交互已核对；完整门禁尚缺修正后的 Web 全量通过。RO-4 侧栏主页面切换仍未交付。
+  认证测试运行已通过，辅助函数类型需同 Task 修正。
   本 Task 未来 PASS 后再次核对全部结果；侧栏切换仍缺则不能提交 Slice Closure Packet。
 
 ### Developer Completion Report / B Review Result
@@ -250,104 +250,82 @@ B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
 
 ```text
 Reviewed Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Reviewed Head: 37465bd4f3f2724e5143befe485c2a82b855cc0a
+Reviewed Head: 66ac0f06c3d7b2d63263626c3713335057ad8e3d
 Decision: FIX REQUIRED
-Resolved: B50.3-01；B50.3-02 全部（含待核对/核对中/完成后的输入一致性）
-Task blocker: AuthBoundary 的直接受影响测试仍依赖读取完成前的假空态，全量 Web 门禁未通过
+Resolved: 未命名 Storage、保存恢复/只读一致性；认证空态断言；原生慢目录视觉证据
+Task blocker: AuthBoundary.test.tsx 新回调与 stubFetch 类型不匹配，npm run typecheck 失败
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; CORRECT THE AFFECTED TEST
+Next: SAME TASK FIX LOOP; CORRECT THE TEST HELPER TYPE
 ```
 
-**评审范围与已通过结果。** 结合前轮逐段审查，本轮独立核对原 Base..Head 的完整 25 文件
-累计差异及最终只读修正。产品实现为 `995bce3b`，`995bce3b..37465bd4` 仅改 TASK.md。
-B 未改产品或测试，原 Base、Goal、Scope 与 T4 不变。前轮问题/原始复现保留于
-`d66fe4da:TASK.md`，不把已经修复的问题继续列为阻塞。
+**完整范围与实际结果。** 延续前轮独立源码/旅程审查，本轮核对原 Task Base..Head 的
+完整 26 文件累计差异和当前提交。`37465bd4..66ac0f06` 只改 TASK.md 与
+`web/src/shared/auth/AuthBoundary.test.tsx`；全部产品源码、库测试、API、原生/fake E2E、
+harness、依赖及配置未变。`5d60aae6..66ac0f06` 仅为文档交接。原 Base、Goal、Scope、
+High/T4 均保留，B 未改产品或测试。前轮完整结论和日志指针保留于 `7c2824b6:TASK.md`。
 
-真实 Python/API/SQLite/Local 临时环境、生产构建上的完整 direct-files **27 passed**，
-覆盖两种库正常 Add/Edit、合法未命名 Storage、默认启用、文件保留、实际已发布但响应丢失、
-核对失败后恢复及两浏览器真实冲突后明确继续。四个恢复场景也验证待核对、核对中和完成后
-只读、核对不同后恢复编辑。B 另从两种库的正常添加入口独立重复前轮操作：保存成功响应
-中断后尝试更改名称，字段不可编辑；核对后仍显示提交名称且只有关闭，整个旅程各仅一次
-变更请求。先前“新输入被呈现为完成”的问题已修复。
+用户已登录后直接进入媒体库：测试现在显式提供合法空列表与真实请求的 system status，
+等待实际空态后验证仍在媒体库路由、token 保留、无待续转路径且未返回连接入口。这一
+方向正确。B 独立运行认证与媒体库页面测试，**2 files / 24 passed**，包括读取未返回
+不能显示假空态的既有用例。先前失败的运行断言已修正。
 
-B 在 1536×1024 / 390×844 实际交互并查看截图：两页首次库信息等待、目录就绪、同条件
-刷新保留内容、四个添加/编辑卡片、编辑慢读到就绪、库菜单及移除确认入口、键盘焦点/
-关闭回焦和 reduced-motion。卡片加载/就绪位置与尺寸稳定，窄屏无页面横向溢出，关闭
-释放背景锁定；浏览、开关和取消未发变更请求。原生目录加载截图实际已到就绪态，未把
-文件名中的 loading 当成加载中证据；该段可控慢读视觉验收仍由 B 在后续补完，不据此
-要求 Developer 改产品。此处是本地合成环境结果，不是生产部署验证。
+**唯一已证实的剩余阻塞是测试编译类型。** `npm run typecheck` 实际 exit 2：
 
-**当前唯一已证实的阻塞：旧认证测试没有提供空库响应，却等待“尚未添加媒体库”。**
+- `AuthBoundary.test.tsx:75`：TS2345，`(input) => Promise<Response>` 不能作为
+  `() => Promise<Response>` 参数；TS7006，`input` 隐含为 any。
+- 当前文件的 `stubFetch` 仍把 implementation 声明为无参数函数，新实现却需要读取请求
+  地址。Vitest 执行时可收到地址，但 TypeScript 严格检查不通过。这由 `5d60aae6`
+  （2026-11-06 22:58 +08:00）新增 callback 引入；不是媒体库页面或认证产品故障。
 
-已登录用户直接打开 `/ui-v2/medialib/files`，真实旅程应先显示媒体库页面与读取状态，只有
-接口返回已启用库列表为空，才显示“尚未添加媒体库”。
-`web/src/shared/auth/AuthBoundary.test.tsx` 的
-`keeps a still-authenticated operator on the deep route` 未 mock fetch，却把该空态当作
-认证路由成功标志。本 Task 正确移除了 pending 阶段的假空态，这条断言未同步更新，导致
-全量 Web **1386 passed / 1 failed**；单独重跑同文件也为 **8 passed / 1 failed**。
-这是测试与新加载语义不一致，不是已证实的登录/路由产品故障。
+**Developer 开发指导：**
 
-本轮以原 Task Base 的 `git archive` 源码、相同 node_modules 在隔离目录运行同一命令，
-**9 passed**。最初直接从 `.git` 内归档执行时 Vitest 无法解析 setup 文件（未执行测试）；
-改在独立临时目录执行归档源码后通过，日志全部保留。引入点为
-`07e6b89f`（2026-11-06 20:25 +08:00）新增 `librariesPending` 分支，却未更新上述消费者；
-不归因于最终只读修正，也不让 Developer 补跑全仓门禁。
-
-**Developer 最小修正指导（仍在 Task50.3）：**
-
-1. 只调整上述认证测试及其必要 fixture。复用文件现有 `stubFetch` / `jsonResponse`，
-   为真实 `/api/v1/media-libraries` 明确返回合法空列表，为页面同时读取的
-   `/api/v1/system/status` 提供合法状态；响应结构可复用
-   `MediaLibraryFilesPage.test.tsx` 中“真实库信息等待而非假空态”用例。只响应实际请求。
-2. 保留认证目标：等待页面就绪后，断言真实 router 仍在媒体库路径、token 保留、
-   intended path 为空且没有回到连接入口。若保留“尚未添加媒体库”断言，必须等待上述
-   明确空列表返回；它不能继续充当“请求尚未完成”的路由标志。`renderApp` 已返回 router，
-   不需改共享测试工具或产品入口。
-3. 保留现有加载用例中的“响应未返回无假空态、空列表返回后出现空态”断言。不改正确的
-   生产加载分支，不删/跳过该认证用例，不加重试/超时，不扩大认证或恢复功能范围。
-4. 运行直接受影响测试与改动文件静态检查，提交一个测试修正 checkpoint，交 READY FOR
-   B REVIEW；全量门禁继续由 B 负责。cwd `web/`：
+1. 仅修正本文件 `stubFetch` 的 implementation 参数类型，使其表达实际 fetch 的请求
+   输入及可选 init。可采用 `typeof fetch` 或与当前调用一致的准确函数签名；现有无参数
+   callback 仍应可用。不要用 any、类型强转、ts-ignore 或关闭检查绕过问题。
+2. 保留当前合法响应、空态和路由/token/续转断言，保留媒体库的 pending/真实空态测试。
+   不改产品代码、加载语义、认证边界、共享测试工具或其他功能。
+3. cwd `web/` 运行以下直接受影响检查，交一个完整 checkpoint，READY FOR B REVIEW。
+   全量 Web/Python/E2E 仍由 B 负责，不交回 Developer：
 
 ```sh
+npm run typecheck
 npm run test -- run src/shared/auth/AuthBoundary.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx
 npx eslint src/shared/auth/AuthBoundary.test.tsx
 npx prettier --check src/shared/auth/AuthBoundary.test.tsx
 ```
 
-根目录仍运行治理与 whitespace 检查；若实际改了其他文件，仅补对应受影响检查。
-不新增 Task，不改后端、配置发布、普通文件命令或全局 Shell。
+根目录运行治理与 whitespace 检查。修正留在本 Task，不增加新任务或新产品能力。
 
-**本轮 B 门禁实际结果：**
+**B 补完的原生视觉验收。** 在同一现有临时 Python/API/SQLite/Local harness 和未变的
+生产资产上，通过正常两页入口，保持真实库信息响应、目录响应分别等待后释放；本轮
+匹配实际带/不带 query 的现有 files URL，修正了上轮 B 取证漏拦根目录响应的问题。
+1536×1024 / 390×844 两种库共四种组合均完成“库读取→目录读取→真实文件→刷新保留
+内容”。B 已逐张查看四份实际目录加载截图：协调占位、正确库/根、无假空目录；再释放
+真实响应后显示内容。原生慢目录取证欠项已完成，不留给 Developer。
+同时复核四入口卡片的慢读到就绪/关闭、菜单/移除取消、焦点回交、背景锁定释放与
+reduced-motion；四种组合均无变更请求、无页面横向溢出，卡片几何稳定。
 
-| 门禁 | 结果 |
-|---|---|
-| Python 全量 unittest | 2603 tests / OK，7 skipped（套件原有条件跳过，未隐藏） |
-| Ruff format/check、compileall、pip check | PASS |
-| 两个公开配置 validate、禁止 FFmpeg/FFprobe 依赖检查 | PASS（禁止依赖 rg 无匹配，exit 1 为预期） |
-| Web typecheck / lint / format:check / build | PASS |
-| Web 全量单元测试 | 93 files PASS / 1 file FAIL；1386 passed / 1 failed，上述唯一失败 |
-| 默认 Web E2E | 255 passed |
-| 原生 direct-files / live-files / operations-inventory / storage-dialog | 27 / 5 / 43 / 8 passed，各模块新临时环境 |
-| wheel 构建、exact-wheel smoke 与源码外安装消费者 | PASS |
-| 认证单文件当前候选 / 原 Task Base | 8 passed + 1 failed / 9 passed |
+**门禁与复用。** 当前新跑 typecheck FAIL、受影响单元测试 24 PASS，以及上述真实
+交互 PASS。匹配输入的上轮 B 结果仍有效：Python 2603 tests / OK（7 原有条件 skip）、
+Ruff/compileall/pip check/两个配置示例/禁止依赖检查、Web build、默认 E2E
+255、原生 direct/live/operations/storage **27/5/43/8**、wheel/源码外 smoke 均通过。
+生产产物仍为 `index-CSCBu9QV.css` / `index-DZ6qj7GM.js`，与上轮构建日志一致。
+当前 Web 测试文件已改变，上轮全量 lint/format 仅保留为历史结果；未复用上轮失败的
+全量单元运行作为通过。发现编译阻塞后未
+启动该昂贵门禁，修正后仍须由 B 跑全量 Web 单元与变化输入对应的检查才可 PASS。
+Docker/重启未因纯测试改动新增适用性，不声称生产部署通过；未推送、未部署。
 
-证据位于本地稳定 ignored `.git/validation-evidence/37465bd4/B50.3-review/`：
-逐命令 JSON/日志、原生 Playwright artifacts、`input-probe.*`、`visual.*` 及实际 PNG，
-wheel SHA-256 为 `29bb8b478163bed8fb1371c426a2e42d08d0aba3079e4d0d98a4fd32dcb86f6a`。
-所有失败运行保留。共享外壳逻辑未改，样式增量仅库页/库菜单与旧抽屉几何；自动化无这些
-class 消费者，未触发该原生模块重跑，未将未执行记为通过。Storage 的共享类消费者已
-由上述 8 项原生用例核对。Docker/服务重启矩阵在此次
-纯前端、无部署/后端/schema/常驻合同变化的候选不适用。B 未推送或部署。
+证据：本地稳定 ignored `.git/validation-evidence/66ac0f06/B50.3-review/` 中
+`web-typecheck.*`、`affected-unit.*`、`visual.*` 与四组合 PNG；匹配上轮证据在
+`.git/validation-evidence/37465bd4/B50.3-review/`。治理与 whitespace PASS，文档消费者
+`test_release_security.py` **8 tests / OK**。本轮自 `15:07:16 UTC` 至计时记录共
+238.95 秒，测试/门禁区间并集 16.95 秒，另计准备与零散检查保守 10 秒后
+上界 26.95 秒（11.3%），低于 50%；见 `review-timing.json`，未空等凑比例。
+预存 dirty/untracked 全部保留，本轮 B checkpoint 仅含 TASK.md。
 
-治理与 whitespace PASS；文档消费者 `test_release_security.py` **8 tests / OK**。本轮
-从 `14:20:20 UTC` 至计时记录工作 836.54 秒；测试及静态/构建等门禁的区间并集
-396.39 秒，另计零散检查保守 10 秒上界后 406.39 秒（48.6%），小于 50%。
-实际记录见 `doc-checks.json` / `review-timing.json`；未空等凑比例。预存 dirty/untracked
-全部保留，本轮 B checkpoint 仅含 TASK.md。
-
-**全 Slice 重评。** RO-1（Task50.2）、RO-2 与自动化稳定性（Task50.1）保持既有 B PASS。
-RO-3 的上述交互检查通过，库加载的原生慢目录视觉证据待 B 补完；Task50.3 的 T4 门禁
-尚未全部通过；RO-4 侧栏主页面切换仍未交付。Slice50 保持 ACTIVE，同 Task 修正；不自动规划下一 Task，不交
+**全 Slice 重评。** RO-1（Task50.2）、RO-2 与自动化稳定性（Task50.1）保持既有 B PASS；
+RO-3 和库加载的交互已验证，但 Task50.3 的 T4 尚缺当前类型/全量 Web 通过。RO-4 侧栏
+主页面切换仍未交付。Slice50 保持 ACTIVE；同 Task 修正，不自动规划下一 Task，不交
 Closure Packet，不宣告 Slice PASS / CLOSED。
 
 ### Developer Fix Report — 2026-11-06 (B50.3-01 auth test)
