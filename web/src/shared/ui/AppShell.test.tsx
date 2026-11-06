@@ -66,39 +66,39 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { name: "文件" })).toBeVisible();
   });
 
-  it("keeps one surface for same-page children and replaces it only between sidebar pages", async () => {
+  it("keeps one routed surface across same-page children and main-page changes", async () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
     const { router } = renderApp("/ui-v2/dashboard");
 
     await screen.findByRole("heading", { name: "Dashboard" });
-    const homeSurface = document.querySelector<HTMLElement>(
+    const shellSurface = document.querySelector<HTMLElement>(
       '[data-main-page="home"]',
     );
-    expect(homeSurface).not.toBeNull();
-    expect(homeSurface?.dataset.pageTransition).toBe("initial");
+    expect(shellSurface).not.toBeNull();
+    expect(shellSurface?.dataset.pageTransition).toBe("initial");
 
     await user.click(screen.getByRole("link", { name: "任务中心" }));
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/ui-v2/operations"),
     );
-    const operationsSurface = document.querySelector<HTMLElement>(
-      '[data-main-page="operations"]',
+    // The arrived identity updates the one persistent surface. It must not
+    // replace the wrapper that carries AuthBoundary and the Router Outlet:
+    // remounting those during the navigation handoff is exactly what let the
+    // previous page's mount effects write into the new location.
+    expect(document.querySelector("[data-main-page]")).toBe(shellSurface);
+    expect(shellSurface).toHaveAttribute("data-main-page", "operations");
+    expect(shellSurface?.dataset.pageTransition).toBe("enter");
+    expect(shellSurface?.classList.contains("mf-page-surface-entering")).toBe(
+      true,
     );
-    expect(operationsSurface).not.toBeNull();
-    expect(operationsSurface?.dataset.pageTransition).toBe("enter");
-    expect(
-      operationsSurface?.classList.contains("mf-page-surface-entering"),
-    ).toBe(true);
-    expect(homeSurface?.isConnected).toBe(false);
 
-    // The mount-time start class lowers opacity for the first frame only.
-    // Removing it starts the one transition; it is never re-added for this
-    // mounted main page.
+    // The entry start class lowers opacity for the first frame only. Removing
+    // it starts the one transition; it is never re-added for this arrival.
     await waitFor(() =>
       expect(
-        operationsSurface?.classList.contains("mf-page-surface-enter-start"),
+        shellSurface?.classList.contains("mf-page-surface-enter-start"),
       ).toBe(false),
     );
 
@@ -109,34 +109,31 @@ describe("AppShell", () => {
     });
     expect(screen.getByRole("heading", { name: "任务中心" })).toBeVisible();
     expect(document.querySelector('[data-main-page="operations"]')).toBe(
-      operationsSurface,
+      shellSurface,
     );
-    expect(operationsSurface?.dataset.pageTransition).toBe("enter");
+    expect(shellSurface?.dataset.pageTransition).toBe("enter");
     expect(
-      operationsSurface?.classList.contains("mf-page-surface-enter-start"),
+      shellSurface?.classList.contains("mf-page-surface-enter-start"),
     ).toBe(false);
 
-    // A real sidebar page change replaces the surface with the entering state.
+    // A real sidebar page change updates the same persistent surface to the
+    // entering state once; it never replaces the routed subtree wholesale.
     await user.click(screen.getByRole("link", { name: "Library" }));
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/ui-v2/medialib/files"),
     );
-    const librarySurface = document.querySelector<HTMLElement>(
-      '[data-main-page="library"]',
-    );
-    expect(librarySurface).not.toBeNull();
-    expect(librarySurface?.dataset.pageTransition).toBe("enter");
-    expect(librarySurface?.classList.contains("mf-page-surface-entering")).toBe(
+    expect(document.querySelector("[data-main-page]")).toBe(shellSurface);
+    expect(shellSurface).toHaveAttribute("data-main-page", "library");
+    expect(shellSurface?.dataset.pageTransition).toBe("enter");
+    expect(shellSurface?.classList.contains("mf-page-surface-entering")).toBe(
       true,
     );
     await waitFor(() =>
       expect(
-        librarySurface?.classList.contains("mf-page-surface-enter-start"),
+        shellSurface?.classList.contains("mf-page-surface-enter-start"),
       ).toBe(false),
     );
-    expect(operationsSurface?.isConnected).toBe(false);
     expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
-    expect(document.querySelector("[data-main-page]")).toBe(librarySurface);
   });
 
   it("lands on the last requested sidebar page after rapid navigation", async () => {

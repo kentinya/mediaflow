@@ -426,6 +426,9 @@ test("MediaLibrary and ResourceLibrary reads never share request authority", asy
   await openMediaLibrary(page);
   await page.getByRole("link", { name: "Files" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  // The previous MediaLibrary page must not append its selected library to the
+  // ResourceLibrary address during the shared main-page handoff.
+  expect(page.url()).not.toContain("mediaLibraryId");
   await expect(page.getByRole("table")).toBeVisible();
 
   const mediaRequests = requests.filter((request) =>

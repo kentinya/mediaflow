@@ -230,6 +230,16 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
 }, testInfo) => {
   await page.setViewportSize({ width: 1536, height: 1024 });
   await connect(page);
+  // The routed wrapper must persist across main-page changes. Keying it by
+  // destination identity remounted AuthBoundary and the Outlet during the
+  // navigation handoff, which let the previous page's mount effects write into
+  // the arrived URL. Mark the current wrapper and require it to survive every
+  // sidebar change below.
+  await page.evaluate(() => {
+    document
+      .querySelector("[data-main-page]")
+      ?.setAttribute("data-transition-probe", "persistent");
+  });
   const writes: string[] = [];
   page.on("request", (request) => {
     if (
@@ -256,6 +266,10 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
     const surface = page.locator(`[data-main-page="${destination.page}"]`);
     await expect(surface).toHaveCount(1);
     await expect(surface).toHaveAttribute("data-page-transition", "enter");
+    await expect(surface).toHaveAttribute(
+      "data-transition-probe",
+      "persistent",
+    );
     await expect(
       page.getByRole("navigation", { name: "Primary" }),
     ).toBeVisible();
@@ -418,6 +432,16 @@ test("unsaved automation input holds the current page until the operator discard
 }) => {
   await page.setViewportSize({ width: 1536, height: 1024 });
   await connect(page);
+  // The routed wrapper must persist across main-page changes. Keying it by
+  // destination identity remounted AuthBoundary and the Outlet during the
+  // navigation handoff, which let the previous page's mount effects write into
+  // the arrived URL. Mark the current wrapper and require it to survive every
+  // sidebar change below.
+  await page.evaluate(() => {
+    document
+      .querySelector("[data-main-page]")
+      ?.setAttribute("data-transition-probe", "persistent");
+  });
   const writes: string[] = [];
   page.on("request", (request) => {
     if (
@@ -608,6 +632,11 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
   await page.getByRole("link", { name: "Library", exact: true }).click();
   await expect.poll(() => currentPath(page)).toBe("/ui-v2/medialib/files");
+  // The shared transition never leaks the previous page's search into the
+  // arrived Library URL; it is the page's own selected-library address.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
   const reducedSurface = page.locator('[data-main-page="library"]');
   await expect(reducedSurface).toHaveCount(1);
   expect(

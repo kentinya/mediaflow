@@ -70,32 +70,44 @@ export function useStorageSearch(): StorageSearchContextValue {
 }
 
 /**
- * The one main-content surface that plays the shared page transition.
+ * The one persistent main-content surface that plays the shared page
+ * transition.
  *
- * It is keyed by the sidebar page identity, so a transition can only start by
- * mounting a new surface for a different main page. A same-page child route,
- * query, tab, filter, card or refresh keeps this element (and its business
- * content) mounted. The mount-time start class lowers opacity for one frame;
- * the next frame removes it and the entering class runs one opacity
- * transition. Because the start class is never re-added, a same-page overlay
- * (which suppresses the transient opacity through `:has(...)` in the
- * stylesheet) cannot replay the entry when it closes.
+ * The wrapper and the routed subtree inside it stay mounted while only the
+ * arrived sidebar identity changes. Keying this wrapper by identity would
+ * remount AuthBoundary and the Outlet during a navigation handoff, letting the
+ * previous page's mount effects write into the new location and breaking
+ * authentication continuation. A same-page child route, query, tab, filter,
+ * card or refresh keeps the identity and never starts a new entry.
+ *
+ * `entryVersion` advances only for a real main-page change. On that render the
+ * start class is applied immediately; the next frame removes it and the
+ * entering class runs one opacity transition. The start class is never
+ * re-added for the same version, so a same-page overlay (which suppresses the
+ * transient opacity through `:has(...)` in the stylesheet) cannot replay the
+ * entry when it closes.
  */
 function ShellPageSurface({
   identity,
-  entering,
+  entryVersion,
   children,
 }: {
   readonly identity: ShellPageId | undefined;
-  readonly entering: boolean;
+  readonly entryVersion: number;
   readonly children: ReactNode;
 }) {
-  const [starting, setStarting] = useState(entering);
+  const [startedVersion, setStartedVersion] = useState(entryVersion);
+  const [starting, setStarting] = useState(false);
+  if (startedVersion !== entryVersion) {
+    setStartedVersion(entryVersion);
+    setStarting(true);
+  }
   useEffect(() => {
     if (!starting) return;
     const frame = window.requestAnimationFrame(() => setStarting(false));
     return () => window.cancelAnimationFrame(frame);
   }, [starting]);
+  const entering = entryVersion > 0;
   return (
     <div
       className={[
@@ -120,23 +132,21 @@ export function AppShell({ children }: AppShellProps) {
   });
   const destination = destinationForPath(pathname);
   const pageIdentity = shellPageForPath(pathname);
-  // The shell stays mounted across route changes. A route-level identity
-  // change restarts this render before commit, so the new keyed surface is
-  // mounted directly in its entering state. Once a change has happened, the
-  // state stays true: same-page children and query updates keep the same keyed
-  // surface and never replay it, while every later main-page change mounts a
-  // new surface with the animation already selected.
+  // The shell and its routed subtree stay mounted across route changes. Only
+  // the arrived sidebar identity advances the presentation entry version; a
+  // same-page child/query update keeps it unchanged. The update runs during
+  // render so the new identity and its start class commit together, while
+  // AuthBoundary and the Outlet keep their ordinary Router-managed lifecycle.
   const [pageSurfaceState, setPageSurfaceState] = useState({
     identity: pageIdentity,
-    changed: false,
+    entryVersion: 0,
   });
   if (pageSurfaceState.identity !== pageIdentity) {
-    // A route-level identity change restarts this component's render before
-    // commit, so the new keyed surface is mounted directly in its entering
-    // state. Same-page children/query updates never enter this branch.
-    setPageSurfaceState({ identity: pageIdentity, changed: true });
+    setPageSurfaceState({
+      identity: pageIdentity,
+      entryVersion: pageSurfaceState.entryVersion + 1,
+    });
   }
-  const pageChanged = pageSurfaceState.changed;
   const [menuOpen, setMenuOpen] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
   const [storageSearch, setStorageSearch] = useState("");
@@ -278,9 +288,8 @@ export function AppShell({ children }: AppShellProps) {
         </header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
           <ShellPageSurface
-            key={pageIdentity ?? "outside"}
             identity={pageIdentity}
-            entering={pageChanged}
+            entryVersion={pageSurfaceState.entryVersion}
           >
             {destination !== undefined &&
             destination.id !== "operations" &&

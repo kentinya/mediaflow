@@ -447,8 +447,11 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   ).toBeVisible();
 
   // The shared shell keeps the Operations workspace reachable from any page.
+  // The media library's own search must never be carried into the arrived
+  // Operations URL by a remounted previous page.
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  expect(page.url()).not.toContain("mediaLibraryId");
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -717,6 +720,7 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   // The view and exact selection survive; the removed hidden filter does not.
   await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
   await expect(page).not.toHaveURL(/status=/);
+  await expect(page).toHaveURL(/view=ended/);
   await expect(page).toHaveURL(/run=job-005/);
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
