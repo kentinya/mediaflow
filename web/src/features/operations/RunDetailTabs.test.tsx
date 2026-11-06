@@ -771,10 +771,95 @@ function exportPackageDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The same-page plan Preview that a prepared recovery summary reads here. */
+function recoveryPreviewDocument(): Record<string, unknown> {
+  const preview = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)[
+        "organizePreviewDetail"
+      ],
+    ),
+  ) as Record<string, unknown>;
+  preview["previewId"] = "preview-1";
+  preview["intentId"] = "intent-1";
+  preview["intentVersion"] = 1;
+  preview["executionCandidateItemIds"] = ["item-2"];
+  const items = preview["items"] as Record<string, unknown>[];
+  items[0]!["itemId"] = "item-2";
+  items[0]!["previewItemId"] = "preview-item-1";
+  (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+    "item-2",
+  ];
+  (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+  const actions = preview["actions"] as Record<string, Record<string, unknown>>;
+  actions["execute"]!["path"] =
+    "/api/v1/operations/organize/previews/preview-1/execute";
+  return preview;
+}
+
+/** The analyzed item whose zero-change summary waits for an explicit confirm. */
+function manualReadyRecoveryDocument(
+  preparation: Record<string, unknown> | null,
+): Record<string, unknown> {
+  return recognitionRecoveryDocument({
+    checkpoint: {
+      status: "pending",
+      stage: "queued",
+      raw_stage: "recognition_resolved",
+      effects: { certainty: "none" },
+      retry_safety: "safe",
+      checkpoint_version: "b".repeat(64),
+      blocker: null,
+      permitted_action_ids: [],
+      refusal_reason: null,
+      next_action: "review the current plan summary and confirm",
+      recovery_continuation: {
+        status: "completed",
+        new_task_id: "analysis-task-1",
+        new_item_id: "analysis-item-1",
+        new_result_id: "analysis-result-1",
+      },
+    },
+    decision: null,
+    manualRecoveryAvailable: true,
+    manualRecoveryPreparation: preparation,
+    next_action: "review the current plan summary and confirm",
+  });
+}
+
+function preparedSummaryDocument(status: "prepared" | "confirmed") {
+  return {
+    preparation_id: "preparation-1",
+    status,
+    preview_id: "preview-1",
+    intent_id: "intent-1",
+    source_task_id: "task-001",
+    source_item_id: "item-2",
+    checkpoint_version: "b".repeat(64),
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "d".repeat(64),
+    actor: "test-principal",
+    authorization_id: status === "confirmed" ? "authorization-1" : null,
+    execution_id: status === "confirmed" ? "execution-1" : null,
+    selected_item_ids: status === "confirmed" ? ["item-2"] : [],
+    allow_overwrite: false,
+    allow_source_cleanup: false,
+    hasExecutionAuthority: false,
+    next_action: "review the current plan summary and confirm",
+  };
+}
+
 interface DetailJourneyOptions {
   /** The exact native recovery reads/commands of item-2, when a test drives
    * them.  Without it the existing 404 fallback is unchanged. */
   readonly recovery?: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  /** The same-page plan-summary read/confirm endpoints (the fixed Preview
+   * GET and the manual-recovery-preparation confirm POST), when a test drives
+   * the same-page confirmation after a prepared summary. */
+  readonly planSummary?: (
     input: RequestInfo | URL,
     init?: RequestInit,
   ) => Promise<Response>;
@@ -794,6 +879,15 @@ function stubDetailJourney(
     if (url.startsWith("/api/v1/tasks/task-001/items/item-2/recovery")) {
       if (options.recovery !== undefined) {
         return options.recovery(input, init);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    }
+    if (
+      url.startsWith("/api/v1/operations/organize/previews/") ||
+      url.startsWith("/api/v1/manual-recovery-preparations/")
+    ) {
+      if (options.planSummary !== undefined) {
+        return options.planSummary(input, init);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }
@@ -1242,6 +1336,139 @@ describe("selected-run detail tabs", () => {
       await within(backToItem).findByText(/已重新读取此 TaskItem 的持久状态/),
     ).toBeVisible();
     expect(decisionPosts).toBe(1);
+  });
+
+  it("keeps a late confirmation success from navigating a closed card", async () => {
+    const user = userEvent.setup();
+    let current = manualReadyRecoveryDocument(null);
+    let confirmPosts = 0;
+    let releaseConfirm: ((response: Response) => void) | undefined;
+    const confirmGate = new Promise<Response>((resolve) => {
+      releaseConfirm = resolve;
+    });
+    stubDetailJourney([], {
+      recovery: async (_input, init) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return jsonResponse(current);
+        }
+        // Prepare-summary is the deliberate same-page summary creation.
+        current = manualReadyRecoveryDocument(
+          preparedSummaryDocument("prepared"),
+        );
+        return jsonResponse(preparedSummaryDocument("prepared"), 201);
+      },
+      planSummary: async (input) => {
+        const url = String(input);
+        if (url === "/api/v1/operations/organize/previews/preview-1") {
+          return jsonResponse(recoveryPreviewDocument());
+        }
+        confirmPosts += 1;
+        return confirmGate;
+      },
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const recovery = await within(detail).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await user.click(
+      await within(recovery).findByRole("button", {
+        name: "生成计划摘要并在此确认",
+      }),
+    );
+    const summary = await within(detail).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    );
+    expect(
+      within(summary).getByRole("button", { name: "正在受理…" }),
+    ).toBeDisabled();
+    expect(confirmPosts).toBe(1);
+
+    // Switching to another item leaves the exact confirmation session with
+    // item-2: the other item's panel never shows this confirmation.
+    await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
+    await user.click(
+      within(detail).getAllByRole("button", { name: "查看证据" })[0]!,
+    );
+    const otherRecovery = await within(detail).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await within(otherRecovery).findByText(/审核与恢复/);
+    expect(within(otherRecovery).queryByText(/本次确认已经受理/)).toBeNull();
+    await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
+
+    // Closing the card while the confirmation is in flight is a legal exit:
+    // the list context is restored and the request is never cancelled.
+    await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    // The closed card's selection is dropped from the URL, so nothing about
+    // the in-flight confirm can restore it behind the operator's back.
+    expect(router.history.location.search).not.toContain("run=");
+
+    // The late 202 success must not navigate on behalf of the closed card.
+    await act(async () => {
+      current = manualReadyRecoveryDocument(
+        preparedSummaryDocument("confirmed"),
+      );
+      releaseConfirm?.(
+        jsonResponse(
+          {
+            executionId: "execution-1",
+            taskId: "execution-task-1",
+            status: "admitted",
+            selectedItemIds: ["item-2"],
+            nextAction: "track the durable Worker execution",
+          },
+          202,
+        ),
+      );
+    });
+    expect(confirmPosts).toBe(1);
+    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(router.history.location.pathname).not.toContain(
+      "organize/execution",
+    );
+    expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull();
+
+    // Reopening reads the persisted admission instead of resubmitting it.
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const reopened = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const reopenedRecovery = await within(reopened).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    expect(
+      await within(reopenedRecovery).findByText(/本次确认已经受理/),
+    ).toBeVisible();
+    expect(
+      within(reopenedRecovery).getByRole("button", {
+        name: "查看关联执行结果",
+      }),
+    ).toBeEnabled();
+    expect(confirmPosts).toBe(1);
   });
 
   it("renders the durable reviewed plan, effects and section detail for a manually executed item", async () => {

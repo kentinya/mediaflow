@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -126,6 +126,19 @@ export function TaskItemRecoveryPanel({
   const { busy, pendingAction, message, repeatLocked, submittedPreparationId } =
     recoverySession.state;
   const updateRecoverySession = recoverySession.update;
+  // This mounted panel instance is the exact processing context a recovery
+  // request was submitted from.  An allowed card close, a Task/item switch or
+  // a principal change unmounts it; the durable session still records the
+  // outcome, but a late success must not navigate on behalf of a context the
+  // operator already left.  The reopened panel offers the persisted result
+  // with its existing explicit link instead.
+  const contextActiveRef = useRef(true);
+  useEffect(() => {
+    contextActiveRef.current = true;
+    return () => {
+      contextActiveRef.current = false;
+    };
+  }, []);
   const beginAction = (
     action: TaskItemRecoveryPendingAction,
     message: string | null = null,
@@ -439,7 +452,14 @@ export function TaskItemRecoveryPanel({
         setPreparation(null);
         setConfirmSelection(null);
         refreshLinkedReads();
-        onOpenRecoveryExecution?.(result.model.executionId);
+        // The success navigation belongs to the live processing context only.
+        // When this panel was unmounted while the confirmation was in flight
+        // (card closed, Task/item switched), the operator's restored list or
+        // other item context stays untouched; the accepted result is kept in
+        // the durable session and re-read on the next reopen.
+        if (contextActiveRef.current) {
+          onOpenRecoveryExecution?.(result.model.executionId);
+        }
       } else {
         // An unknown response is never treated as a refusal.  Keep the
         // submission locked and let the operator explicitly re-read the

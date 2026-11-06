@@ -518,3 +518,70 @@ wheel/源码外消费及最终视觉/安全门禁仍待 B 在修复候选上执�
 RO-1 仍未完成验收；RO-2 与自动化稳定性补充保持 Task50.1 已接受事实；RO-3 两种库及
 RO-4 主页面切换/库加载仍未交付。Slice50 保持 ACTIVE；不规划下一 Task、不提交 Closure
 Packet、不进行 A 终审或关闭。下一步只修本 Task 上述剩余返回行为。
+
+## Developer Completion Report — 确认迟到成功导航修复轮
+
+状态：**READY FOR B REVIEW**（B50.2-02 剩余 P1 已修复，Developer 交接，未自审 PASS）。
+
+```text
+实现 checkpoint: 本报告所在提交（单个修复 checkpoint，d5c45b19 内容并入）
+分支: main
+Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
+B 审查范围: Task Base..本报告提交 HEAD
+本轮工作/测试时间: 全轮约 20 分钟；测试运行墙钟合计约 3 分钟（约 15%，含缺陷复现验证，低于 30%）
+```
+
+工作区预存的 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 等保持
+原样，未暂存、未纳入 checkpoint。共享 `modal-card.tsx`、AppShell、存储和自动化生产代码未修改。
+
+### B50.2-02 剩余阻塞修复
+
+- **守卫归属（B 开发指导 1）：** `TaskItemRecoveryPanel.tsx` 新增 `contextActiveRef`
+  （挂载即真、卸载即假）。确认成功仍照常写入精确条目会话、作废持久读回缓存；仅当本面板
+  实例仍是当前处理上下文（卡片开着且未换条目/主体）才沿用原成功跳转。卡片已关闭、已切换
+  任务/条目或主体时，迟到成功不再替用户导航；重开面板经持久读回显示"本次确认已经受理"
+  与既有"查看关联执行结果"显式链接。同卡片内结构相同的**剩余范围确认**（`RunDetailPanel`
+  的 `confirmRemainingScope`）按同一模式加守卫：关闭/换任务后迟到成功保留列表上下文，
+  受理结果经 `remainingSession.admitted` 的显式链接可达。正常打开卡片时的成功旅程、未知
+  核对、原权限/pins 与非重放不变；未增加关闭限制、重复确认或后端能力。
+- **真实卡片/Router 回归（B 开发指导 3）：** `RunDetailTabs.test.tsx` 新增
+  "keeps a late confirmation success from navigating a closed card"：真实 renderApp +
+  名称点击 → 条目证据 → 生成计划摘要 → 确认在途（gate）→ 切到 item-1 证据（其面板不显示
+  item-2 的确认状态，验证归属）→ 关闭证据、关闭详情（URL 回列表、无 `run=`）→ 释放真实
+  202 → 断言 URL 保持 `/ui-v2/operations` 且不出现 `organize/execution`、详情卡不重开、
+  confirm POST 恒为 1 → 重开原条目读到"本次确认已经受理"+ 可用显式链接。
+  stub 扩展仅加 `planSummary`（Preview GET/确认 POST）测试入口，未改生产代码路径。
+- **回归有效性验证：** 临时移除面板守卫后该用例真实失败
+  （`expected '/ui-v2/operations/organize/execution/…' to be '/ui-v2/operations'`，
+  与 B 复现一致），恢复守卫后通过；验证后未保留任何临时代码。
+
+### 实际执行结果（cwd、命令、结果）
+
+- 根目录 `python3 scripts/check_governance.py` → PASS（实施前、提交前）；`git diff --check`
+  → 无输出。
+- `web/` 指定受影响组件/单元（7 文件 84 用例，含新增用例）：`npx vitest run
+  src/features/operations/OperationsInventory.test.tsx src/features/operations/
+  RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/features/operations/RunLifecycleControls.test.tsx
+  src/features/operations/run-detail-state.test.ts
+  src/shared/navigation/operations-return.test.ts
+  src/features/operations/OperationsRouter.test.tsx` → 84 passed。
+- `web/` `npm run typecheck` → PASS；`npx eslint`（3 个实际变更文件）→ PASS；
+  `npm run format:check` → PASS；`npm run build` → PASS（仅既存 chunk >500 kB 提示）。
+- `web/` Node E2E：`npm run test:e2e -- tests/e2e/operations.spec.ts
+  tests/e2e/task-center-layout.spec.ts` → 37 passed。
+- `web/` 真实 Python 栈 E2E（`--config=playwright.python.config.ts --workers=1`）指定
+  grep 子集 → 9 passed（detail reads / filter context / 21-file / native 四类恢复 /
+  Metadata correction / policy-permitted overwrite）。
+
+### 已知失败
+
+无。守卫移除的失败是有效性验证，已恢复。
+
+### 剩余风险与留给 B 的验收点
+
+- 剩余范围确认的"在途关闭→迟到成功"未单独立真实入口 E2E：该旅程此前无现成 harness，
+  本轮仅按同一守卫模式修复并在组件层复用原生条目回归覆盖守卫机制；B 验收可按需补探测。
+- 迟到成功的可见结果依赖重开后持久读回与 landing 级会话（本页生命周期内），
+  刷新后以服务器持久 continuation/preparation 证据为准，与既有语义一致。
+- 完整 T4、全量 Python/Web/E2E、wheel/源码外消费及最终视觉/安全验收仍由 B 执行。

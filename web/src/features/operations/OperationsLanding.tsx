@@ -17,7 +17,7 @@
  * replaces it.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -1467,6 +1467,20 @@ function RunDetailPanel({
       ?.focus({ preventScroll: true });
   }, [modal.layerRef]);
 
+  // This mounted card is the exact processing context a remaining-scope
+  // confirmation was submitted from.  An allowed close or a run switch
+  // unmounts it; the landing session still records the admitted result, but a
+  // late success must not navigate on behalf of a card the operator already
+  // left.  The reopened card offers the persisted execution through its
+  // existing explicit link instead.
+  const contextActiveRef = useRef(true);
+  useEffect(() => {
+    contextActiveRef.current = true;
+    return () => {
+      contextActiveRef.current = false;
+    };
+  }, []);
+
   // Exactly one authenticated POST per deliberate click, carrying the version
   // of the projection that was rendered at click time. There is no retry
   // policy: an unknown or refused outcome requires the operator to reconcile
@@ -1728,7 +1742,13 @@ function RunDetailPanel({
         });
         void query.refetch();
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-        onOpenRecoveryExecution(result.model.executionId);
+        // Only the still-open card follows the normal success navigation; a
+        // card closed while the request was in flight keeps the operator's
+        // restored list context, and the admitted execution stays reachable
+        // through the session's explicit link after reopening.
+        if (contextActiveRef.current) {
+          onOpenRecoveryExecution(result.model.executionId);
+        }
       } else {
         if (isUnknownLifecycleOutcome(result)) {
           // A lost response must not be described as a proven zero effect.  Keep
