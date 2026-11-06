@@ -1,7 +1,7 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
-用户于 2026-11-06 明确授权激活本 Task，当前状态为 PLANNED，等待 Developer 实施。
-本轮只完成激活与事实指针同步，不自动启动开发，不推送或部署。
+用户于 2026-11-06 明确授权激活本 Task。Developer 已完成实现并交 READY FOR B
+REVIEW；下方验收清单仍待 B 独立复核，本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -13,13 +13,14 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
+Candidate: 07e6b89f
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: TASK 50.3 ONLY; THIS TURN TASK ACTIVATION ONLY
+Development Authorization: TASK 50.3 ONLY; DEVELOPER IMPLEMENTATION COMPLETED
 ```
 
 ### Goal 与完整用户旅程
@@ -195,8 +196,52 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 ### Developer Completion Report / B Review Result
 
-尚未实施，尚无候选或验收结果。Developer 按 [Task 模板](Task/TEMPLATE.md) 交接精确
-SHA/实际受影响测试；B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
+**READY FOR B REVIEW。** 候选为 `07e6b89f`，在 `main` 上单个实现 checkpoint；Task Base
+仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- 两页删除页内目录树、仅树消费的目录构建/记忆/发现链及空白占位；文件区占满释放宽度，
+  文件夹行、面包屑、根目录、搜索、刷新、视图、选择与有界分页保持原入口。共享 Shell
+  侧栏未改。
+- 添加/编辑资源库与媒体库四个入口改为共享居中卡片；资源库保留规则与三项稳定性字段，
+  编辑 ID 只读；显式编辑先显示精确读取状态，投影返回后才可保存，读取失败保留
+  `重新读取`、原 `刷新 Active 状态` 与取消；保存失败保留输入与旧 Active。
+- 两页对库信息未返回、目录读取、真实空、无 Active、拒绝与失败分别呈现；新增共享
+  `library-loading.tsx` 与 reduced-motion 静态兜底；同条件刷新保留内容并显示刷新状态，
+  查询键/认证边界未改，迟到旧响应不替换新库/路径。
+- 选中库菜单按库种类命名（资源库/媒体库），普通/危险动作、图标、间距、focus/disabled
+  与窄屏位置调整；移除确认、引用阻塞与文件保留说明沿用原实现。
+- 仅删除本页失效的树/抽屉几何 CSS，保留 Storage 生命周期与 Rules/Storage 表单仍在
+  消费的 `.mf-files-drawer`、步骤/正文/面板等共享类。
+
+主要改动文件：`web/src/features/library/{StorageFilesPage.tsx,MediaLibraryFilesPage.tsx,
+LibraryCardStrip.tsx,library-loading.tsx}`、共享样式 `web/src/shared/ui/styles.css`，
+以及两页组件测试、媒体库配置弹卡测试和受布局替换直接影响的三份 fake E2E 与
+`operations-inventory.python.spec.ts` 的入口断言。
+
+**Developer 实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 4 files / 99 tests passed |
+| `npm run typecheck` | passed |
+| `npm run build` | passed |
+| `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts` | 79 passed |
+| `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'reopens its own durable operation status\|confirms once, waits for the real Worker'` | 4 passed |
+| `npx eslint <实际改动 TSX/测试>`、`npx prettier --check <实际改动文件>` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+实际查看了 1536×1024 文件页配置卡片截图和 390px 两页添加卡片/库菜单截图；窄屏菜单
+标签不再逐字换行、普通/危险动作与图标可辨，卡片正文在视口内、底部操作可达。截图位于
+ignored `web/test-results/`，动态进出过程与 reduced-motion 仍由 B 在验收中亲查。
+
+**未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files` 与 Storage/自动化原生
+模块、wheel/源码外 smoke、Docker/重启；这些不是 Developer 本轮失败的证据。剩余风险：
+窄屏表格列仍沿用既有压缩规则（本 Task 未重做表格）；分页/动画/迟到响应的更广组合和
+真实 Worker 慢读由 B 的完整门禁覆盖。测试运行约 4 分钟，低于本轮实际工作时间的 30%。
+
+B 给 PASS 或 FIX REQUIRED，修复留在同一 Task，不另立修复任务。
 
 ### 激活基线与前序接受事实
 
@@ -210,5 +255,5 @@ Task50.2 的 B PASS 及完整报告保留于 `073e75a97d08f5ad02d4cbe9e2d9cc1efc
 激活不重开前序 Task，不代表本 Task PASS 或 Slice 关闭。
 
 预存 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 产物全部保留，
-不纳入 checkpoint；不接触用户数据库、私有配置或生产媒体。本轮验证仅为文档状态、
-治理及直接文档消费者，不声称产品/完整回归验收；测试时间须低于本轮实际用时的 50%。
+不纳入 checkpoint；不接触用户数据库、私有配置或生产媒体。本轮只执行 Developer 受影响
+测试与静态检查，不声称完整回归或 Slice 验收；测试运行时间低于本轮实际用时的 30%。
