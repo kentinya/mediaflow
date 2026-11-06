@@ -1,7 +1,8 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
 用户于 2026-11-06 明确授权激活本 Task。B 独立审查后给出 FIX REQUIRED：两种库的
-真实编辑入口尚有阻塞，按下方指导在同一 Task 修正；本轮不推送或部署。
+真实编辑入口在合法未命名 Storage 下阻塞。Developer 已在同一 Task 完成修正并交回
+READY FOR B REVIEW；本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -13,14 +14,14 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: 04992b8cd2c690112f4fe009cb0560e7663746cc
+Candidate: c52456b3b5e4eee3166ad79c6e361458fedb729c
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: TASK 50.3 ONLY; SAME TASK FIX LOOP
+Development Authorization: TASK 50.3 ONLY; SAME TASK FIX LOOP COMPLETED
 ```
 
 ### Goal 与完整用户旅程
@@ -316,6 +317,54 @@ Base..Head 无变化。这是当前未关闭 Slice/Task 必须交付的编辑结
 **全 Slice 重评：** RO-1（Task50.2）、RO-2 和自动化稳定性（Task50.1）保留既有 B PASS；
 RO-3 本轮编辑阻塞，加载已有实现但待完整验收；RO-4 侧栏主页面切换仍未交付。Slice50
 保持 ACTIVE，不规划下一 Task，不交 Closure Packet，不宣告 Slice PASS / CLOSED。
+
+### Developer Fix Report — 2026-11-06
+
+**READY FOR B REVIEW。** 修正候选为 `c52456b3b5e4eee3166ad79c6e361458fedb729c`，
+在 `main` 上单个实现 checkpoint；Task Base 仍为
+`073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- `fetchLibraryEditProjection` 现在接受合法 Active 中未填写的 Storage 显示名称
+  （`null`、缺省或空字符串），仅在展示标签上回退稳定 Storage ID；提交仍使用精确
+  Storage ID，种类、只读、启用及 Active fence 校验不变，非文本名称继续按
+  `malformed_response` 失败关闭。读取卡片不改写、不发布配置。
+- 同一次真实菜单验证暴露出同一编辑旅程的默认启用合同缺口：合法 Active 可省略
+  库的 `enabled`，而原适配器把缺省判为 `false`，只改名称也会把库保存为停用。两种库
+  的编辑归一化现按运行时与 Save 合同把缺省视为启用，显式 `false` 仍为停用。
+- 新增 `playwright.direct-files.python.config.ts` 原生场景：真实 Python/API/SQLite/
+  临时 Local fixture 的 Active 含合法未命名 Storage `media-target`；分别从文件页
+  `source` 菜单和媒体库页 `movies` 菜单进入编辑，确认原值、只读 ID、未命名 Storage
+  以 ID 展示；只改名称保存后从真实 `/edit` 读回名称、启用、Storage 绑定与根，并对
+  保存前后真实文件列表做等值核对。资源库场景中的未命名 Storage 与当前绑定无关。
+- 未改后端、harness、产品入口或共享页面结构；没有为测试构造不可达状态。
+
+**本轮实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts` | 2 files / 45 tests passed |
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 4 files / 99 tests passed |
+| `npm run typecheck` | passed |
+| `npm run build` | passed |
+| `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts` | 79 passed |
+| `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'reopens its own durable operation status\|confirms once, waits for the real Worker'` | 4 passed |
+| `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'both library edit cards accept a legal Active with an unnamed Storage'` | 1 passed |
+| `npx eslint <实际改动文件>`、`npx prettier --check <实际改动文件>` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+新增/修改测试：两份 API 适配测试各覆盖未命名 Storage 回退、缺省启用和非文本名称
+拒绝；原生场景覆盖两种库的真实菜单、Active 读回与零文件变化。失败的早期探测保留
+在本地 ignored `web/test-results/`，未删除断言、未加重试或放宽超时。
+
+**未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files`、Storage/自动化原生
+模块、wheel/源码外 smoke、Docker/重启及完整 T4 视觉/加载验收；这些不是 Developer
+本轮失败的证据。剩余风险：未命名 Storage 的展示标签现为稳定 ID，若未来产品要求
+独立显示名需另立设计；B 仍需在相同原生 fixture 上复核真实菜单与保存结果。
+
+本轮从 `2026-11-06T12:48:52Z` 开始，约 `12:56Z` 交接（约 7 分钟）；测试执行约
+100 秒（含失败重跑与直接受影响 E2E），约占本轮实际用时的 24%，低于 30%。
 
 ### 激活基线与前序接受事实
 
