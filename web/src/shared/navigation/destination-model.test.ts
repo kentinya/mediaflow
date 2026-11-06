@@ -7,6 +7,7 @@ import {
   destinationPaths,
   destinations,
   isDestinationPath,
+  shellPageForPath,
 } from "./destination-model";
 
 describe("destination model", () => {
@@ -68,6 +69,49 @@ describe("destination model", () => {
       destinationForPath("/operations/automation/preview/def-1/preview-1"),
     ).toBeUndefined();
     expect(destinationForPath("/operations/preview/new")).toBeUndefined();
+  });
+
+  it("groups every sidebar main page with its existing children only", () => {
+    const expected: ReadonlyArray<readonly [string, string]> = [
+      ["/dashboard", "home"],
+      ["/resourcelib/files", "files"],
+      ["/medialib/files", "library"],
+      ["/storage", "storage"],
+      ["/rules", "rules"],
+      ["/rules/edit/recognitionTypes/C", "rules"],
+      ["/operations/automation", "automation"],
+      ["/operations/automation/new", "automation"],
+      ["/operations/automation/lifecycle/nightly", "automation"],
+      ["/operations/automation/definition/def-1", "automation"],
+      ["/operations/automation/occurrences/def-1", "automation"],
+      ["/operations/automation/run-once/discovery-1", "automation"],
+      ["/operations", "operations"],
+      ["/operations/tasks", "operations"],
+      ["/operations/tasks/task-1", "operations"],
+      ["/operations/organize/new", "operations"],
+      ["/operations/organize/intent/intent-1", "operations"],
+      ["/operations/notifications", "notifications"],
+      ["/operations/notifications/webhooks/new", "notifications"],
+      ["/operations/notifications/webhooks/webhook-1", "notifications"],
+      ["/operations/notifications/deliveries/delivery-1", "notifications"],
+      ["/configuration", "settings"],
+    ];
+    for (const [path, identity] of expected) {
+      expect(shellPageForPath(path), path).toBe(identity);
+    }
+    // The grouping is presentation-only and normalizes one trailing slash.
+    expect(shellPageForPath("/storage/")).toBe("storage");
+    // No sidebar page owns the entry, review handoff, retired library or an
+    // unknown address; they keep their existing route handling unchanged.
+    for (const path of [
+      "/",
+      "/review",
+      "/library",
+      "/library/files",
+      "/unknown",
+    ]) {
+      expect(shellPageForPath(path), path).toBeUndefined();
+    }
   });
 
   it("resolves rules edit routes carrying every backend-legal object ID", () => {

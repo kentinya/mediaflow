@@ -430,6 +430,59 @@ export const shellDestinations: readonly ShellDestination[] = [
   },
 ];
 
+/** The stable presentation identity of one existing sidebar main page. */
+export type ShellPageId =
+  | "home"
+  | "files"
+  | "library"
+  | "storage"
+  | "rules"
+  | "automation"
+  | "operations"
+  | "notifications"
+  | "settings";
+
+/**
+ * The presentation grouping used only by the shared shell's main-page
+ * transition.
+ *
+ * Every route that belongs to an existing V2 sidebar destination maps to that
+ * destination's stable identity, including its already-supported detail
+ * subroutes. Authentication continuation, titles and active-link state keep
+ * using `destinationForPath`/`shellDestinations`: this function never widens
+ * the allowlist or decides whether a route is available.
+ *
+ * Automation and Notifications own their own prefix inside `/operations`; the
+ * task center must not absorb them through the wider operations prefix.
+ * Query-only changes and same-page children keep the same identity, so they
+ * never replay the page transition.
+ */
+export function shellPageForPath(pathname: string): ShellPageId | undefined {
+  const path = pathname.replace(/\/$/, "") || "/";
+  if (path === "/dashboard") return "home";
+  if (path === "/resourcelib/files") return "files";
+  if (path === "/medialib/files") return "library";
+  if (path === "/storage") return "storage";
+  if (path === "/configuration") return "settings";
+  if (path === "/rules" || path.startsWith("/rules/edit/")) return "rules";
+  if (
+    path === "/operations/automation" ||
+    path.startsWith("/operations/automation/")
+  ) {
+    return "automation";
+  }
+  if (
+    path === "/operations/notifications" ||
+    path.startsWith("/operations/notifications/")
+  ) {
+    return "notifications";
+  }
+  if (path === "/operations" || path.startsWith("/operations/")) {
+    return "operations";
+  }
+  return undefined;
+}
+
 /** Supported child routes are typed and allowlisted but not top-level nav items. */
 export const childDestinations: readonly Destination[] = childDestinationData;
 

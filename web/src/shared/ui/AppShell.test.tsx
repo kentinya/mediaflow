@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   screen,
@@ -9,7 +10,24 @@ import {
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
 import { rulesPayload } from "../../entities/rules/rules-workspace.test";
+import { dashboardPayload } from "../../../tests/fixtures";
 import { renderApp } from "../../../tests/utils";
+
+/** One bounded read stub: a real Dashboard document plus another page's reads. */
+function stubShellReads(): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const payload = String(input).includes("/api/v1/dashboard")
+        ? dashboardPayload
+        : rulesPayload;
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }),
+  );
+}
 
 afterEach(() => {
   cleanup();
@@ -46,6 +64,79 @@ describe("AppShell", () => {
     );
     expect(document.title).toBe("Files | MediaFlow");
     expect(screen.getByRole("heading", { name: "文件" })).toBeVisible();
+  });
+
+  it("keeps one surface for same-page children and replaces it only between sidebar pages", async () => {
+    const user = userEvent.setup();
+    stubShellReads();
+    authStore.setToken("shell-test-token");
+    const { router } = renderApp("/ui-v2/dashboard");
+
+    await screen.findByRole("heading", { name: "Dashboard" });
+    const homeSurface = document.querySelector<HTMLElement>(
+      '[data-main-page="home"]',
+    );
+    expect(homeSurface).not.toBeNull();
+    expect(homeSurface?.dataset.pageTransition).toBe("initial");
+
+    await user.click(screen.getByRole("link", { name: "任务中心" }));
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+    );
+    const operationsSurface = document.querySelector<HTMLElement>(
+      '[data-main-page="operations"]',
+    );
+    expect(operationsSurface).not.toBeNull();
+    expect(operationsSurface?.dataset.pageTransition).toBe("enter");
+    expect(homeSurface?.isConnected).toBe(false);
+
+    // The closed task list is a real child of the task center: it keeps the
+    // exact same surface/DOM and never replays the main-page transition.
+    await act(async () => {
+      await router.navigate({ to: "/operations/tasks" });
+    });
+    expect(screen.getByRole("heading", { name: "任务中心" })).toBeVisible();
+    expect(document.querySelector('[data-main-page="operations"]')).toBe(
+      operationsSurface,
+    );
+    expect(operationsSurface?.dataset.pageTransition).toBe("enter");
+
+    // A real sidebar page change replaces the surface with the entering state.
+    await user.click(screen.getByRole("link", { name: "Library" }));
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/medialib/files"),
+    );
+    const librarySurface = document.querySelector<HTMLElement>(
+      '[data-main-page="library"]',
+    );
+    expect(librarySurface).not.toBeNull();
+    expect(librarySurface?.dataset.pageTransition).toBe("enter");
+    expect(operationsSurface?.isConnected).toBe(false);
+    expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
+    expect(document.querySelector("[data-main-page]")).toBe(librarySurface);
+  });
+
+  it("lands on the last requested sidebar page after rapid navigation", async () => {
+    stubShellReads();
+    authStore.setToken("shell-test-token");
+    const { router } = renderApp("/ui-v2/dashboard");
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    // Real Route/Query state still decides the page; the presentation layer
+    // only follows the identity that ultimately arrives, so an interrupted
+    // A→B→C cannot leave the old surface or an infinite animation behind.
+    await act(async () => {
+      void router.navigate({ to: "/resourcelib/files" });
+      void router.navigate({ to: "/medialib/files" });
+      await router.navigate({ to: "/storage" });
+    });
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/storage"),
+    );
+    const surfaces = document.querySelectorAll("[data-main-page]");
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0]).toHaveAttribute("data-main-page", "storage");
+    expect(surfaces[0]).toHaveAttribute("data-page-transition", "enter");
   });
 
   it("exposes a keyboard-operable narrow navigation control", async () => {

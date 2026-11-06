@@ -2328,6 +2328,52 @@ button.mf-grid-button {
   padding: 28px 4vw 64px;
 }
 
+/* Shared main-page transition (Slice50 RO-4 / V2-UX-012). ------------------
+   The surface is keyed by the existing sidebar destination identity, never by
+   every URL change. Only this entering class animates; after the animation
+   ends the base style is restored, so no lasting opacity/stacking context is
+   left around business content. A fade keeps geometry stable, so sticky
+   controls and the fixed card layers never move during the transition. */
+.mf-page-surface {
+  min-width: 0;
+}
+
+.mf-page-surface-entering {
+  animation: mf-shell-page-enter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * Cards and drawers are rendered inside the business content and use fixed
+ * viewport positioning. An opacity below 1 creates a stacking context that
+ * could confine their layer while the page is settling. When one of the
+ * existing overlay layers is present, drop the transient entry animation: the
+ * card keeps its own animation, full-viewport backdrop, centering and stacking,
+ * and the target page is immediately usable.
+ */
+.mf-page-surface-entering:has(
+  .mf-modal-layer,
+  .mf-automation-create-layer,
+  .mf-dialog-overlay,
+  .mf-rules-drawer-layer
+) {
+  animation: none;
+}
+
+@keyframes mf-shell-page-enter {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-page-surface-entering {
+    animation: none;
+  }
+}
+
 /* --- Slice 37 reference Files composition ------------------------------- */
 .mf-files-page {
   min-height: calc(100vh - 58px);

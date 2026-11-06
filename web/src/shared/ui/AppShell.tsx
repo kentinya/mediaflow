@@ -13,6 +13,8 @@ import { AuthControls } from "../auth/AuthControls";
 import {
   destinationForPath,
   shellDestinations,
+  shellPageForPath,
+  type ShellPageId,
 } from "../navigation/destination-model";
 import { Icon } from "./Icons";
 
@@ -67,12 +69,67 @@ export function useStorageSearch(): StorageSearchContextValue {
   return useContext(StorageSearchContext);
 }
 
+/**
+ * The one main-content surface that plays the shared page transition.
+ *
+ * It is keyed by the sidebar page identity, so a transition can only start by
+ * mounting a new surface for a different main page. A same-page child route,
+ * query, tab, filter, card or refresh keeps this element (and its business
+ * content) mounted. The entering class is captured at mount: it persists for
+ * that page's lifetime, so later query re-renders cannot cut the animation or
+ * replay it. `:has(...)` in the stylesheet drops the transient
+ * transform/opacity while one of the existing fixed overlay layers is open,
+ * keeping the card, backdrop, viewport centering and menu stacking intact.
+ */
+function ShellPageSurface({
+  identity,
+  entering,
+  children,
+}: {
+  readonly identity: ShellPageId | undefined;
+  readonly entering: boolean;
+  readonly children: ReactNode;
+}) {
+  const [startedWithTransition] = useState(entering);
+  return (
+    <div
+      className={
+        startedWithTransition
+          ? "mf-page-surface mf-page-surface-entering"
+          : "mf-page-surface"
+      }
+      data-main-page={identity ?? "outside"}
+      data-page-transition={startedWithTransition ? "enter" : "initial"}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** Shared feature-independent V2 shell and operator-goal navigation. */
 export function AppShell({ children }: AppShellProps) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
   const destination = destinationForPath(pathname);
+  const pageIdentity = shellPageForPath(pathname);
+  // The shell stays mounted across route changes. A route-level identity
+  // change restarts this render before commit, so the new keyed surface is
+  // mounted directly in its entering state. Once a change has happened, the
+  // state stays true: same-page children and query updates keep the same keyed
+  // surface and never replay it, while every later main-page change mounts a
+  // new surface with the animation already selected.
+  const [pageSurfaceState, setPageSurfaceState] = useState({
+    identity: pageIdentity,
+    changed: false,
+  });
+  if (pageSurfaceState.identity !== pageIdentity) {
+    // A route-level identity change restarts this component's render before
+    // commit, so the new keyed surface is mounted directly in its entering
+    // state. Same-page children/query updates never enter this branch.
+    setPageSurfaceState({ identity: pageIdentity, changed: true });
+  }
+  const pageChanged = pageSurfaceState.changed;
   const [menuOpen, setMenuOpen] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
   const [storageSearch, setStorageSearch] = useState("");
@@ -213,17 +270,23 @@ export function AppShell({ children }: AppShellProps) {
           {shellActions}
         </header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
-          {destination !== undefined &&
-          destination.id !== "operations" &&
-          !isAutomationListSurface(pathname) &&
-          !searchIsRules ? (
-            <p className="mf-page-context">{destination.label}</p>
-          ) : null}
-          <FilesSearchContext.Provider value={filesSearchContext}>
-            <StorageSearchContext.Provider value={storageSearchContext}>
-              {children}
-            </StorageSearchContext.Provider>
-          </FilesSearchContext.Provider>
+          <ShellPageSurface
+            key={pageIdentity ?? "outside"}
+            identity={pageIdentity}
+            entering={pageChanged}
+          >
+            {destination !== undefined &&
+            destination.id !== "operations" &&
+            !isAutomationListSurface(pathname) &&
+            !searchIsRules ? (
+              <p className="mf-page-context">{destination.label}</p>
+            ) : null}
+            <FilesSearchContext.Provider value={filesSearchContext}>
+              <StorageSearchContext.Provider value={storageSearchContext}>
+                {children}
+              </StorageSearchContext.Provider>
+            </FilesSearchContext.Provider>
+          </ShellPageSurface>
         </main>
       </div>
     </div>
