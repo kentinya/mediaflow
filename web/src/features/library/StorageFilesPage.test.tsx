@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import admissionContract from "../../../tests/fixtures/files-transfer-admission.json";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -418,9 +419,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
       headers: { "Content-Type": "application/json" },
     });
 
-  /** The directory pane; tree buttons never collide with table row buttons. */
-  const directoryTree = () =>
-    within(screen.getByLabelText("目录", { exact: true }));
+  /** Enter a directory through its visible table row. */
+  const enterDirectory = async (
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+  ) => {
+    const row = await screen.findByRole("row", { name: `文件条目 ${name}` });
+    await user.click(within(row).getByRole("button", { name }));
+  };
 
   const storageItem = (id: string) => ({
     id,
@@ -1021,7 +1027,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(screen.getByRole("button", { name: "+ 添加资源库" }));
     expect(await screen.findByLabelText("名称 *")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "取消" }));
-    expect(screen.queryByLabelText("名称 *")).toBeNull();
+    await waitFor(() => expect(screen.queryByLabelText("名称 *")).toBeNull());
   });
 
   it("renders the full-width empty state with both add entries and no fabricated rows", async () => {
@@ -1499,7 +1505,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
   });
 
-  it("removes the deleted selection and prunes the directory tree after Delete", async () => {
+  it("keeps a partially failed deleted directory selected after Delete", async () => {
     const user = userEvent.setup();
     // A deleted directory must not survive in knownDirectoryPaths /
     // visitedDirectories, while the row menu for the surviving sibling stays.
@@ -1560,9 +1566,6 @@ describe("Files entry state and ResourceLibrary strip", () => {
     });
     await user.click(seasonCheckbox);
     expect(seasonCheckbox).toBeChecked();
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
     openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
@@ -1598,7 +1601,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(seasonRowCheckbox).toBeChecked();
   });
 
-  it("prunes a fully deleted directory from the selection and the tree", async () => {
+  it("prunes a fully deleted directory from the selection and listing", async () => {
     const user = userEvent.setup();
     // A fully deleted directory (including >200-entry scopes) is reported
     // through the never-truncated knownEffects contract; the selection and
@@ -1658,9 +1661,6 @@ describe("Files entry state and ResourceLibrary strip", () => {
       name: "选择 Season",
     });
     await user.click(seasonCheckbox);
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
     openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
@@ -1679,7 +1679,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.queryByText("Season")).toBeNull();
   });
 
-  it("prunes a visited directory from the tree after it is fully deleted", async () => {
+  it("prunes a visited directory from the refreshed listing after it is fully deleted", async () => {
     const user = userEvent.setup();
     let deleted = false;
     const fetchMock = stripFetchMock({
@@ -1723,9 +1723,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    // Visit the directory so it becomes explicit tree state, then return to
-    // the ResourceLibrary root.
-    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    // Visit the directory so it is a real browsing context, then return to the
+    // ResourceLibrary root through the still-present breadcrumb.
+    await enterDirectory(user, "Season");
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([url]) =>
@@ -1735,10 +1735,6 @@ describe("Files entry state and ResourceLibrary strip", () => {
     );
     await user.click(screen.getByRole("button", { name: "返回资源库根目录" }));
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    // The visited directory is present in the tree even at the root listing.
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
 
     openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
@@ -1751,15 +1747,13 @@ describe("Files entry state and ResourceLibrary strip", () => {
       within(resultDialog).getByRole("button", { name: "关闭" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // The visited/known tree state is pruned with the deleted directory.
+    // The refreshed listing is the authority: the deleted directory has no row.
     await waitFor(() =>
-      expect(
-        directoryTree().queryByRole("button", { name: "Season" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("row", { name: "文件条目 Season" })).toBeNull(),
     );
   });
 
-  it("drops an externally removed directory from the tree on refresh", async () => {
+  it("drops an externally removed directory from the refreshed listing", async () => {
     const user = userEvent.setup();
     // The directory is discovered by a live read, then removed outside
     // MediaFlow. After 刷新 the refreshed live listing is the sole authority:
@@ -1776,18 +1770,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
+    expect(screen.getByRole("row", { name: "文件条目 Season" })).toBeVisible();
 
     // External deletion: the next live read no longer contains the directory.
     removed = true;
     await user.click(screen.getByRole("button", { name: "刷新" }));
 
     await waitFor(() =>
-      expect(
-        directoryTree().queryByRole("button", { name: "Season" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("row", { name: "文件条目 Season" })).toBeNull(),
     );
     expect(screen.queryByRole("checkbox", { name: "选择 Season" })).toBeNull();
     // The still-live entries from the refreshed read are still presented.
@@ -1829,9 +1819,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       expect(screen.queryByText(/已选择 1 个文件夹/)).toBeNull(),
     );
     expect(screen.getByText("已选择 0 个文件", { exact: true })).toBeVisible();
-    expect(
-      directoryTree().queryByRole("button", { name: "Season" }),
-    ).toBeNull();
+    expect(screen.queryByRole("row", { name: "文件条目 Season" })).toBeNull();
   });
 
   it("keeps a trailing-space Storage directory distinguishable and opens its exact path", async () => {
@@ -1902,22 +1890,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Both directories are listed from the live read: the exact trailing-space
     // entry survives the model boundary and is presented with an explicit
     // whitespace marker, while the ordinary sibling keeps its plain label.
-    const exactTreeButton = await waitFor(() =>
-      directoryTree().getByRole("button", {
-        name: "SSH（名称结尾包含空格）",
-      }),
-    );
-    expect(exactTreeButton.querySelector(".mf-ws-marker")).not.toBeNull();
-    expect(exactTreeButton.querySelector(".mf-ws-value")?.textContent).toBe(
-      "SSH ",
-    );
-    const plainTreeButton = directoryTree().getByRole("button", {
-      name: "SSH",
-    });
-    expect(plainTreeButton.querySelector(".mf-ws-marker")).toBeNull();
-
-    // The table row keeps the same exact identity and distinction.
-    const exactRow = screen.getByRole("row", {
+    const exactRow = await screen.findByRole("row", {
       name: /SSH\s+（名称结尾包含空格）/,
     });
     expect(exactRow.querySelector(".mf-ws-value")?.textContent).toBe("SSH ");
@@ -2006,7 +1979,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
     await screen.findByText("notes.txt");
 
-    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await enterDirectory(user, "Season");
 
     expect(
       await screen.findByRole("heading", { name: "Directory not found" }),
@@ -2034,7 +2007,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await enterDirectory(user, "Season");
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([url]) =>
@@ -2097,7 +2070,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
     // Enter the directory so the refresh has a real current-directory context.
-    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await enterDirectory(user, "Season");
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([url]) =>
@@ -2118,8 +2091,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       screen.getByRole("button", { name: "返回资源库根目录" }),
     ).toBeVisible();
-    // The failed read fabricates no directory-tree entry and no table row.
-    expect(screen.queryByLabelText("目录")).toBeNull();
+    // The failed read fabricates no table row.
     expect(screen.queryByRole("table")).toBeNull();
     for (const [url, init] of fetchMock.mock.calls) {
       expect(String(url)).not.toContain("/file-index");
@@ -2152,7 +2124,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await enterDirectory(user, "Season");
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([url]) =>
@@ -2171,19 +2143,17 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(
       within(renameDialog).getByRole("button", { name: "重命名" }),
     );
-    // The visited tree state follows the renamed identity; the old node never
+    // The refreshed listing follows the renamed identity; the old row never
     // survives as a hidden path.
     await waitFor(() =>
       expect(
-        directoryTree().getByRole("button", { name: "Seasons" }),
+        screen.getByRole("row", { name: "文件条目 Seasons" }),
       ).toBeVisible(),
     );
-    expect(
-      directoryTree().queryByRole("button", { name: "Season" }),
-    ).toBeNull();
+    expect(screen.queryByRole("row", { name: "文件条目 Season" })).toBeNull();
   });
 
-  it("remaps the selection and the tree after a directory rename", async () => {
+  it("remaps the selection after a directory rename", async () => {
     const user = userEvent.setup();
     let commandBody: Record<string, unknown> | null = null;
     let renamed = false;
@@ -2211,14 +2181,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    // Select the directory; it is also present in the directory tree.
+    // Select the directory before renaming it.
     const seasonCheckbox = screen.getByRole("checkbox", {
       name: "选择 Season",
     });
     await user.click(seasonCheckbox);
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
     openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const renameDialog = await screen.findByRole("dialog", { name: "重命名" });
@@ -2342,9 +2309,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       await within(dialog).findByText(/目标在操作前已发生变化/),
     ).toBeVisible();
     expect(within(dialog).getByLabelText("新名称")).toHaveValue("Seasons");
-    expect(
-      directoryTree().getByRole("button", { name: "Season" }),
-    ).toBeVisible();
+    expect(screen.getByRole("row", { name: "文件条目 Season" })).toBeVisible();
   });
 
   it("opens the bounded text editor and saves the exact loaded version", async () => {
@@ -3801,5 +3766,122 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // No work was created and nothing was silently resubmitted or opened.
     expect(discoveryPosts).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
+  });
+
+  it("shows a real library-information wait state instead of a false empty ResourceLibrary page", async () => {
+    let resolveStatus!: (response: Response) => void;
+    const statusResponse = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/v1/system/status") return statusResponse;
+        throw new Error(`unexpected test request: ${String(input)}`);
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    const loading = await screen.findByRole("status", {
+      name: "正在读取资源库信息",
+    });
+    expect(loading).toBeVisible();
+    expect(within(loading).getByText(/正在读取 Active 配置/)).toBeVisible();
+    // A not-yet-returned status is never presented as "no ResourceLibrary".
+    expect(screen.queryByText("尚未添加资源库")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+
+    await act(async () => {
+      resolveStatus(jsonResponse(activeStatus([])));
+    });
+    expect(
+      await screen.findByText(
+        "尚未添加资源库。添加后即可在这里浏览和整理文件。",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "正在读取资源库信息" }),
+    ).toBeNull();
+  });
+
+  it("opens the exact edit projection only after its real reading state", async () => {
+    const user = userEvent.setup();
+    let resolveEdit!: (response: Response) => void;
+    const editResponse = new Promise<Response>((resolve) => {
+      resolveEdit = resolve;
+    });
+    const base = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+    });
+    const baseImplementation = base.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/v1/resource-libraries/lib-a/edit") {
+          return editResponse;
+        }
+        return baseImplementation(input, init);
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "资源库操作 资源库A" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "编辑资源库" }),
+    );
+
+    const card = await screen.findByRole("dialog", { name: "编辑资源库" });
+    expect(
+      within(card).getByText(/正在读取该资源库的精确保存状态/),
+    ).toBeVisible();
+    expect(within(card).queryByLabelText("名称 *")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: "保存并激活" }),
+    ).toBeNull();
+
+    await act(async () => {
+      resolveEdit(
+        jsonResponse({
+          resourceLibrary: {
+            id: "lib-a",
+            name: "资源库A",
+            enabled: true,
+            storageId: "local-1",
+            storagePath: "/lib-a",
+          },
+          storages: [
+            {
+              id: "local-1",
+              name: "Storage local-1",
+              type: "local",
+              readOnly: false,
+              enabled: true,
+            },
+          ],
+          active: {
+            revisionId: "active-1",
+            revisionSequence: 1,
+            digest: "digest-1",
+          },
+        }),
+      );
+    });
+
+    expect(await within(card).findByLabelText("名称 *")).toHaveValue("资源库A");
+    expect(within(card).getByLabelText("资源库 ID *")).toBeDisabled();
+    expect(within(card).getByLabelText("资源库 ID *")).toHaveValue("lib-a");
+
+    await user.click(within(card).getByRole("button", { name: "取消" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "编辑资源库" })).toBeNull(),
+    );
   });
 });

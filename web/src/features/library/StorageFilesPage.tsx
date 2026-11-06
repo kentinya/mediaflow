@@ -16,6 +16,11 @@ import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import {
+  ModalCardShell,
+  useModalCardExit,
+  useModalLayer,
+} from "../../shared/ui/modal-card";
+import {
   FilesBreadcrumbs,
   IdentityLabel,
   identityAccessibleName,
@@ -42,6 +47,7 @@ import {
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
 import { LibraryCardStrip } from "./LibraryCardStrip";
+import { LibraryLoadingPanel } from "./library-loading";
 import { DeleteResourceLibraryDialog } from "./DeleteResourceLibraryDialog";
 import {
   DeleteImpactDialog,
@@ -155,12 +161,6 @@ interface FilesRowVm {
   readonly checked: boolean;
 }
 
-interface DirectoryNodeVm {
-  readonly name: string;
-  readonly path: string;
-  readonly depth: number;
-}
-
 interface InitialBrowseState {
   readonly path: string;
   readonly invalidPath: boolean;
@@ -178,17 +178,6 @@ function readOperationTaskHint(value: string | null): string | null {
   if (value === null || value.length === 0 || value.length > 128) return null;
   return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) ? value : null;
 }
-
-const DIRECTORY_PRESENTATION_ORDER = [
-  "Movies",
-  "TV",
-  "Anime",
-  "Others",
-  "Avatar (2009)",
-  "Inception (2010)",
-  "Interstellar (2014)",
-  "Dune (2021)",
-];
 
 const FILES_BANNER =
   "当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。";
@@ -692,74 +681,6 @@ function formatSelectedSize(
   return formatBytes(total);
 }
 
-function buildDirectoryTree(
-  model: StorageFilesModel,
-  visitedDirectories: readonly string[],
-): readonly DirectoryNodeVm[] {
-  const names = new Map<string, string>();
-  for (const crumb of model.breadcrumbs) {
-    if (!crumb.isRoot) names.set(crumb.path, crumb.name);
-  }
-  for (const path of visitedDirectories) {
-    let current = "";
-    for (const segment of path.split("/")) {
-      current = current === "" ? segment : current + "/" + segment;
-      if (!names.has(current)) names.set(current, segment);
-    }
-  }
-  for (const entry of model.entries) {
-    const parentPath = entry.path.split("/").slice(0, -1).join("/");
-    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
-    const hideCurrentChildren = currentDepth > 1 && parentPath === model.path;
-    if (
-      entry.isDirectory &&
-      entry.traversable &&
-      !hideCurrentChildren &&
-      !names.has(entry.path)
-    ) {
-      names.set(entry.path, entry.name);
-    }
-  }
-  return Array.from(names.entries())
-    .sort((left, right) => {
-      const leftParts = left[0].split("/");
-      const rightParts = right[0].split("/");
-      for (
-        let index = 0;
-        index < Math.min(leftParts.length, rightParts.length);
-        index += 1
-      ) {
-        const leftOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(
-          leftParts[index] ?? "",
-        );
-        const rightOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(
-          rightParts[index] ?? "",
-        );
-        if (leftOrder !== rightOrder) {
-          return (
-            (leftOrder === -1
-              ? DIRECTORY_PRESENTATION_ORDER.length
-              : leftOrder) -
-            (rightOrder === -1
-              ? DIRECTORY_PRESENTATION_ORDER.length
-              : rightOrder)
-          );
-        }
-        if (leftParts[index] !== rightParts[index]) {
-          return (leftParts[index] ?? "").localeCompare(
-            rightParts[index] ?? "",
-          );
-        }
-      }
-      return leftParts.length - rightParts.length;
-    })
-    .map(([path, name]) => ({
-      name,
-      path,
-      depth: path.split("/").length,
-    }));
-}
-
 function FilesState({
   title,
   children,
@@ -794,80 +715,6 @@ function FilesState({
         </div>
       )}
     </section>
-  );
-}
-
-function DirectoryTree({
-  libraryName,
-  nodes,
-  currentPath,
-  onOpenPath,
-}: {
-  readonly libraryName: string;
-  readonly nodes: readonly DirectoryNodeVm[];
-  readonly currentPath: string;
-  readonly onOpenPath: (path: string) => void;
-}) {
-  return (
-    <aside className="mf-files-tree" aria-label="目录">
-      <h3>目录</h3>
-      <ul>
-        <li
-          className={
-            currentPath === "" ? "mf-tree-row is-selected" : "mf-tree-row"
-          }
-        >
-          <span className="mf-tree-disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-          <span className="mf-tree-icon mf-tree-icon-cloud" aria-hidden="true">
-            <Icon name="storage" />
-          </span>
-          <button
-            type="button"
-            className="mf-link-button"
-            aria-current={currentPath === "" ? "page" : undefined}
-            onClick={() => onOpenPath("")}
-          >
-            {libraryName}
-          </button>
-        </li>
-        {nodes.map((node) => (
-          <li
-            key={node.path}
-            className={
-              node.path === currentPath
-                ? "mf-tree-row is-selected"
-                : "mf-tree-row"
-            }
-            style={{ paddingLeft: node.depth * 16 + "px" }}
-          >
-            <span className="mf-tree-disclosure" aria-hidden="true">
-              {nodes.some(
-                (candidate) =>
-                  candidate.path !== node.path &&
-                  candidate.path.startsWith(node.path + "/"),
-              ) ? (
-                <Icon name="chevron-down" />
-              ) : (
-                <Icon name="chevron-right" />
-              )}
-            </span>
-            <span className="mf-tree-icon" aria-hidden="true">
-              <Icon name="folder" />
-            </span>
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => onOpenPath(node.path)}
-              aria-current={node.path === currentPath ? "page" : undefined}
-            >
-              <IdentityLabel value={node.name} />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </aside>
   );
 }
 
@@ -982,11 +829,11 @@ function failureDetail(kind: string, path: string): string {
     case "resource_library_mismatch":
       return "请求与所选资源库不一致。请返回资源库根目录后重试。";
     case "invalid_path":
-      return "请求的路径不是安全的资源库相对路径。请通过目录树或面包屑重新进入。";
+      return "请求的路径不是安全的资源库相对路径。请通过面包屑或返回根目录重新进入。";
     case "not_found":
       return "未在 " + where + " 找到该目录。请返回资源库根目录后重试。";
     case "not_directory":
-      return "请求的路径不是目录。请通过目录树或面包屑重新进入。";
+      return "请求的路径不是目录。请通过面包屑或返回根目录重新进入。";
     case "invalid_cursor":
       return "分页游标已失效，与当前资源库或目录不匹配。请刷新本目录后重新浏览。";
     case "configuration_unavailable":
@@ -1003,10 +850,10 @@ function FileBrowseView({
   libraries,
   selectedLibraryId,
   selected,
-  tree,
   view,
   query,
   previewing,
+  refreshing,
   previewError,
   page,
   canPrev,
@@ -1021,7 +868,6 @@ function FileBrowseView({
   onEdit,
   onDelete,
   onTransfer,
-  onDiscoverDirectories,
   onToggle,
   onToggleAll,
   onPreviewOne,
@@ -1037,10 +883,11 @@ function FileBrowseView({
   readonly libraries: readonly SystemResourceLibrary[];
   readonly selectedLibraryId: string;
   readonly selected: ReadonlySet<string>;
-  readonly tree: readonly DirectoryNodeVm[];
   readonly view: FilesView;
   readonly query: string;
   readonly previewing: boolean;
+  /** A same-context re-read keeps the rendered rows and states it explicitly. */
+  readonly refreshing: boolean;
   readonly previewError: string | null;
   readonly page: number;
   readonly canPrev: boolean;
@@ -1062,7 +909,6 @@ function FileBrowseView({
     operation: "copy" | "move",
     paths: readonly string[],
   ) => void;
-  readonly onDiscoverDirectories: (paths: readonly string[]) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
   readonly onPreviewOne: (path: string, discovery: boolean) => void;
@@ -1074,20 +920,6 @@ function FileBrowseView({
   readonly onPrevPage: () => void;
   readonly onReturnRoot: () => void;
 }) {
-  useEffect(() => {
-    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
-    const paths = model.entries
-      .filter((entry) => {
-        const parentPath = entry.path.split("/").slice(0, -1).join("/");
-        return (
-          entry.isDirectory &&
-          entry.traversable &&
-          !(currentDepth > 1 && parentPath === model.path)
-        );
-      })
-      .map((entry) => entry.path);
-    if (paths.length > 0) onDiscoverDirectories(paths);
-  }, [model, onDiscoverDirectories]);
   const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
   const rows = useMemo(
     () => buildRows(model, selected, query),
@@ -1101,7 +933,6 @@ function FileBrowseView({
   const allChecked =
     rows.length > 0 && rows.every((row) => selected.has(row.path));
   const library = model.resourceLibrary;
-  const libraryName = library?.name ?? "资源库";
   const hasNext = model.hasNext && model.nextCursor !== null;
   const selectedPaths = model.entries
     .filter((entry) => selected.has(entry.path))
@@ -1233,13 +1064,7 @@ function FileBrowseView({
         removalBusy={removalBusy}
       />
       <div className="mf-files-workarea">
-        <DirectoryTree
-          libraryName={libraryName}
-          nodes={tree}
-          currentPath={model.path}
-          onOpenPath={onOpenPath}
-        />
-        <div className="mf-files-pane">
+        <div className="mf-files-pane" aria-busy={refreshing}>
           <div className="mf-files-toolbar">
             <FilesBreadcrumbs
               label="资源库面包屑"
@@ -1300,6 +1125,11 @@ function FileBrowseView({
               </button>
             </div>
           </div>
+          {refreshing && (
+            <p className="mf-files-refresh-state" role="status">
+              正在刷新当前目录…
+            </p>
+          )}
           {previewError !== null && (
             <p className="mf-error" role="status">
               {previewError}
@@ -1684,16 +1514,7 @@ function FilesHeader({
   );
 }
 
-export function AddResourceLibraryDrawer({
-  open,
-  storages,
-  onClose,
-  onSave,
-  saving,
-  saveError,
-  initial,
-  editing = false,
-}: {
+interface AddResourceLibraryDrawerProps {
   readonly open: boolean;
   readonly storages: readonly SystemStorage[];
   readonly onClose: () => void;
@@ -1702,7 +1523,53 @@ export function AddResourceLibraryDrawer({
   readonly saveError: string | null;
   readonly initial?: SaveResourceLibraryOptions;
   readonly editing?: boolean;
-}) {
+  /** True while the explicit Edit read of the exact Active projection runs. */
+  readonly reading?: boolean;
+  /** A failed explicit Edit read: no candidate exists and no Save is offered. */
+  readonly readError?: string | null;
+  readonly onRetryRead?: () => void;
+  /** The page's existing authority refresh for a failed explicit Edit read. */
+  readonly onRefreshAuthority?: () => void;
+  /** True between a legal close request and the shared card exit finishing. */
+  readonly closing?: boolean;
+}
+
+/**
+ * The Add/Edit ResourceLibrary configuration card.
+ *
+ * The explicit Edit intent opens this card immediately in its reading state:
+ * only the exact projection the backend returns can seed the form and its
+ * checked Save fence. A failed read keeps the card open with the existing
+ * re-read path and no candidate to submit.
+ */
+export function AddResourceLibraryDrawer(props: AddResourceLibraryDrawerProps) {
+  if (!props.open) return null;
+  return <ResourceLibraryConfigCard {...props} />;
+}
+
+function ResourceLibraryConfigCard({
+  storages,
+  onClose,
+  onSave,
+  saving,
+  saveError,
+  initial,
+  editing = false,
+  reading = false,
+  readError = null,
+  onRetryRead,
+  onRefreshAuthority,
+  closing = false,
+}: AddResourceLibraryDrawerProps) {
+  const card = useModalLayer({
+    onEscape: onClose,
+    escapeDisabled: () => saving || closing,
+  });
+  const requestClose = () => {
+    if (saving || closing) return;
+    onClose();
+  };
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState(1);
   const [name, setName] = useState(initial?.name ?? "");
   const [resourceId, setResourceId] = useState(
@@ -1750,11 +1617,69 @@ export function AddResourceLibraryDrawer({
     String(initial?.stability?.stableSizeDurationSeconds ?? 0),
   );
   const [validationError, setValidationError] = useState<string | null>(null);
+  // The explicit Edit read arrives after the card has opened in its reading
+  // state, so the exact projection seeds the form once, in place. Add stays
+  // local: a later storages refresh never overwrites entered input.
+  const seededProjectionRef = useRef(initial);
+  useEffect(() => {
+    if (initial === undefined || seededProjectionRef.current === initial) {
+      return;
+    }
+    seededProjectionRef.current = initial;
+    setName(initial.name);
+    setResourceId(initial.resourceLibraryId);
+    setStorageId(initial.storageId);
+    setRootPath(initial.storagePath);
+    setEnabled(initial.enabled);
+    setIncludeRulesText(
+      initial.includeRules === undefined
+        ? ""
+        : initial.includeRules
+            .map((rule) =>
+              typeof rule === "string"
+                ? rule
+                : `${rule.kind ?? "glob"}:${rule.pattern}`,
+            )
+            .join("\n"),
+    );
+    setExcludeRulesText(
+      initial.excludeRules === undefined
+        ? ""
+        : initial.excludeRules
+            .map((rule) =>
+              typeof rule === "string"
+                ? rule
+                : `${rule.kind ?? "glob"}:${rule.pattern}`,
+            )
+            .join("\n"),
+    );
+    setMinimumAgeSeconds(String(initial.stability?.minimumAgeSeconds ?? 0));
+    setModifiedThresholdSeconds(
+      String(initial.stability?.modifiedThresholdSeconds ?? 0),
+    );
+    setStableSizeDurationSeconds(
+      String(initial.stability?.stableSizeDurationSeconds ?? 0),
+    );
+    setValidationError(null);
+    setStep(1);
+  }, [initial]);
   const selectedStorageId = storages.some((storage) => storage.id === storageId)
     ? storageId
     : (storages[0]?.id ?? "");
 
-  if (!open) return null;
+  // A pending explicit Edit read keeps its stable card; the form exists only
+  // once the exact projection has arrived, so late/cached data can never seed a
+  // submit. The first field takes focus when editable content is ready.
+  const formReady = !reading && readError === null;
+  useEffect(() => {
+    if (!formReady) {
+      card.layerRef.current
+        ?.querySelector<HTMLElement>(".mf-modal-close")
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    firstFieldRef.current?.focus({ preventScroll: true });
+  }, [card.layerRef, formReady]);
 
   const validateBasics = (): boolean => {
     if (name.trim() === "") {
@@ -1904,25 +1829,42 @@ export function AddResourceLibraryDrawer({
   const selectedStorageName =
     selectedStorage?.name ??
     (selectedStorageId === "" ? "未选择" : selectedStorageId);
-  return (
-    <aside
-      className="mf-files-drawer"
-      aria-label={editing ? "编辑资源库" : "添加资源库"}
-    >
-      <div className="mf-files-drawer-header">
-        <div>
-          <h2>{editing ? "编辑资源库" : "添加资源库"}</h2>
-        </div>
-        <button
-          type="button"
-          className="mf-files-drawer-close"
-          aria-label="关闭添加资源库"
-          onClick={onClose}
-        >
-          ×
-        </button>
+  const title = editing ? "编辑资源库" : "添加资源库";
+  const cardBody = reading ? (
+    <div className="mf-modal-card-status">
+      <p role="status">正在读取该资源库的精确保存状态与当前 Active 配置…</p>
+    </div>
+  ) : readError !== null ? (
+    <div className="mf-modal-card-status mf-modal-card-status-error">
+      <div role="alert">
+        <p>{readError}</p>
       </div>
-      <ol className="mf-files-drawer-steps">
+      <div className="mf-actions">
+        {onRetryRead !== undefined && (
+          <button
+            type="button"
+            className="mf-button mf-button-primary"
+            onClick={onRetryRead}
+            disabled={closing}
+          >
+            重新读取
+          </button>
+        )}
+        {onRefreshAuthority !== undefined && (
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={onRefreshAuthority}
+            disabled={closing}
+          >
+            刷新 Active 状态
+          </button>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div className="mf-storage-card-grid">
+      <ol className="mf-files-drawer-steps" aria-label="资源库配置步骤">
         {[
           ["1", "基本信息"],
           ["2", "存储位置"],
@@ -1932,7 +1874,11 @@ export function AddResourceLibraryDrawer({
             key={number}
             className={step === index + 1 ? "is-active" : undefined}
           >
-            <button type="button" onClick={() => goToStep(index + 1)}>
+            <button
+              type="button"
+              disabled={saving || closing}
+              onClick={() => goToStep(index + 1)}
+            >
               <span>{number}</span> {label}
             </button>
           </li>
@@ -1956,9 +1902,11 @@ export function AddResourceLibraryDrawer({
             <label htmlFor="mf-library-name">名称 *</label>
             <input
               id="mf-library-name"
+              ref={firstFieldRef}
               placeholder="例如：115电影"
               maxLength={120}
               value={name}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setName(event.target.value);
@@ -1971,7 +1919,7 @@ export function AddResourceLibraryDrawer({
               placeholder="例如：source"
               maxLength={64}
               value={resourceId}
-              disabled={editing}
+              disabled={editing || saving}
               onChange={(event) => {
                 setValidationError(null);
                 setResourceId(event.target.value);
@@ -1984,6 +1932,7 @@ export function AddResourceLibraryDrawer({
                 id="mf-library-enabled"
                 type="checkbox"
                 checked={enabled}
+                disabled={saving}
                 onChange={(event) => {
                   setValidationError(null);
                   setEnabled(event.target.checked);
@@ -2004,6 +1953,7 @@ export function AddResourceLibraryDrawer({
             <select
               id="mf-library-storage"
               value={selectedStorageId}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setStorageId(event.target.value);
@@ -2023,6 +1973,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-root"
               maxLength={4096}
               value={rootPath}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setRootPath(event.target.value);
@@ -2034,6 +1985,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-include-rules"
               rows={3}
               value={includeRulesText}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setIncludeRulesText(event.target.value);
@@ -2048,6 +2000,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-exclude-rules"
               rows={3}
               value={excludeRulesText}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setExcludeRulesText(event.target.value);
@@ -2061,6 +2014,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-min-age"
               inputMode="numeric"
               value={minimumAgeSeconds}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setMinimumAgeSeconds(event.target.value);
@@ -2073,6 +2027,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-modified-threshold"
               inputMode="numeric"
               value={modifiedThresholdSeconds}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setModifiedThresholdSeconds(event.target.value);
@@ -2085,6 +2040,7 @@ export function AddResourceLibraryDrawer({
               id="mf-library-stable-size"
               inputMode="numeric"
               value={stableSizeDurationSeconds}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setStableSizeDurationSeconds(event.target.value);
@@ -2118,6 +2074,10 @@ export function AddResourceLibraryDrawer({
                 <dt>根路径</dt>
                 <dd>{rootPath || "未填写"}</dd>
               </div>
+              <div>
+                <dt>状态</dt>
+                <dd>{enabled ? "启用" : "停用"}</dd>
+              </div>
             </dl>
             <p className="mf-files-drawer-note">
               保存会验证并激活这个
@@ -2127,35 +2087,61 @@ export function AddResourceLibraryDrawer({
           </div>
         )}
       </div>
-      <div className="mf-files-drawer-footer">
-        <button
-          type="button"
-          className="mf-button mf-button-secondary"
-          onClick={onClose}
-        >
-          取消
-        </button>
-        {step < 3 ? (
+    </div>
+  );
+  return (
+    <ModalCardShell
+      layerRef={card.layerRef}
+      closing={closing}
+      busy={saving || reading}
+      title={title}
+      titleId="mf-library-config-title"
+      accessibleName={title}
+      description={
+        editing
+          ? "编辑只提交当前读到的精确 Active 配置；失败时旧 Active 与 Storage 内容均保持不变。"
+          : "保存会验证并激活完整的 ResourceLibrary 配置；失败时候选配置不会发布，Storage 内容不受影响。"
+      }
+      closeLabel={editing ? "关闭编辑资源库" : "关闭添加资源库"}
+      closeDisabled={saving || closing}
+      onRequestClose={requestClose}
+      size="form"
+      footer={
+        <>
           <button
             type="button"
-            className="mf-button mf-button-primary"
-            onClick={goNext}
+            className="mf-button mf-button-secondary"
+            onClick={requestClose}
+            disabled={saving || closing}
           >
-            下一步
+            取消
           </button>
-        ) : (
-          <button
-            type="button"
-            className="mf-button mf-button-primary"
-            onClick={save}
-            disabled={saving}
-            aria-busy={saving}
-          >
-            {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
-          </button>
-        )}
-      </div>
-    </aside>
+          {formReady &&
+            (step < 3 ? (
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                onClick={goNext}
+                disabled={saving}
+              >
+                下一步
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                onClick={save}
+                disabled={saving}
+                aria-busy={saving}
+              >
+                {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
+              </button>
+            ))}
+        </>
+      }
+    >
+      {cardBody}
+    </ModalCardShell>
   );
 }
 
@@ -2183,12 +2169,6 @@ export function StorageFilesPage() {
     new Set(),
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [visitedDirectories, setVisitedDirectories] = useState<
-    readonly string[]
-  >([]);
-  const [knownDirectoryPaths, setKnownDirectoryPaths] = useState<
-    readonly string[]
-  >([]);
   const [view, setView] = useState<FilesView>("list");
   // The Add ResourceLibrary drawer is an operator-invoked action state only:
   // mount, re-entry, refresh and authentication recovery keep it closed.
@@ -2196,8 +2176,15 @@ export function StorageFilesPage() {
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
   const editDrawerInvokerRef = useRef<HTMLElement | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const [editReading, setEditReading] = useState(false);
+  const [editReadError, setEditReadError] = useState<string | null>(null);
+  // Fences a late explicit-Edit read after the card was closed or a different
+  // intent started: a resolved projection can never reopen it or replace a
+  // newer one.
+  const editRequestRef = useRef(0);
+  const drawerExit = useModalCardExit();
   const [editInitial, setEditInitial] = useState<
     SaveResourceLibraryOptions | undefined
   >();
@@ -2431,37 +2418,15 @@ export function StorageFilesPage() {
     setQuery("");
   };
 
-  // The refresh boundary.  `knownDirectoryPaths` and `visitedDirectories` are
-  // page-local memory of directories that older reads happened to show; they
-  // are not Storage authority.  If they survived a refresh, a directory removed
-  // outside MediaFlow would keep re-rendering as a current directory-tree
-  // target even though the refreshed live listing no longer contains it.  A
-  // refresh therefore drops that local tree memory and any selection that
-  // referred to it, then repeats only the bounded live read: the refreshed read
-  // is the sole authority, and the still-live directories are re-discovered
-  // from it.  The selected ResourceLibrary and current directory path are
+  // The refresh boundary.  A refresh drops the selection and repeats only the
+  // bounded live read: the refreshed read is the sole authority for the visible
+  // entries.  The selected ResourceLibrary and current directory path are
   // deliberately preserved, so a still-valid context stays where the operator
   // was.
   const refreshBrowse = (refetch: () => void) => {
-    setKnownDirectoryPaths([]);
-    setVisitedDirectories([]);
     setSelectedFiles(new Set());
     refetch();
   };
-
-  // Directory discovery is part of that same boundary: it must stay a stable
-  // identity so it records directories only when the live read actually
-  // changes, instead of re-running on every page render and resurrecting
-  // pre-refresh paths that the refresh just dropped.
-  const discoverLiveDirectories = useCallback((paths: readonly string[]) => {
-    setKnownDirectoryPaths((current) => {
-      const next = new Set(current);
-      for (const discoveredPath of paths) {
-        next.add(discoveredPath);
-      }
-      return next.size === current.length ? current : Array.from(next);
-    });
-  }, []);
 
   // A requested selection that no longer resolves is explained and
   // deterministically re-pointed at a current eligible library entirely by
@@ -2491,11 +2456,6 @@ export function StorageFilesPage() {
     }
     setInvalidPath(false);
     setPath(nextPath);
-    setVisitedDirectories((current) =>
-      nextPath === "" || current.includes(nextPath)
-        ? current
-        : [...current, nextPath],
-    );
     resetBrowseState();
   };
 
@@ -2503,25 +2463,31 @@ export function StorageFilesPage() {
     setSelectedLibraryId(id);
     setInvalidPath(false);
     setPath("");
-    setVisitedDirectories([]);
-    setKnownDirectoryPaths([]);
     resetBrowseState();
     updateLibraryRouteState(id);
   };
 
   const openDrawer = (invokerId: string) => {
+    editRequestRef.current += 1;
     setDrawerInvokerId(invokerId);
     setSaveError(null);
-    setEditLoadError(null);
     setSaveNotice(null);
+    setEditTargetId(null);
+    setEditReading(false);
+    setEditReadError(null);
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
     setDrawerOpen(true);
   };
 
+  /** Immediate close: clears intent and returns focus to the invoking control. */
   const closeDrawer = () => {
+    editRequestRef.current += 1;
     setSaveError(null);
+    setEditTargetId(null);
+    setEditReading(false);
+    setEditReadError(null);
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
@@ -2533,6 +2499,9 @@ export function StorageFilesPage() {
     }
     editDrawerInvokerRef.current = null;
   };
+
+  /** Every close gesture plays the shared card exit before unmounting. */
+  const beginDrawerClose = () => drawerExit.beginClose(closeDrawer);
 
   const saveLibraryMutation = useMutation({
     mutationFn: (candidate: SaveResourceLibraryOptions) =>
@@ -2554,10 +2523,6 @@ export function StorageFilesPage() {
       setSaveError(null);
       const wasEditing = editInitial !== undefined;
       const editInvoker = editDrawerInvokerRef.current;
-      setEditInitial(undefined);
-      setEditStorages(undefined);
-      setEditExpected(undefined);
-      setDrawerOpen(false);
       const savedId = result.model.enabled ? result.model.id : "";
       setSelectedLibraryId(savedId);
       setInvalidPath(false);
@@ -2567,10 +2532,6 @@ export function StorageFilesPage() {
           editInitial.storagePath !== candidate.storagePath);
       const nextPath = result.model.enabled && !bindingChanged ? path : "";
       setPath(nextPath);
-      if (bindingChanged || !result.model.enabled) {
-        setVisitedDirectories([]);
-        setKnownDirectoryPaths([]);
-      }
       resetBrowseState();
       updateLibraryRouteState(savedId);
       updateDirectoryRouteState(nextPath);
@@ -2579,18 +2540,19 @@ export function StorageFilesPage() {
           ? null
           : `资源库“${result.model.name}”已保存，但当前为停用状态：不会出现在文件列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
       );
-      if (wasEditing) {
+      // A successful Save also returns through the shared exit; the handoff
+      // for a disabled library focuses the existing enable entry once the card
+      // has finished leaving, never behind the still-open card.
+      drawerExit.beginClose(() => {
+        closeDrawer();
+        if (!wasEditing) return;
         requestAnimationFrame(() => {
-          if (result.model.enabled && editInvoker?.isConnected) {
-            editInvoker.focus();
-          } else {
-            document
-              .getElementById("mf-resource-library-enable-handoff")
-              ?.focus();
-          }
+          if (result.model.enabled && editInvoker?.isConnected) return;
+          document
+            .getElementById("mf-resource-library-enable-handoff")
+            ?.focus();
         });
-      }
-      editDrawerInvokerRef.current = null;
+      });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
@@ -2604,18 +2566,29 @@ export function StorageFilesPage() {
   });
 
   const openResourceLibraryEdit = async (id: string) => {
+    const requestId = ++editRequestRef.current;
     editDrawerInvokerRef.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    setDrawerInvokerId(null);
     setSaveError(null);
-    setEditLoadError(null);
+    setSaveNotice(null);
+    setEditTargetId(id);
+    setEditReadError(null);
+    setEditReading(true);
+    setEditInitial(undefined);
+    setEditStorages(undefined);
+    setEditExpected(undefined);
+    setDrawerOpen(true);
     const result = await fetchResourceLibraryEdit(token, id);
+    if (editRequestRef.current !== requestId) return;
+    setEditReading(false);
     if (!result.ok) {
-      setEditLoadError(
+      setEditReadError(
         result.code === "transport_unavailable"
-          ? "无法读取资源库编辑信息，结果未知且未自动重试。请检查连接并刷新 Active 状态后重试。"
-          : "无法读取资源库编辑信息，未执行任何更改。请刷新 Active 状态、确认权限和资源库状态后重试。",
+          ? "无法读取资源库编辑信息，结果未知且未自动重试。没有提交任何更改。请重新读取；若仍失败，请检查连接并刷新 Active 状态。"
+          : "无法读取资源库编辑信息，未执行任何更改。请重新读取；若仍失败，请刷新 Active 状态、确认权限和资源库状态。",
       );
       return;
     }
@@ -2624,8 +2597,8 @@ export function StorageFilesPage() {
         (storage) => storage.id === result.model.library.storageId,
       )
     ) {
-      setEditLoadError(
-        "当前 Active 资源库绑定的 Storage 无法在编辑表单中表示，未执行任何更改。请刷新或修复 Active 配置后重试。",
+      setEditReadError(
+        "当前 Active 资源库绑定的 Storage 无法在编辑表单中表示，未执行任何更改。请刷新或修复 Active 配置后重新读取。",
       );
       return;
     }
@@ -2636,12 +2609,10 @@ export function StorageFilesPage() {
       expectedVersion: result.model.activeVersion,
       expectedDigest: result.model.activeDigest,
     });
-    setDrawerInvokerId(null);
-    setDrawerOpen(true);
   };
 
-  // Rename/Delete success must clear or remap exactly the affected selection
-  // and directory-tree state; unrelated sibling selections stay independent.
+  // Rename/Delete success must clear or remap exactly the affected selection;
+  // unrelated sibling selections stay independent.
   const pruneAffectedBrowseState = useCallback(
     (
       removedPaths: readonly string[],
@@ -2649,29 +2620,12 @@ export function StorageFilesPage() {
     ) => {
       if (renameRemap !== null) {
         const { from, to } = renameRemap;
-        const remap = (value: string) =>
-          value === from
-            ? to
-            : value.startsWith(from + "/")
-              ? to + value.slice(from.length)
-              : value;
-        const changed = (list: readonly string[], next: readonly string[]) =>
-          next.length !== list.length ||
-          next.some((value, index) => value !== list[index]);
         setSelectedFiles((current) => {
           if (!current.has(from)) return current;
           const next = new Set(current);
           next.delete(from);
           next.add(to);
           return next;
-        });
-        setKnownDirectoryPaths((current) => {
-          const next = current.map(remap);
-          return changed(current, next) ? next : current;
-        });
-        setVisitedDirectories((current) => {
-          const next = current.map(remap);
-          return changed(current, next) ? next : current;
         });
         return;
       }
@@ -2683,14 +2637,6 @@ export function StorageFilesPage() {
       setSelectedFiles((current) => {
         const next = new Set([...current].filter((path) => !isRemoved(path)));
         return next.size === current.size ? current : next;
-      });
-      setKnownDirectoryPaths((current) => {
-        const next = current.filter((path) => !isRemoved(path));
-        return next.length === current.length ? current : next;
-      });
-      setVisitedDirectories((current) => {
-        const next = current.filter((path) => !isRemoved(path));
-        return next.length === current.length ? current : next;
       });
     },
     [setSelectedFiles],
@@ -2811,7 +2757,7 @@ export function StorageFilesPage() {
         return;
       }
       if (dialog?.kind === "rename") {
-        // Remap the renamed path so no stale selection or tree node survives.
+        // Remap the renamed path so no stale selection survives.
         const renamePath =
           variables.options.operation === "rename"
             ? variables.options.path
@@ -3235,8 +3181,6 @@ export function StorageFilesPage() {
       setSelectedLibraryId("");
       setInvalidPath(false);
       setPath("");
-      setVisitedDirectories([]);
-      setKnownDirectoryPaths([]);
       resetBrowseState();
       updateLibraryRouteState("");
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
@@ -3284,30 +3228,6 @@ export function StorageFilesPage() {
           setDialog({ kind: "operations" });
         }}
       />
-      {editLoadError !== null && (
-        <div className="mf-files-banner" role="alert">
-          <span className="mf-banner-icon" aria-hidden="true">
-            <Icon name="info" />
-          </span>
-          <span className="mf-banner-text">{editLoadError}</span>
-          <span className="mf-banner-actions">
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => void statusQuery.refetch()}
-            >
-              刷新 Active 状态
-            </button>
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => setEditLoadError(null)}
-            >
-              知道了
-            </button>
-          </span>
-        </div>
-      )}
       {saveNotice !== null && (
         <div className="mf-files-banner" role="status">
           <span className="mf-banner-icon" aria-hidden="true">
@@ -3344,9 +3264,11 @@ export function StorageFilesPage() {
         }) => {
           if (currentStatus === undefined) {
             return (
-              <FilesState title="正在加载文件页">
-                正在读取 Active 配置和可用资源库…
-              </FilesState>
+              <LibraryLoadingPanel
+                variant="cards"
+                title="正在读取资源库信息"
+                detail="正在读取 Active 配置、可用 Storage 与资源库列表…"
+              />
             );
           }
           if (!currentStatus.configurationActive) {
@@ -3381,7 +3303,7 @@ export function StorageFilesPage() {
             currentLibraries[0] ??
             null;
           if (currentLibrary === null) {
-            // Full-width zero-ResourceLibrary state: no cards, paths, tree,
+            // Full-width zero-ResourceLibrary state: no cards, paths,
             // breadcrumb, table rows or fabricated identity, and no
             // ResourceLibrary-scoped Files request.
             return (
@@ -3446,7 +3368,7 @@ export function StorageFilesPage() {
                   openPath("");
                 }}
               >
-                请求的路径不是安全的资源库相对路径。请通过目录树或面包屑重新进入。
+                请求的路径不是安全的资源库相对路径。请通过面包屑或返回根目录重新进入。
               </FilesState>
             );
           }
@@ -3491,13 +3413,17 @@ export function StorageFilesPage() {
                     libraryId={activeLibraryId}
                     operationsReturn={operationsReturn}
                   />
-                  <FilesState title="正在读取文件">
-                    正在读取{" "}
-                    {effectivePath === ""
-                      ? "资源库根目录"
-                      : "“" + effectivePath + "”"}{" "}
-                    的文件…
-                  </FilesState>
+                  <LibraryLoadingPanel
+                    variant="rows"
+                    title="正在读取文件"
+                    detail={
+                      "正在读取" +
+                      (effectivePath === ""
+                        ? "资源库根目录"
+                        : "“" + effectivePath + "”") +
+                      "的文件…"
+                    }
+                  />
                 </>
               ) : filesQuery.isError ? (
                 <>
@@ -3533,13 +3459,17 @@ export function StorageFilesPage() {
                   {({ data: filesRead, isFetching, refresh }) => {
                     if (filesRead === undefined) {
                       return (
-                        <FilesState title="正在读取文件">
-                          正在读取{" "}
-                          {effectivePath === ""
-                            ? "资源库根目录"
-                            : "“" + effectivePath + "”"}{" "}
-                          的文件…
-                        </FilesState>
+                        <LibraryLoadingPanel
+                          variant="rows"
+                          title="正在读取文件"
+                          detail={
+                            "正在读取" +
+                            (effectivePath === ""
+                              ? "资源库根目录"
+                              : "“" + effectivePath + "”") +
+                            "的文件…"
+                          }
+                        />
                       );
                     }
                     if (!filesRead.ok) {
@@ -3572,10 +3502,6 @@ export function StorageFilesPage() {
                         libraries={currentLibraries}
                         selectedLibraryId={activeLibraryId}
                         selected={selectedFiles}
-                        tree={buildDirectoryTree(model, [
-                          ...knownDirectoryPaths,
-                          ...visitedDirectories,
-                        ])}
                         view={view}
                         query={query}
                         previewing={
@@ -3583,6 +3509,7 @@ export function StorageFilesPage() {
                           isFetching ||
                           statusFetching
                         }
+                        refreshing={isFetching}
                         previewError={previewError}
                         page={cursorHistory.length + 1}
                         canPrev={cursorHistory.length > 0}
@@ -3626,7 +3553,6 @@ export function StorageFilesPage() {
                           setAdmittedTransferId(null);
                           setDialog({ kind: "transfer", operation, paths });
                         }}
-                        onDiscoverDirectories={discoverLiveDirectories}
                         onToggle={(entryPath) => {
                           setSelectedFiles((current) => {
                             const next = new Set(current);
@@ -3707,29 +3633,33 @@ export function StorageFilesPage() {
           );
         }}
       </AuthorizedReadBoundary>
-      {drawerOpen &&
-        (eligibleStorages.length > 0 ||
-          saveLibraryMutation.isPending ||
-          saveError !== null) && (
-          <AddResourceLibraryDrawer
-            key={editInitial?.resourceLibraryId ?? "new"}
-            open={drawerOpen}
-            storages={
-              editInitial === undefined
-                ? eligibleStorages
-                : (editStorages ?? [])
-            }
-            onClose={closeDrawer}
-            onSave={(candidate) => {
-              setSaveError(null);
-              saveLibraryMutation.mutate(candidate);
-            }}
-            saving={saveLibraryMutation.isPending}
-            saveError={saveError}
-            initial={editInitial}
-            editing={editInitial !== undefined}
-          />
-        )}
+      {drawerOpen && (
+        <AddResourceLibraryDrawer
+          key={editTargetId ?? "new"}
+          open
+          storages={
+            editTargetId === null ? eligibleStorages : (editStorages ?? [])
+          }
+          onClose={beginDrawerClose}
+          onSave={(candidate) => {
+            setSaveError(null);
+            saveLibraryMutation.mutate(candidate);
+          }}
+          saving={saveLibraryMutation.isPending}
+          saveError={saveError}
+          initial={editInitial}
+          editing={editTargetId !== null}
+          closing={drawerExit.closing}
+          reading={editReading}
+          readError={editReadError}
+          onRetryRead={
+            editTargetId === null
+              ? undefined
+              : () => void openResourceLibraryEdit(editTargetId)
+          }
+          onRefreshAuthority={() => void statusQuery.refetch()}
+        />
+      )}
       {dialog?.kind === "create_folder" && (
         <NamePromptDialog
           kind="create_folder"

@@ -99,7 +99,8 @@ test("the reference hierarchy renders without statistics, thumbnails or organize
 }) => {
   await openMediaLibrary(page);
 
-  await expect(page.getByRole("heading", { name: "目录" })).toBeVisible();
+  // The in-page directory tree is gone; the file pane owns the full width.
+  await expect(page.getByRole("heading", { name: "目录" })).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
   // Six-column table structure with type icons.
   await expect(page.getByRole("columnheader")).toHaveCount(5);
@@ -131,9 +132,7 @@ test("the reference hierarchy renders without statistics, thumbnails or organize
   await expect(
     page.getByRole("button", { name: "+ 添加媒体库" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("complementary", { name: "添加媒体库" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "添加媒体库" })).toHaveCount(0);
 });
 
 test("directory navigation, return to root and library switching keep the route exact", async ({

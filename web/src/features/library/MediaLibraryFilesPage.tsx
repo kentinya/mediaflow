@@ -14,6 +14,11 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
+import {
+  ModalCardShell,
+  useModalCardExit,
+  useModalLayer,
+} from "../../shared/ui/modal-card";
 import { Icon } from "../../shared/ui/Icons";
 import {
   FilesBreadcrumbs,
@@ -70,6 +75,7 @@ import {
 } from "../../shared/api/api-client";
 import { TransferDialog } from "./TransferDialog";
 import { LibraryCardStrip } from "./LibraryCardStrip";
+import { LibraryLoadingPanel } from "./library-loading";
 import {
   clearDeleteAdmission,
   newDeleteRequestId,
@@ -145,12 +151,6 @@ interface MediaRowVm {
   readonly sizeLabel: string;
   readonly modifiedLabel: string;
   readonly checked: boolean;
-}
-
-interface DirectoryNodeVm {
-  readonly name: string;
-  readonly path: string;
-  readonly depth: number;
 }
 
 interface InitialBrowseState {
@@ -325,43 +325,6 @@ function formatSelectedSize(
   return formatBytes(total);
 }
 
-function buildDirectoryTree(
-  model: MediaLibraryFilesModel,
-  visitedDirectories: readonly string[],
-): readonly DirectoryNodeVm[] {
-  const names = new Map<string, string>();
-  for (const crumb of model.breadcrumbs) {
-    if (!crumb.isRoot) names.set(crumb.path, crumb.name);
-  }
-  for (const path of visitedDirectories) {
-    let current = "";
-    for (const segment of path.split("/")) {
-      current = current === "" ? segment : current + "/" + segment;
-      if (!names.has(current)) names.set(current, segment);
-    }
-  }
-  for (const entry of model.entries) {
-    const parentPath = entry.path.split("/").slice(0, -1).join("/");
-    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
-    const hideCurrentChildren = currentDepth > 1 && parentPath === model.path;
-    if (
-      entry.isDirectory &&
-      entry.traversable &&
-      !hideCurrentChildren &&
-      !names.has(entry.path)
-    ) {
-      names.set(entry.path, entry.name);
-    }
-  }
-  return Array.from(names.entries())
-    .sort((left, right) => left[0].localeCompare(right[0]))
-    .map(([path, name]) => ({
-      name,
-      path,
-      depth: path.split("/").length,
-    }));
-}
-
 function MediaState({
   title,
   children,
@@ -396,80 +359,6 @@ function MediaState({
         </div>
       )}
     </section>
-  );
-}
-
-function MediaDirectoryTree({
-  libraryName,
-  nodes,
-  currentPath,
-  onOpenPath,
-}: {
-  readonly libraryName: string;
-  readonly nodes: readonly DirectoryNodeVm[];
-  readonly currentPath: string;
-  readonly onOpenPath: (path: string) => void;
-}) {
-  return (
-    <aside className="mf-files-tree" aria-label="目录">
-      <h3>目录</h3>
-      <ul>
-        <li
-          className={
-            currentPath === "" ? "mf-tree-row is-selected" : "mf-tree-row"
-          }
-        >
-          <span className="mf-tree-disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-          <span className="mf-tree-icon mf-tree-icon-cloud" aria-hidden="true">
-            <Icon name="storage" />
-          </span>
-          <button
-            type="button"
-            className="mf-link-button"
-            aria-current={currentPath === "" ? "page" : undefined}
-            onClick={() => onOpenPath("")}
-          >
-            {libraryName}
-          </button>
-        </li>
-        {nodes.map((node) => (
-          <li
-            key={node.path}
-            className={
-              node.path === currentPath
-                ? "mf-tree-row is-selected"
-                : "mf-tree-row"
-            }
-            style={{ paddingLeft: node.depth * 16 + "px" }}
-          >
-            <span className="mf-tree-disclosure" aria-hidden="true">
-              {nodes.some(
-                (candidate) =>
-                  candidate.path !== node.path &&
-                  candidate.path.startsWith(node.path + "/"),
-              ) ? (
-                <Icon name="chevron-down" />
-              ) : (
-                <Icon name="chevron-right" />
-              )}
-            </span>
-            <span className="mf-tree-icon" aria-hidden="true">
-              <Icon name="folder" />
-            </span>
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => onOpenPath(node.path)}
-              aria-current={node.path === currentPath ? "page" : undefined}
-            >
-              <IdentityLabel value={node.name} />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </aside>
   );
 }
 
@@ -577,11 +466,11 @@ function failureDetail(kind: string, path: string): string {
     case "media_library_not_found":
       return "所选媒体库在当前 Active 配置中不可用。请选择其他已启用的媒体库。";
     case "invalid_path":
-      return "请求的路径不是安全的媒体库相对路径。请通过目录树或面包屑重新进入。";
+      return "请求的路径不是安全的媒体库相对路径。请通过面包屑或返回根目录重新进入。";
     case "not_found":
       return "未在 " + where + " 找到该目录。它可能已在 MediaFlow 之外被删除。";
     case "not_directory":
-      return "请求的路径不是目录。请通过目录树或面包屑重新进入。";
+      return "请求的路径不是目录。请通过面包屑或返回根目录重新进入。";
     case "invalid_cursor":
       return "分页游标已失效，与当前媒体库或目录不匹配。请刷新本目录后重新浏览。";
     case "configuration_unavailable":
@@ -745,12 +634,12 @@ export function mediaLibraryTransferFailure(
 function MediaBrowseView({
   model,
   selected,
-  tree,
   view,
   query,
   page,
   canPrev,
   busy,
+  refreshing,
   onViewChange,
   onToggle,
   onToggleAll,
@@ -769,13 +658,14 @@ function MediaBrowseView({
 }: {
   readonly model: MediaLibraryFilesModel;
   readonly selected: ReadonlySet<string>;
-  readonly tree: readonly DirectoryNodeVm[];
   readonly view: MediaView;
   readonly query: string;
   readonly page: number;
   readonly canPrev: boolean;
   /** True while one command is admitted or executing: no control submits twice. */
   readonly busy: boolean;
+  /** A same-context re-read keeps the rendered rows and states it explicitly. */
+  readonly refreshing: boolean;
   readonly onViewChange: (view: MediaView) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
@@ -807,8 +697,6 @@ function MediaBrowseView({
   const selectedCount = selectedRows.length;
   const allChecked =
     rows.length > 0 && rows.every((row) => selected.has(row.path));
-  const library = model.mediaLibrary;
-  const libraryName = library?.name ?? "媒体库";
   const hasNext = model.hasNext && model.nextCursor !== null;
   // Model order keeps a bounded Delete selection deterministic across pages.
   const selectedPaths = model.entries
@@ -913,13 +801,7 @@ function MediaBrowseView({
   return (
     <section className="mf-files" aria-label="媒体库文件浏览">
       <div className="mf-files-workarea">
-        <MediaDirectoryTree
-          libraryName={libraryName}
-          nodes={tree}
-          currentPath={model.path}
-          onOpenPath={onOpenPath}
-        />
-        <div className="mf-files-pane">
+        <div className="mf-files-pane" aria-busy={refreshing}>
           <div className="mf-files-toolbar">
             <FilesBreadcrumbs
               label="媒体库面包屑"
@@ -980,6 +862,11 @@ function MediaBrowseView({
               </button>
             </div>
           </div>
+          {refreshing && (
+            <p className="mf-files-refresh-state" role="status">
+              正在刷新当前目录…
+            </p>
+          )}
           {rows.length === 0 ? (
             <p className="mf-files-state">
               {query !== ""
@@ -1321,16 +1208,7 @@ export function mediaLibraryRemovalFailureMessage(
  * control and 取消 all dismiss it, and inline validation keeps correctable
  * input in place rather than discarding a rejected candidate.
  */
-export function AddMediaLibraryDrawer({
-  open,
-  storages,
-  onClose,
-  onSave,
-  saving,
-  saveError,
-  initial,
-  editing = false,
-}: {
+interface AddMediaLibraryDrawerProps {
   readonly open: boolean;
   readonly storages: readonly SystemStorage[];
   readonly onClose: () => void;
@@ -1339,7 +1217,52 @@ export function AddMediaLibraryDrawer({
   readonly saveError: string | null;
   readonly initial?: SaveMediaLibraryOptions;
   readonly editing?: boolean;
-}) {
+  /** True while the explicit Edit read of the exact Active projection runs. */
+  readonly reading?: boolean;
+  /** A failed explicit Edit read: no candidate exists and no Save is offered. */
+  readonly readError?: string | null;
+  readonly onRetryRead?: () => void;
+  /** The page's existing authority refresh for a failed explicit Edit read. */
+  readonly onRefreshAuthority?: () => void;
+  /** True between a legal close request and the shared card exit finishing. */
+  readonly closing?: boolean;
+}
+
+/**
+ * The Add/Edit MediaLibrary configuration card.
+ *
+ * The explicit Edit intent opens this card immediately in its reading state:
+ * only the exact projection the backend returns can seed the form and its
+ * checked Save fence. A failed read keeps the card open with the existing
+ * re-read path and no candidate to submit.
+ */
+export function AddMediaLibraryDrawer(props: AddMediaLibraryDrawerProps) {
+  if (!props.open) return null;
+  return <MediaLibraryConfigCard {...props} />;
+}
+
+function MediaLibraryConfigCard({
+  storages,
+  onClose,
+  onSave,
+  saving,
+  saveError,
+  initial,
+  editing = false,
+  reading = false,
+  readError = null,
+  onRetryRead,
+  onRefreshAuthority,
+  closing = false,
+}: AddMediaLibraryDrawerProps) {
+  const card = useModalLayer({
+    onEscape: onClose,
+    escapeDisabled: () => saving || closing,
+  });
+  const requestClose = () => {
+    if (saving || closing) return;
+    onClose();
+  };
   const [step, setStep] = useState(1);
   const [name, setName] = useState(initial?.name ?? "");
   const [mediaLibraryId, setMediaLibraryId] = useState(
@@ -1352,26 +1275,36 @@ export function AddMediaLibraryDrawer({
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [validationError, setValidationError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const seededProjectionRef = useRef(initial);
+  useEffect(() => {
+    if (initial === undefined || seededProjectionRef.current === initial) {
+      return;
+    }
+    seededProjectionRef.current = initial;
+    setName(initial.name);
+    setMediaLibraryId(initial.mediaLibraryId);
+    setStorageId(initial.storageId);
+    setRootPath(initial.rootPath);
+    setEnabled(initial.enabled);
+    setValidationError(null);
+    setStep(1);
+  }, [initial]);
   const selectedStorageId = storages.some((storage) => storage.id === storageId)
     ? storageId
     : (storages[0]?.id ?? "");
 
-  // Move keyboard focus into the drawer on open and let Escape dismiss it while
-  // no save is in flight; focus returns to the invoking control via onClose.
+  // A pending explicit Edit read keeps the stable card. Focus moves to the
+  // close control until editable content is ready, then to the first field.
+  const formReady = !reading && readError === null;
   useEffect(() => {
-    if (!open) return undefined;
-    nameInputRef.current?.focus();
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !saving) {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKey, true);
-    return () => document.removeEventListener("keydown", handleKey, true);
-  }, [open, saving, onClose]);
-
-  if (!open) return null;
+    if (!formReady) {
+      card.layerRef.current
+        ?.querySelector<HTMLElement>(".mf-modal-close")
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    nameInputRef.current?.focus({ preventScroll: true });
+  }, [card.layerRef, formReady]);
 
   const validateBasics = (): boolean => {
     if (name.trim() === "") {
@@ -1443,25 +1376,42 @@ export function AddMediaLibraryDrawer({
   const selectedStorageName =
     selectedStorage?.name ??
     (selectedStorageId === "" ? "未选择" : selectedStorageId);
-  return (
-    <aside
-      className="mf-files-drawer"
-      aria-label={editing ? "编辑媒体库" : "添加媒体库"}
-    >
-      <div className="mf-files-drawer-header">
-        <div>
-          <h2>{editing ? "编辑媒体库" : "添加媒体库"}</h2>
-        </div>
-        <button
-          type="button"
-          className="mf-files-drawer-close"
-          aria-label="关闭添加媒体库"
-          onClick={onClose}
-        >
-          ×
-        </button>
+  const title = editing ? "编辑媒体库" : "添加媒体库";
+  const cardBody = reading ? (
+    <div className="mf-modal-card-status">
+      <p role="status">正在读取该媒体库的精确保存状态与当前 Active 配置…</p>
+    </div>
+  ) : readError !== null ? (
+    <div className="mf-modal-card-status mf-modal-card-status-error">
+      <div role="alert">
+        <p>{readError}</p>
       </div>
-      <ol className="mf-files-drawer-steps">
+      <div className="mf-actions">
+        {onRetryRead !== undefined && (
+          <button
+            type="button"
+            className="mf-button mf-button-primary"
+            onClick={onRetryRead}
+            disabled={closing}
+          >
+            重新读取
+          </button>
+        )}
+        {onRefreshAuthority !== undefined && (
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={onRefreshAuthority}
+            disabled={closing}
+          >
+            刷新 Active 状态
+          </button>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div className="mf-storage-card-grid">
+      <ol className="mf-files-drawer-steps" aria-label="媒体库配置步骤">
         {[
           ["1", "基本信息"],
           ["2", "存储位置"],
@@ -1471,7 +1421,11 @@ export function AddMediaLibraryDrawer({
             key={number}
             className={step === index + 1 ? "is-active" : undefined}
           >
-            <button type="button" onClick={() => goToStep(index + 1)}>
+            <button
+              type="button"
+              disabled={saving || closing}
+              onClick={() => goToStep(index + 1)}
+            >
               <span>{number}</span> {label}
             </button>
           </li>
@@ -1499,6 +1453,7 @@ export function AddMediaLibraryDrawer({
               placeholder="例如：电影库"
               maxLength={120}
               value={name}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setName(event.target.value);
@@ -1511,7 +1466,7 @@ export function AddMediaLibraryDrawer({
               placeholder="例如：movies"
               maxLength={64}
               value={mediaLibraryId}
-              disabled={editing}
+              disabled={editing || saving}
               onChange={(event) => {
                 setValidationError(null);
                 setMediaLibraryId(event.target.value);
@@ -1527,6 +1482,7 @@ export function AddMediaLibraryDrawer({
                 id="mf-media-library-enabled"
                 type="checkbox"
                 checked={enabled}
+                disabled={saving}
                 onChange={(event) => {
                   setValidationError(null);
                   setEnabled(event.target.checked);
@@ -1547,6 +1503,7 @@ export function AddMediaLibraryDrawer({
             <select
               id="mf-media-library-storage"
               value={selectedStorageId}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setStorageId(event.target.value);
@@ -1566,6 +1523,7 @@ export function AddMediaLibraryDrawer({
               id="mf-media-library-root"
               maxLength={4096}
               value={rootPath}
+              disabled={saving}
               onChange={(event) => {
                 setValidationError(null);
                 setRootPath(event.target.value);
@@ -1612,35 +1570,61 @@ export function AddMediaLibraryDrawer({
           </div>
         )}
       </div>
-      <div className="mf-files-drawer-footer">
-        <button
-          type="button"
-          className="mf-button mf-button-secondary"
-          onClick={onClose}
-        >
-          取消
-        </button>
-        {step < 3 ? (
+    </div>
+  );
+  return (
+    <ModalCardShell
+      layerRef={card.layerRef}
+      closing={closing}
+      busy={saving || reading}
+      title={title}
+      titleId="mf-media-library-config-title"
+      accessibleName={title}
+      description={
+        editing
+          ? "编辑只提交当前读到的精确 Active 配置；失败时旧 Active 与 Storage 内容均保持不变。"
+          : "保存会验证并激活完整的 MediaLibrary 配置；失败时候选配置不会发布，Storage 内容不受影响。"
+      }
+      closeLabel={editing ? "关闭编辑媒体库" : "关闭添加媒体库"}
+      closeDisabled={saving || closing}
+      onRequestClose={requestClose}
+      size="form"
+      footer={
+        <>
           <button
             type="button"
-            className="mf-button mf-button-primary"
-            onClick={goNext}
+            className="mf-button mf-button-secondary"
+            onClick={requestClose}
+            disabled={saving || closing}
           >
-            下一步
+            取消
           </button>
-        ) : (
-          <button
-            type="button"
-            className="mf-button mf-button-primary"
-            onClick={save}
-            disabled={saving}
-            aria-busy={saving}
-          >
-            {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
-          </button>
-        )}
-      </div>
-    </aside>
+          {formReady &&
+            (step < 3 ? (
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                onClick={goNext}
+                disabled={saving}
+              >
+                下一步
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                onClick={save}
+                disabled={saving}
+                aria-busy={saving}
+              >
+                {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
+              </button>
+            ))}
+        </>
+      }
+    >
+      {cardBody}
+    </ModalCardShell>
   );
 }
 
@@ -1856,12 +1840,6 @@ export function MediaLibraryFilesPage() {
   const [selectedFiles, setSelectedFiles] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [visitedDirectories, setVisitedDirectories] = useState<
-    readonly string[]
-  >([]);
-  const [knownDirectoryPaths, setKnownDirectoryPaths] = useState<
-    readonly string[]
-  >([]);
   const [view, setView] = useState<MediaView>("list");
   // Operator-invoked action state for the Add drawer and the removal dialog.
   // Mount, re-entry, reload and authentication reconnect all start with both
@@ -1870,7 +1848,14 @@ export function MediaLibraryFilesPage() {
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
   const editDrawerInvokerRef = useRef<HTMLElement | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const [editReading, setEditReading] = useState(false);
+  const [editReadError, setEditReadError] = useState<string | null>(null);
+  // Fences a late explicit-Edit read after the card was closed or a different
+  // intent started: a resolved projection can never reopen it or replace a
+  // newer one.
+  const editRequestRef = useRef(0);
+  const drawerExit = useModalCardExit();
   const [editInitial, setEditInitial] = useState<
     SaveMediaLibraryOptions | undefined
   >();
@@ -2000,26 +1985,13 @@ export function MediaLibraryFilesPage() {
     setQuery("");
   };
 
-  // Refresh boundary: page-local directory memory and selection survive only a
-  // still-valid context. A refresh drops the remembered tree and selection,
-  // then repeats only the bounded live read; the selected library and current
-  // path are preserved so a still-valid location stays where the operator was.
+  // Refresh boundary: a refresh drops the selection and repeats only the
+  // bounded live read; the selected library and current path are preserved so a
+  // still-valid location stays where the operator was.
   const refreshBrowse = (refetch: () => void) => {
-    setKnownDirectoryPaths([]);
-    setVisitedDirectories([]);
     setSelectedFiles(new Set());
     refetch();
   };
-
-  const discoverLiveDirectories = useCallback((paths: readonly string[]) => {
-    setKnownDirectoryPaths((current) => {
-      const next = new Set(current);
-      for (const discoveredPath of paths) {
-        next.add(discoveredPath);
-      }
-      return next.size === current.length ? current : Array.from(next);
-    });
-  }, []);
 
   const libraryNotice = useMemo(() => {
     if (
@@ -2052,11 +2024,6 @@ export function MediaLibraryFilesPage() {
     }
     setInvalidPath(false);
     setPath(nextPath);
-    setVisitedDirectories((current) =>
-      nextPath === "" || current.includes(nextPath)
-        ? current
-        : [...current, nextPath],
-    );
     resetBrowseState();
   };
 
@@ -2064,8 +2031,6 @@ export function MediaLibraryFilesPage() {
     setSelectedLibraryId(id);
     setInvalidPath(false);
     setPath("");
-    setVisitedDirectories([]);
-    setKnownDirectoryPaths([]);
     // A command dialog belongs to one exact library; switching library closes it
     // rather than letting it act on a different authority than it describes.
     setDialog(null);
@@ -2078,17 +2043,25 @@ export function MediaLibraryFilesPage() {
   // is remembered on open and refocused on close, and a fresh open never
   // carries a prior save error or the disabled-save handoff notice forward.
   const openDrawer = (invokerId: string) => {
+    editRequestRef.current += 1;
     setDrawerInvokerId(invokerId);
     setSaveError(null);
-    setEditLoadError(null);
     setSaveNotice(null);
+    setEditTargetId(null);
+    setEditReading(false);
+    setEditReadError(null);
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
     setDrawerOpen(true);
   };
+  /** Immediate close: clears intent and returns focus to the invoking control. */
   const closeDrawer = () => {
+    editRequestRef.current += 1;
     setSaveError(null);
+    setEditTargetId(null);
+    setEditReading(false);
+    setEditReadError(null);
     setEditInitial(undefined);
     setEditStorages(undefined);
     setEditExpected(undefined);
@@ -2100,6 +2073,8 @@ export function MediaLibraryFilesPage() {
     }
     editDrawerInvokerRef.current = null;
   };
+  /** Every close gesture plays the shared card exit before unmounting. */
+  const beginDrawerClose = () => drawerExit.beginClose(closeDrawer);
   const requestRemoval = (id: string) => {
     setRemovalError(null);
     setRemovalDialogId(id);
@@ -2127,13 +2102,6 @@ export function MediaLibraryFilesPage() {
       setSaveError(null);
       const wasEditing = editInitial !== undefined;
       const editInvoker = editDrawerInvokerRef.current;
-      setEditInitial(undefined);
-      setEditStorages(undefined);
-      setEditExpected(undefined);
-      setDrawerOpen(false);
-      if (drawerInvokerId !== null) {
-        document.getElementById(drawerInvokerId)?.focus();
-      }
       const enabled = result.model.enabled;
       const savedId = enabled ? result.model.id : "";
       setSelectedLibraryId(savedId);
@@ -2144,10 +2112,6 @@ export function MediaLibraryFilesPage() {
           editInitial.rootPath !== candidate.rootPath);
       const nextPath = enabled && !bindingChanged ? path : "";
       setPath(nextPath);
-      if (bindingChanged || !enabled) {
-        setVisitedDirectories([]);
-        setKnownDirectoryPaths([]);
-      }
       resetBrowseState();
       syncLibraryRouteState(savedId, nextPath);
       setSaveNotice(
@@ -2155,16 +2119,16 @@ export function MediaLibraryFilesPage() {
           ? null
           : `媒体库“${result.model.name}”已保存，但当前为停用状态：不会出现在媒体库列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
       );
-      if (wasEditing) {
+      // A successful Save also returns through the shared exit; a disabled
+      // library focuses the existing enable entry after the card is gone.
+      drawerExit.beginClose(() => {
+        closeDrawer();
+        if (!wasEditing) return;
         requestAnimationFrame(() => {
-          if (enabled && editInvoker?.isConnected) {
-            editInvoker.focus();
-          } else {
-            document.getElementById("mf-media-library-enable-handoff")?.focus();
-          }
+          if (enabled && editInvoker?.isConnected) return;
+          document.getElementById("mf-media-library-enable-handoff")?.focus();
         });
-      }
-      editDrawerInvokerRef.current = null;
+      });
       void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
     },
@@ -2178,18 +2142,29 @@ export function MediaLibraryFilesPage() {
   });
 
   const openMediaLibraryEdit = async (id: string) => {
+    const requestId = ++editRequestRef.current;
     editDrawerInvokerRef.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    setDrawerInvokerId(null);
     setSaveError(null);
-    setEditLoadError(null);
+    setSaveNotice(null);
+    setEditTargetId(id);
+    setEditReadError(null);
+    setEditReading(true);
+    setEditInitial(undefined);
+    setEditStorages(undefined);
+    setEditExpected(undefined);
+    setDrawerOpen(true);
     const result = await fetchMediaLibraryEdit(token, id);
+    if (editRequestRef.current !== requestId) return;
+    setEditReading(false);
     if (!result.ok) {
-      setEditLoadError(
+      setEditReadError(
         result.code === "transport_unavailable"
-          ? "无法读取媒体库编辑信息，结果未知且未自动重试。请检查连接并刷新 Active 状态后重试。"
-          : "无法读取媒体库编辑信息，未执行任何更改。请刷新 Active 状态、确认权限和媒体库状态后重试。",
+          ? "无法读取媒体库编辑信息，结果未知且未自动重试。没有提交任何更改。请重新读取；若仍失败，请检查连接并刷新 Active 状态。"
+          : "无法读取媒体库编辑信息，未执行任何更改。请重新读取；若仍失败，请刷新 Active 状态、确认权限和媒体库状态。",
       );
       return;
     }
@@ -2198,8 +2173,8 @@ export function MediaLibraryFilesPage() {
         (storage) => storage.id === result.model.library.storageId,
       )
     ) {
-      setEditLoadError(
-        "当前 Active 媒体库绑定的 Storage 无法在编辑表单中表示，未执行任何更改。请刷新或修复 Active 配置后重试。",
+      setEditReadError(
+        "当前 Active 媒体库绑定的 Storage 无法在编辑表单中表示，未执行任何更改。请刷新或修复 Active 配置后重新读取。",
       );
       return;
     }
@@ -2210,8 +2185,6 @@ export function MediaLibraryFilesPage() {
       expectedVersion: result.model.activeVersion,
       expectedDigest: result.model.activeDigest,
     });
-    setDrawerInvokerId(null);
-    setDrawerOpen(true);
   };
 
   // The removal preview is read against the exact Active revision; the
@@ -2270,8 +2243,6 @@ export function MediaLibraryFilesPage() {
       setSelectedLibraryId("");
       setInvalidPath(false);
       setPath("");
-      setVisitedDirectories([]);
-      setKnownDirectoryPaths([]);
       resetBrowseState();
       syncLibraryRouteState("", "");
       void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
@@ -2285,8 +2256,8 @@ export function MediaLibraryFilesPage() {
     },
   });
 
-  // Rename/Delete success must clear or remap exactly the affected selection and
-  // directory-tree state; unrelated sibling selections stay independent.  The
+  // Rename/Delete success must clear or remap exactly the affected selection;
+  // unrelated sibling selections stay independent.  The
   // live read remains the only authority — this only forgets local memory that
   // the known result proves stale.
   const pruneAffectedBrowseState = useCallback(
@@ -2296,29 +2267,12 @@ export function MediaLibraryFilesPage() {
     ) => {
       if (renameRemap !== null) {
         const { from, to } = renameRemap;
-        const remap = (value: string) =>
-          value === from
-            ? to
-            : value.startsWith(from + "/")
-              ? to + value.slice(from.length)
-              : value;
-        const changed = (list: readonly string[], next: readonly string[]) =>
-          next.length !== list.length ||
-          next.some((value, index) => value !== list[index]);
         setSelectedFiles((current) => {
           if (!current.has(from)) return current;
           const next = new Set(current);
           next.delete(from);
           next.add(to);
           return next;
-        });
-        setKnownDirectoryPaths((current) => {
-          const next = current.map(remap);
-          return changed(current, next) ? next : current;
-        });
-        setVisitedDirectories((current) => {
-          const next = current.map(remap);
-          return changed(current, next) ? next : current;
         });
         return;
       }
@@ -2330,14 +2284,6 @@ export function MediaLibraryFilesPage() {
       setSelectedFiles((current) => {
         const next = new Set([...current].filter((path) => !isRemoved(path)));
         return next.size === current.size ? current : next;
-      });
-      setKnownDirectoryPaths((current) => {
-        const next = current.filter((path) => !isRemoved(path));
-        return next.length === current.length ? current : next;
-      });
-      setVisitedDirectories((current) => {
-        const next = current.filter((path) => !isRemoved(path));
-        return next.length === current.length ? current : next;
       });
     },
     [],
@@ -2920,33 +2866,6 @@ export function MediaLibraryFilesPage() {
           setDialog({ kind: "operations" });
         }}
       />
-      {editLoadError !== null && (
-        <div className="mf-files-banner" role="alert">
-          <span className="mf-banner-icon" aria-hidden="true">
-            <Icon name="info" />
-          </span>
-          <span className="mf-banner-text">{editLoadError}</span>
-          <span className="mf-banner-actions">
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => {
-                void listQuery.refetch();
-                void statusQuery.refetch();
-              }}
-            >
-              刷新 Active 状态
-            </button>
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => setEditLoadError(null)}
-            >
-              知道了
-            </button>
-          </span>
-        </div>
-      )}
       {saveNotice !== null && (
         <div className="mf-files-banner" role="status">
           <span className="mf-banner-icon" aria-hidden="true">
@@ -2976,7 +2895,16 @@ export function MediaLibraryFilesPage() {
         query={listQuery}
         unavailableTitle="媒体库列表不可用"
       >
-        {() => {
+        {({ isPending: librariesPending }) => {
+          if (librariesPending && listQuery.data === undefined) {
+            return (
+              <LibraryLoadingPanel
+                variant="cards"
+                title="正在读取媒体库信息"
+                detail="正在读取当前 Active 配置中已启用的媒体库…"
+              />
+            );
+          }
           if (libraries.length === 0) {
             return (
               <div className="mf-library-empty-block">
@@ -3038,7 +2966,7 @@ export function MediaLibraryFilesPage() {
                   openPath("");
                 }}
               >
-                请求的路径不是安全的媒体库相对路径。请通过目录树或面包屑重新进入。
+                请求的路径不是安全的媒体库相对路径。请通过面包屑或返回根目录重新进入。
               </MediaState>
             );
           }
@@ -3086,16 +3014,20 @@ export function MediaLibraryFilesPage() {
                 query={filesQuery}
                 unavailableTitle="媒体库文件读取不可用"
               >
-                {({ data: filesRead, refresh }) => {
+                {({ data: filesRead, isFetching, refresh }) => {
                   if (filesRead === undefined) {
                     return (
-                      <MediaState title="正在读取文件">
-                        正在读取{" "}
-                        {effectivePath === ""
-                          ? "媒体库根目录"
-                          : "“" + effectivePath + "”"}{" "}
-                        的文件…
-                      </MediaState>
+                      <LibraryLoadingPanel
+                        variant="rows"
+                        title="正在读取文件"
+                        detail={
+                          "正在读取" +
+                          (effectivePath === ""
+                            ? "媒体库根目录"
+                            : "“" + effectivePath + "”") +
+                          "的文件…"
+                        }
+                      />
                     );
                   }
                   if (!filesRead.ok) {
@@ -3123,10 +3055,6 @@ export function MediaLibraryFilesPage() {
                     <MediaBrowseView
                       model={model}
                       selected={selectedFiles}
-                      tree={buildDirectoryTree(model, [
-                        ...knownDirectoryPaths,
-                        ...visitedDirectories,
-                      ])}
                       view={view}
                       query={query}
                       page={cursorHistory.length + 1}
@@ -3152,6 +3080,7 @@ export function MediaLibraryFilesPage() {
                         });
                       }}
                       busy={commandMutation.isPending}
+                      refreshing={isFetching}
                       onClearSelection={() => setSelectedFiles(new Set())}
                       onRefresh={() => refreshBrowse(refresh)}
                       onOpenPath={openPath}
@@ -3217,14 +3146,6 @@ export function MediaLibraryFilesPage() {
                   );
                 }}
               </AuthorizedReadBoundary>
-              {filesQuery.data !== undefined &&
-                !filesQuery.isError &&
-                filesQuery.data.ok && (
-                  <DirectoryDiscovery
-                    model={filesQuery.data.model}
-                    onDiscover={discoverLiveDirectories}
-                  />
-                )}
             </div>
           );
         }}
@@ -3502,29 +3423,36 @@ export function MediaLibraryFilesPage() {
           }}
         />
       )}
-      {drawerOpen &&
-        (eligibleStorages.length > 0 ||
-          saveMediaLibraryMutation.isPending ||
-          saveError !== null) && (
-          <AddMediaLibraryDrawer
-            key={editInitial?.mediaLibraryId ?? "new"}
-            open={drawerOpen}
-            storages={
-              editInitial === undefined
-                ? eligibleStorages
-                : (editStorages ?? [])
-            }
-            onClose={closeDrawer}
-            onSave={(candidate) => {
-              setSaveError(null);
-              saveMediaLibraryMutation.mutate(candidate);
-            }}
-            saving={saveMediaLibraryMutation.isPending}
-            saveError={saveError}
-            initial={editInitial}
-            editing={editInitial !== undefined}
-          />
-        )}
+      {drawerOpen && (
+        <AddMediaLibraryDrawer
+          key={editTargetId ?? "new"}
+          open
+          storages={
+            editTargetId === null ? eligibleStorages : (editStorages ?? [])
+          }
+          onClose={beginDrawerClose}
+          onSave={(candidate) => {
+            setSaveError(null);
+            saveMediaLibraryMutation.mutate(candidate);
+          }}
+          saving={saveMediaLibraryMutation.isPending}
+          saveError={saveError}
+          initial={editInitial}
+          editing={editTargetId !== null}
+          closing={drawerExit.closing}
+          reading={editReading}
+          readError={editReadError}
+          onRetryRead={
+            editTargetId === null
+              ? undefined
+              : () => void openMediaLibraryEdit(editTargetId)
+          }
+          onRefreshAuthority={() => {
+            void listQuery.refetch();
+            void statusQuery.refetch();
+          }}
+        />
+      )}
       {removalDialogId !== null && (
         <DeleteMediaLibraryDialog
           preview={removalPreview}
@@ -3569,35 +3497,6 @@ export function MediaLibraryFilesPage() {
       )}
     </div>
   );
-}
-
-/**
- * Records the directories the live read actually shows so the lazy tree keeps
- * visited ancestors traversable. It stays a separate, stable child so the
- * discovery effect never resurrects pre-refresh paths the refresh dropped.
- */
-function DirectoryDiscovery({
-  model,
-  onDiscover,
-}: {
-  readonly model: MediaLibraryFilesModel;
-  readonly onDiscover: (paths: readonly string[]) => void;
-}) {
-  useEffect(() => {
-    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
-    const paths = model.entries
-      .filter((entry) => {
-        const parentPath = entry.path.split("/").slice(0, -1).join("/");
-        return (
-          entry.isDirectory &&
-          entry.traversable &&
-          !(currentDepth > 1 && parentPath === model.path)
-        );
-      })
-      .map((entry) => entry.path);
-    if (paths.length > 0) onDiscover(paths);
-  }, [model, onDiscover]);
-  return null;
 }
 
 export default MediaLibraryFilesPage;

@@ -1467,44 +1467,109 @@ body {
   align-items: stretch;
 }
 
-.mf-files-tree {
-  width: 230px;
-  flex-shrink: 0;
-  background: var(--files-surface);
-  border: 1px solid var(--files-line);
-  border-radius: 8px;
-  padding: 12px;
-}
-
-.mf-files-tree h3 {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
-  color: var(--files-ink);
-}
-
-.mf-files-tree ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* Coordinated wait state for a library-information or directory read. The
+   status text is the real feedback; the bars are a bounded placeholder that
+   stops moving under reduced motion. */
+.mf-library-loading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
+  padding: 18px 16px;
+  border: 1px solid #dfe6ef;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.mf-tree-row {
+.mf-library-loading-heading {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mf-library-loading-heading h3 {
+  margin: 0;
+  color: #14223c;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.mf-library-loading-heading p {
+  margin: 3px 0 0;
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+
+.mf-library-loading-pulse {
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #1268f5;
+  animation: mf-library-loading-pulse 1.1s ease-in-out infinite;
+}
+
+.mf-library-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mf-library-loading-cards .mf-library-loading-placeholder {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.mf-library-loading-cards .mf-library-loading-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 54px;
+  border-radius: 8px;
+}
+
+.mf-library-loading-bar {
+  display: block;
+  height: 38px;
   border-radius: 6px;
-  padding: 5px 8px;
+  background: linear-gradient(90deg, #eef3fa 0%, #f7fafe 50%, #eef3fa 100%);
+  background-size: 220% 100%;
+  animation: mf-library-loading-shimmer 1.4s linear infinite;
 }
 
-.mf-tree-row.is-selected {
-  background: var(--files-accent-soft);
+.mf-files-refresh-state {
+  margin: 0 0 6px;
+  color: #5f6b7d;
+  font-size: 13px;
 }
 
-.mf-tree-icon {
-  font-size: 0.9rem;
+@keyframes mf-library-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes mf-library-loading-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-library-loading-pulse,
+  .mf-library-loading-bar {
+    animation: none;
+  }
 }
 
 .mf-files-pane {
@@ -1780,10 +1845,6 @@ button.mf-grid-button {
     flex-direction: column;
   }
 
-  .mf-files-tree {
-    width: 100%;
-  }
-
   .mf-files-table td,
   .mf-files-table th {
     white-space: normal;
@@ -1820,12 +1881,6 @@ button.mf-grid-button {
   color: var(--files-muted);
 }
 
-/* Keep the readable Files content beside the fixed reference drawer instead
-   of allowing the drawer to hide the table's right-hand status/actions. */
-.mf-files-page:has(.mf-files-drawer) {
-  padding-right: 385px;
-}
-
 .mf-files-drawer {
   position: fixed;
   top: 68px;
@@ -1841,38 +1896,6 @@ button.mf-grid-button {
   border: 1px solid var(--files-line);
   border-radius: 8px;
   box-shadow: 0 14px 40px rgba(15, 23, 42, 0.2);
-}
-
-.mf-files-drawer-header {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 18px 18px 14px;
-  border-bottom: 1px solid var(--files-line);
-}
-
-.mf-files-drawer-header h2 {
-  margin: 0;
-  color: var(--files-ink);
-  font-size: 1.15rem;
-}
-
-.mf-files-drawer-header p {
-  margin: 5px 0 0;
-  color: var(--files-muted);
-  font-size: 0.82rem;
-}
-
-.mf-files-drawer-close {
-  border: none;
-  background: transparent;
-  color: var(--files-muted);
-  font-size: 1.45rem;
-  line-height: 1;
-  padding: 0 2px;
-  cursor: pointer;
 }
 
 .mf-files-drawer-steps {
@@ -2028,20 +2051,7 @@ button.mf-grid-button {
   line-height: 1.45;
 }
 
-.mf-files-drawer-footer {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  border-top: 1px solid var(--files-line);
-  padding: 12px 16px;
-}
-
 @media (max-width: 700px) {
-  .mf-files-page:has(.mf-files-drawer) {
-    padding-right: 24px;
-  }
-
   .mf-files-page-search {
     width: 100%;
     min-width: 0;
@@ -2327,10 +2337,6 @@ button.mf-grid-button {
   color: #18243b;
 }
 
-.mf-files-page:has(.mf-files-drawer) {
-  padding-right: 446px;
-}
-
 .mf-files-header {
   height: 62px;
   align-items: flex-start;
@@ -2512,76 +2518,6 @@ button.mf-grid-button {
   height: 535px;
   gap: 14px;
   align-items: stretch;
-}
-
-.mf-files-tree {
-  width: 203px;
-  height: 535px;
-  flex: 0 0 203px;
-  padding: 14px 8px;
-  border: 1px solid #dfe6ef;
-  border-radius: 5px;
-  background: #ffffff;
-  overflow-y: auto;
-}
-
-.mf-files-tree h3 {
-  margin: 0 0 12px 3px;
-  color: #101b30;
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 24px;
-}
-
-.mf-files-tree ul {
-  gap: 2px;
-}
-
-.mf-tree-row {
-  min-height: 34px;
-  gap: 5px;
-  padding: 5px 6px;
-  border-radius: 5px;
-  color: #263f70;
-  font-size: 15px;
-  line-height: 22px;
-}
-
-.mf-tree-row.is-selected {
-  background: #e5efff;
-  color: #2763c8;
-}
-
-.mf-tree-disclosure {
-  display: inline-flex;
-  width: 14px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 14px;
-  color: #3c5b90;
-}
-
-.mf-tree-disclosure svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.2;
-}
-
-.mf-tree-icon {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 22px;
-  color: #1268f5;
-}
-
-.mf-tree-icon svg {
-  width: 21px;
-  height: 21px;
-  stroke-width: 1.65;
 }
 
 .mf-files-pane {
@@ -3064,24 +3000,6 @@ button.mf-grid-button {
   box-shadow: 0 10px 28px rgba(43, 65, 97, 0.1);
 }
 
-.mf-files-drawer-header {
-  min-height: 68px;
-  padding: 17px 20px 13px;
-  border-color: #e8edf4;
-}
-
-.mf-files-drawer-header h2 {
-  font-size: 20px;
-  line-height: 27px;
-}
-
-.mf-files-drawer-close {
-  margin-top: 3px;
-  color: #263b61;
-  font-size: 25px;
-  font-weight: 300;
-}
-
 .mf-files-drawer-steps {
   padding: 15px 10px;
   border-color: #e7edf5;
@@ -3187,23 +3105,6 @@ button.mf-grid-button {
   transform: translateX(18px);
 }
 
-.mf-files-drawer-footer {
-  min-height: 68px;
-  padding: 12px 20px;
-  border-color: #e8edf4;
-}
-
-.mf-files-drawer-footer .mf-button {
-  min-width: 118px;
-  min-height: 44px;
-  border-radius: 5px;
-  font-size: 15px;
-}
-
-.mf-files-drawer-footer .mf-button-primary {
-  min-width: 118px;
-}
-
 @media (max-width: 850px) {
   .mf-shell-sidebar {
     position: fixed;
@@ -3270,8 +3171,7 @@ button.mf-grid-button {
     display: none;
   }
 
-  .mf-files-page,
-  .mf-files-page:has(.mf-files-drawer) {
+  .mf-files-page {
     padding: 18px 14px 24px;
   }
 
@@ -3290,7 +3190,6 @@ button.mf-grid-button {
     flex-direction: column;
   }
 
-  .mf-files-tree,
   .mf-files-pane {
     width: 100%;
     height: auto;
@@ -3471,8 +3370,54 @@ button.mf-grid-button {
   background: #f1f5fd;
 }
 
+.mf-card-menu-item {
+  white-space: nowrap;
+}
+
+.mf-card-menu-item svg {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
+.mf-card-menu-item:hover,
+.mf-card-menu-item:focus-visible {
+  background: #f1f5fd;
+}
+
+.mf-card-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mf-card-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .mf-card-menu-danger {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 8px 8px;
   color: var(--bad);
+}
+
+.mf-card-menu-danger:hover,
+.mf-card-menu-danger:focus-visible {
+  background: #fef3f2;
+}
+
+/* The anchored menu never clips the card edge: it stays inside the viewport
+   and re-anchors near the right edge on narrow screens. */
+.mf-card-menu {
+  max-width: calc(100vw - 24px);
+}
+
+@media (max-width: 480px) {
+  .mf-card-menu {
+    right: -6px;
+    min-width: 156px;
+  }
 }
 
 .mf-library-more-popover {

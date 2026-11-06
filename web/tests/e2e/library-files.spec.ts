@@ -34,9 +34,9 @@ async function openFiles(
   if (expectTable) await expect(page.getByRole("table")).toBeVisible();
 }
 
-/** The directory pane; tree buttons never collide with table row buttons. */
-function directoryTree(page: Page): ReturnType<Page["getByLabel"]> {
-  return page.getByLabel("目录", { exact: true });
+/** Open one directory through its visible table row button. */
+async function openDirectory(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name, exact: true }).click();
 }
 
 test("the shell 文件 entry opens ResourceLibrary Files at its new address", async ({
@@ -93,7 +93,7 @@ test("ResourceLibrary edit is prefilled, immutable-ID, recoverable and atomicall
   await openFiles(page);
   await page.getByRole("button", { name: "资源库操作 Resources" }).click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  const drawer = page.getByRole("dialog", { name: "编辑资源库" });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByLabel("资源库 ID *")).toBeDisabled();
   await expect(drawer.getByLabel("资源库 ID *")).toHaveValue("resources");
@@ -138,15 +138,17 @@ test("ResourceLibrary edit projection failure is visible and never retried autom
   await openFiles(page);
   await page.getByRole("button", { name: "资源库操作 Resources" }).click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  await expect(page.getByRole("alert")).toContainText("未执行任何更改");
+  const card = page.getByRole("dialog", { name: "编辑资源库" });
+  await expect(card.getByRole("alert")).toContainText("未执行任何更改");
   await expect(
-    page.getByRole("button", { name: "刷新 Active 状态" }),
+    card.getByRole("button", { name: "刷新 Active 状态" }),
   ).toBeVisible();
+  await expect(card.getByRole("button", { name: "重新读取" })).toBeVisible();
+  // The failed read offers no candidate and no Save.
+  await expect(card.getByLabel("名称 *")).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "保存并激活" })).toHaveCount(0);
   await page.waitForTimeout(500);
   expect(reads).toHaveLength(1);
-  await expect(
-    page.getByRole("complementary", { name: "编辑资源库" }),
-  ).toHaveCount(0);
 });
 
 test("ResourceLibrary edit uses Storage choices from the exact edit Active, not cached status", async ({
@@ -158,7 +160,7 @@ test("ResourceLibrary edit uses Storage choices from the exact edit Active, not 
   await openFiles(page);
   await page.getByRole("button", { name: "资源库操作 Resources" }).click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  const drawer = page.getByRole("dialog", { name: "编辑资源库" });
   await drawer.getByRole("button", { name: "下一步" }).click();
   await expect(drawer.getByLabel("Storage *")).toHaveValue(
     "active-new-storage",
@@ -178,10 +180,10 @@ test("ResourceLibrary edit fails visibly when its exact Storage binding cannot b
   await openFiles(page);
   await page.getByRole("button", { name: "资源库操作 Resources" }).click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  await expect(page.getByRole("alert")).toContainText("无法在编辑表单中表示");
-  await expect(
-    page.getByRole("complementary", { name: "编辑资源库" }),
-  ).toHaveCount(0);
+  const card = page.getByRole("dialog", { name: "编辑资源库" });
+  await expect(card.getByRole("alert")).toContainText("无法在编辑表单中表示");
+  await expect(card.getByLabel("名称 *")).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "保存并激活" })).toHaveCount(0);
 });
 
 test("ResourceLibrary edit save failure retains input and disable offers configuration recovery", async ({
@@ -202,7 +204,7 @@ test("ResourceLibrary edit save failure retains input and disable offers configu
   const trigger = page.getByRole("button", { name: "资源库操作 Resources" });
   await trigger.click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  let drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  let drawer = page.getByRole("dialog", { name: "编辑资源库" });
   await drawer.getByLabel("名称 *").fill("Retained Resource");
   await drawer.getByRole("button", { name: "下一步" }).click();
   await drawer.getByRole("button", { name: "下一步" }).click();
@@ -216,7 +218,7 @@ test("ResourceLibrary edit save failure retains input and disable offers configu
 
   await trigger.click();
   await page.getByRole("menuitem", { name: "编辑资源库" }).click();
-  drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  drawer = page.getByRole("dialog", { name: "编辑资源库" });
   await drawer.getByLabel("状态").uncheck();
   await drawer.getByRole("button", { name: "下一步" }).click();
   await drawer.getByRole("button", { name: "下一步" }).click();
@@ -266,11 +268,12 @@ test("Files success state presents the reference composition with live Storage r
     strip.getByRole("button", { name: "source", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("路径: /")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "目录" })).toBeVisible();
-  await expect(
-    directoryTree(page).getByRole("button", { name: "Resources", exact: true }),
-  ).toBeVisible();
+  // No in-page directory tree: the released width holds the file pane only.
+  await expect(page.getByRole("heading", { name: "目录" })).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: "文件条目 Movies" }),
+  ).toBeVisible();
 
   // Physical rows come from the live Storage read, with the bounded physical
   // columns.  The Files page presents physical file facts and explicit actions:
@@ -300,7 +303,7 @@ test("Files success state presents the reference composition with live Storage r
   await expect(page.getByRole("menuitem", { name: "整理" })).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(
-    directoryTree(page).getByRole("button", { name: "Movies", exact: true }),
+    page.getByRole("row", { name: "文件条目 Movies" }),
   ).toBeVisible();
   await expect(page.getByText(/sample\.mkv/)).toBeVisible();
   await expect(page.getByText("共 7 个项目")).toBeVisible();
@@ -325,11 +328,9 @@ test("directory navigation, breadcrumb return, refresh and selection reset", asy
   const apiRequests = apiRequestsOf(page);
   await openFiles(page);
 
-  await directoryTree(page)
-    .getByRole("button", { name: "Movies", exact: true })
-    .click();
+  await openDirectory(page, "Movies");
   await expect(
-    directoryTree(page).getByRole("button", { name: "Avatar (2009)" }),
+    page.getByRole("row", { name: "文件条目 Avatar (2009)" }),
   ).toBeVisible();
   await expect(
     page.getByRole("row", { name: /Behind\.The\.Scenes\.mkv/ }),
@@ -340,19 +341,19 @@ test("directory navigation, breadcrumb return, refresh and selection reset", asy
     .getByRole("checkbox", { name: "选择 Behind.The.Scenes.mkv" })
     .check();
   await expect(page.getByText("已选择 1 个文件")).toBeVisible();
-  await directoryTree(page)
-    .getByRole("button", { name: "Avatar (2009)" })
-    .click();
+  await openDirectory(page, "Avatar (2009)");
   await expect(
     page.getByText("已选择 0 个文件", { exact: true }),
   ).toBeVisible();
 
-  // The directory tree keeps visited ancestors traversable.
-  await directoryTree(page)
+  // The breadcrumb keeps visited ancestors reachable: return to Movies and
+  // open its sibling through the visible row.
+  await page
+    .getByRole("navigation", { name: "资源库面包屑" })
     .getByRole("button", { name: "Movies", exact: true })
     .click();
   await expect(
-    directoryTree(page).getByRole("button", { name: "Inception (2010)" }),
+    page.getByRole("row", { name: "文件条目 Inception (2010)" }),
   ).toBeVisible();
 
   // Breadcrumb home returns to the ResourceLibrary root.
@@ -804,9 +805,7 @@ test("empty and recoverable failure states preserve the Files context", async ({
   await openFiles(page);
 
   // Enter a directory the fake Storage reports as empty.
-  await directoryTree(page)
-    .getByRole("button", { name: "Others", exact: true })
-    .click();
+  await openDirectory(page, "Others");
   await expect(
     page.getByText(/此目录为空。可以刷新或返回上一级目录。/),
   ).toBeVisible();
@@ -938,12 +937,8 @@ test("controlled 1536x1024 success-state evidence screenshot", async ({
 
   // Recreate the reference state: browse Movies -> Avatar (2009) and select
   // the video file so the selected row and footer counts are visible.
-  await directoryTree(page)
-    .getByRole("button", { name: "Movies", exact: true })
-    .click();
-  await directoryTree(page)
-    .getByRole("button", { name: "Avatar (2009)", exact: true })
-    .click();
+  await openDirectory(page, "Movies");
+  await openDirectory(page, "Avatar (2009)");
   await expect(page.getByText(/Avatar\.2009\.1080p\.mkv/)).toBeVisible();
   await page
     .getByRole("checkbox", { name: "选择 Avatar.2009.1080p.mkv" })
@@ -951,12 +946,15 @@ test("controlled 1536x1024 success-state evidence screenshot", async ({
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
 
   await page.getByRole("button", { name: "+ 添加资源库" }).click();
-  await expect(page.getByRole("heading", { name: "添加资源库" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "1 基本信息" })).toBeVisible();
+  const card = page.getByRole("dialog", { name: "添加资源库" });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("button", { name: "1 基本信息" })).toBeVisible();
 
   await page.screenshot({
     path: "test-results/files-success-1536x1024.png",
     fullPage: false,
+    // The shared card's entrance is short; capture the settled state.
+    animations: "disabled",
   });
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
 });
@@ -968,12 +966,10 @@ test("refresh stops presenting a directory removed outside MediaFlow", async ({
   const apiRequests = apiRequestsOf(page);
   await openFiles(page);
 
-  // A live read discovers the nested directory, so it is real tree state.
-  await directoryTree(page)
-    .getByRole("button", { name: "Movies", exact: true })
-    .click();
+  // A live read shows the nested directory as a real table row.
+  await openDirectory(page, "Movies");
   await expect(
-    directoryTree(page).getByRole("button", { name: "Avatar (2009)" }),
+    page.getByRole("row", { name: "文件条目 Avatar (2009)" }),
   ).toBeVisible();
   await page.getByRole("checkbox", { name: "选择 Avatar (2009)" }).check();
   await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();
@@ -987,17 +983,17 @@ test("refresh stops presenting a directory removed outside MediaFlow", async ({
     `/__test__/remove-directory?path=${encodeURIComponent("Movies/Avatar (2009)")}`,
   );
 
-  // 刷新 re-reads live Storage: the removed directory is gone from the tree,
-  // its stale selection is cleared, and the surviving entries stay visible.
+  // 刷新 re-reads live Storage: the removed directory is gone from the
+  // listing, its stale selection is cleared, and surviving entries stay.
   await page.getByRole("button", { name: /刷新/ }).click();
   await expect(
-    directoryTree(page).getByRole("button", { name: "Avatar (2009)" }),
+    page.getByRole("row", { name: "文件条目 Avatar (2009)" }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("checkbox", { name: "选择 Avatar (2009)" }),
   ).toHaveCount(0);
   await expect(
-    directoryTree(page).getByRole("button", { name: "Inception (2010)" }),
+    page.getByRole("row", { name: "文件条目 Inception (2010)" }),
   ).toBeVisible();
   await expect(page.getByText(/已选择 0 个/)).toBeVisible();
 
@@ -1026,28 +1022,21 @@ test("a live directory whose exact name ends with a space stays distinguishable 
   await openFiles(page);
 
   // The live root contains the parent directory; enter it.
-  await directoryTree(page).getByRole("button", { name: "电影" }).click();
+  await openDirectory(page, "电影");
 
-  const exactTreeButton = directoryTree(page).getByRole("button", {
-    name: /SSH\s?（名称结尾包含空格）/,
-  });
-  await expect(exactTreeButton).toBeVisible();
-  // The presentation makes the invisible boundary character explicit while
+  // The table row makes the invisible boundary character explicit while
   // rendering the server value itself unchanged.
-  await expect(exactTreeButton.locator(".mf-ws-marker")).toHaveText("␣");
-  await expect(exactTreeButton.locator(".mf-ws-value")).toHaveText("SSH ");
-
-  // The table row keeps the same exact identity and distinction.
   const exactRow = page.getByRole("row", {
     name: /SSH\s?（名称结尾包含空格）/,
   });
+  await expect(exactRow).toBeVisible();
   await expect(exactRow.locator(".mf-ws-value")).toHaveText("SSH ");
   await expect(
     exactRow.getByRole("checkbox", { name: /选择 SSH\s?（名称结尾包含空格）/ }),
   ).toBeVisible();
 
-  // The operator opens the exact live directory from the directory tree.
-  await exactTreeButton.click();
+  // The operator opens the exact live directory from its visible row.
+  await exactRow.getByRole("button", { name: /SSH/ }).click();
   await expect(page.getByText(/inside\.mkv/)).toBeVisible();
   await expect(page.getByText("路径无效")).toHaveCount(0);
   // No bounded not-found state was fabricated for a directory that exists.
@@ -1533,9 +1522,7 @@ test("a ten-row directory scrolls to the final row with an unclipped portal menu
   await page.setViewportSize({ width: 1536, height: 1024 });
   await openFiles(page);
 
-  await directoryTree(page)
-    .getByRole("button", { name: "TV", exact: true })
-    .click();
+  await openDirectory(page, "TV");
   await expect(page.getByText("共 12 个项目")).toBeVisible();
   const viewport = page.locator(".mf-files-table-scroll");
   await expect
@@ -1769,9 +1756,9 @@ test("Delete in one browser context does not change another context's Copy journ
     expect(deleteCommands).toHaveLength(1);
     expect(impact.scopeDigest).toMatch(/^[a-f0-9]{64}$/);
 
-    // The other session retains its independent source tree and destination.
+    // The other session retains its independent source listing and context.
     await expect(
-      directoryTree(pageB).getByRole("button", { name: "Movies", exact: true }),
+      pageB.getByRole("row", { name: "文件条目 Movies" }),
     ).toBeVisible();
     await pageB
       .getByRole("row", { name: /文件条目 sample\.mkv/ })

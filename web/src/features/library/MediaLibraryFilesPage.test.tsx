@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -279,9 +279,11 @@ describe("MediaLibrary Files journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/medialib/files");
 
-    const tree = await screen.findByLabelText("目录", { exact: true });
+    const folderRow = await screen.findByRole("row", {
+      name: "文件条目 Breaking Bad",
+    });
     await user.click(
-      await within(tree).findByRole("button", { name: "Breaking Bad" }),
+      within(folderRow).getByRole("button", { name: "Breaking Bad" }),
     );
     expect(
       await screen.findByRole("row", {
@@ -334,9 +336,11 @@ describe("MediaLibrary Files journey", () => {
     );
 
     // Entering a directory records the exact library-relative path.
-    const tree = await screen.findByLabelText("目录", { exact: true });
+    const folderRow = await screen.findByRole("row", {
+      name: "文件条目 Breaking Bad",
+    });
     await user.click(
-      await within(tree).findByRole("button", { name: "Breaking Bad" }),
+      within(folderRow).getByRole("button", { name: "Breaking Bad" }),
     );
     await screen.findByRole("row", { name: /Season 1/ });
     await waitFor(() =>
@@ -577,6 +581,126 @@ describe("MediaLibrary Files journey", () => {
       "/api/v1/system/status",
     ]);
     expect(new Set(requestedUrls).size).toBe(requestedUrls.length);
+  });
+
+  it("shows a real library-information wait state instead of a false empty MediaLibrary page", async () => {
+    let resolveList!: (response: Response) => void;
+    const listResponse = new Promise<Response>((resolve) => {
+      resolveList = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return listResponse;
+      if (url === "/api/v1/system/status") {
+        return jsonResponse({
+          system: {
+            configuration_valid: true,
+            configuration_authority: "MANAGED",
+            configuration_snapshot_id: "active-1",
+          },
+          storages: { total: 0, truncated: false, items: [] },
+          resource_libraries: { total: 0, truncated: false, items: [] },
+        });
+      }
+      throw new Error(`unexpected test request: ${url}`);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    const loading = await screen.findByRole("status", {
+      name: "正在读取媒体库信息",
+    });
+    expect(loading).toBeVisible();
+    expect(within(loading).getByText(/正在读取当前 Active 配置/)).toBeVisible();
+    // A not-yet-returned list is never presented as "no MediaLibrary exists".
+    expect(screen.queryByText("尚未添加媒体库")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+
+    await act(async () => {
+      resolveList(
+        jsonResponse({
+          surface: "media_libraries",
+          items: [],
+          total: 0,
+          sideEffects: "none",
+        }),
+      );
+    });
+    expect(await screen.findByText("尚未添加媒体库")).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "正在读取媒体库信息" }),
+    ).toBeNull();
+  });
+
+  it("keeps the previous context out of a slow directory read and ignores its late response after returning", async () => {
+    const user = userEvent.setup();
+    let resolveFolder!: (response: Response) => void;
+    const folderResponse = new Promise<Response>((resolve) => {
+      resolveFolder = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.includes("/media-libraries/tv/files")) {
+        return jsonResponse(
+          filesDocument("tv", "", [entry("电影", "电影", { directory: true })]),
+        );
+      }
+      if (
+        url.includes("path=Breaking+Bad") ||
+        url.includes("path=Breaking%20Bad")
+      ) {
+        return folderResponse;
+      }
+      return jsonResponse(
+        filesDocument("movies", "", [
+          entry("Breaking Bad", "Breaking Bad", { directory: true }),
+        ]),
+      );
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    const folderRow = await screen.findByRole("row", {
+      name: "文件条目 Breaking Bad",
+    });
+    await user.click(
+      within(folderRow).getByRole("button", { name: "Breaking Bad" }),
+    );
+
+    const loading = await screen.findByRole("status", {
+      name: "正在读取文件",
+    });
+    expect(loading).toBeVisible();
+    // The root listing is not presented as the new directory, and the real
+    // empty-directory text is never shown while the read is still outstanding.
+    expect(
+      screen.queryByRole("row", { name: "文件条目 Breaking Bad" }),
+    ).toBeNull();
+    expect(screen.queryByText(/此目录为空/)).toBeNull();
+
+    // Switching to another library stays responsive while the abandoned read
+    // is still outstanding, and begins from that library's own root.
+    await user.click(screen.getByRole("button", { name: "夸克网盘" }));
+    expect(
+      await screen.findByRole("row", { name: "文件条目 电影" }),
+    ).toBeVisible();
+    expect(screen.getByText("路径: /TV Shows")).toBeVisible();
+
+    await act(async () => {
+      resolveFolder(
+        jsonResponse(
+          filesDocument("movies", "Breaking Bad", [
+            entry("Season 1", "Breaking Bad/Season 1", { directory: true }),
+          ]),
+        ),
+      );
+    });
+    // The late response belongs to the abandoned library/path and never
+    // replaces the listing the operator actually switched to.
+    expect(screen.queryByRole("row", { name: /Season 1/ })).toBeNull();
+    expect(screen.queryByText("文件条目 Breaking Bad")).toBeNull();
+    expect(screen.getByRole("row", { name: "文件条目 电影" })).toBeVisible();
   });
 });
 

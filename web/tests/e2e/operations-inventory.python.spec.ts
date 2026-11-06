@@ -362,7 +362,9 @@ async function openOrganizingSource(
       .first()
       .click();
   }
-  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  // The library page no longer has an in-page directory tree; the live table
+  // is the browsing surface.
+  await expect(page.getByRole("table")).toBeVisible();
 }
 
 /** The server-reported run total rendered beside the bounded page. */

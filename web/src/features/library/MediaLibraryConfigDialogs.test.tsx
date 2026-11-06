@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactElement } from "react";
@@ -38,21 +38,21 @@ const storages: readonly SystemStorage[] = [
   },
 ];
 
-function renderWithQuery(element: ReactElement): void {
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({
-          defaultOptions: {
-            queries: {
-              retry: false,
-              refetchOnWindowFocus: false,
-              refetchOnReconnect: false,
-            },
-          },
-        })
-      }
-    >
+function newQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+      },
+    },
+  });
+}
+
+function renderWithQuery(element: ReactElement) {
+  return render(
+    <QueryClientProvider client={newQueryClient()}>
       {element}
     </QueryClientProvider>,
   );
@@ -108,7 +108,7 @@ describe("AddMediaLibraryDrawer", () => {
         saveError={null}
       />,
     );
-    expect(screen.getByRole("heading", { name: "编辑媒体库" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "编辑媒体库" })).toBeVisible();
     expect(screen.getByLabelText("媒体库 ID *")).toBeDisabled();
     expect(screen.getByLabelText("媒体库 ID *")).toHaveValue("movies");
     expect(screen.getByLabelText("名称 *")).toHaveValue("电影库");
@@ -340,9 +340,82 @@ describe("AddMediaLibraryDrawer", () => {
         saveError={null}
       />,
     );
+    expect(screen.queryByRole("dialog", { name: "添加媒体库" })).toBeNull();
+  });
+
+  it("keeps a stable reading card and seeds only the exact projection it returns", async () => {
+    const client = newQueryClient();
+    const readingDrawer = (ready: boolean) => (
+      <QueryClientProvider client={client}>
+        <AddMediaLibraryDrawer
+          open
+          editing
+          reading={!ready}
+          storages={ready ? storages : []}
+          initial={
+            ready
+              ? {
+                  mediaLibraryId: "movies",
+                  name: "电影库",
+                  enabled: true,
+                  storageId: "cloud-1",
+                  rootPath: "Media/Movies",
+                }
+              : undefined
+          }
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+          saving={false}
+          saveError={null}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(readingDrawer(false));
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
     expect(
-      screen.queryByRole("complementary", { name: "添加媒体库" }),
+      within(card).getByText(/正在读取该媒体库的精确保存状态/),
+    ).toBeVisible();
+    expect(within(card).queryByLabelText("名称 *")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: "保存并激活" }),
     ).toBeNull();
+
+    rerender(readingDrawer(true));
+    expect(await screen.findByLabelText("名称 *")).toHaveValue("电影库");
+    expect(screen.getByLabelText("媒体库 ID *")).toBeDisabled();
+    expect(screen.getByLabelText("媒体库 ID *")).toHaveValue("movies");
+    expect(screen.getByRole("button", { name: "下一步" })).toBeEnabled();
+  });
+
+  it("offers the existing re-read path when the explicit edit read fails", async () => {
+    const user = userEvent.setup();
+    const onRetryRead = vi.fn();
+    const onClose = vi.fn();
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        readError="无法读取媒体库编辑信息，未执行任何更改。请重新读取；若仍失败，请刷新 Active 状态。"
+        storages={[]}
+        onClose={onClose}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        onRetryRead={onRetryRead}
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    expect(within(card).getByRole("alert")).toHaveTextContent(
+      "无法读取媒体库编辑信息",
+    );
+    expect(within(card).queryByLabelText("名称 *")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: "保存并激活" }),
+    ).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "重新读取" }));
+    expect(onRetryRead).toHaveBeenCalledTimes(1);
+    await user.click(within(card).getByRole("button", { name: "取消" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

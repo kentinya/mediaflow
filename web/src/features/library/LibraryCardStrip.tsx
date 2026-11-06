@@ -96,6 +96,7 @@ export function CardActionMenu({
   libraryId,
   libraryName,
   triggerLabel,
+  actionLabel = "资源库",
   onRemoveRequest,
   onEditRequest,
   editLabel = "编辑资源库",
@@ -105,6 +106,8 @@ export function CardActionMenu({
   readonly libraryId: string;
   readonly libraryName: string;
   readonly triggerLabel: string;
+  /** The object kind this menu acts on: 资源库 or 媒体库. */
+  readonly actionLabel?: string;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly onEditRequest?: (libraryId: string) => void;
   readonly editLabel?: string;
@@ -127,6 +130,7 @@ export function CardActionMenu({
         aria-label={triggerLabel}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-busy={disabled}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
@@ -137,7 +141,7 @@ export function CardActionMenu({
           ref={popoverRef}
           className="mf-card-menu"
           role="menu"
-          aria-label={`资源库操作 ${libraryName}`}
+          aria-label={`${actionLabel}操作 ${libraryName}`}
         >
           {onEditRequest && (
             <button
@@ -163,7 +167,6 @@ export function CardActionMenu({
             }}
           >
             <Icon name="trash" />
-            {""}
             {removeLabel}
           </button>
         </div>
@@ -225,6 +228,7 @@ function LibraryCard({
           libraryId={library.id}
           libraryName={label}
           triggerLabel={`${actionLabel}操作 ${label}`}
+          actionLabel={actionLabel}
           onRemoveRequest={onRemoveRequest}
           onEditRequest={onEditRequest}
           editLabel={editLabel}
@@ -344,7 +348,7 @@ export function LibraryCardStrip({
               }
               aria-haspopup="dialog"
               aria-expanded={moreOpen}
-              aria-label="更多资源库"
+              aria-label={`更多${menuLabel}`}
               onClick={() => setMoreOpen((current) => !current)}
             >
               <span className="mf-library-card-icon" aria-hidden="true">
@@ -360,15 +364,15 @@ export function LibraryCardStrip({
                 ref={popoverRef}
                 className="mf-library-more-popover"
                 role="dialog"
-                aria-label="更多资源库"
+                aria-label={`更多${menuLabel}`}
               >
-                <h3>更多资源库</h3>
+                <h3>更多{menuLabel}</h3>
                 <div className="mf-more-search">
                   <Icon name="search" />
                   <input
                     type="search"
-                    placeholder="搜索资源库"
-                    aria-label="搜索资源库"
+                    placeholder={`搜索${menuLabel}`}
+                    aria-label={`搜索${menuLabel}`}
                     value={overflowQuery}
                     onChange={(event) => setOverflowQuery(event.target.value)}
                   />
@@ -396,7 +400,7 @@ export function LibraryCardStrip({
                     </li>
                   ))}
                   {filteredOverflow.length === 0 && (
-                    <li className="mf-more-empty">没有匹配的资源库。</li>
+                    <li className="mf-more-empty">没有匹配的{menuLabel}。</li>
                   )}
                 </ul>
               </div>

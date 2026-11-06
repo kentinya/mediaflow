@@ -70,7 +70,7 @@ async function fillAddDrawer(
     readonly enabled?: boolean;
   },
 ): Promise<void> {
-  const drawer = page.getByRole("complementary", { name: "添加媒体库" });
+  const drawer = page.getByRole("dialog", { name: "添加媒体库" });
   await page.getByRole("button", { name: "+ 添加媒体库" }).click();
   await expect(page.getByRole("heading", { name: "添加媒体库" })).toBeVisible();
 
@@ -100,7 +100,7 @@ test("the Add drawer stays closed on normal entry and reload", async ({
   page,
 }) => {
   await openMediaLibrary(page);
-  const drawer = page.getByRole("complementary", { name: "添加媒体库" });
+  const drawer = page.getByRole("dialog", { name: "添加媒体库" });
 
   // Explicit intent only: neither mount nor reload opens the drawer.
   await expect(drawer).toHaveCount(0);
@@ -139,7 +139,7 @@ test("MediaLibrary edit preloads exact Active values and activates one immutable
   await openMediaLibrary(page);
   await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  const drawer = page.getByRole("dialog", { name: "编辑媒体库" });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByLabel("媒体库 ID *")).toBeDisabled();
   await expect(drawer.getByLabel("媒体库 ID *")).toHaveValue("movies");
@@ -180,10 +180,14 @@ test("MediaLibrary edit projection failure remains visible without automatic ret
   await openMediaLibrary(page);
   await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  await expect(page.getByRole("alert")).toContainText("未执行任何更改");
+  const card = page.getByRole("dialog", { name: "编辑媒体库" });
+  await expect(card.getByRole("alert")).toContainText("未执行任何更改");
   await expect(
-    page.getByRole("button", { name: "刷新 Active 状态" }),
+    card.getByRole("button", { name: "刷新 Active 状态" }),
   ).toBeVisible();
+  await expect(card.getByRole("button", { name: "重新读取" })).toBeVisible();
+  await expect(card.getByLabel("名称 *")).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "保存并激活" })).toHaveCount(0);
   await page.waitForTimeout(500);
   expect(reads).toHaveLength(1);
 });
@@ -195,7 +199,7 @@ test("MediaLibrary edit does not replace an exact-Active Storage with cached sta
   await openMediaLibrary(page);
   await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  const drawer = page.getByRole("dialog", { name: "编辑媒体库" });
   await drawer.getByRole("button", { name: "下一步" }).click();
   await expect(drawer.getByLabel("Storage *")).toHaveValue(
     "active-new-storage",
@@ -213,10 +217,10 @@ test("MediaLibrary edit fails visibly when the exact Storage binding is unrepres
   await openMediaLibrary(page);
   await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  await expect(page.getByRole("alert")).toContainText("无法在编辑表单中表示");
-  await expect(
-    page.getByRole("complementary", { name: "编辑媒体库" }),
-  ).toHaveCount(0);
+  const card = page.getByRole("dialog", { name: "编辑媒体库" });
+  await expect(card.getByRole("alert")).toContainText("无法在编辑表单中表示");
+  await expect(card.getByLabel("名称 *")).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "保存并激活" })).toHaveCount(0);
 });
 
 test("MediaLibrary edit save failure retains values, avoids replay and returns focus", async ({
@@ -239,7 +243,7 @@ test("MediaLibrary edit save failure retains values, avoids replay and returns f
   });
   await trigger.click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  const drawer = page.getByRole("dialog", { name: "编辑媒体库" });
   await drawer.getByLabel("名称 *").fill("保留的媒体库名称");
   await drawer.getByRole("button", { name: "下一步" }).click();
   await drawer.getByRole("button", { name: "下一步" }).click();
@@ -265,7 +269,7 @@ test("disabling a MediaLibrary edit focuses the configuration recovery handoff",
   await openMediaLibrary(page);
   await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
   await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
-  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  const drawer = page.getByRole("dialog", { name: "编辑媒体库" });
   await drawer.getByLabel("状态").uncheck();
   await drawer.getByRole("button", { name: "下一步" }).click();
   await drawer.getByRole("button", { name: "下一步" }).click();
@@ -305,9 +309,7 @@ test("an enabled Save becomes the exact Active library, is selected and browseab
   await page.getByRole("button", { name: "保存" }).click();
 
   // Exactly one bounded Save was submitted and the drawer closed on success.
-  await expect(
-    page.getByRole("complementary", { name: "添加媒体库" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "添加媒体库" })).toHaveCount(0);
   expect(posts).toHaveLength(1);
 
   // The saved enabled library is the selected, actually browseable library.
@@ -365,7 +367,7 @@ test("an invalid candidate is blocked with inline validation and no mutation", a
     }
   });
   await openMediaLibrary(page);
-  const drawer = page.getByRole("complementary", { name: "添加媒体库" });
+  const drawer = page.getByRole("dialog", { name: "添加媒体库" });
 
   await page.getByRole("button", { name: "+ 添加媒体库" }).click();
   // An uppercase ID violates the image's creation rule and never advances.
@@ -408,9 +410,7 @@ test("a rejected Save preserves the prior Active and retains correctable input",
 
   // The candidate is not published, the failure is explained and the input is
   // retained so the operator can correct it in place.
-  await expect(
-    page.getByRole("complementary", { name: "添加媒体库" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "添加媒体库" })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("旧 Active 仍在使用");
   await page.getByRole("button", { name: /1 基本信息/ }).click();
   await expect(page.getByLabel("名称 *")).toHaveValue("E2E 候选库");
@@ -443,9 +443,7 @@ test("a duplicate ID is refused with a correctable identity", async ({
 
   await page.getByRole("button", { name: "保存" }).click();
   await expect(page.getByRole("alert")).toContainText("媒体库 ID 已存在");
-  await expect(
-    page.getByRole("complementary", { name: "添加媒体库" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "添加媒体库" })).toBeVisible();
   // Exactly one submission; the refused candidate is never replayed.
   expect(posts).toHaveLength(1);
 });
@@ -454,7 +452,7 @@ test("an unavailable Storage and an unsafe root are refused before publication",
   page,
 }) => {
   await openMediaLibrary(page);
-  const drawer = page.getByRole("complementary", { name: "添加媒体库" });
+  const drawer = page.getByRole("dialog", { name: "添加媒体库" });
   await fillAddDrawer(page, {
     name: "E2E 缺存储",
     id: "e2e-no-storage",
@@ -609,9 +607,7 @@ test("the Add and removal journeys stay usable at the narrow viewport", async ({
     root: "Media/Narrow",
   });
   await page.getByRole("button", { name: "保存" }).click();
-  await expect(
-    page.getByRole("complementary", { name: "添加媒体库" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "添加媒体库" })).toHaveCount(0);
   await expect(page).toHaveURL(/mediaLibraryId=e2e-narrow/);
 
   // The newly saved library is selected, so its removal menu is available.
