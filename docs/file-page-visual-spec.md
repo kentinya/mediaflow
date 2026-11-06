@@ -1,6 +1,6 @@
 # Files Page Visual Specification
 
-Status: CURRENT visual baseline — accepted37/38 with accepted46 readable actions/local-status updates.
+Status: CURRENT — accepted50 cards/tree removal/loading; retained37/38/46 business and shell rules.
 Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
 Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
 [separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
@@ -11,10 +11,10 @@ Original revision/delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
 Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
-## TARGET — Slice50 弹卡、去目录树与加载体验（ACTIVE）
+## CURRENT — Slice50 弹卡、去目录树与加载体验（PASS / CLOSED）
 
-[Slice50](../SLICE.md) / `V2-UX-009–012` 是用户授权的规划目标，尚未实施/验收。
-本节在目标实现/验收中替换下方 CURRENT 的 Directory Pane 和 Add/Edit drawer 呈现约束；
+[Slice50](../SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
+本节现行呈现替换原 Directory Pane 和 Add/Edit drawer 约束；
 其他浏览、命令、真实状态及安全规则保留。旧参考图片不可改写，也不要求未来同时保留与
 新目标冲突的树/抽屉布局。
 
@@ -33,10 +33,10 @@ Do not edit/regenerate/compress/recolor/replace the user's reference image.
   及开关弹卡不重播整页切换动画，既有合法局部动效保留。占位仅用于未就绪区域，快速响应/
   有效缓存可直接显示内容，不强制阶段播放或为动画串行请求。
 
-目标视觉证据覆盖桌面 `1536×1024`、`390px` 窄屏、卡片开/关、长名称/路径、菜单普通/危险
+已审视觉证据覆盖桌面 `1536×1024`、`390px` 窄屏、卡片开/关、长名称/路径、菜单普通/危险
 状态、键盘/焦点、慢读取/真实空态/失败、快速切换及 reduced-motion；动态效果须实际查看，
 不只检查 CSS/截图。以用户八项结果和自动化基准验收，不增加固定像素/动画时长门槛。
-下方 CURRENT 是尚未替换的已接受基线，不宣称本节已经交付。
+下方历史图形锚点仅解释原参考；与本节冲突的树/抽屉几何不再要求，业务与安全规则保留。
 
 ## Current Presentation Boundary — 2026-09-22
 
@@ -46,8 +46,8 @@ persistent row action buttons or operation column. Backend evidence is not ordin
 Preserve boundary whitespace exactly and distinguish it visually/assistively; an absent trimmed
 sibling stays not-found, without alternate-path guesses.
 
-Refresh reconciles directory-tree memory/selection against live Storage so externally removed/moved
-directories disappear. Keep the selected library/path when valid, or the bounded read-failure and
+Refresh reconciles the live listing and selection against Storage so externally removed/moved
+directories disappear; no page-local directory tree remains. Keep the selected library/path when valid, or the bounded read-failure and
 recovery state when absent. Explicit Files organizing admits its durable task before business
 readiness; exact analysis/summary and selected confirmation still precede media mutation.
 
@@ -61,24 +61,25 @@ hidden with the existing Web re-enable path. These explicit overrides govern old
 ## Selected-card Library Editing — 2026-09-25 A Revision
 
 Selected-card `编辑资源库`/`编辑媒体库` sits beside configuration removal and opens the prefilled
-three-step drawer. ID is read-only; name/enabled/Storage/kind-relative root are editable. Save uses
+three-step centered card. ID is read-only; name/enabled/Storage/kind-relative root are editable. Save uses
 checked atomic Active publication, preserves hidden fields/input/old Active on failure, and never
 creates/moves/migrates/deletes media. Ordinary file commands remain separate.
 
 ## Scope
 
-The accepted baseline covers the replacement shared light shell, Files body/Add drawer, bounded
+The accepted baseline covers the replacement shared light shell, Files body/Add/Edit cards, bounded
 live browse/selection/common maintenance and ResourceLibrary organization. No browser Upload/Download.
 Other pages' business behavior was frozen only for that historical Slice, not every later Contract.
 V1/API authority, exact source/pin, RBAC, capability/confinement and OrganizerExecutor-only mutation
 remain protected. Slice45 has accepted complete FileIndex retirement and same-page organizing
 analysis/confirmation; former index compatibility/sync obligations are superseded by V2-FILES-005/006.
 
-## Reference State
+## Historical Reference State
 
 The acceptance screenshot uses a deterministic desktop state at exactly `1536 x 1024`, browser zoom
 `100%`, device scale factor `1`, no browser chrome, no page scrollbar and all required fonts/assets
-loaded. The drawer is open and shows step 1.
+loaded. The historical drawer is open and shows step 1; current Add/Edit uses the centered card
+and no directory tree, preserving the other fixture values and business constraints.
 
 The reference content is:
 
@@ -111,13 +112,13 @@ do not impose pixel-identical CSS geometry:
 | Header actions | Upper-right: `当前页面操作状态` immediately left of `+ 添加资源库`, with the same style |
 | Information banner | Full content-width light-blue band directly below the title block |
 | Library selector/context | Shared card strip showing `source` by name; selected context below shows `已启用` and `路径: /media/incoming` |
-| Directory pane | Left pane below the summary card, headed `目录` |
-| File pane | Center pane beside the directory pane, containing breadcrumb, toolbar and table |
+| Directory pane | Removed by accepted Slice50; no tree or blank placeholder |
+| File pane | Full available workarea width, containing breadcrumb, toolbar and table |
 | Selection footer | Full-width strip below the directory/file work area |
-| Add-library drawer | Right-aligned white panel, approximately `425 px` wide, with a visible shadow |
+| Add/Edit library card | Centered bounded overlay with header, three-step form and reachable footer |
 
 The reference has a light neutral canvas, white surfaces, thin cool-gray borders, dark text and
-blue primary actions. The selected navigation item, selected tree row, selected table checkbox and
+blue primary actions. The selected navigation item, selected library card, selected table checkbox and
 primary buttons use the same blue family. The green `已启用` state is distinct from the blue action
 color. The reference color relationships and visual hierarchy take precedence over named colors,
 but exact raster values are not independently pass/fail criteria.
@@ -155,24 +156,12 @@ The main content shows:
   - green state `已启用`;
   - `路径: /media/incoming`.
 
-### Directory Pane
+### Directory Navigation
 
-The directory pane is headed `目录` and contains this expanded tree:
-
-```text
-source
-└─ Movies
-   ├─ Avatar (2009)
-   ├─ Inception (2010)
-   ├─ Interstellar (2014)
-   └─ Dune (2021)
-└─ TV
-└─ Anime
-└─ Others
-```
-
-`Avatar (2009)` is the selected directory. `source` and `Movies` are expanded. Folder icons,
-disclosure controls, indentation, selected-row background and tree spacing must match the image.
+Slice50 removes the page-local directory tree and its placeholder. Open folders from the live
+listing and use exact breadcrumbs, parent/root navigation, search, view switching, refresh and
+bounded paging. The global navigation rail remains. Old tree geometry belongs only to the
+immutable reference image and is not current acceptance.
 
 ### File Pane
 
@@ -261,9 +250,9 @@ The footer shows, from left to right:
 The footer remains visible in the reference state and must not collapse, wrap or move the
 pagination into a second row at the reference viewport.
 
-### Add ResourceLibrary Drawer
+### Add/Edit ResourceLibrary Card
 
-The drawer is open on the right and contains:
+Explicit Add/Edit opens a centered bounded card over the full-width listing. It contains:
 
 - title `添加资源库`;
 - close control at the upper-right;
@@ -287,15 +276,17 @@ The drawer is open on the right and contains:
 - bottom buttons in the reference step-1 state are `取消` and `下一步`; the final step replaces
   `下一步` with `保存`.
 
-The drawer is a page-local ResourceLibrary creation panel, not a MediaLibrary editor and not a
-replacement for the general Configuration page. Its visual stepper, field order, labels, required
-markers, button placement and close control follow the reference structure. Exact internal spacing,
-typography metrics, borders and shadows may differ when the complete step remains clear and usable.
+The card owns ResourceLibrary creation/editing. MediaLibrary uses its separate page with the same
+presentation. Preserve all existing fields, immutable Edit ID and hidden configuration, checked
+Active publication and exact readback. A slow Edit read keeps the card stable; no candidate can be
+submitted before its exact projection/fence arrives. Unknown Save retains its submitted input and
+explicit current-configuration verification across allowed close/reopen; no automatic resubmission.
+The stepper, labels, bounded internal scroll and footer remain usable on desktop/narrow layouts.
 
 The final `保存` action submits the complete ResourceLibrary candidate. The backend uses the
 current Active configuration as its base, runs the existing configuration validation and checked
 activation flow, and makes the new immutable Active runtime available on success. The operator does
-not perform a separate Validate or Activate action in this drawer. Any validation, dependency,
+not perform a separate Validate or Activate action in this card. Any validation, dependency,
 Storage check, activation or runtime-load error rejects the save and preserves the previous Active
 configuration; the page must not present the ResourceLibrary as saved when activation failed.
 
@@ -307,7 +298,7 @@ The current page completes one vertical journey:
 |---|---|
 | Goal | Browse and fully manage common file operations in configured ResourceLibraries, create a ResourceLibrary, or choose media to organize |
 | Entry | Select `文件` from the shell or open `/ui-v2/resourcelib/files` |
-| Visible state | The replacement shared shell, ResourceLibrary summary, directory tree, file table, common file commands/progress, selection footer and add-library drawer |
+| Visible state | Shared shell, ResourceLibrary cards, exact breadcrumbs and full-width file table, common commands/progress, selection footer and explicit Add/Edit card; truthful library/directory loading |
 | Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit eligible content, organize selected media or complete the local add-library flow |
 | Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page matches the reference |
 | Failure | Read, permission, capability, path, limit, stale/conflict, partial transfer, malformed-data or activation failure is shown on the affected item without fabricated success or uncertain replay |
@@ -327,7 +318,8 @@ There is no FileIndex sync/reconciliation consumer; result/display failure never
 
 ## Acceptance
 
-The following current obligations consolidate accepted37/38/45/46. Historical index-sync and
+The following current obligations consolidate accepted37/38/45/46/50; Slice50 replaces only the
+selected old tree/drawer geometry and adds the accepted motion/loading/stability behavior. Historical index-sync and
 Upload/Download delivery facts remain in the original Git closures; neither is a current feature:
 
 1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
@@ -336,7 +328,7 @@ Upload/Download delivery facts remain in the original Git closures; neither is a
    shell, Files hierarchy, fixture state, labels and control order must remain complete and
    recognizably aligned. Bounded differences in font/glyph rendering, icon or thumbnail artwork,
    exact dimensions/spacing, borders, shadows and color nuance are accepted.
-2. The required visible Chinese labels, row order, values, selected states, drawer state and control
+2. The required visible Chinese labels, row order, values, selected states, card state and control
    order above are present. Dense table cells may use bounded ellipsis when the complete underlying
    value remains available to assistive technology and the item/action is unambiguous.
 3. The old dark horizontal shell is replaced by the reference light shared shell across V2 without

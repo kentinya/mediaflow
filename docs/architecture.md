@@ -10,20 +10,13 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
+## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
-[Slice50](../SLICE.md) selects the original eight `V2-UX-005–012` and the explicitly added
-Automation create/edit stability requirement `V2-UX-013`. Task50.1 passed B review at
-`8573445f13a3f67cc434a576ee87e1d048d8362a`: Storage cards/menu and Automation create/edit
-stability are delivered within the presentation boundary below. Task50.2 passed B review at
-`61d37285652c0eae2553f3bc970895476277bc0f`, delivering Task detail cards/readability.
-Task50.3 is activated and awaiting implementation; both libraries and sidebar-page transitions/
-library loading remain TARGET; the whole Slice is not accepted or closed.
-The full target changes presentation of Task detail,
-Storage and both library configuration surfaces, removes the two page-local directory trees, and
-coordinates transitions between existing V2 sidebar destination pages plus Files/MediaLibrary loading,
-and fixes Automation create/edit card opening jitter. It does not introduce a backend capability,
-schema, task lifecycle, recovery engine or configuration authority.
+[Slice50](../SLICE.md) passed independent A Final Review **PASS / CLOSED** on 2026-11-07,
+original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation `6b0927328a7bf0873faffce9cb38007fd4607764`.
+All original eight `V2-UX-005–012` and added Automation stability `V2-UX-013` contracts below are
+CURRENT. Changes are confined to Web presentation, its state/read compatibility and documentation;
+no backend capability, schema, task lifecycle, recovery engine or configuration authority was added.
 
 **Presentation reuse:** use the existing Automation create/edit card as the visual/interaction
 baseline: backdrop, centered card, header/body/footer hierarchy, entry/exit, focus, narrow layout
@@ -75,14 +68,18 @@ directory loading states; undefined data is not an empty list. Show placeholders
 actually pending; fast responses/valid cache may show content directly, without forced playback or
 serial requests for animation. Preserve same-query refresh content and authoritative errors, reject stale
 cross-library/path responses, respect reduced-motion, and do not remount/replay business commands
-for animation.
+for animation. The shared main-content surface remains mounted across page identities; only
+its opacity entry changes, keeping AuthBoundary/Outlet lifecycle and URL state owned by the Router.
+Library Save verification retains the submitted candidate across allowed card close/reopen, reads
+the exact current Active projection and requires explicit intent before any further fenced Save.
 
 Beyond the selected Task/Storage/library surfaces and Automation create/edit stability, other
 sidebar destination pages participate in the main-page transition only; their business bodies are
 not redesigned. Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
 query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
 the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below
-and earlier Base/Head/closure facts remain valid until target implementation/acceptance is recorded.
+and earlier Base/Head/closure facts remain valid; these CURRENT presentation contracts supersede
+only the selected old side-detail/drawer/tree geometry.
 
 ## CURRENT — Automation forms and direct Run once (Slice49 PASS / CLOSED)
 

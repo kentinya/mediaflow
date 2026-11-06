@@ -4,14 +4,14 @@
 Slice ID: 50
 Name: V2 Dialog, Readability and Navigation Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0
-Implementation Head: NOT SET
+Implementation Head: 6b0927328a7bf0873faffce9cb38007fd4607764
 Working Branch: main
-Development Authorization: TASK 50.4 ONLY; THIS TURN TASK ACTIVATION ONLY
+Development Authorization: NONE
 Risk: High
 Final Test Level: T4
-Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and accepted baseline
@@ -22,12 +22,13 @@ Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
 用户进一步明确：第 8 项的页面切换仅指左侧侧栏入口对应的主页面之间切换；同一主页面内
 的标签、详情子路由（含其深链）、切库/目录与弹卡进出不属于这项整页切换动画，加载与
 弹卡要求分别保留。按主页面身份判断切换，不把链接来源或每次 URL 变化等同于切页。
-用户已明确授权“激活 Slice 并代替 B 规划第一个 Task”，由同一代理先完成 A 激活 checkpoint，
-再承担 B 的首次 Task 规划。Task50.1、Task50.2、Task50.3 已由 B 验收 PASS；用户现已
-明确授权激活修订后的 Task50.4（V2 侧栏主页面切换体验）。当前唯一活动实施 Task
-见 [TASK.md](TASK.md)，状态 PLANNED（待实施）。
-本次由 B 记录用户授权及当前指针，不改变合同范围、原 Base、验收或角色边界。
-本轮仅完成 Task 激活，不自动启动 Developer，不改产品代码，不推送或部署。
+用户已明确授权“激活 Slice 并代替 B 规划第一个 Task”，同一代理先完成 A 激活 checkpoint，
+再承担 B 的首次 Task 规划；这项已披露角色例外不代替独立最终审查。Task50.1–50.4 均已由 B
+验收 PASS，最终收尾包固定于 `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`。
+A 于 2026-11-07 独立审查完整原 Base..Implementation Head，判定 **PASS / CLOSED**。
+原八项及自动化新建/编辑补充全部接受；无活动实施 Task。下一大 Slice 另行选择，不自动实施、
+推送或部署。工作区分支仍为 `main`；审查开始 HEAD 为 `60798c3e50fdc62a6d46b6ee439e2406751ecfd3`，
+预存 dirty/untracked 保留。本次仅提交接受后的文档事实对齐。
 生命周期与测试分工遵循
 [Development Workflow](docs/development-workflow.md)。
 
@@ -62,10 +63,10 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 | 8 | 各页面切换动画自然、美观；用加载动画优化文件/媒体库尚未加载的体验，两种库一致 | RO-4 / `V2-UX-012` |
 | 补充 | 修复自动化页“新建自动化任务”和“编辑”打开弹卡时的页面/卡片抖动 | RO-4 / `V2-UX-013` |
 
-稳定定义见 [V2 Requirements TARGET](docs/v2-requirements.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)，
-完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)，
-技术边界见 [Architecture TARGET](docs/architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)。
-这些是尚未实施/验收的目标，不是 CURRENT 交付声明。
+稳定定义见 [V2 Requirements CURRENT](docs/v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)，
+完整现行旅程见 [Product Experience CURRENT](docs/product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)，
+技术边界见 [Architecture CURRENT](docs/architecture.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)。
+这些要求已完成独立最终审查，作为 CURRENT 交付；旧 Slice 的接受身份与延期保持。
 
 沿用适用 `UX-001–010`、`REQ-STO-*`、`REQ-LIB-*`、`REQ-WEB-*`、`REQ-TASK-*`、
 `REQ-SAFE-001–009` 与现行 `V2-UX-001–004`、`V2-FILES-*`、`V2-OPS-*`、
@@ -245,12 +246,9 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 
 ## Planning and validation allocation
 
-建议按完整行为组织约四个 Task：存储弹卡/菜单（含必要共享呈现）、任务详情弹卡/
-可读性、两种库布局/配置交互、侧栏主页面切换/两种库加载。自动化新建/编辑稳定性作为共享弹卡
-呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。Task50.1–50.3 已验收，
-两种库布局/配置交互与同页加载已交付。当前 Task50.4 负责剩余侧栏主页面切换，
-见 [TASK.md](TASK.md)，状态 PLANNED（待实施）。上述分组不改变任何必需结果，
-不授权额外范围。B 在本 Task PASS 后重评全部结果，满足则停止规划并完成最终验证。
+四个完整行为 Task 均已 PASS：50.1 存储弹卡/菜单及自动化稳定性，50.2 任务详情弹卡/
+可读性，50.3 两种库布局/配置交互及加载，50.4 侧栏主页面切换。B 已重评全部结果并停止
+规划，最终验证与 A 接受如下；无后续实施授权。
 
 整体验收 T4：跨共享 Shell、存储/库 Active 配置与任务/危险操作入口，需证明呈现改变未改变
 权限/命令/并发语义。Developer 仅跑新增/修改/直接受影响测试；B 按
@@ -260,8 +258,7 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 隔离 Local/SQLite/合成 Provider/测试数据，不接触用户媒体和私有配置。视觉按用户结果与
 自动化基准验收，不增设像素/耗时硬门槛。
 
-本轮文档只检查治理、原八项及补充追踪、链接/状态一致性和 whitespace，不声称功能/全量验收。
-规划改变目标，不记为普通 T0 事实修订或已交付能力。
+本次关闭文档只对齐已审实现与当前事实；原始规划/调查不是验收证据，最终验证和限制如下。
 
 ## Final validation, Closure Packet and A Final Review
 
@@ -271,5 +268,43 @@ Task50.1 已通过 B 验收，交付存储卡片/菜单及自动化新建/编辑
 报告见 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d:TASK.md`。Task50.3 已由 B 验收 PASS，
 已审 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d..a284c0135701d949afcae1cfe15fbba904eb16e0`，
 报告见 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md`。
-剩余主页面切换由已激活、待实施的 Task50.4 承担。最终 Implementation Head /
-B Closure Packet / A Final Review 未产生；本次激活不是新增 Task PASS 或 Slice 关闭。
+
+Task50.4 由 B 验收 PASS，已审 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749..ab5589340b7a9c72f30b0cbc955a95924a089b87`。
+最终实现 `6b0927328a7bf0873faffce9cb38007fd4607764`；其后至 B 包仅 TASK.md，执行输入不变。
+完整 B Closure Packet：[固定报告](https://github.com/kentinya/mediaflow/blob/60798c3e50fdc62a6d46b6ee439e2406751ecfd3/TASK.md)。
+
+### A Final Review — 2026-11-07 — PASS / CLOSED
+
+独立审查范围：`6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0..6b0927328a7bf0873faffce9cb38007fd4607764`，全部 62 文件累计差异（包括合同/文档、
+共享 Shell/卡片、三个业务表面、自动化稳定性、API 读取兼容与测试）；未以末次补丁替代完整审查。
+没有后端/schema/执行器/部署变化；读取兼容修正仍依据现有合法 Active 默认值，未增加权限。
+
+| 结果 / 验收 | A 接受依据 |
+|---|---|
+| RO-1，AC-1/2 | 真实任务名称/精确链接打开居中详情；状态、独立文件结果、诊断、条目和记录分层；关闭/回退上下文及未决核对保留。最终原生四类恢复、任务可视旅程和受影响单元复验通过，桌面/窄屏证据可读。 |
+| RO-2，AC-3/4 | 存储查看/添加/编辑、更多菜单与协调退出；成功、重复拒绝、慢读取、在途保护、键盘/回焦和 reduced-motion 的真实 Python 交互通过。 |
+| RO-3，AC-5/6/7 | 两页去树、原浏览继续可用、四配置卡片/配置移除清晰；真实合法 Active 编辑、丢响应后关闭重开/失败核对和双窗口并发冲突均通过，不重发 Save。 |
+| RO-4，AC-8/9/12 | 九主页面身份切换与同页不重播、快速往返、认证/返回保持；两种库真实慢读/刷新保留内容/桌面窄屏实测；自动化新建/已保存定义编辑的已滚动背景、实际滚动条占位、慢读取过程稳定性复验通过。 |
+| 全部表面，AC-10/11 | B 最终适用 T4 与资产摘要匹配；A 复验实际入口、零额外命令/媒体变更、并发/未知核对、四类决定→分析→摘要→明确执行及独立结果，查看 PNG 和 trace 中间帧。没有剩余 P0/P1 或未交付必需表面。 |
+
+A 独立执行：生产 build；受影响 Vitest **12 files / 272 tests PASS**；主页面切换 **5 PASS**；
+真实 Python 浏览器 **33 PASS**（存储/自动化弹卡 22、合法 Active 库编辑 1、两种库保存恢复 4、
+原生四类任务恢复 4、任务中心视觉/精确确认 2）。另用现有 direct-files harness/生产资产
+从真实入口复验两种库×桌面/390px 四组合的分阶段慢读、刷新、Add/Edit、菜单和移除取消，
+以及 reduced-motion 一组合，全部通过，打开/关闭/导航无额外业务写命令。
+查看本轮桌面/窄屏截图及切页 trace 逐帧，核对 B 的自然 transitionrun/end 与弹卡进出证据。
+A 本地证据：`.git/validation-evidence/60798c3e/A50-final/`，含日志、PNG、trace、过程测量、
+复现脚本和 `b-manifest-check.json`；全部匹配 B 的产物/依赖锁/harness/exact-wheel 摘要，
+本地 ignored 证据不宣称远程可取。文档治理/消费者/链接/whitespace 检查在本次关闭 checkpoint 完成。
+
+B 最终实际覆盖 **2603 Python tests（7 skipped）/ 1390 Web tests / 260 default E2E**，
+适用原生/安全/打包/source-external consumers 见固定收尾包，未机械重复全套。
+B 披露的 direct-files 错配置失败后正确配置 27 PASS、旧额外 installed helper 引用已删除测试、
+Python 3.14 约束拒绝后 3.13 消费者 18 PASS、ResourceWarning/大 chunk 提示、7 项外部介质/
+耐久 skip 和 B 测试耗时比例偏差均保留，不将失败/限制改写为通过。Docker daemon 不可用，
+镜像/Compose/release-security 未运行；累计仅 Web/文档且无后端/部署/服务生命周期变化，
+该矩阵对本 Slice 呈现改动不适用，不声称生产、迁移或部署验证。原独立修正与旧 Slice 身份不变。
+
+已复核 A/B/Developer 经验；A 补充共享呈现保持业务挂载生命周期的一条通用经验，其他无需新增。
+CURRENT requirements/journey/architecture/页面规范及 README、Roadmap、Progress 同次对齐；
+原 Base 和已审 Implementation Head 不变。下一步 **A SELECTS THE NEXT LARGE SLICE**，另行授权。

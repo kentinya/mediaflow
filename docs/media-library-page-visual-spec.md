@@ -1,6 +1,6 @@
 # MediaLibrary Page Visual Specification
 
-Status: CURRENT visual baseline — accepted Slice 38, including page-local editing
+Status: CURRENT — accepted50 cards/tree removal/loading, retaining Slice38 business and editing
 Canonical image: `docs/pics/媒体库页.png` (absent from the current tree; preserved in Git at
 `f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`)
 Reference size: `1536 x 1024`
@@ -11,10 +11,10 @@ The supplied image defines hierarchy with explicit overrides below: no card stat
 both library selectors share cards with name/selection/menu and selected context with enabled state/
 path only. Reuse the shared shell; this visual specification adds no unrelated Files business scope.
 
-## TARGET — Slice50 弹卡、去目录树与加载体验（ACTIVE）
+## CURRENT — Slice50 弹卡、去目录树与加载体验（PASS / CLOSED）
 
-[Slice50](../SLICE.md) / `V2-UX-009–012` 逐项承接用户要求，尚未实施/验收。
-目标删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、
+[Slice50](../SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
+已删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、
 面包屑、上一级/根目录、文件夹、搜索、视图、选择、刷新与分页，不新增替代树。
 
 添加/编辑媒体库与资源库四个入口都改为与自动化新建/编辑协调的居中弹卡，保留字段/值、
@@ -30,7 +30,7 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 详情子路由（含其深链）、切库/目录和开关弹卡不重播整页动画，既有合法局部动效保留。
 其他页面业务不重设计。
 
-目标实现与验收以本节替换下表 Directory pane / Add/Edit drawer 及旧图片的对应几何要求；
+现行验收以本节替换旧 Directory pane / Add/Edit drawer 及旧图片的对应几何要求；
 其他 CURRENT 业务约束保留，图片/历史验收不改写。桌面 `1536×1024`、`390px` 窄屏、
 键盘/焦点、卡片/菜单、慢读取/真实空/错误和快速切换/reduced-motion 须有实际交互及视觉
 证据；动态体验不能只靠 DOM/CSS 断言。按用户结果与自动化基准验收，无新增像素/时长指标。
@@ -43,19 +43,19 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 | Header | `媒体库`; subtitle `选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。`; `当前页面操作状态` immediately left of `+ 添加媒体库`, with the same button style. |
 | Card strip | Enabled libraries with name only; blue selected state and independent action menu; accessible responsive overflow shared with ResourceLibrary Files. |
 | Selected-library context | Immediately below the cards, show only `已启用` and exact configured `路径: /...`; do not repeat the name or show Storage. |
-| Directory pane | `目录`, selected library root and lazy directories; exact relative identity and selected directory. |
+| Directory navigation | No page-local tree/placeholder; folders, exact breadcrumbs and parent/root navigation retain browsing. |
 | File toolbar | Relative breadcrumbs, `刷新`, list/grid controls and existing bounded search through the top bar. |
 | Selection bar | Above rows: selected count/known size and bounded batch Copy/Move/Delete; ResourceLibrary batch Organize remains available. Single-entry commands are not duplicated here. |
 | Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间`; type icons, directory navigation and selection. No persistent operation column. |
 | Entry context menu | Right-click, Context Menu key or `Shift+F10` opens the applicable single-entry commands. Folder left click opens directly; no inline Open button. |
 | Grid | Same entries, selection and commands using type icons, without thumbnails/artwork. |
 | Paging | Existing supported bounded previous/next/cursor behavior; accurately labelled loaded/visible count, no fabricated full totals. |
-| Add/Edit drawer | Right-side white panel, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
+| Add/Edit card | Centered bounded overlay, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
 
-The desktop reference has an approximately `208 px` left rail, `58 px` top bar and a drawer
-beginning near `x=1142`. These guide composition, not pixel thresholds. Retain the light canvas,
-white panels, cool borders, blue actions/selection and green enabled badges. Cards sit above the
-directory/file panes. The drawer must not make controls unusable. Narrow layouts retain actions,
+The desktop reference has an approximately `208 px` left rail and `58 px` top bar. These guide
+composition, not pixel thresholds; its right drawer/tree geometry is superseded by Slice50. Retain
+the light canvas, white panels, cool borders, blue actions/selection and green enabled badges.
+Library cards sit above the full-width browse area; Add/Edit uses a bounded centered overlay. Narrow layouts retain actions,
 readable content and keyboard/focus behavior.
 
 ## Explicit Image Overrides
@@ -88,9 +88,9 @@ These are synthetic library labels, not new provider requirements or authorizati
 connections. Do not hardcode fixture data at runtime. Path identity remains exact despite shortened
 display labels.
 
-## Drawer and Configuration Actions
+## Card and Configuration Actions
 
-Normal entry, reload and reconnect keep the drawer closed. Add or selected-card Edit explicitly
+Normal entry, reload and reconnect keep the configuration card closed. Add or selected-card Edit explicitly
 opens/focuses the form. Close, Cancel and Escape restore focus to the invoking control where
 practical; failed save retains input. Edit pre-fills the exact current Active object and renders ID
 read-only.
@@ -114,8 +114,8 @@ policy rewrite.
 
 Provide truthful loading, no libraries, empty directory, 401/403, missing/disabled library,
 unavailable Storage, stale path/cursor, malformed response, invalid form and failed activation
-states. Each supplies a concrete next action. Refresh reconciles directory memory and selection;
-it never fabricates removed entries to retain the tree.
+states. Each supplies a concrete next action. Refresh reconciles live entries and selection;
+it never fabricates removed entries or a directory tree.
 
 Common commands follow existing short dialogs and backend capabilities. Text is allowlisted/bounded;
 Delete is explicit; conflicts default to no overwrite. Copy/Move selects a MediaLibrary and confined
@@ -127,9 +127,10 @@ Empty/loading/read-error and keyboard dismissal remain usable; closing neither c
 
 ## Visual Acceptance
 
-Capture Add/Edit drawer-open step 1 and drawer-closed states at `1536 x 1024`, zoom `100%`, scale `1`
+Capture Add/Edit card-open step 1 and card-closed states at `1536 x 1024`, zoom `100%`, scale `1`
 with deterministic entries, plus narrow-screen and keyboard/focus evidence. Verify hierarchy,
-selection-bar position, five columns, context-menu entry, drawer and required functional states. Statistics/artwork
+selection-bar position, five columns, context-menu entry, card and required functional states. Tree/drawer geometry
+is superseded; statistics/artwork
 removals are mandatory differences from the image. Font/glyph/spacing variation is acceptable when
 the design remains clear; a nonzero pixel diff alone is not a blocker. Slice tests accept behavior
 and safety.

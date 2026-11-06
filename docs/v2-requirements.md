@@ -25,18 +25,13 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
+## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
-用户于 2026-11-05 授权规划八项体验要求及相关文档，并明确不得扩大或收窄需求。
-后续明确补充自动化新建/编辑弹卡抖动修复；`V2-UX-005–012` 保留原八项一一映射，
-`V2-UX-013` 单列补充，不替代或缩减原要求。[Slice50](../SLICE.md) 为 **ACTIVE**，
-Task50.1 已由 B 在 `8573445f13a3f67cc434a576ee87e1d048d8362a` 验收 PASS：
-`V2-UX-007/008/013` 的存储卡片/菜单与自动化新建/编辑稳定性已交付。Task50.2 已由 B
-在 `61d37285652c0eae2553f3bc970895476277bc0f` 验收 PASS，交付 `V2-UX-005/006` 任务详情。
-Task50.3 已激活、待实施；两种库与侧栏主页面切换/库加载仍为 TARGET。
-下表保留整个 Slice 的必需范围，Task PASS 不等于 Slice 整体验收或关闭。
-现有自动化创建/编辑卡片是共同
-视觉和交互基准；其他业务按各自内容设计，不能复制自动化字段或改变其命令。
+用户原八项 `V2-UX-005–012` 与后续自动化新建/编辑稳定性补充 `V2-UX-013` 均已交付。
+[Slice50](../SLICE.md) 于 2026-11-07 通过独立 A Final Review **PASS / CLOSED**：原 Base
+`6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`；
+B 最终包 `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`。下表全部为 CURRENT；现有自动化卡片是共同视觉/
+交互基准，各领域保留自己的模型与命令。旧参考图和旧 Slice 原始验收保持历史事实。
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -50,13 +45,13 @@ Task50.3 已激活、待实施；两种库与侧栏主页面切换/库加载仍�
 | V2-UX-012 | 用户第 8 项：各页面切换自然、美观，文件/媒体库未加载时以一致加载动画改善体验。 | 页面切换仅指现有 V2 左侧侧栏入口对应的主页面之间，覆盖全部现有侧栏主页面，按主页面身份判断；其他业务内容不重设计。同一主页面内的标签、详情子路由（含其深链）、切库/目录、开关弹卡及刷新/轮询不重播该整页动画，原有导航/返回/认证续转和合法局部动效保留，所选弹卡按各自要求协调进出。主页面切换无突兀挤压/闪白/旧页残留。两种库的库信息和目录读取按实际等待区域分阶段反馈、内容平顺接入；快速响应/有效缓存可直接显示内容，不强制占位播放或串行请求。未返回不能当空态，真实空/失败/权限/无 Active 可辨。保留同条件刷新内容，快速切库/路径不串响应，尊重 reduced-motion，不人为延时或重放命令。 |
 | V2-UX-013 | 用户补充：自动化页新建与编辑弹卡打开稳定、不抖动。 | 两个入口均保留背景列表的滚动、宽度和合法上下文；叠层路由不默认回顶，滚动锁定保留实际滚动条占位并准确释放。权限/定义读取与完整表单使用协调的稳定卡片布局，不从矮空壳突然撑大重居中；不跳过真实读取、放宽提交权限或人为延时。覆盖打开中间帧、关闭/重开、页顶/已滚动、占位滚动条/无占位、慢权限/慢定义、失败/拒绝/缺失、桌面/窄屏和 reduced-motion；保留深链、认证续转、回焦、未保存/在途保护、精确保存和未知核对。仅停稳截图或标题 y 不能证明通过。 |
 
-这组目标替换现有任务侧详情、Storage 右抽屉及 Files/MediaLibrary 目录树/添加编辑抽屉的
+这组 CURRENT 要求替换原任务侧详情、Storage 右抽屉及 Files/MediaLibrary 目录树/添加编辑抽屉的
 所选呈现约束；旧参考图/旧 Slice 原始验收保持历史事实。沿用 `V2-UX-001–004`、当前
 五态 Task/文件结果分离、四类恢复、配置/执行权限和非重放，不新增引擎/状态/恢复或设置。
 自动化新建/编辑补充仅修正共享卡片的布局稳定性，视觉基准与已有业务字段/命令保持。
-完整 [TARGET 旅程](product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)
-与 [TARGET 架构](architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)
-共同解释目标；CURRENT 段落仍表示已交付基线，不能将本规划记为完成。
+完整 [CURRENT 旅程](product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)
+与 [CURRENT 架构](architecture.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)
+共同解释现行行为；更早的 CURRENT 业务/安全契约在不冲突的部分继续适用。
 
 ## Automation forms and direct Run once — CURRENT (Slice49 PASS / CLOSED)
 

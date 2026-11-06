@@ -8,15 +8,34 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice50](../SLICE.md) is **ACTIVE**, retaining the original eight UX changes and Automation
-create/edit card jitter correction. Task50.1–50.3 passed B review; the user has activated
-[Task50.4](../TASK.md) (V2 sidebar main-page transitions) as the
-sole current implementation Task, **PLANNED** and awaiting Developer implementation.
-This turn records activation only; no Task50.4
-implementation/acceptance or Slice50 closure is claimed.
-Slice49 remains PASS / CLOSED. The accepted closure ledger below is unchanged.
+[Slice50](../SLICE.md) is **PASS / CLOSED** after independent A Final Review on 2026-11-07.
+All original eight UX changes and Automation create/edit stability are accepted; no active
+implementation Task. **A SELECTS THE NEXT LARGE SLICE** separately. Closure is not a release,
+push or deployment; earlier Slice acceptance identities remain unchanged.
 
-## Latest accepted closure — Slice49
+## Latest accepted closure — Slice50
+
+Original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through accepted implementation
+`6b0927328a7bf0873faffce9cb38007fd4607764`; full [Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review).
+B final packet: `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`; original Task/fix reports remain reachable there.
+Delivered: centered readable Task details; Storage view/add/edit cards and More menu; both library
+pages without page-local trees, with four configuration cards and clear edit/remove presentation;
+nine main-page transitions, consistent library/directory loading and stable Automation create/edit.
+Existing exact publication, RBAC, references, pins/fences, independent results and non-replay remain.
+
+A reviewed the complete 62-file range, matched B's assets/lock/harness/wheel digests and independently
+passed **272 unit tests / 33 real-Python browser cases / 5 main-page browser cases**, plus two-library
+× desktop/390px slow-read/card/menu/cancel journeys and reduced-motion. Inspected current PNGs and
+trace middle frames. B final **2603 Python (7 skips) / 1390 Web / 260 E2E**, native/safety/packaging/
+source-external evidence and failure/skip disclosures remain in the immutable packet. A local
+artifacts: `.git/validation-evidence/60798c3e/A50-final/`; local evidence is not remotely promised.
+The incorrect direct-files harness run, obsolete optional helper, Python version refusal, warnings,
+B testing-time deviation and seven external-service/endurance skips remain disclosed. Docker was
+unavailable and its matrix is inapplicable to this Web/document-only scope with no backend/deployment/
+service-lifecycle changes. No production, migration, release or deployment validation is claimed.
+`V2-UX-005–013` and affected journey/architecture/page specifications are CURRENT; deferrals unchanged.
+
+## Prior accepted closure — Slice49
 
 Original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through accepted implementation
 `9d6b78147d90b950ed2333f9747facc77bf0391a`. [Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review)
@@ -70,6 +89,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 50 — V2 Dialog, Readability and Navigation Experience | PASS / CLOSED | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` | `6b0927328a7bf0873faffce9cb38007fd4607764` | A Final Review PASS / CLOSED — 2026-11-07 | Original eight UX changes plus Automation create/edit stability; centered Task/Storage/library cards and readable actions; both page-local trees removed; nine main-page transitions and consistent library loading; exact publication, recovery and non-replay preserved | New backend/schema/engine/permissions/commands, other pages’ business redesign, themes/settings, automatic uncertain replay/rollback, V1 and production deployment; B failure/skip/validation limits retained |
 | 49 — Automation Task Creation, Editing and Direct Run Once | PASS / CLOSED | `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` | `9d6b78147d90b950ed2333f9747facc77bf0391a` | A Final Review PASS / CLOSED — 2026-11-05 | Confined sources and direct list Run once; exact request feedback/reconciliation; shared Chinese create/edit card and saved-value/fence pairing; optional default-off enabled atomic creation and later enable/disable with existing authority; truthful historical/current publication readback | New providers/commands, broad detail/records/Task Center redesign, new schema/queue/engine, bulk/cross-Task recovery, automatic retry/uncertain replay/rollback, old failed-Task repair/migration, cross-version upgrade/rollback, V1, external-service acceptance and production deployment; 7 optional skips and recorded gate/time limits retained |
 | 48 — Task Flow Status and Automation Success Rate | PASS / CLOSED | `ba84272721961c970f1eb85d616a0d129523ab92` | `a80015e2f7d46e3ad1b8f7b14c453d1030e62104` | A Final Review PASS / CLOSED — 2026-11-04 | Five-state durable Task flow independent of file outcomes; technical closure with absent Results/unknown effects; consistent Task Center/Files/API/CLI/other readback and processed progress; preserved four-type waiting/recovery/cancellation/fences/non-replay; due + definition Run once completed/(completed+failed) rate and current-flow execution records, original times/attempts/file effects retained; A48-01 corrected | New Providers/Storage commands, queue/parallelism/settings/supervision redesign, unbounded discovery/MediaLibrary organizing, new recovery types/cross-Task bulk/attachment retry, automatic uncertain replay/universal rollback, old-task/status migration, bulk relabelling, cross-version upgrade/rollback, mixed-version writers and V1; 7 existing optional external-service/endurance skips remain disclosed |
 | 47 — Unified Task Scheduling and Organizing Execution | PASS / CLOSED | `5144ab1fc2344b06194969cc2c496835729664c0` | `5134c78b22057781d472e6ebf61a1799d9e40324` | A Final Review PASS / CLOSED — 2026-11-03 | One Task-owned queue/claim/organizing engine across all triggers; same-Task four-type recovery; live Job removal and same-version persistence; latest failed/partial source exclusion for Automation and warned new manual confirmation; Pause/resume and CLI retry-failed retirement; three System Settings with shared 1–10000 capacity and real Worker/Scheduler cadence, stale-age removal with immutable-config readability | New providers/commands, distributed scheduling/supervision/parallelism, ordinary-file queue redesign, unbounded/MediaLibrary organizing, new recovery types/cross-Task bulk, automatic uncertain replay/universal rollback, old-task/Job migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1; 7 optional external-service/endurance skips remain disclosed |

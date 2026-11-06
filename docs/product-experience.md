@@ -20,16 +20,13 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — V2 dialog, readability and navigation experience (Slice50 ACTIVE)
+## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
-[Slice50](../SLICE.md) / `V2-UX-005–012` 逐项承接用户的原八项要求，`V2-UX-013` 承接后续
-自动化新建/编辑弹卡抖动补充。Task50.1 已由 B 验收 PASS（候选 `8573445f`）：
-本节的存储卡片/更多菜单、自动化新建/编辑稳定性旅程已交付。Task50.2 已由 B 在
-`61d37285652c0eae2553f3bc970895476277bc0f` 验收 PASS，任务详情卡片/可读性旅程已交付。
-Task50.3 已激活、待实施；两种库与侧栏主页面切换/库加载仍为 TARGET，Slice50 尚未
-整体验收。下方 CURRENT 的既有业务规则继续适用。
-完整目标替换任务侧详情、所选存储/库
-抽屉和两种库的页内目录树，旧图片不要求未来页面继续复现这些结构。其他已接受业务语义保留。
+[Slice50](../SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
+`6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
+原八项 `V2-UX-005–012` 和自动化新建/编辑补充 `V2-UX-013` 全部接受，以下完整旅程为 CURRENT。
+它们替换原任务侧详情、所选存储/库抽屉与两页目录树；旧图片/历史接受事实保留，更早 CURRENT
+中的业务、权限、独立结果与非重放规则继续适用。
 
 **任务中心详情（用户 1、2）：**
 
@@ -569,7 +566,7 @@ keeps prior Active and correctable input.
   Provider lookup or work.
 - **Success:** exact names/paths survive normalization, hover/focus, breadcrumbs and long-name toolbar
   reflow. Boundary whitespace is visibly/assistively distinguished; shortening never changes identity.
-  Refresh reconciles directory-tree memory/selection and removes vanished entries without losing a
+  Refresh reconciles live entries/selection and removes vanished entries without losing a
   still-valid selected library/path.
 - **Failure/recovery:** explain missing/denied root, timeout/provider, invalid/stale cursor/path,
   capability/conflict or escape. Correct binding/path or retry the bounded read; absent paths never
@@ -616,7 +613,7 @@ ordinary-operation center or new retry/undo authority is introduced.
 ### Library Add/Edit/removal
 
 Add ResourceLibrary from `+ 添加资源库`; edit either library kind through its selected-card menu.
-The three-step drawer is `基本信息 → 存储位置 → 确认`, opened only by explicit intent. Edit loads exact
+The three-step centered card is `基本信息 → 存储位置 → 确认`, opened only by explicit intent. Edit loads exact
 Active, keeps ID read-only and allows name/enabled/Storage/kind-relative root while preserving hidden
 configuration. One Save/`保存并激活` composes shared structural/reference/applicable checks and atomic
 runtime publication; no ordinary Draft/Validate/Activate ceremony.
@@ -632,7 +629,7 @@ stale authority and explicitly resubmit only after unknown outcomes have been ve
 
 - **Goal/entry:** maintain destination files at `媒体库` (`/ui-v2/medialib/files`). Old `/ui-v2/library`
   and `/ui-v2/library/files` provide explicit recovery links without automatic work or redirect.
-- **State/action:** the shared cards/tree/exact breadcrumbs/list-grid/selection/paging, ordinary
+- **State/action:** the shared cards/exact breadcrumbs/list-grid/selection/paging, without a page-local directory tree, ordinary
   maintenance and Add/Edit/removal above. No library-card statistics/placeholders/thumbnails or
   thumbnail collection. Per-file size, selected count/known size and bounded impact remain visible.
 - **Success:** live entries are independent of prior organization/index membership, and enabled Save

@@ -35,34 +35,26 @@ only in [the development workflow](development-workflow.md).
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
-| 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | ACTIVE | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
+| 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 
 ## Current boundary
 
-[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **ACTIVE**.
-The user authorized planning and related documentation for the original eight requests and explicitly
-added Automation create/edit card jitter correction; the original eight requirements remain intact.
-Task50.1–50.3 passed B review. The user explicitly activated the revised Task50.4
-(V2 sidebar main-page transitions);
-[TASK.md](../TASK.md) is the sole current implementation Task, PLANNED and awaiting Developer
-implementation. This turn records Task activation only; no Task50.4 implementation or A Final
-Review has started. Slice scope and acceptance boundaries are unchanged.
-Page transitions cover only the main pages reached through existing V2 sidebar entries, as clarified
-by the user; main-page identity determines a transition. Tabs, detail subroutes (including their deep
-links), library/path changes and card open/close within the same main page do not replay that page
-transition. Existing local motion, library loading and selected card transitions/stability retain
-their own requirements. Other pages' business redesign is not in scope.
+[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **PASS / CLOSED**
+after independent A Final Review on 2026-11-07. All original eight requests and the added Automation
+create/edit stability requirement are delivered. No active implementation Task; A selects the next
+large Slice separately. No implementation, push or deployment is authorized by closure.
+Main-page transitions remain limited to existing sidebar destination identities; tabs, details,
+library/path changes, cards and refreshes retain their own navigation/loading/local-motion behavior.
 
 ## Accepted boundary references
 
-Latest acceptance is [Slice49's Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review):
-original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
-`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes remain accepted; Slice50's complete target
-is not yet accepted; the delivered Task50.1–50.3 subsets do not close the Slice. Prior accepted
-Base/Head/closure identities, delivered results, deferrals and validation limits belong to
-[Progress](progress.md#closure-ledger) and its immutable
-review pointers. Earlier Slices are not reopened, and Scan/Preview/FileIndex/Job/Pause retirements
-remain intact.
+Latest acceptance is [Slice50's Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review):
+original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation
+`6b0927328a7bf0873faffce9cb38007fd4607764`. Required outcomes, unchanged safety and all explicit deferrals are
+recorded in [Progress](progress.md#closure-ledger). Prior49 acceptance remains at its
+[immutable Contract](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md), original Base
+`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` / implementation `9d6b78147d90b950ed2333f9747facc77bf0391a`.
+No older Slice is reopened; Scan/Preview/FileIndex/Job/Pause retirements remain intact.
 
 [Release](release.md) owns release-line facts; [Architecture](architecture.md) and
 [Product Experience](product-experience.md) own CURRENT behavior. This page records large-Slice
