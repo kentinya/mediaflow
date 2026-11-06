@@ -391,15 +391,16 @@ Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设
 | `npx playwright test ... -g "all nine sidebar\|...\|authentication continuation"` | 5 passed（6.1s），含新增包装持久标记与精确 URL 断言 |
 | `npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts src/routes/router.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/modal-card.test.tsx` | 5 files / 68 tests passed（3.67s，最终格式后复跑） |
 | `npm run typecheck` | passed |
-| `npx eslint`（上述源文件及三个改动 E2E spec） | passed |
+| `npx eslint`（上述源文件及三个改动 E2E spec） | passed（格式修正后再次复检） |
 | `npx prettier --check`（上述源文件、`styles.css` 及三个改动 E2E spec） | passed（一次格式修正后复检） |
 | `npm run build` | passed；`dist/assets/index-BBNz3k9m.js`、`dist/assets/index-BUcXw9MU.css`，既有大 chunk 提示保留 |
 | `npx playwright test tests/e2e/dashboard.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/automation-presentation.spec.ts tests/e2e/task-center-layout.spec.ts` | 32 passed（15.7s） |
 | 根目录 `python3 scripts/check_governance.py`、`git diff --check` | PASS |
 
 **测试计时**：本轮从 `2026-11-07 00:42:39 +08:00` 开始；可核实测试/静态检查区间并集
-约 186.5 秒（含修正前复现 90.2 秒、修正后三模块 27.8+27.9 秒、四模块 15.7 秒、
-定向 6.1 秒、单元 3.6+3.7 秒及 typecheck/lint/prettier/build 约 12.9 秒），低于本轮
+约 188.3 秒（含修正前复现 90.2 秒、修正后三模块 27.8+27.9 秒、四模块 15.7 秒、
+定向 6.6 秒、单元 3.6+4.0 秒、typecheck/lint/prettier/build 约 12.9 秒及报告后
+最终 eslint/prettier 复检 1.8 秒），低于本轮
 总用时的 30%。未空等凑比例。
 
 **剩余风险 / 未执行**：B 的全量 Web/Python 回归、完整默认 E2E、真实 Python 浏览器旅程、
