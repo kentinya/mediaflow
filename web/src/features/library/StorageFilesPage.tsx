@@ -306,6 +306,11 @@ function resourceLibraryRefusal(
   }
 }
 
+/** The exact card entry a pending Save belongs to. */
+function resourceLibrarySaveKey(editing: boolean, libraryId: string): string {
+  return editing ? `edit:${libraryId}` : "add";
+}
+
 /** One Save whose publication still needs the operator's explicit read. */
 interface PendingResourceLibrarySave {
   readonly mode: "unknown" | "conflict";
@@ -2385,14 +2390,17 @@ export function StorageFilesPage() {
       }
     | undefined
   >();
-  // One Save whose publication still needs an explicit read.  An unconfirmed
-  // publication survives closing the card, so reopening the same entry resumes
-  // the verification instead of losing the submitted candidate.  A definite
-  // conflict is cleared on close because reopening an Edit already reads the
-  // exact current projection.
-  const [saveRecovery, setSaveRecovery] =
-    useState<PendingResourceLibrarySave | null>(null);
-  const saveRecoveryRef = useRef<PendingResourceLibrarySave | null>(null);
+  // Saves whose publication still needs an explicit read, keyed by their exact
+  // entry (one Add slot, one per Edit).  An unconfirmed publication survives
+  // closing the card, so reopening the same entry resumes the verification
+  // instead of losing the submitted candidate, and an unrelated Save never
+  // drops it.  A definite conflict is cleared on close because reopening an
+  // Edit already reads the exact current projection.
+  const [saveRecoveries, setSaveRecoveries] = useState<
+    ReadonlyMap<string, PendingResourceLibrarySave>
+  >(() => new Map());
+  const saveRecoveriesRef =
+    useRef<ReadonlyMap<string, PendingResourceLibrarySave>>(saveRecoveries);
   const [verifyReading, setVerifyReading] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifiedNotice, setVerifiedNotice] = useState<string | null>(null);
@@ -2675,9 +2683,19 @@ export function StorageFilesPage() {
     updateLibraryRouteState(id);
   };
 
-  const updateSaveRecovery = (next: PendingResourceLibrarySave | null) => {
-    saveRecoveryRef.current = next;
-    setSaveRecovery(next);
+  const updateSaveRecovery = (
+    editing: boolean,
+    libraryId: string,
+    next: PendingResourceLibrarySave | null,
+  ) => {
+    const key = resourceLibrarySaveKey(editing, libraryId);
+    const current = saveRecoveriesRef.current;
+    if ((current.get(key) ?? null) === next) return;
+    const map = new Map(current);
+    if (next === null) map.delete(key);
+    else map.set(key, next);
+    saveRecoveriesRef.current = map;
+    setSaveRecoveries(map);
   };
 
   const resetRecoveryPresentation = () => {
@@ -2702,10 +2720,7 @@ export function StorageFilesPage() {
     editBaselineRef.current = null;
     // An unconfirmed Add resumes its exact submitted candidate; reopening the
     // Add entry never presents a blank form as if nothing was pending.
-    const retained =
-      saveRecoveryRef.current !== null && !saveRecoveryRef.current.editing
-        ? saveRecoveryRef.current
-        : null;
+    const retained = saveRecoveriesRef.current.get("add") ?? null;
     setEditInitial(retained?.candidate);
     setDrawerOpen(true);
   };
@@ -2725,8 +2740,12 @@ export function StorageFilesPage() {
     setDrawerOpen(false);
     // An unconfirmed Save stays retained for its verification; a definite
     // conflict is re-read by the next explicit Edit.
-    if (saveRecoveryRef.current?.mode === "conflict") {
-      updateSaveRecovery(null);
+    const closingRecovery =
+      editTargetId === null
+        ? (saveRecoveriesRef.current.get("add") ?? null)
+        : (saveRecoveriesRef.current.get(`edit:${editTargetId}`) ?? null);
+    if (closingRecovery?.mode === "conflict") {
+      updateSaveRecovery(editTargetId !== null, editTargetId ?? "", null);
     }
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
@@ -2791,15 +2810,19 @@ export function StorageFilesPage() {
           setSaveError(failure.message);
         } else {
           setSaveError(null);
-          updateSaveRecovery({
-            mode: failure.outcome,
-            message: failure.message,
-            candidate,
-            editing: editTargetId !== null,
-            baseline: editBaselineRef.current,
-            storages:
-              editTargetId === null ? eligibleStorages : (editStorages ?? []),
-          });
+          updateSaveRecovery(
+            editTargetId !== null,
+            candidate.resourceLibraryId,
+            {
+              mode: failure.outcome,
+              message: failure.message,
+              candidate,
+              editing: editTargetId !== null,
+              baseline: editBaselineRef.current,
+              storages:
+                editTargetId === null ? eligibleStorages : (editStorages ?? []),
+            },
+          );
         }
         if (failure.refreshAuthoritativeState) {
           void queryClient.invalidateQueries({ queryKey: ["system-status"] });
@@ -2808,8 +2831,8 @@ export function StorageFilesPage() {
         return;
       }
       setSaveError(null);
-      updateSaveRecovery(null);
       const wasEditing = editTargetId !== null;
+      updateSaveRecovery(wasEditing, result.model.id, null);
       const editInvoker = editDrawerInvokerRef.current;
       applyPublishedLibraryState(
         result.model,
@@ -2832,7 +2855,7 @@ export function StorageFilesPage() {
     },
     onError: (_error, candidate) => {
       setSaveError(null);
-      updateSaveRecovery({
+      updateSaveRecovery(editTargetId !== null, candidate.resourceLibraryId, {
         mode: "unknown",
         message:
           "响应没有送达或无法解读，候选资源库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
@@ -2852,9 +2875,16 @@ export function StorageFilesPage() {
   // never replaces the retained candidate and never asserts that "current value
   // is equal" proves the original command's history.
   const verifySaveRecovery = async () => {
-    const recovery = saveRecoveryRef.current;
+    const recovery =
+      editTargetId === null
+        ? (saveRecoveriesRef.current.get("add") ?? null)
+        : (saveRecoveriesRef.current.get(`edit:${editTargetId}`) ?? null);
     if (recovery === null || verifyReading) return;
     const requestId = ++verifyRequestRef.current;
+    const key = resourceLibrarySaveKey(
+      recovery.editing,
+      recovery.candidate.resourceLibraryId,
+    );
     setVerifyReading(true);
     setVerifyError(null);
     const result = await fetchResourceLibraryEdit(
@@ -2862,11 +2892,15 @@ export function StorageFilesPage() {
       recovery.candidate.resourceLibraryId,
     );
     if (verifyRequestRef.current !== requestId) return;
-    if (saveRecoveryRef.current !== recovery) return;
+    if (saveRecoveriesRef.current.get(key) !== recovery) return;
     setVerifyReading(false);
     if (!result.ok) {
       if (result.code === "resource_library_not_found") {
-        updateSaveRecovery(null);
+        updateSaveRecovery(
+          recovery.editing,
+          recovery.candidate.resourceLibraryId,
+          null,
+        );
         if (recovery.editing) {
           setVerifiedNotice(
             "已核对：该资源库已不在当前 Active 中（可能已被移除），本次提交未发布；你的输入已保留。请关闭卡片并刷新资源库列表。",
@@ -2886,7 +2920,11 @@ export function StorageFilesPage() {
     }
     const current = result.model.library;
     if (resourceLibraryCandidateMatches(recovery.candidate, current)) {
-      updateSaveRecovery(null);
+      updateSaveRecovery(
+        recovery.editing,
+        recovery.candidate.resourceLibraryId,
+        null,
+      );
       setVerifiedNotice(
         `已核对：当前 Active 中的资源库已是本次提交的配置（${describeResourceLibrary(current, result.model.storages)}）。当前配置无需再次保存；关闭卡片即可继续。`,
       );
@@ -2902,7 +2940,11 @@ export function StorageFilesPage() {
       );
       return;
     }
-    updateSaveRecovery(null);
+    updateSaveRecovery(
+      recovery.editing,
+      recovery.candidate.resourceLibraryId,
+      null,
+    );
     setVerifiedNotice(
       `已核对当前 Active：${describeResourceLibrary(current, result.model.storages)}。它与本次提交不同；你的输入已保留。如要继续，请明确保存：它会以刚核对到的 Active 版本为基准。`,
     );
@@ -2932,12 +2974,7 @@ export function StorageFilesPage() {
     setEditExpected(undefined);
     editBaselineRef.current = null;
     setDrawerOpen(true);
-    const retained =
-      saveRecoveryRef.current !== null &&
-      saveRecoveryRef.current.editing &&
-      saveRecoveryRef.current.candidate.resourceLibraryId === id
-        ? saveRecoveryRef.current
-        : null;
+    const retained = saveRecoveriesRef.current.get(`edit:${id}`) ?? null;
     if (retained !== null) {
       // Resume the retained submission itself: the exact candidate and its
       // Storage options reappear, no projection read re-seeds the form and no
@@ -3573,14 +3610,14 @@ export function StorageFilesPage() {
   // Only the Save that belongs to this card's exact target is presented; an
   // unconfirmed Save for another library stays retained without blocking this
   // entry.
+  const cardSaveRecovery =
+    editTargetId === null
+      ? (saveRecoveries.get("add") ?? null)
+      : (saveRecoveries.get(`edit:${editTargetId}`) ?? null);
   const cardRecovery: LibrarySaveRecoveryView | null =
-    saveRecovery !== null &&
-    (editTargetId === null
-      ? !saveRecovery.editing
-      : saveRecovery.editing &&
-        saveRecovery.candidate.resourceLibraryId === editTargetId)
-      ? { mode: saveRecovery.mode, message: saveRecovery.message }
-      : null;
+    cardSaveRecovery === null
+      ? null
+      : { mode: cardSaveRecovery.mode, message: cardSaveRecovery.message };
 
   return (
     <div className="mf-files-page">

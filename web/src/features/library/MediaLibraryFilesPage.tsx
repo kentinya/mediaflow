@@ -1185,6 +1185,11 @@ function mediaLibraryRefusal(
   }
 }
 
+/** The exact card entry a pending Save belongs to. */
+function mediaLibrarySaveKey(editing: boolean, libraryId: string): string {
+  return editing ? `edit:${libraryId}` : "add";
+}
+
 /** One Save whose publication still needs the operator's explicit read. */
 interface PendingMediaLibrarySave {
   readonly mode: "unknown" | "conflict";
@@ -2011,14 +2016,17 @@ export function MediaLibraryFilesPage() {
       }
     | undefined
   >();
-  // One Save whose publication still needs an explicit read.  An unconfirmed
-  // publication survives closing the card, so reopening the same entry resumes
-  // the verification instead of losing the submitted candidate.  A definite
-  // conflict is cleared on close because reopening an Edit already reads the
-  // exact current projection.
-  const [saveRecovery, setSaveRecovery] =
-    useState<PendingMediaLibrarySave | null>(null);
-  const saveRecoveryRef = useRef<PendingMediaLibrarySave | null>(null);
+  // Saves whose publication still needs an explicit read, keyed by their exact
+  // entry (one Add slot, one per Edit).  An unconfirmed publication survives
+  // closing the card, so reopening the same entry resumes the verification
+  // instead of losing the submitted candidate, and an unrelated Save never
+  // drops it.  A definite conflict is cleared on close because reopening an
+  // Edit already reads the exact current projection.
+  const [saveRecoveries, setSaveRecoveries] = useState<
+    ReadonlyMap<string, PendingMediaLibrarySave>
+  >(() => new Map());
+  const saveRecoveriesRef =
+    useRef<ReadonlyMap<string, PendingMediaLibrarySave>>(saveRecoveries);
   const [verifyReading, setVerifyReading] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifiedNotice, setVerifiedNotice] = useState<string | null>(null);
@@ -2205,9 +2213,19 @@ export function MediaLibraryFilesPage() {
   // Add drawer open/close keep operator focus recoverable: the invoking control
   // is remembered on open and refocused on close, and a fresh open never
   // carries a prior save error or the disabled-save handoff notice forward.
-  const updateSaveRecovery = (next: PendingMediaLibrarySave | null) => {
-    saveRecoveryRef.current = next;
-    setSaveRecovery(next);
+  const updateSaveRecovery = (
+    editing: boolean,
+    libraryId: string,
+    next: PendingMediaLibrarySave | null,
+  ) => {
+    const key = mediaLibrarySaveKey(editing, libraryId);
+    const current = saveRecoveriesRef.current;
+    if ((current.get(key) ?? null) === next) return;
+    const map = new Map(current);
+    if (next === null) map.delete(key);
+    else map.set(key, next);
+    saveRecoveriesRef.current = map;
+    setSaveRecoveries(map);
   };
 
   const resetRecoveryPresentation = () => {
@@ -2232,10 +2250,7 @@ export function MediaLibraryFilesPage() {
     editBaselineRef.current = null;
     // An unconfirmed Add resumes its exact submitted candidate; reopening the
     // Add entry never presents a blank form as if nothing was pending.
-    const retained =
-      saveRecoveryRef.current !== null && !saveRecoveryRef.current.editing
-        ? saveRecoveryRef.current
-        : null;
+    const retained = saveRecoveriesRef.current.get("add") ?? null;
     setEditInitial(retained?.candidate);
     setDrawerOpen(true);
   };
@@ -2254,8 +2269,12 @@ export function MediaLibraryFilesPage() {
     setDrawerOpen(false);
     // An unconfirmed Save stays retained for its verification; a definite
     // conflict is re-read by the next explicit Edit.
-    if (saveRecoveryRef.current?.mode === "conflict") {
-      updateSaveRecovery(null);
+    const closingRecovery =
+      editTargetId === null
+        ? (saveRecoveriesRef.current.get("add") ?? null)
+        : (saveRecoveriesRef.current.get(`edit:${editTargetId}`) ?? null);
+    if (closingRecovery?.mode === "conflict") {
+      updateSaveRecovery(editTargetId !== null, editTargetId ?? "", null);
     }
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
@@ -2325,7 +2344,7 @@ export function MediaLibraryFilesPage() {
           setSaveError(failure.message);
         } else {
           setSaveError(null);
-          updateSaveRecovery({
+          updateSaveRecovery(editTargetId !== null, candidate.mediaLibraryId, {
             mode: failure.outcome,
             message: failure.message,
             candidate,
@@ -2342,8 +2361,8 @@ export function MediaLibraryFilesPage() {
         return;
       }
       setSaveError(null);
-      updateSaveRecovery(null);
       const wasEditing = editTargetId !== null;
+      updateSaveRecovery(wasEditing, result.model.id, null);
       const editInvoker = editDrawerInvokerRef.current;
       applyPublishedLibraryState(
         result.model,
@@ -2363,7 +2382,7 @@ export function MediaLibraryFilesPage() {
     },
     onError: (_error, candidate) => {
       setSaveError(null);
-      updateSaveRecovery({
+      updateSaveRecovery(editTargetId !== null, candidate.mediaLibraryId, {
         mode: "unknown",
         message:
           "响应没有送达或无法解读，候选媒体库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
@@ -2383,9 +2402,16 @@ export function MediaLibraryFilesPage() {
   // never replaces the retained candidate and never asserts that "current value
   // is equal" proves the original command's history.
   const verifySaveRecovery = async () => {
-    const recovery = saveRecoveryRef.current;
+    const recovery =
+      editTargetId === null
+        ? (saveRecoveriesRef.current.get("add") ?? null)
+        : (saveRecoveriesRef.current.get(`edit:${editTargetId}`) ?? null);
     if (recovery === null || verifyReading) return;
     const requestId = ++verifyRequestRef.current;
+    const key = mediaLibrarySaveKey(
+      recovery.editing,
+      recovery.candidate.mediaLibraryId,
+    );
     setVerifyReading(true);
     setVerifyError(null);
     const result = await fetchMediaLibraryEdit(
@@ -2393,11 +2419,15 @@ export function MediaLibraryFilesPage() {
       recovery.candidate.mediaLibraryId,
     );
     if (verifyRequestRef.current !== requestId) return;
-    if (saveRecoveryRef.current !== recovery) return;
+    if (saveRecoveriesRef.current.get(key) !== recovery) return;
     setVerifyReading(false);
     if (!result.ok) {
       if (result.code === "media_library_not_found") {
-        updateSaveRecovery(null);
+        updateSaveRecovery(
+          recovery.editing,
+          recovery.candidate.mediaLibraryId,
+          null,
+        );
         if (recovery.editing) {
           setVerifiedNotice(
             "已核对：该媒体库已不在当前 Active 中（可能已被移除），本次提交未发布；你的输入已保留。请关闭卡片并刷新媒体库列表。",
@@ -2417,7 +2447,11 @@ export function MediaLibraryFilesPage() {
     }
     const current = result.model.library;
     if (mediaLibraryCandidateMatches(recovery.candidate, current)) {
-      updateSaveRecovery(null);
+      updateSaveRecovery(
+        recovery.editing,
+        recovery.candidate.mediaLibraryId,
+        null,
+      );
       setVerifiedNotice(
         `已核对：当前 Active 中的媒体库已是本次提交的配置（${describeMediaLibrary(current, result.model.storages)}）。当前配置无需再次保存；关闭卡片即可继续。`,
       );
@@ -2433,7 +2467,11 @@ export function MediaLibraryFilesPage() {
       );
       return;
     }
-    updateSaveRecovery(null);
+    updateSaveRecovery(
+      recovery.editing,
+      recovery.candidate.mediaLibraryId,
+      null,
+    );
     setVerifiedNotice(
       `已核对当前 Active：${describeMediaLibrary(current, result.model.storages)}。它与本次提交不同；你的输入已保留。如要继续，请明确保存：它会以刚核对到的 Active 版本为基准。`,
     );
@@ -2463,12 +2501,7 @@ export function MediaLibraryFilesPage() {
     setEditExpected(undefined);
     editBaselineRef.current = null;
     setDrawerOpen(true);
-    const retained =
-      saveRecoveryRef.current !== null &&
-      saveRecoveryRef.current.editing &&
-      saveRecoveryRef.current.candidate.mediaLibraryId === id
-        ? saveRecoveryRef.current
-        : null;
+    const retained = saveRecoveriesRef.current.get(`edit:${id}`) ?? null;
     if (retained !== null) {
       // Resume the retained submission itself: the exact candidate and its
       // Storage options reappear, no projection read re-seeds the form and no
@@ -3185,14 +3218,14 @@ export function MediaLibraryFilesPage() {
   // Only the Save that belongs to this card's exact target is presented; an
   // unconfirmed Save for another library stays retained without blocking this
   // entry.
+  const cardSaveRecovery =
+    editTargetId === null
+      ? (saveRecoveries.get("add") ?? null)
+      : (saveRecoveries.get(`edit:${editTargetId}`) ?? null);
   const cardRecovery: LibrarySaveRecoveryView | null =
-    saveRecovery !== null &&
-    (editTargetId === null
-      ? !saveRecovery.editing
-      : saveRecovery.editing &&
-        saveRecovery.candidate.mediaLibraryId === editTargetId)
-      ? { mode: saveRecovery.mode, message: saveRecovery.message }
-      : null;
+    cardSaveRecovery === null
+      ? null
+      : { mode: cardSaveRecovery.mode, message: cardSaveRecovery.message };
 
   return (
     <div className="mf-files-page">
