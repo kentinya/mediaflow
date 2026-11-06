@@ -8,7 +8,7 @@ ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 B 已复核修正候选 4c511fc7d18d66d01c70c7a695f88c77376135f6 及交付 Head
 733250e836615317340c563f603efea41492987f，结论 **FIX REQUIRED**。B50.4-01 已解决；
 B50.4-02 的认证续转及跨页 URL 回归已在同一 Task 修正，当前实现候选为
-ad40d23538cb3bf30d416ae7cefb6920d2375f5b，交回 B 复核。原 Base、范围、验收及测试分工保持。
+6b0927328a7bf0873faffce9cb38007fd4607764，交回 B 复核。原 Base、范围、验收及测试分工保持。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
@@ -20,7 +20,7 @@ Task Type: SLICE
 Parent Slice: 50
 Status: READY FOR B REVIEW
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
-Candidate: ad40d23538cb3bf30d416ae7cefb6920d2375f5b
+Candidate: 6b0927328a7bf0873faffce9cb38007fd4607764
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -353,7 +353,7 @@ output/ 下数据库参考/图片/HTML/预览等未跟踪产物全部保留，�
 
 ### Developer Completion Report — 2026-11-07 B50.4-02 fix
 
-实现候选：`ad40d23538cb3bf30d416ae7cefb6920d2375f5b`（2026-11-07 00:49 +08:00）。
+实现候选：`6b0927328a7bf0873faffce9cb38007fd4607764`（2026-11-07 00:52 +08:00）。
 Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设 Base、未扩大范围、
 未推送或部署。本报告记录后交回 **READY FOR B REVIEW**，不自行宣告 PASS。
 
@@ -374,7 +374,8 @@ Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设
 - `AppShell.test.tsx`：主页切换后断言仍是同一个 `[data-main-page]` 包装（不是新 key
   节点），同页子路由保持同一节点，真正切页仍进入一次。
 - `page-transition.spec.ts`：九页真实侧栏导航前标记当前包装，逐步断言标记跨九页保留；
-  reduced-motion 下从存储进入媒体库后断言精确的
+  未保存自动化输入的实际拦截/放弃流程结束后也断言包装未更换；reduced-motion 下从存储
+  进入媒体库后断言精确的
   `/ui-v2/medialib/files?mediaLibraryId=movies`，不残留上一页 search。
 - `operations.spec.ts`：未连接的任务中心精确深链继续断言自动进入连接页、连接后
   `view=ended&run=job-005` 的任务详情；媒体库→任务中心断言目标 URL 不含
@@ -388,6 +389,7 @@ Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设
 |---|---|
 | 修正前 `npx playwright test tests/e2e/operations.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/page-transition.spec.ts` | 6 failed / 38 passed（90.2s），复现 B 列出的连接页与跨页 URL 失败 |
 | 修正后同一三模块命令 | 44 passed（27.5s） |
+| 最终测试断言后 `npx playwright test tests/e2e/page-transition.spec.ts` | 5 passed（11.7s），含未保存流程包装持久断言 |
 | `npx playwright test ... -g "all nine sidebar\|...\|authentication continuation"` | 5 passed（6.1s），含新增包装持久标记与精确 URL 断言 |
 | `npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts src/routes/router.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/modal-card.test.tsx` | 5 files / 68 tests passed（3.67s，最终格式后复跑） |
 | `npm run typecheck` | passed |
@@ -398,9 +400,9 @@ Task Base 未变，仍为 `ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749`；未重设
 | 根目录 `python3 scripts/check_governance.py`、`git diff --check` | PASS |
 
 **测试计时**：本轮从 `2026-11-07 00:42:39 +08:00` 开始；可核实测试/静态检查区间并集
-约 188.3 秒（含修正前复现 90.2 秒、修正后三模块 27.8+27.9 秒、四模块 15.7 秒、
-定向 6.6 秒、单元 3.6+4.0 秒、typecheck/lint/prettier/build 约 12.9 秒及报告后
-最终 eslint/prettier 复检 1.8 秒），低于本轮
+约 202.7 秒（含修正前复现 90.2 秒、修正后三模块 27.8+27.9 秒、四模块 15.7 秒、
+定向 6.6 秒、单元 3.6+4.0 秒、typecheck/lint/prettier/build 约 12.9 秒、后续
+eslint/prettier 复检 1.8 秒及最终 page-transition 11.7 秒），低于本轮
 总用时的 30%。未空等凑比例。
 
 **剩余风险 / 未执行**：B 的全量 Web/Python 回归、完整默认 E2E、真实 Python 浏览器旅程、
