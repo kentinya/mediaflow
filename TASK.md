@@ -5,9 +5,9 @@ ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749:TASK.md；已审范围保留为
 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d..a284c0135701d949afcae1cfe15fbba904eb16e0，
 最终实现 checkpoint 为 a7a2b669da4611efd84778aabd4435145bcfd159。
 用户已明确授权激活修订后的 Task50.4。本 Task 仍为唯一当前实施 Task，
-B 已复核实现候选 ad81eb6be204aee7baf91a1a48273675a554f872，结论 **FIX REQUIRED**。
-B50.4-01 已在同一 Task 内修正并交回 **READY FOR B REVIEW**；原 Base、范围、验收及
-测试分工保持。
+B 已复核修正候选 4c511fc7d18d66d01c70c7a695f88c77376135f6 及交付 Head
+733250e836615317340c563f603efea41492987f，结论 **FIX REQUIRED**。B50.4-01 已解决；
+B50.4-02 的认证续转及跨页 URL 回归留在同一 Task 修正，原 Base、范围、验收及测试分工保持。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 的主页面
 切换部分；生命周期遵循 [Development Workflow](docs/development-workflow.md)。
@@ -17,7 +17,7 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-4、AC-8/10/11 与 V2-UX-012 �
 Task ID: 50.4
 Task Type: SLICE
 Parent Slice: 50
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
 Candidate: 4c511fc7d18d66d01c70c7a695f88c77376135f6
 Difficulty: Medium
@@ -25,7 +25,7 @@ Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: TASK50.4 ONLY — EXPLICIT USER ACTIVATION
-Next Action: B REVIEWS FIX CANDIDATE 4c511fc7 — SAME-PAGE CARD CLOSE ENTRY REPLAY
+Next Action: SAME TASK FIX — B50.4-02 AUTH CONTINUATION AND CROSS-PAGE URL
 ```
 
 ### Goal 与真实代码缺口
@@ -230,83 +230,116 @@ docs checkpoint 交回 **READY FOR B REVIEW**，不自行宣告 PASS。
 Chromium 1536×1024 与 390×844，B 仍须在最终候选上查看实际过程截图/trace 并完成其验收。
 未接触用户配置、运行数据库或生产媒体；预存 dirty/untracked 文件全部保留，不纳入 checkpoint。
 
-### B Review Result — 2026-11-07
+### B Review Result — 2026-11-07（修正候选复核）
 
 ```text
 Reviewed Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
-Reviewed Head: ad81eb6be204aee7baf91a1a48273675a554f872
+Reviewed Head: 733250e836615317340c563f603efea41492987f
+Implementation Candidate: 4c511fc7d18d66d01c70c7a695f88c77376135f6
 Decision: FIX REQUIRED
-Task blocker: B50.4-01 — 关闭同页弹卡重新播放整页淡入
+Resolved: B50.4-01 — 同页关闭弹卡不再重播整页进入
+Task blocker: B50.4-02 / P1 — 切页呈现重挂业务/认证，破坏续转与目标 URL
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-已独立审查完整 Base..Head 累计 10 个文件（4 个规划/激活文档、6 个产品/测试文件），
-没有重设 Base 或扩大 Task。主页面身份覆盖九个既有侧栏入口，认证允许范围未更改；
-本轮先通过实际入口复现以下必需结果缺口，依据 workflow §6 提前返回修正，未运行昂贵门禁。
+已独立审查完整 Base..Head 累计 10 个文件（4 个规划/激活文档、6 个产品/测试文件）。
+4c511fc7..733250e8 仅改 TASK.md，执行输入相同。分支 main、复核起点 HEAD 如上；
+workspace/Git 可写，预存 dirty/untracked 保留。本轮只更新 B 报告，不改产品或 A 所有文档。
 
-**B50.4-01 / P1：同页关闭弹卡后，整个页面重新变浅再恢复。**
+**B50.4-01 已解决。** 专用切页 E2E 5 项通过，含桌面自动化与窄屏存储反复打开/关闭。
+实际过程截图/trace 与关闭后采样均支持不再重播；另用普通侧栏点击、只监听 transition
+事件核对九页，均有实际 transitionrun/end。此项不再作为阻塞。
 
-用户旅程：连接隔离测试实例 → 首页 → 左侧“自动化” → “新建自动化任务” →
-不改输入，点击“取消” → 回到同一自动化列表。桌面 1536×1024 与窄屏 390×844
-各重复两次，四次关闭均触发 `mf-shell-page-enter`，主内容透明度从 0.2 恢复；
-侧栏/页头保持正常颜色，列表整片变浅。保持的是同一主页面和同一内容容器，
-并非正常跨页，也不是弹卡自身的退出动画；未发出业务写请求。
-不满足本 Task 的同页排除验收、Slice RO-4 / AC-8 与 V2-UX-012。
+**B50.4-02 / P1：共享切页容器重新挂载认证及业务内容，既有导航被页面副作用抢写。**
 
-引入点为候选实现 ad81eb6b。`ShellPageSurface` 保留进入类至该主页面卸载；
-styles.css 的 `:has(...)` 在卡片存在时将动画声明改为 `none`，卡片离开后恢复
-`mf-shell-page-enter`，浏览器重新播放。新 E2E 检查了卡片打开时的遮罩和容器存在，
-关闭后只等待卡片消失，没有检查之后的整页可见过程，因此不能证明同页排除已完成。
+两条均为现有受支持入口，已用隔离生产资产分别对照 Task Base、初版和当前候选：
+
+1. 尚未连接时，打开已保存的任务中心链接
+   `/ui-v2/operations?view=ended&status=failed&run=job-005`
+   （现有 operations.spec.ts:710 的精确任务续转旅程）。Base 自动进入连接页，显示
+   API token 输入框；候选停在 `/ui-v2/operations?view=ended&run=job-005`，
+   显示 “Not connected”，没有连接输入框，无法继续正常的“连接→原任务详情”旅程。
+2. 连接 → 侧栏“媒体库” → 正常选中现有 movies 库 → 侧栏“文件”。Base 到达
+   `/ui-v2/resourcelib/files`；候选最终变成
+   `/ui-v2/resourcelib/files?mediaLibraryId=movies`。历史记录证明侧栏先导航到正确地址，
+   随后旧媒体库页面把自己的参数写入文件页。媒体库→任务中心也出现相同参数残留。
+
+根因在 `AppShell.tsx:118–137,280–296`：以 Router location 的主页面身份作为整个
+ShellPageSurface 的 key，而 children 包含 `router.tsx:46–51` 中的 AuthBoundary 与
+Outlet。切换 key 重新挂载这棵子树；在 location 与当前路由内容交接时，旧内容的挂载
+副作用参与新导航。任务中心 `OperationsLanding.tsx:542–561` 的原有筛选规范化导航
+与认证跳转竞争；媒体库 `MediaLibraryFilesPage.tsx:3209–3217` 的挂载同步通过
+`:230–245` 写当前浏览器 pathname，导致目标页带上旧页参数。
+
+引入提交为 `ad81eb6be204aee7baf91a1a48273675a554f872`，时间
+2026-11-06 23:53 +08:00。对该初版重新构建后，两条旅程均复现；不是本次 4c511fc7
+才引入。Base 两条均通过。当前证据表明必需的认证续转与精确跨页 URL 不满足；
+权限隔离用例在 URL 断言处失败，不将其描述为越权读取或权限绕过。
 
 ### 本次修正开发指导（同一 Task）
 
-1. 将一次跨主页面的入场效果限制在该次进入过程。正常结束，以及为已有叠层停止/跳过
-   该次效果后，都不能因叠层移除而再次获得入场动画。保留立即开卡时的全屏遮罩、定位、
-   原有卡片动效和下次真正跨主页面时的过渡；由 Developer 选择最小呈现修正。
-2. 扩展现有 `tests/e2e/page-transition.spec.ts`，从上述真实入口完成打开、取消、重复
-   打开/关闭，观察关闭后的整页过程。至少覆盖自动化以及一个共享卡片入口，桌面和窄屏
-   按代表风险组合；跨主页面后仍有过渡、同页关闭没有整页淡入。以真实可见结果结合事件/
-   过程采样验证，不再只看元素存在或一直保留的 animationName，不增加固定耗时/像素门槛。
-3. 按原 Developer affected-test 计划运行受影响检查，并加入：
+1. 从共享切页呈现边界修正生命周期：动画应反映已抵达的主页面，不应为播放动画额外
+   重新挂载 AuthBoundary 或交接中的旧业务页。保留 Router 对匹配/导航的管理和认证
+   组件的正常生命周期；允许在 AppShell/router 做最小必要调整，不限定具体 DOM/key 实现。
+2. 保留现有筛选规范化、安全续转、库地址同步及权限规则。不要给各业务页面增加路径
+   判断来掩盖共享层问题，不加延迟/重试、不禁用规范化、不扩大认证允许范围或削弱断言。
+   同时保留已解决的同页关闭不重播、下次真正切页仍过渡和立即开卡定位。
+3. 优先复用现有失败旅程；如需增强断言，扩展既有 spec，覆盖自动转入连接页、连接后精确
+   任务详情，以及媒体库→文件/任务中心的干净 URL。先运行以下实际失败模块与切页用例：
 
-       npm run test:e2e -- tests/e2e/page-transition.spec.ts
+       npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/page-transition.spec.ts
 
-   先确认本次失败旅程通过，再交回同一 Task。B 负责修正候选的完整 Web、指定原生旅程
-   和最终适用门禁；本次提前 FIX REQUIRED 不免除这些验收。
+   再按原 Developer affected-test 计划完成直接受影响单元、typecheck、changed-file
+   lint/format、build、四个既定受影响 E2E、治理和 whitespace。改动测试追加相应检查。
+   Developer 不承担全量 Web/Python 或最终发布矩阵；交同一 Task 的新 checkpoint，
+   B 在修正候选上完成分配的完整验收。
 
 ### 本轮实际验证与证据
 
-本地证据目录（未发布到远程）：
-`.git/validation-evidence/ad81eb6b/B50.4-review/`。
+本地原始日志/生产资产摘要/截图/trace 保存在
+`.git/validation-evidence/733250e8/B50.4-review/`，未发布到远程。
+`inputs.json` 记录 dist、依赖锁、fake API 与两套 Playwright 配置 SHA256。
+最终 JS 为 index-BM7jOxaD.js，CSS 为 index-BUcXw9MU.css。
 
-| 验证 | 实际结果 / 证据 |
+| 验证（未注明时 cwd web/） | 实际结果 / 原始证据 |
 |---|---|
-| `python3 scripts/check_governance.py` | PASS（开始与记录前）；保留现有工作区杂项 |
-| `git diff --check ea8aad6..HEAD`、`git diff --check` | PASS |
-| 根目录 `npm --prefix web run build` | PASS，构建该候选生产资产；保留现有大 chunk 提示，build.log |
-| cwd web/，`node tests/fake-server.mjs`；`node ../.git/validation-evidence/ad81eb6b/B50.4-review/card-close-repro.mjs` | 真实 UI 复现，断言失败退出 1；1536/390 各 2 次关闭，4 次整页重播、0 次业务写请求。card-close-repro.log/json/mjs |
-| 桌面/窄屏实际过程图与 trace | 已查看 close-1536-1.png、close-390-1.png，确认整片内容变浅；close-1536-trace.zip、close-390-trace.zip 保留完整操作过程 |
-| 完整 Web 静态/单元/默认 E2E、指定 Python 浏览器、Slice 最终 T4/安全/打包 | 未运行，先修复已复现阻塞；不记为 PASS |
+| 根目录 `npm --prefix web run build` | PASS；build.log，既有大 chunk 提示保留 |
+| `npm run typecheck`、`npm run lint`、`npm run format:check` | 全部 PASS；各同名 log/json |
+| `npm run test -- run` | 94 files / 1390 tests PASS，131.33s；unit.log/json，保留 jsdom scrollTo 提示 |
+| `npx playwright test tests/e2e/page-transition.spec.ts`（trace on） | 5 PASS，12.2s；transition.log、transition-results/ |
+| `npm run test:e2e` 对应完整默认 Playwright 配置（trace on） | 254 PASS / 6 FAIL，3.6min；default.log、default-results/ |
+| 原计划五条 Python Playwright 精确筛选命令（各独立 harness，trace on） | 合计 6 PASS：任务详情、存储关闭、自动化新建/编辑、两库配置、CLI/两 Web 实际目录；native-*.log/json 及各目录 |
+| 根目录 `.venv/bin/python -m unittest discover -s tests` | 2603 tests OK / 7 个既有可选 skip，305.039s；python-full.log/json，ResourceWarning 保留 |
+| 根目录共享 Python 质量命令：ruff format/check、compileall、pip check、两个公开示例 config validate | 全部 PASS；ruff-format/ruff/compile/pip/example-*.log/json |
+| 根目录 `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | 无匹配，exit 1 符合预期；准确命令见 forbidden.json |
+| 根目录 `python3 scripts/check_governance.py`、`git diff --check ea8aad6..733250e8` 和报告 whitespace | PASS，报告记录后再次核对 |
+| 普通九页导航及 Base/初版/候选对照 | natural-entry.*、route-regression.*、original-regression.*；各 trace/截图保留 |
+| 动态视觉 | 已查看桌面自动化退出、窄屏存储退出、正常进入帧及未连接任务中心截图；transition-results/ 与 close-frames/、entry-frames/ |
+| wheel/安装消费者/容器与 Slice 最终完整安全、打包、原生矩阵 | 未运行；已确认阻塞，停止追加昂贵门禁，不记为 PASS |
 
-测试计时：可核实记录窗口从本地 2026-11-07 00:07:21 开始（此前已完成文档及源码审查，
-未计入分母），结束见本目录 review-end.txt。构建 00:07:21–00:07:22、初次复现
-00:07:42.754–00:07:44.477、双视口复现 00:08:34.157–00:08:39.336，
-区间并集约 8 秒；计入治理/whitespace 等短检查后保守不足 15 秒，
-小于已记录有效工作窗口的 50%，未通过等待补足比例。
+完整默认 E2E 的六项失败全部保留：medialib-files.spec.ts:45、:422（目标 URL），
+operations.spec.ts:184、:492、:710（未出现连接表单）及 :435（跨页 URL）。
+专用切页测试的简单认证用例通过不能替代这些现有带筛选/任务选择的续转旅程。
+本轮 Python 全量已在发现默认浏览器阻塞前启动；其通过不抵消 Web 的实际失败。
+
+测试计时：有效记录窗口从 2026-11-07 00:25:07 +08:00 开始；并行测试按区间并集计，
+已记录区间 365.453 秒，另为短构建/治理/whitespace 保守计入 20 秒，上界约 385.5 秒。
+00:40:16 记录时有效工作已 909.4 秒，占比上界 42.4%，低于 50%；后续仅报告与收尾，
+未空等凑比例。各起止记录和 timing.json 保留。
 
 ### 全部 Slice 结果重评
 
 | Required Outcome / Surface | 当前判断 |
 |---|---|
-| RO-1：任务详情卡片、可读性和既有操作 | 保留 Task50.2 B PASS；本候选的共享呈现回归仍待纠正后验收 |
-| RO-2：存储卡片/菜单 | 保留 Task50.1 B PASS；共享卡片退出需纳入本次回归 |
-| RO-3：两种库布局、菜单、四个配置入口 | 保留 Task50.3 B PASS；最终候选原生/安全门禁待完成 |
-| RO-4：库加载与自动化新建/编辑稳定性 | 保留 Task50.1/50.3 已接受结果；本次整页重播由当前 Task 修正 |
-| RO-4：九个主页面过渡及同页排除 | 已有实现，但同页排除不满足，B50.4-01 阻塞 |
-| 最终 AC-11 与全部 Surface 的共同安全/打包/原生验证 | 未完成，尚不能提交 Closure Packet |
+| RO-1：任务详情卡片、可读性和既有操作 | 保留 Task50.2 B PASS；当前原生详情用例通过，精确任务认证续转被 B50.4-02 阻塞 |
+| RO-2：存储卡片/菜单 | 保留 Task50.1 B PASS；本候选共享关闭原生旅程及窄屏重复关闭通过 |
+| RO-3：两种库布局、菜单、四个配置入口 | 保留 Task50.3 B PASS；本候选原生配置/目录通过，跨页 URL 被 B50.4-02 阻塞 |
+| RO-4：库加载与自动化新建/编辑稳定性 | 保留 Task50.1/50.3 已接受结果；本轮已滚动自动化新建/编辑原生旅程通过 |
+| RO-4：九主页面过渡及同页排除 | 同页重播已解决，九页进入通过；认证/导航兼容性尚不满足 AC-8，本 Task 继续修正 |
+| 全部 Surface 的共同安全与最终 AC-11 | 尚未完整完成，不提交 Closure Packet；既有 Task 接受事实不改写 |
 
-继续同一 Task 修正；不创建新 Task，不更改 Slice/Roadmap 边界，不宣告 Slice READY 或 CLOSED。
+继续同一 Task，不创建新 Task，不更改 Slice/Roadmap/Progress 边界或宣告 Slice READY/CLOSED。
 
 ### 规划基线与本次激活
 
