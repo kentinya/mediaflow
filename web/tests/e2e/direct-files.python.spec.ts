@@ -2044,6 +2044,8 @@ for (const kind of ["resource", "media"] as const) {
     await expect(addCard.getByRole("button", { name: "保存" })).toBeDisabled();
     await expect(addCard.getByText(addedName, { exact: true })).toBeVisible();
     expect(addPosts).toBe(1);
+    await addCard.getByRole("button", { name: "1 基本信息" }).click();
+    await expect(addCard.getByLabel("名称 *")).toBeDisabled();
     const published = await readRecoveryProjection(page, kind, id);
     expect(published[spec.libraryKey]).toMatchObject({
       id,
@@ -2059,6 +2061,7 @@ for (const kind of ["resource", "media"] as const) {
     ).toBeVisible();
     // Verification only read; the Save command was never resent.
     expect(addPosts).toBe(1);
+    await expect(addCard.getByLabel("名称 *")).toBeDisabled();
     await expect(addCard.getByRole("button", { name: "保存" })).toHaveCount(0);
     await addCard.getByRole("button", { name: "关闭", exact: true }).click();
     await expect(
@@ -2113,6 +2116,8 @@ for (const kind of ["resource", "media"] as const) {
     await expect(editCard.getByText("保存结果待核对")).toBeVisible();
     expect(editPuts).toBe(1);
     expect(editReads).toBe(1);
+    await editCard.getByRole("button", { name: "1 基本信息" }).click();
+    await expect(editCard.getByLabel("名称 *")).toBeDisabled();
 
     // Closing keeps the unconfirmed submission; reopening shows it again and
     // performs no new projection read or Save.
@@ -2128,6 +2133,7 @@ for (const kind of ["resource", "media"] as const) {
     await page.getByRole("menuitem", { name: spec.editLabel }).click();
     const reopened = page.getByRole("dialog", { name: spec.editLabel });
     await expect(reopened.getByLabel("名称 *")).toHaveValue(editedName);
+    await expect(reopened.getByLabel("名称 *")).toBeDisabled();
     await expect(reopened.getByText("保存结果待核对")).toBeVisible();
     expect(editPuts).toBe(1);
     expect(editReads).toBe(1);
@@ -2136,12 +2142,14 @@ for (const kind of ["resource", "media"] as const) {
     await reopened.getByRole("button", { name: "核对当前配置" }).click();
     await expect(reopened.getByText(/无法核对当前配置/)).toBeVisible();
     await expect(reopened.getByText("保存结果待核对")).toBeVisible();
+    await expect(reopened.getByLabel("名称 *")).toBeDisabled();
 
     // The real read proves the submitted candidate is already the Active.
     await reopened.getByRole("button", { name: "核对当前配置" }).click();
     await expect(
       reopened.getByText(/已核对：当前 Active 中的.+已是本次提交的配置/),
     ).toBeVisible();
+    await expect(reopened.getByLabel("名称 *")).toBeDisabled();
     expect(editPuts).toBe(1);
     await expect(
       reopened.getByRole("button", { name: "保存并激活" }),
@@ -2217,6 +2225,8 @@ for (const kind of ["resource", "media"] as const) {
     ).toBeDisabled();
     // The local intent is retained, not replaced by the winning values.
     await expect(card.getByText(mineName, { exact: true })).toBeVisible();
+    await card.getByRole("button", { name: "1 基本信息" }).click();
+    await expect(card.getByLabel("名称 *")).toBeDisabled();
     await expect
       .poll(
         async () =>
@@ -2228,11 +2238,14 @@ for (const kind of ["resource", "media"] as const) {
     expect(putStatuses).toEqual([409]);
 
     // The explicit read states the winning values; only then can the retained
-    // candidate be saved against that exact Active identity.
+    // candidate be edited and saved against that exact Active identity.
     await card.getByRole("button", { name: "核对当前配置" }).click();
     await expect(
       card.getByText(new RegExp(`已核对当前 Active：名称“${winnerName}”`)),
     ).toBeVisible();
+    await expect(card.getByLabel("名称 *")).toBeEnabled();
+    await card.getByRole("button", { name: "下一步" }).click();
+    await card.getByRole("button", { name: "下一步" }).click();
     await expect(
       card.getByRole("button", { name: "保存并激活" }),
     ).toBeEnabled();

@@ -828,6 +828,8 @@ describe("MediaLibrary Files journey", () => {
       within(card).getByRole("button", { name: "保存并激活" }),
     ).toBeDisabled();
     expect(within(card).getByText("My media name")).toBeVisible();
+    await user.click(within(card).getByRole("button", { name: "1 基本信息" }));
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
 
     await user.click(
       within(card).getByRole("button", { name: "核对当前配置" }),
@@ -835,7 +837,12 @@ describe("MediaLibrary Files journey", () => {
     expect(
       await within(card).findByText(/已核对当前 Active：名称“Peer name”/),
     ).toBeVisible();
+    // The proven competition restores editing and the freshly read Active is
+    // the explicit Save's fence.
+    expect(within(card).getByLabelText("名称 *")).toBeEnabled();
     expect(puts).toHaveLength(1);
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
     await user.click(within(card).getByRole("button", { name: "保存并激活" }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1]).toMatchObject({

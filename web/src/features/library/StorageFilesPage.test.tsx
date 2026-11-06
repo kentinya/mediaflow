@@ -16,6 +16,7 @@ import { renderApp, renderWithProviders } from "../../../tests/utils";
 import type { SystemStorage } from "../../entities/library/system-status";
 import { authStore } from "../../shared/api/auth-store";
 import type { SaveResourceLibraryOptions } from "../../shared/api/api-client";
+import type { LibrarySaveRecoveryView } from "./library-save-recovery";
 import {
   AddResourceLibraryDrawer,
   resourceLibraryCandidateMatches,
@@ -463,6 +464,145 @@ describe("AddResourceLibraryDrawer", () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+  });
+
+  it("keeps the pending Save read-only and restores editing only after the read differs", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn<(candidate: SaveResourceLibraryOptions) => void>();
+    const pending: LibrarySaveRecoveryView = {
+      mode: "unknown",
+      message:
+        "响应没有送达或无法解读，候选资源库可能已经发布。系统不会自动重发；请核对当前 Active 中的实际配置后再决定下一步。",
+    };
+    function Harness() {
+      const [recovery, setRecovery] = useState<LibrarySaveRecoveryView | null>(
+        pending,
+      );
+      const [verifiedNotice, setVerifiedNotice] = useState<string | null>(null);
+      return (
+        <AddResourceLibraryDrawer
+          open
+          storages={storages}
+          initial={{
+            resourceLibraryId: "lib-b",
+            name: "Submitted library",
+            enabled: true,
+            storageId: "local-1",
+            storagePath: "media/incoming",
+          }}
+          onClose={vi.fn()}
+          onSave={onSave}
+          saving={false}
+          saveError={null}
+          recovery={recovery}
+          verifying={false}
+          verifyError={null}
+          onVerify={() => {
+            setRecovery(null);
+            setVerifiedNotice(
+              "已核对当前 Active：名称“Peer”。它与本次提交不同；你的输入已保留。如要继续，请明确保存：它会以刚核对到的 Active 版本为基准。",
+            );
+          }}
+          verified={null}
+          verifiedNotice={verifiedNotice}
+        />
+      );
+    }
+    renderDrawer(<Harness />);
+
+    const name = screen.getByLabelText("名称 *");
+    expect(name).toHaveValue("Submitted library");
+    expect(name).toBeDisabled();
+    expect(screen.getByLabelText("资源库 ID *")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /状态/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    expect(screen.getByLabelText("Storage *")).toBeDisabled();
+    expect(screen.getByLabelText("资源库根路径 *")).toBeDisabled();
+    expect(screen.getByLabelText("包含规则")).toBeDisabled();
+    expect(screen.getByLabelText("排除规则")).toBeDisabled();
+    expect(screen.getByLabelText("最小文件年龄（秒）")).toBeDisabled();
+    expect(screen.getByLabelText("最后修改阈值（秒）")).toBeDisabled();
+    expect(screen.getByLabelText("稳定大小持续时间（秒）")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "核对当前配置" }));
+
+    // The read proves a different Active, so the retained input becomes
+    // editable again and has a real Save path.
+    expect(screen.getByText(/它与本次提交不同/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "1 基本信息" }));
+    const editableName = screen.getByLabelText("名称 *");
+    expect(editableName).toBeEnabled();
+    await user.clear(editableName);
+    await user.type(editableName, "Corrected library");
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith({
+      resourceLibraryId: "lib-b",
+      name: "Corrected library",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "media/incoming",
+    });
+  });
+
+  it("keeps the submitted fields read-only while verification is in progress", () => {
+    renderDrawer(
+      <AddResourceLibraryDrawer
+        open
+        storages={storages}
+        initial={{
+          resourceLibraryId: "lib-b",
+          name: "Submitted library",
+          enabled: true,
+          storageId: "local-1",
+          storagePath: "media/incoming",
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        recovery={{ mode: "unknown", message: "保存结果待核对。" }}
+        verifying
+        verifyError={null}
+        onVerify={vi.fn()}
+        verified={null}
+        verifiedNotice={null}
+      />,
+    );
+    expect(screen.getByLabelText("名称 *")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "核对中…" })).toBeDisabled();
+  });
+
+  it("keeps a verified Save read-only with only its close exit", () => {
+    renderDrawer(
+      <AddResourceLibraryDrawer
+        open
+        editing
+        storages={storages}
+        initial={{
+          resourceLibraryId: "lib-a",
+          name: "Submitted library",
+          enabled: true,
+          storageId: "local-1",
+          storagePath: "media/incoming",
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        recovery={null}
+        verifying={false}
+        verifyError={null}
+        onVerify={vi.fn()}
+        verified="published"
+        verifiedNotice="已核对：当前 Active 中的资源库已是本次提交的配置。当前配置无需再次保存；关闭卡片即可继续。"
+      />,
+    );
+    expect(screen.getByLabelText("名称 *")).toBeDisabled();
+    expect(screen.getByLabelText("资源库 ID *")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "保存并激活" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消" })).toBeNull();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled();
   });
 });
 
@@ -4047,6 +4187,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(within(card).queryByText(/当前 Active 未被本次操作替换/)).toBeNull();
     expect(within(card).getByRole("button", { name: "保存" })).toBeDisabled();
     expect(within(card).getByText("New library")).toBeVisible();
+    // Pending verification presents only the submitted fields; it cannot
+    // accept a new candidate that this state has no path to save.
+    await user.click(within(card).getByRole("button", { name: "1 基本信息" }));
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
+    expect(within(card).getByLabelText("资源库 ID *")).toBeDisabled();
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    expect(within(card).getByLabelText("资源库根路径 *")).toBeDisabled();
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
     expect(savePosts).toHaveLength(1);
     expect(savePosts[0]).toMatchObject({
       resourceLibraryId: "lib-b",
@@ -4065,6 +4213,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Verification is a read only: the Save command was never resent.
     expect(savePosts).toHaveLength(1);
     expect(within(card).queryByRole("button", { name: "保存" })).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "1 基本信息" }));
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
     await user.click(within(card).getByRole("button", { name: "关闭" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "添加资源库" })).toBeNull(),
@@ -4129,6 +4279,10 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(within(card).getByRole("button", { name: "保存并激活" }));
     expect(await within(card).findByText("保存结果待核对")).toBeVisible();
     expect(puts).toHaveLength(1);
+    // The pending card presents the submitted values without accepting a new
+    // candidate that only a later read could make savable.
+    await user.click(within(card).getByRole("button", { name: "1 基本信息" }));
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
 
     // Closing does not drop the unconfirmed submission or resend it.
     await user.click(within(card).getByRole("button", { name: "取消" }));
@@ -4147,6 +4301,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(await within(reopened).findByLabelText("名称 *")).toHaveValue(
       "Renamed by me",
     );
+    expect(within(reopened).getByLabelText("名称 *")).toBeDisabled();
     expect(within(reopened).getByText("保存结果待核对")).toBeVisible();
     expect(editReads).toBe(1);
     expect(puts).toHaveLength(1);
@@ -4157,6 +4312,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     );
     expect(await within(reopened).findByText(/无法核对当前配置/)).toBeVisible();
     expect(within(reopened).getByText("保存结果待核对")).toBeVisible();
+    expect(within(reopened).getByLabelText("名称 *")).toBeDisabled();
     // The retained input is still the operator's, and Save stays gated.
     await user.click(within(reopened).getByRole("button", { name: "下一步" }));
     await user.click(within(reopened).getByRole("button", { name: "下一步" }));
@@ -4178,13 +4334,24 @@ describe("Files entry state and ResourceLibrary strip", () => {
       within(reopened).getByRole("button", { name: "保存并激活" }),
     ).toBeEnabled();
     expect(puts).toHaveLength(1);
+    // The read proved a different Active, so editing is restored for the
+    // explicit Save that uses the freshly read identity.
+    await user.click(
+      within(reopened).getByRole("button", { name: "1 基本信息" }),
+    );
+    const name = within(reopened).getByLabelText("名称 *");
+    expect(name).toBeEnabled();
+    await user.clear(name);
+    await user.type(name, "Renamed after verify");
+    await user.click(within(reopened).getByRole("button", { name: "下一步" }));
+    await user.click(within(reopened).getByRole("button", { name: "下一步" }));
     await user.click(
       within(reopened).getByRole("button", { name: "保存并激活" }),
     );
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1]).toMatchObject({
       resourceLibraryId: "lib-a",
-      name: "Renamed by me",
+      name: "Renamed after verify",
       expectedRevisionId: "active-2",
       expectedVersion: 2,
       expectedDigest: "digest-2",
@@ -4267,6 +4434,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
     ).toBeDisabled();
     // The local intent is retained, not replaced by the winning values.
     expect(within(card).getByText("My explicit name")).toBeVisible();
+    await user.click(within(card).getByRole("button", { name: "1 基本信息" }));
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
 
     await user.click(
       within(card).getByRole("button", { name: "核对当前配置" }),
@@ -4274,7 +4443,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       await within(card).findByText(/已核对当前 Active：名称“Peer name”/),
     ).toBeVisible();
+    // The proven competition restores editing and the freshly read Active is
+    // the explicit Save's fence.
+    expect(within(card).getByLabelText("名称 *")).toBeEnabled();
     expect(puts).toHaveLength(1);
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
     await user.click(within(card).getByRole("button", { name: "保存并激活" }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1]).toMatchObject({

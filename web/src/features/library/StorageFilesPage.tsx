@@ -1808,6 +1808,11 @@ function ResourceLibraryConfigCard({
   // once the exact projection has arrived, so late/cached data can never seed a
   // submit. The first field takes focus when editable content is ready.
   const formReady = !reading && readError === null;
+  // While a Save waits for its explicit verification, and after a verification
+  // proves this form is finished, the body only presents the submitted values.
+  // Editing resumes only when the read proves a different Active that may be
+  // replaced by an explicit Save.
+  const fieldsDisabled = saving || recovery !== null || verified !== null;
   useEffect(() => {
     if (!formReady) {
       card.layerRef.current
@@ -2081,7 +2086,7 @@ function ResourceLibraryConfigCard({
               placeholder="例如：115电影"
               maxLength={120}
               value={name}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setName(event.target.value);
@@ -2094,7 +2099,7 @@ function ResourceLibraryConfigCard({
               placeholder="例如：source"
               maxLength={64}
               value={resourceId}
-              disabled={editing || saving}
+              disabled={editing || fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setResourceId(event.target.value);
@@ -2107,7 +2112,7 @@ function ResourceLibraryConfigCard({
                 id="mf-library-enabled"
                 type="checkbox"
                 checked={enabled}
-                disabled={saving}
+                disabled={fieldsDisabled}
                 onChange={(event) => {
                   setValidationError(null);
                   setEnabled(event.target.checked);
@@ -2128,7 +2133,7 @@ function ResourceLibraryConfigCard({
             <select
               id="mf-library-storage"
               value={selectedStorageId}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setStorageId(event.target.value);
@@ -2148,7 +2153,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-root"
               maxLength={4096}
               value={rootPath}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setRootPath(event.target.value);
@@ -2160,7 +2165,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-include-rules"
               rows={3}
               value={includeRulesText}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setIncludeRulesText(event.target.value);
@@ -2175,7 +2180,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-exclude-rules"
               rows={3}
               value={excludeRulesText}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setExcludeRulesText(event.target.value);
@@ -2189,7 +2194,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-min-age"
               inputMode="numeric"
               value={minimumAgeSeconds}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setMinimumAgeSeconds(event.target.value);
@@ -2202,7 +2207,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-modified-threshold"
               inputMode="numeric"
               value={modifiedThresholdSeconds}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setModifiedThresholdSeconds(event.target.value);
@@ -2215,7 +2220,7 @@ function ResourceLibraryConfigCard({
               id="mf-library-stable-size"
               inputMode="numeric"
               value={stableSizeDurationSeconds}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setStableSizeDurationSeconds(event.target.value);

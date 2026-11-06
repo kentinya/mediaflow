@@ -1387,6 +1387,11 @@ function MediaLibraryConfigCard({
   // A pending explicit Edit read keeps the stable card. Focus moves to the
   // close control until editable content is ready, then to the first field.
   const formReady = !reading && readError === null;
+  // While a Save waits for its explicit verification, and after a verification
+  // proves this form is finished, the body only presents the submitted values.
+  // Editing resumes only when the read proves a different Active that may be
+  // replaced by an explicit Save.
+  const fieldsDisabled = saving || recovery !== null || verified !== null;
   useEffect(() => {
     if (!formReady) {
       card.layerRef.current
@@ -1582,7 +1587,7 @@ function MediaLibraryConfigCard({
               placeholder="例如：电影库"
               maxLength={120}
               value={name}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setName(event.target.value);
@@ -1595,7 +1600,7 @@ function MediaLibraryConfigCard({
               placeholder="例如：movies"
               maxLength={64}
               value={mediaLibraryId}
-              disabled={editing || saving}
+              disabled={editing || fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setMediaLibraryId(event.target.value);
@@ -1611,7 +1616,7 @@ function MediaLibraryConfigCard({
                 id="mf-media-library-enabled"
                 type="checkbox"
                 checked={enabled}
-                disabled={saving}
+                disabled={fieldsDisabled}
                 onChange={(event) => {
                   setValidationError(null);
                   setEnabled(event.target.checked);
@@ -1632,7 +1637,7 @@ function MediaLibraryConfigCard({
             <select
               id="mf-media-library-storage"
               value={selectedStorageId}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setStorageId(event.target.value);
@@ -1652,7 +1657,7 @@ function MediaLibraryConfigCard({
               id="mf-media-library-root"
               maxLength={4096}
               value={rootPath}
-              disabled={saving}
+              disabled={fieldsDisabled}
               onChange={(event) => {
                 setValidationError(null);
                 setRootPath(event.target.value);

@@ -454,10 +454,15 @@ describe("AddMediaLibraryDrawer", () => {
     expect(within(card).getByRole("alert")).toHaveTextContent("保存结果待核对");
     expect(within(card).getByText(/可能已经发布/)).toBeVisible();
     expect(within(card).queryByText(/当前 Active 未被本次操作替换/)).toBeNull();
-    // The submitted input is still visible while the outcome is unconfirmed.
+    // The submitted input stays visible but cannot accept a new candidate that
+    // the pending verification has no path to save.
     expect(within(card).getByLabelText("名称 *")).toHaveValue("电影库");
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
+    expect(within(card).getByLabelText("媒体库 ID *")).toBeDisabled();
 
     await user.click(within(card).getByRole("button", { name: "下一步" }));
+    expect(within(card).getByLabelText("Storage *")).toBeDisabled();
+    expect(within(card).getByLabelText("媒体库根路径 *")).toBeDisabled();
     await user.click(within(card).getByRole("button", { name: "下一步" }));
     expect(
       within(card).getByRole("button", { name: "保存并激活" }),
@@ -467,6 +472,41 @@ describe("AddMediaLibraryDrawer", () => {
     );
     expect(onVerify).toHaveBeenCalledTimes(1);
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps the submitted fields read-only while verification is in progress", () => {
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        saving={false}
+        saveError={null}
+        recovery={{
+          mode: "unknown",
+          message: "响应没有送达或无法解读，候选媒体库可能已经发布。",
+        }}
+        verifying
+        verifyError={null}
+        onVerify={vi.fn()}
+        verified={null}
+        verifiedNotice={null}
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
+    expect(
+      within(card).getByRole("button", { name: "核对中…" }),
+    ).toBeDisabled();
   });
 
   it("shows a failed verification while keeping the pending candidate", () => {
@@ -533,12 +573,60 @@ describe("AddMediaLibraryDrawer", () => {
     );
     const card = screen.getByRole("dialog", { name: "编辑媒体库" });
     expect(within(card).getByRole("status")).toHaveTextContent("已核对");
+    // A finished verification only presents the submitted values; there is no
+    // editable input left without a Save path.
+    expect(within(card).getByLabelText("名称 *")).toBeDisabled();
+    expect(within(card).getByLabelText("媒体库 ID *")).toBeDisabled();
     expect(
       within(card).queryByRole("button", { name: "保存并激活" }),
     ).toBeNull();
     expect(within(card).queryByRole("button", { name: "取消" })).toBeNull();
     await user.click(within(card).getByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores editing when verification proves a different current Active", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn<(candidate: SaveMediaLibraryOptions) => void>();
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={onSave}
+        saving={false}
+        saveError={null}
+        recovery={null}
+        verifying={false}
+        verifyError={null}
+        onVerify={vi.fn()}
+        verified={null}
+        verifiedNotice="已核对当前 Active：名称“Peer”。它与本次提交不同；你的输入已保留。如要继续，请明确保存：它会以刚核对到的 Active 版本为基准。"
+      />,
+    );
+    const card = screen.getByRole("dialog", { name: "编辑媒体库" });
+    const nameField = within(card).getByLabelText("名称 *");
+    expect(nameField).toBeEnabled();
+    await user.clear(nameField);
+    await user.type(nameField, "My explicit name");
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "下一步" }));
+    await user.click(within(card).getByRole("button", { name: "保存并激活" }));
+    expect(onSave).toHaveBeenCalledWith({
+      mediaLibraryId: "movies",
+      name: "My explicit name",
+      enabled: true,
+      storageId: "cloud-1",
+      rootPath: "Media/Movies",
+    });
   });
 });
 
