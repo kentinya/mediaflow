@@ -42,10 +42,10 @@ only in [the development workflow](development-workflow.md).
 [Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **ACTIVE**.
 The user authorized planning and related documentation for the original eight requests and explicitly
 added Automation create/edit card jitter correction; the original eight requirements remain intact.
-The user authorized Slice activation and the first B Task plan by the same agent, then explicitly
-activated Task50.1. [TASK.md](../TASK.md) is the sole current implementation Task, PLANNED and
-awaiting Developer implementation. This turn activates the Task only; no code implementation,
-self-acceptance or A Final Review has started.
+Task50.1 passed B review. The user explicitly activated Task50.2 (Task detail cards and readability)
+on 2026-11-06; [TASK.md](../TASK.md) is the sole current implementation Task, PLANNED and awaiting
+Developer implementation. This turn records Task activation only; no Task50.2 code implementation
+or A Final Review has started. Slice scope and acceptance boundaries are unchanged.
 Page transitions cover only the main pages reached through existing V2 sidebar entries, as clarified
 by the user; main-page identity determines a transition. Tabs, detail subroutes (including their deep
 links), library/path changes and card open/close within the same main page do not replay that page
@@ -56,9 +56,10 @@ their own requirements. Other pages' business redesign is not in scope.
 
 Latest acceptance is [Slice49's Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review):
 original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through implementation
-`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes remain accepted; Slice50's target
-is not delivered or accepted. Prior accepted Base/Head/closure identities, delivered results,
-deferrals and validation limits belong to [Progress](progress.md#closure-ledger) and its immutable
+`9d6b78147d90b950ed2333f9747facc77bf0391a`. All four outcomes remain accepted; Slice50's complete target
+is not yet accepted; the delivered Task50.1 subset does not close the Slice. Prior accepted
+Base/Head/closure identities, delivered results, deferrals and validation limits belong to
+[Progress](progress.md#closure-ledger) and its immutable
 review pointers. Earlier Slices are not reopened, and Scan/Preview/FileIndex/Job/Pause retirements
 remain intact.
 
