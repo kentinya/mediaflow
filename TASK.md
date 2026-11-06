@@ -1,8 +1,8 @@
 # Task 50.3 — 两种库的完整浏览布局、配置弹卡与加载体验
 
 用户于 2026-11-06 明确授权激活本 Task。未命名 Storage、保存恢复及核对期间/完成后的
-只读状态均已通过 B 复验，原生慢目录视觉验收已补完。认证测试的运行断言已通过，
-但新回调与辅助函数签名不一致，类型检查失败；当前 FIX REQUIRED，同 Task 修正测试类型。
+只读状态均已通过 B 复验，原生慢目录视觉验收已补完。认证测试的运行断言与辅助函数
+类型均已修正并交回 READY FOR B REVIEW；本轮不推送或部署。
 
 Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载部分；对应
 `V2-UX-009–011`、`V2-UX-012` 的加载部分及 AC-5/6/7/9、适用 AC-10/11。
@@ -14,9 +14,9 @@ Authority：已提交 [Slice50](SLICE.md) 的 RO-3 全部、RO-4 两种库加载
 Task ID: 50.3
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d
-Candidate: 66ac0f06c3d7b2d63263626c3713335057ad8e3d
+Candidate: a7a2b669da4611efd84778aabd4435145bcfd159
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -193,7 +193,7 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
   不重构后端配置/权限/队列或引入自动未知重放，不推送/部署。
 - 当前：RO-1 已由 Task50.2 PASS；RO-2 与自动化稳定性由 Task50.1 PASS；RO-3 及两种库
   加载交互已核对；完整门禁尚缺修正后的 Web 全量通过。RO-4 侧栏主页面切换仍未交付。
-  认证测试运行已通过，辅助函数类型需同 Task 修正。
+  认证测试运行与类型检查均已通过，待 B 复验。
   本 Task 未来 PASS 后再次核对全部结果；侧栏切换仍缺则不能提交 Slice Closure Packet。
 
 ### Developer Completion Report / B Review Result
@@ -535,3 +535,36 @@ Task50.2 的 B PASS 及完整报告保留于 `073e75a97d08f5ad02d4cbe9e2d9cc1efc
 预存 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 产物全部保留，
 不纳入 checkpoint；不接触用户数据库、私有配置或生产媒体。本轮只执行 Developer 受影响
 测试与静态检查，不声称完整回归或 Slice 验收；测试运行时间低于本轮实际用时的 30%。
+
+### Developer Fix Report — 2026-11-06 (B50.3-03 fetch stub type)
+
+**READY FOR B REVIEW。** 修正候选为 `a7a2b669da4611efd84778aabd4435145bcfd159`，
+在 `main` 上单个测试 checkpoint；Task Base 仍为
+`073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- `AuthBoundary.test.tsx` 的 `stubFetch` 参数改为 `typeof fetch`，准确表达实际
+  fetch 的请求输入与可选 init；现有无参数 callback 仍可赋值使用。
+- 未使用 `any`、类型强转、`ts-ignore` 或关闭检查；未改产品源码、认证/恢复语义、
+  加载分支或其他测试。
+- 保留上一轮已修正的合法空列表/系统状态响应、空态时机、真实路由、token 与
+  intended path 断言，以及 `MediaLibraryFilesPage` 的 pending/真实空态测试。
+
+**本轮实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run typecheck`（修正前复现 TS2345/TS7006；修正后重跑） | passed |
+| `npm run test -- run src/shared/auth/AuthBoundary.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx` | 2 files / 24 tests passed |
+| `npx eslint src/shared/auth/AuthBoundary.test.tsx` | passed |
+| `npx prettier --check src/shared/auth/AuthBoundary.test.tsx` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+**未执行（B 自有门禁）：** 全量 Web/Python 套件、build、E2E 与原生模块；本修正只改
+测试辅助函数签名，未改产品代码，不把这些门禁记为 Developer 通过或失败。
+剩余风险：无新增产品风险；真实 pending/迟到响应与完整 T4 验收继续由 B 的完整门禁覆盖。
+
+本轮从 `2026-11-06T15:11:41Z` 开始，约 `15:13Z` 交接（约 1 分 20 秒）；typecheck 与
+单元测试并行执行，测试区间并集约 8 秒，连同静态检查约 11 秒，约占本轮实际用时的
+14%，低于 30%。预存 dirty/untracked 全部保留。
