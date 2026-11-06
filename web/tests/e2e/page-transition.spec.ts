@@ -504,6 +504,12 @@ test("unsaved automation input holds the current page until the operator discard
   ).toBeVisible();
   await expect(page.locator('[data-main-page="storage"]')).toHaveCount(1);
   await expect(page.locator('[data-main-page="automation"]')).toHaveCount(0);
+  // The blocker/discard flow and the following main-page change keep the same
+  // routed wrapper; only its presented identity changes.
+  await expect(page.locator('[data-main-page="storage"]')).toHaveAttribute(
+    "data-transition-probe",
+    "persistent",
+  );
   expect(writes).toEqual([]);
 });
 
