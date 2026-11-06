@@ -464,7 +464,11 @@ test("reads are side-effect free: only GET requests leave the landing", async ({
   // Select one run (a read), open its overview (a read) and refresh (a read).
   await page.getByRole("table").getByRole("button").first().click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
   await page.waitForTimeout(750);
 
   expect(api.length).toBeGreaterThan(0);
@@ -561,9 +565,14 @@ test("the selected run follows polling, header refresh and history navigation", 
     .poll(overviewReads, { timeout: 6500, intervals: [250] })
     .toBeGreaterThanOrEqual(2);
 
-  // The header refresh re-reads the same bounded overview exactly once more.
+  // Close the modal to use the page header, then reopen the exact run. The
+  // card covers the header; a real operator cannot click through its backdrop.
   const beforeRefresh = overviewReads();
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await detail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(detail).toHaveCount(0);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await activeRow.getByRole("button").first().click();
+  await expect(detail).toBeVisible();
   await expect
     .poll(overviewReads, { timeout: 10000, intervals: [250] })
     .toBeGreaterThan(beforeRefresh);
@@ -1222,7 +1231,11 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     status: "completed",
     itemCount: 1,
   });
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
@@ -1638,7 +1651,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   ).toBeVisible();
 
   // Refresh keeps the same durable facts — the run is not recomputed.
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await itemEvidence.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(
     itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
   ).toHaveCount(1);
@@ -1828,7 +1841,11 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     status: "completed",
     itemCount: 1,
   });
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Four.2004.mkv")).toBeVisible();
@@ -2207,7 +2224,11 @@ test("the retired batch continuation is a bounded refusal while the center offer
   expect(after.continuations).toEqual(before.continuations);
   expect(after.sourceExists).toEqual(before.sourceExists);
 
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
   expect(before.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
 });
 
@@ -3157,7 +3178,11 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   await openInventory(page);
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
   await page.getByRole("table").getByRole("button").first().click();
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const selectedRunId = new URL(page.url()).searchParams.get("run");
+  await detail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(detail).toHaveCount(0);
   const context = page.url();
   const header = page.locator(".mf-operations-inventory > header");
   let release!: () => void;
@@ -3183,7 +3208,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   await header.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(header.getByRole("button", { name: "刷新中…" })).toBeDisabled();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(detail).toHaveCount(0);
   await expect(page).toHaveURL(context);
   expect(reads).toBe(1);
   release();
@@ -3191,6 +3216,9 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
     header.getByRole("button", { name: "刷新", exact: true }),
   ).toBeEnabled();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+  await page.getByRole("table").getByRole("button").first().click();
+  await expect(detail).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("run")).toBe(selectedRunId);
 });
 
 for (const status of [503, 403, 401]) {
