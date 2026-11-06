@@ -6,7 +6,8 @@ Task50.1：**PASS**（B 独立验收，2026-11-06）。
 本页保留精确审查范围、实际结果和 Slice 重评。
 
 Slice50 仍为 ACTIVE。RO-1、RO-3 及 RO-4 的侧栏主页面切换/两种库加载尚未交付。
-下一步：等待后续 Task 规划请求；没有新的活动实施 Task，不自动实施或由 B 关闭 Slice。
+本轮已规划下方 Task50.2 草案，未激活，不授权实施；没有新的活动实施 Task。
+Task50.1 的原验收如下保留；本轮不重复验收，不由 B 关闭 Slice。
 
 ## B Review Result
 
@@ -103,4 +104,182 @@ Compose、入口/部署权限、后端、schema 或常驻服务合同，因此�
 
 本 Task PASS 不能证明整个 Slice 完成。不提交 Slice Closure Packet，不由 B 宣告 Slice
 PASS / CLOSED；保留 A 的合同/原 Base 及既有接受账本。当前用户请求为修正复核，未另建
-下一活动 Task；需要后续规划时再基于真实代码选择一个完整结果，实施仍需对应授权。
+下一活动 Task；本轮后续规划见下方草案，实施仍需对应授权。
+
+---
+
+# Task50.2 草案 — 任务详情弹卡与可读性（未激活）
+
+Authority：已提交 `575898ebaae593568be59699bb40116f9e6f2d91:SLICE.md` 的 RO-1、
+AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workflow.md) 与
+[Task 模板](Task/TEMPLATE.md)。当前合同的实施授权仍仅为 Task50.1；本草案不授权实施。
+
+规划现场：分支 `main`，HEAD/Task Base 如下；仓库与 Git 可写，治理预检 PASS。
+预存 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、日志、`15`、`output/` 等均保留，
+不纳入 checkpoint。本轮仅改本页；治理、文档链接/测试路径、Base 祖先关系及 whitespace
+检查通过，未运行产品测试。检查耗时不足 1 秒，低于本轮实际工作时间的 50%。
+
+```text
+Task ID: 50.2
+Task Type: SLICE
+Parent Slice: 50
+Status: PLANNED
+Activation: DRAFT ONLY — NOT AUTHORIZED FOR IMPLEMENTATION
+Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B
+```
+
+## Goal 与完整用户旅程
+
+落实 `V2-UX-005/006`：在任务中心点击名称，以保持原列表宽度和上下文的居中详情卡读懂
+“哪个任务、流程到哪一步、文件实际如何、有什么需要处理”，并完成已有允许的操作。
+
+- **入口：** 八个现有视图的任务名称、原精确任务链接、刷新和认证续转到达同一任务。
+- **可见状态：** 先呈现任务身份、五态流程、阶段/等待、进度、独立文件/附件结果和当前
+  业务问题，再分层查看来源/目标、条目、记录、诊断。读取中有协调卡片，不闪假成功。
+- **动作：** 已有控制、四类决定→分析→精确摘要→明确继续，以及计划、日志/审计、记录、
+  JSON 导出仍可达；只使用后端已经允许的动作。
+- **成功/退出：** 能读懂“流程已完成；部分文件失败”；关闭/返回恢复原合法视图、日期、
+  页、问题文件定位、滚动和入口焦点。开关卡片不执行或取消工作。
+- **失败/恢复：** 缺失、拒绝、读取失败、流程失败、未知效果/无 Result 如实显示，保留
+  原有合法下一步。允许的退出/重开不丢原请求核对；技术终结失败保持事实查看。
+
+完整依据：[TARGET 任务详情旅程](docs/product-experience.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)、
+[CURRENT Tasks/results/recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)、
+[任务中心规范](docs/task-center-page-spec.md)、
+[Architecture TARGET](docs/architecture.md#target--v2-dialog-readability-and-navigation-experience-slice50-active)。
+沿用 `UX-001–010`、`REQ-TASK-*`/`REQ-RESULT-*`/`REQ-RECOVERY-*` 的现行 V2 修订、
+`REQ-WEB-004/005`、`REQ-SAFE-001–009`、`V2-OPS-014/016`、`V2-TASK-012–014`。
+
+## 真实代码与范围
+
+- `OperationsLanding.tsx`：`RunTable → selectRun → ?run= → RunDetailPanel` 是名称点击
+  链路；`listSearch`/`applyDetailState`/`closeRun` 管列表、详情和问题定位返回。
+- `shared/ui/styles.css`：`.mf-run-layout.mf-run-has-detail` 按约 34% 分配侧详情，并
+  配套缩窄列表；窄屏详情占满视口。替换目标布局，按实际使用者保留其他布局。
+- `RunDetailTabs.tsx` 已有进度、文件/附件、条目证据、记录、导出和同页摘要；
+  `RunDetailFacts` 将业务内容与 Worker/固定配置等技术信息并列，需重排信息层级。
+- `shared/ui/modal-card.tsx` 的 `ModalCardShell`、`useModalLayer`、`useModalCardExit`
+  已提供无业务依赖的居中外壳、进出、滚动占位、inert、键盘/焦点能力。
+- `routes/router.tsx`、`run-detail-state.ts`、`shared/navigation/operations-return.ts`
+  已有精确链接和返回状态；`operations.spec.ts` 明确断言旧“桌面右列/窄屏全屏”几何。
+
+范围是该完整详情旅程的 Web 呈现、必要导航/状态生命周期适配及测试。复用现有 typed API、
+Query 与 Task/结果/恢复行为，不改变 API/application/runtime/schema、八视图总体和日期语义。
+
+## 开发指导
+
+1. 从上述真实入口梳理列表/详情 URL、问题文件返回、控制与恢复请求的状态归属，确认哪些
+   状态须跨卡片退出保留。保留现有业务控制器，不因动画重挂载重置未决核对。
+2. 为选中任务接入共享卡片，列表保持完整宽度；把卡片挂在能正确约束背景的层级。复用
+   锁滚动/占位、焦点和退出能力，处理首个聚焦点，避免旧 Escape/回焦与外壳重复响应。
+   详情导航采用已有局部保滚动做法；深链没有原入口时给合法列表返回和焦点落点。
+3. 按“任务与流程 → 文件结果/当前问题 → 来源目标与动作 → 详细证据”组织信息。
+   技术 ID、Worker、固定配置可展开查看，失败阶段/未知效果/待处理项保持明显。
+   不从当前 Active 或浏览器猜补历史名称、状态和计数。长路径和多列表格有界滚动/换行，
+   关闭与必要操作在窄屏/键盘下可达，保留全部证据和字段。
+4. 接入既有条目/记录过滤分页、单项证据、导出、控制、四类恢复和精确摘要。
+   用真实在途/未知响应后的关闭、返回、重开验证核对保留；仅在实际链路需要时调整状态
+   生命周期，不增加通用命令框架，不把展示重排变成新的执行入口。
+5. 慢读取、拒绝/缺失/失败使用协调卡片；正文接入和退出平顺，reduced-motion 可用。
+   关闭后晚到响应不重开旧任务，快速换任务不串结果，同条件刷新保留可用内容/阅读位置。
+   不为动画延时，也不以重发业务命令更新界面。
+6. 更新旧几何断言及受影响说明，完成下面 Developer 测试后交接一个完整 checkpoint。
+   共享外壳如有修改，补直接受影响的存储/自动化回归；不顺带清理旧不可达恢复代码或
+   重做其他中心业务。完整验收由 B 负责。
+
+## Acceptance Criteria
+
+- [ ] **卡片/返回（AC-1）：** 八视图真实名称点击打开协调居中卡片，原列表不挤窄。
+  关闭、Escape、遮罩、浏览器返回遵循合法退出规则；视图/日期/页/问题定位/滚动/焦点
+  保留。精确链接、刷新/认证续转到达正确任务，缺少原入口时可回合法列表。
+- [ ] **可读性（AC-2）：** 流程、阶段/等待、处理进度与独立文件/附件效果层级清楚。
+  混合结果、completed+技术失败/未知/无 Result、failed、cancelled、等待确认不互相冒充；
+  未知总数不造百分比，恢复成功仍要求既有精确证据。
+- [ ] **证据/操作（AC-2/10）：** 来源/目标、结果、计划解释、日志/审计、记录/过滤/分页、
+  导出和合法控制可达；四类处理完成原同一 Task 旅程。技术终结失败保持事实查看，成功
+  兄弟项/未知效果不重放。纯查看/导航/刷新不发执行、取消或决定请求。
+- [ ] **核对/并发（AC-10）：** 显式提交保持原权限、意图、身份及 pins/fences；允许的
+  退出/重开仍核对原请求，不能变成再次提交。换任务不串选择、权限、核对或结果。
+- [ ] **加载/失败：** 读取中到正文稳定，缺失/拒绝/读失败可辨且保留原合法下一步；
+  晚到读取不重开旧卡，快速换任务只显示当前任务，同条件刷新不清空可用内容。
+- [ ] **可见交互（AC-11）：** 1536×1024 / 390px 长名称、路径、多文件和证据可读，内部
+  有界滚动，关闭/必要操作不遮挡，焦点留在卡内并正确返回；背景宽度/滚动稳定，进出与
+  自动化/存储协调，reduced-motion 可用。截图与动态操作共同验收。
+- [ ] B 完成适用完整 T4 与真实入口验收后才 PASS。共享呈现若受影响，存储/自动化已接受
+  旅程保持；RBAC、显式破坏性意图、独立结果、核对和成功/未知效果非重放保持。
+
+## Required Tests
+
+遵循 [workflow §6](docs/development-workflow.md#6-test-levels)。使用既有隔离 harness、临时
+SQLite/Local 根及合成 Provider；从真实 UI/已实现链路进入，只对该链路实际请求注入慢响应/
+失败，不构造不存在的入口。场景按风险组合覆盖，不要求全排列。
+
+每轮记录实际工作和测试时间，测试运行墙钟时间须少于本轮实际工作时间的 50%；并行运行
+计区间并集。先完成实际代码/旅程审查和用例选择，不靠空等凑比例、不把 B 全回归交给
+Developer。可证实阻塞先 FIX REQUIRED；必需门禁未完成不得 PASS。
+
+### Developer — affected tests
+
+在 `web/` 运行：
+
+```sh
+npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunLifecycleControls.test.tsx src/features/operations/run-detail-state.test.ts src/shared/navigation/operations-return.test.ts src/features/operations/OperationsRouter.test.tsx
+npm run typecheck
+npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts --grep 'the selected run detail reads|detail tab and filter context|dated views and 21-file|native .*recovery|native Metadata correction|policy-permitted overwrite'
+```
+
+覆盖布局/返回、状态与文件结果、证据/导出及真实四类恢复；将新增慢读取、焦点/退出、未知
+提交重开用例纳入受影响测试执行。替换旧几何断言，保留有效业务断言。对实际变更文件跑
+ESLint/Prettier；仅修改下列生产文件时示例为：
+
+```sh
+npx eslint src/features/operations/OperationsLanding.tsx src/features/operations/RunDetailTabs.tsx
+npx prettier --check src/features/operations/OperationsLanding.tsx src/features/operations/RunDetailTabs.tsx src/shared/ui/styles.css
+```
+
+新增/修改的测试和其他文件同样加入检查。如修改共享 modal，另跑
+`npm run test -- run src/shared/ui/modal-card.test.tsx src/features/storage/StorageManagementPage.test.tsx src/features/operations/AutomationCreateDialog.test.tsx`
+及 `storage-dialog.python.spec.ts` / `automation-create-dialog.python.spec.ts` 的直接受影响用例。
+Developer 不承担完整 Python/Web/E2E 或发布矩阵。
+
+### B — acceptance / full regression
+
+1. 独立审查完整 Task Base..候选 Head，先从真实名称/原精确链接验证关键旅程，含关闭返回、
+   五态/文件结果、四类处理、在途/未知后重开。实际阻塞留在同一 Task 修复。
+2. 运行 [shared full gates](docs/development-workflow.md#shared-full-regression-commands)
+   的适用完整 T4：Python/Web 全回归/质量、构建、示例、依赖、wheel/源码外消费及适用
+   安全用例。Docker/重启矩阵按实际修改和部署合同选择并说明理由/限制；纯前端呈现不
+   自动增加生产部署验收。不得用缺少 Developer 全回归作为产品阻塞。
+3. `web/` 构建后运行真实 Python 浏览器：
+
+   ```sh
+   npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts
+   ```
+
+   在既有真实 harness 补齐桌面/390px 新详情截图和动态交互，人工检查信息层级、长内容、
+   加载/失败、键盘/焦点、reduced-motion；旧八视图截图不能代替新详情验收。
+4. 记录精确 SHA、命令/cwd、实际结果/失败/skip、原始日志及视觉证据，放稳定 ignored
+   目录或 CI。仅复用自己的匹配执行输入/产物并给出差异证明。
+5. PASS 后重评所有 Slice 结果：本草案只覆盖 RO-1；RO-2 和自动化稳定性仍已接受，RO-3
+   与 RO-4 切页/库加载仍待交付。不自动规划/实施下一 Task，不提前交 A 终审。
+
+## Non-goals
+
+两种库去树/配置卡片、侧栏主页面切换和库加载另行规划。不新增 Task 状态/恢复、通用重试、
+跨 Task 批量操作、引擎/队列/后端/schema、Provider、动画设置或生产部署；不重做其他列表
+业务。不以固定像素/毫秒/DOM 结构作为唯一验收，不把可选清理变成阻塞。
+
+## Developer Completion Report
+
+待激活实施后填写：完整 checkpoint SHA、READY FOR B REVIEW、关键变化、实际受影响
+测试结果、已知失败/风险和剩余工作。完整验收待 B，不要求完整回归证据册。
+
+## B Review Result
+
+Task50.2 尚无实现候选，本草案不作产品 PASS / FIX REQUIRED 判断。后续须记录完整
+Base..Head、实际门禁、阻塞及其用户影响、全部 Slice 结果和下一步。
