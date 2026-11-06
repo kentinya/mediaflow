@@ -137,8 +137,9 @@ Planner / Reviewer: B
 “哪个任务、流程到哪一步、文件实际如何、有什么需要处理”，并完成已有允许的操作。
 
 - **入口：** 八个现有视图的任务名称、原精确任务链接、刷新和认证续转到达同一任务。
-- **可见状态：** 先呈现任务身份、五态流程、阶段/等待、进度、独立文件/附件结果和当前
-  业务问题，再分层查看来源/目标、条目、记录、诊断。读取中有协调卡片，不闪假成功。
+- **可见状态：** 优先让用户读懂任务身份、五态流程、阶段/等待、进度、独立文件/附件
+  结果和当前业务问题；来源/目标、条目、记录、诊断分层可查。具体排列、分组和标签按
+  内容设计。读取中有协调卡片，不闪假成功。
 - **动作：** 已有控制、四类决定→分析→精确摘要→明确继续，以及计划、日志/审计、记录、
   JSON 导出仍可达；只使用后端已经允许的动作。
 - **成功/退出：** 能读懂“流程已完成；部分文件失败”；关闭/返回恢复原合法视图、日期、
@@ -172,14 +173,17 @@ Query 与 Task/结果/恢复行为，不改变 API/application/runtime/schema、
 ## 开发指导
 
 1. 从上述真实入口梳理列表/详情 URL、问题文件返回、控制与恢复请求的状态归属，确认哪些
-   状态须跨卡片退出保留。保留现有业务控制器，不因动画重挂载重置未决核对。
-2. 为选中任务接入共享卡片，列表保持完整宽度；把卡片挂在能正确约束背景的层级。复用
-   锁滚动/占位、焦点和退出能力，处理首个聚焦点，避免旧 Escape/回焦与外壳重复响应。
+   状态须跨卡片退出保留。沿用既有业务语义，允许必要的组件与状态归属调整；未决请求
+   的身份和核对上下文须保留。
+2. 为选中任务实现协调的居中卡片，列表保持完整宽度，背景约束正确。优先复用现有共享
+   外壳、锁滚动/占位、焦点和退出能力，允许按详情内容作必要适配，以可见交互和业务语义
+   验收。处理首个聚焦点，避免旧 Escape/回焦与外壳重复响应。
    详情导航采用已有局部保滚动做法；深链没有原入口时给合法列表返回和焦点落点。
-3. 按“任务与流程 → 文件结果/当前问题 → 来源目标与动作 → 详细证据”组织信息。
-   技术 ID、Worker、固定配置可展开查看，失败阶段/未知效果/待处理项保持明显。
-   不从当前 Active 或浏览器猜补历史名称、状态和计数。长路径和多列表格有界滚动/换行，
-   关闭与必要操作在窄屏/键盘下可达，保留全部证据和字段。
+3. 让用户优先读懂任务、流程、文件效果和待处理项；具体排列、分组、标签及折叠方式由
+   开发按内容设计。技术 ID、Worker、固定配置等诊断保持可查，失败阶段/未知效果/
+   待处理项保持明显。历史名称、状态和计数使用已有任务证据。长路径和多列表格有界
+   滚动/换行，关闭与必要操作在窄屏/键盘下可达。保留既有用户可见业务信息和必要证据
+   的可达性，允许合并重复展示、折叠诊断，不要求展示所有内部字段。
 4. 接入既有条目/记录过滤分页、单项证据、导出、控制、四类恢复和精确摘要。
    用真实在途/未知响应后的关闭、返回、重开验证核对保留；仅在实际链路需要时调整状态
    生命周期，不增加通用命令框架，不把展示重排变成新的执行入口。
@@ -197,7 +201,9 @@ Query 与 Task/结果/恢复行为，不改变 API/application/runtime/schema、
   保留。精确链接、刷新/认证续转到达正确任务，缺少原入口时可回合法列表。
 - [ ] **可读性（AC-2）：** 流程、阶段/等待、处理进度与独立文件/附件效果层级清楚。
   混合结果、completed+技术失败/未知/无 Result、failed、cancelled、等待确认不互相冒充；
-  未知总数不造百分比，恢复成功仍要求既有精确证据。
+  未知总数不造百分比，恢复成功仍要求既有精确证据。按用户能否读懂和完成操作验收，
+  允许不同排列、分组和标签设计，以及合并重复展示、折叠诊断；既有用户可见业务信息
+  和必要证据保持可达。
 - [ ] **证据/操作（AC-2/10）：** 来源/目标、结果、计划解释、日志/审计、记录/过滤/分页、
   导出和合法控制可达；四类处理完成原同一 Task 旅程。技术终结失败保持事实查看，成功
   兄弟项/未知效果不重放。纯查看/导航/刷新不发执行、取消或决定请求。
@@ -228,8 +234,8 @@ Developer。可证实阻塞先 FIX REQUIRED；必需门禁未完成不得 PASS�
 ```sh
 npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunLifecycleControls.test.tsx src/features/operations/run-detail-state.test.ts src/shared/navigation/operations-return.test.ts src/features/operations/OperationsRouter.test.tsx
 npm run typecheck
-npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
 npm run build
+npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts --grep 'the selected run detail reads|detail tab and filter context|dated views and 21-file|native .*recovery|native Metadata correction|policy-permitted overwrite'
 ```
 
