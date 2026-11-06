@@ -31,7 +31,9 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 后续明确补充自动化新建/编辑弹卡抖动修复；`V2-UX-005–012` 保留原八项一一映射，
 `V2-UX-013` 单列补充，不替代或缩减原要求。[Slice50](../SLICE.md) 为 **ACTIVE**，
 Task50.1 已由 B 在 `8573445f13a3f67cc434a576ee87e1d048d8362a` 验收 PASS：
-`V2-UX-007/008/013` 的存储卡片/菜单与自动化新建/编辑稳定性已交付；其余结果仍为 TARGET。
+`V2-UX-007/008/013` 的存储卡片/菜单与自动化新建/编辑稳定性已交付。Task50.2 已由 B
+在 `61d37285652c0eae2553f3bc970895476277bc0f` 验收 PASS，交付 `V2-UX-005/006` 任务详情。
+Task50.3 已激活、待实施；两种库与侧栏主页面切换/库加载仍为 TARGET。
 下表保留整个 Slice 的必需范围，Task PASS 不等于 Slice 整体验收或关闭。
 现有自动化创建/编辑卡片是共同
 视觉和交互基准；其他业务按各自内容设计，不能复制自动化字段或改变其命令。

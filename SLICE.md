@@ -8,7 +8,7 @@ Status: ACTIVE
 Base SHA: 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: TASK 50.2 ONLY; THIS TURN TASK ACTIVATION ONLY
+Development Authorization: TASK 50.3 ONLY; THIS TURN TASK ACTIVATION ONLY
 Risk: High
 Final Test Level: T4
 Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
@@ -23,8 +23,9 @@ Next Action: FOLLOW TASK.md; NO AUTOMATIC IMPLEMENTATION
 的标签、详情子路由（含其深链）、切库/目录与弹卡进出不属于这项整页切换动画，加载与
 弹卡要求分别保留。按主页面身份判断切换，不把链接来源或每次 URL 变化等同于切页。
 用户已明确授权“激活 Slice 并代替 B 规划第一个 Task”，由同一代理先完成 A 激活 checkpoint，
-再承担 B 的首次 Task 规划。Task50.1 已由 B 验收 PASS；用户于 2026-11-06 明确授权激活
-Task50.2。当前唯一活动实施 Task 见 [TASK.md](TASK.md)，状态 PLANNED（待实施）。
+再承担 B 的首次 Task 规划。Task50.1、Task50.2 已由 B 验收 PASS；用户于 2026-11-06
+明确授权激活已修订的 Task50.3（两种库布局、配置弹卡及加载体验）。当前唯一活动实施
+Task 见 [TASK.md](TASK.md)，状态 PLANNED（待实施）。
 本次由 B 记录用户授权及当前指针，不改变合同范围、原 Base、验收或角色边界。
 本轮仅完成 Task 激活，不自动启动 Developer，不改产品代码，不推送或部署。
 生命周期与测试分工遵循
@@ -246,8 +247,9 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 
 建议按完整行为组织约四个 Task：存储弹卡/菜单（含必要共享呈现）、任务详情弹卡/
 可读性、两种库布局/配置交互、侧栏主页面切换/两种库加载。自动化新建/编辑稳定性作为共享弹卡
-呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。Task50.1 已验收；当前
-活动 Task50.2（任务详情卡片/可读性）见 [TASK.md](TASK.md)。其余分组仍为建议，不是
+呈现修复纳入，复用前处理已知抖动；无需为每个原因单开 Task。Task50.1、Task50.2 已验收；
+当前活动 Task50.3 将两种库布局/配置交互与同页加载一并交付，见 [TASK.md](TASK.md)。
+侧栏主页面切换仍待后续规划；上述分组不改变任何必需结果，其余分组仍为建议，不是
 额外范围或已规划的活动 Task。B 按真实依赖
 决定顺序/粒度，不按原八项或补充原因机械拆任务。
 
@@ -265,6 +267,8 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 ## Final validation, Closure Packet and A Final Review
 
 Task50.1 已通过 B 验收，交付存储卡片/菜单及自动化新建/编辑稳定性，精确范围和证据见
-`575898ebaae593568be59699bb40116f9e6f2d91:TASK.md`。Task50.2 已激活、待实施；任务详情、
+`575898ebaae593568be59699bb40116f9e6f2d91:TASK.md`。Task50.2 已由 B 验收 PASS，已审
+`575898ebaae593568be59699bb40116f9e6f2d91..61d37285652c0eae2553f3bc970895476277bc0f`，
+报告见 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d:TASK.md`。Task50.3 已激活、待实施；
 两种库与主页面切换/库加载尚未全部交付。最终 Implementation Head / B Closure Packet /
 A Final Review 未产生；本次激活不是新增 Task PASS 或 Slice 关闭。
