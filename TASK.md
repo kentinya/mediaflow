@@ -3,7 +3,8 @@
 Authority：已提交 `575898ebaae593568be59699bb40116f9e6f2d91:SLICE.md` 的 RO-1、
 AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workflow.md) 与
 [Task 模板](Task/TEMPLATE.md)。用户于 2026-11-06 明确授权激活 Task50.2，作为当前唯一
-活动实施 Task。最新 B 结论为 FIX REQUIRED：原三项交互复现均已通过，详情主条目表格仍有窄屏路径/状态叠字，需在本 Task 内完成可读性修复。
+活动实施 Task。上轮 B 结论为 FIX REQUIRED：原三项交互复现均已通过，详情主条目表格仍有
+窄屏路径/状态叠字。Developer 已在同一 Task 内完成 B50.2-03 修复并交 READY FOR B REVIEW。
 
 激活前现场：分支 `main`，HEAD `5b5f319b1d77b9673a447bf60c5d7a21fcbcc956`；治理预检 PASS，
 仓库与 Git 可写。Task Base 保持原值，纯文档提交不重设它。预存 `mediaflow/.DS_Store` 修改
@@ -13,7 +14,7 @@ AC-1/2、适用 AC-10/11；遵循 [Development Workflow](docs/development-workfl
 Task ID: 50.2
 Task Type: SLICE
 Parent Slice: 50
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Activation: USER AUTHORIZED — 2026-11-06
 Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
 Difficulty: High
@@ -289,3 +290,74 @@ RO-1 的交互修复已验证，详情可读性及完整验收仍未完成；RO-
 补充保持 Task50.1 的接受事实；RO-3 两种库与 RO-4 主页面切换/库加载仍未交付。
 Slice50 保持 ACTIVE，不规划下一 Task、不交 Closure Packet、不进行 A 终审或关闭。
 下一步只由 Developer 在同一 Task50.2 修复 B50.2-03；B 之后补齐自己的验收。
+
+## Developer Handoff — B50.2-03 修复
+
+**READY FOR B REVIEW。** 只修复 B 报告的唯一产品阻塞（主条目表格窄屏路径/状态叠字），
+不重开前三个已复验交互，不改 API/application/runtime/schema、八视图业务或共享 modal。
+
+```text
+Task Base: 575898ebaae593568be59699bb40116f9e6f2d91
+Round start HEAD: eac82c77273df15bd51787a6191e671ffcd9f1fb
+Candidate: 本提交 HEAD（见 git log -1）
+Branch: main
+```
+
+**根因。** 详情卡渲染在 `.mf-operations-inventory` 内部（`position: fixed` 但不脱离
+文档树），因此任务列表的 `table-layout: fixed; min-width: 900px` 规则同时命中卡内条目/
+记录表；八列宽度均分、单元格默认 `overflow-wrap: normal`，`source-storage:Recovery.2005.mkv`
+这类无可断行长串溢出单元格边框，绘制到相邻“状态/阶段”列上，形成 B 截图中的叠字。
+
+**修复。** 仅局部（`RunDetailTabs.tsx` + 共享 `styles.css` 的详情卡区段）：
+1. 条目表 8 列表头获得独立列类 `mf-run-item-col-*`；详情卡内给这些列明确宽度
+   （源文件 24%、状态 11%、阶段 10%、尝试 5%、目标 16%、失败证据 13%、操作 11%、批量分析 10%）。
+2. 详情卡内 `.mf-run-table-wrap` 的 `th/td` 声明 `overflow-wrap: anywhere`，长路径与
+   技术身份留在自己列内换行；完整路径、状态与阻塞类型不隐藏、不截断、不缩字号。
+3. `mf-identity` 条目 ID 单独成行；`storage:path`、`(阻塞: kind)` 与 snake_case 阶段
+   加 `wbr`/`TechnicalToken` 语义断点，换行落在分隔符处。
+4. 表格保留 `.mf-run-table-wrap` 的内联 `overflow-x: auto`：窄屏 390px 横向滚动在表内
+   发生（wrap 900 / client 348），页面不撑宽（`documentElement.scrollWidth = 390`）。
+记录表共用同一 wrap 规则，同时获得同样的阅读区域保证，未另加业务能力。
+
+**实际验证（cwd `web/`，除注明外）：**
+
+```sh
+npm run test -- run src/features/operations/OperationsInventory.test.tsx \
+  src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx \
+  src/features/operations/RunLifecycleControls.test.tsx src/features/operations/run-detail-state.test.ts \
+  src/shared/navigation/operations-return.test.ts src/features/operations/OperationsRouter.test.tsx
+npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts --workers=1 \
+  tests/e2e/operations-inventory.python.spec.ts \
+  --grep 'the selected run detail reads|detail tab and filter context|dated views and 21-file|native .*recovery|native Metadata correction|policy-permitted overwrite'
+npm run typecheck && npm run build
+npx eslint src/features/operations/RunDetailTabs.tsx src/features/operations/RunDetailTabs.test.tsx tests/e2e/task-center-layout.spec.ts
+npx prettier --check src/features/operations/RunDetailTabs.tsx src/features/operations/RunDetailTabs.test.tsx src/shared/ui/styles.css tests/e2e/task-center-layout.spec.ts
+```
+
+| 命令 | 实际结果 |
+|---|---|
+| 组件受影响 7 文件 | 7 files / **85 passed** |
+| Node E2E（operations + task-center-layout） | **38 passed** |
+| 真实 Python E2E 子集（含四类原生恢复、精确证据、深链续转） | **9 passed** |
+| typecheck / build | PASS；既存大 chunk 提示保留 |
+| ESLint / Prettier（改动文件） | PASS |
+| 真实 Python harness 独立探测 | 修复前复现叠字；修复后 1536×1024 与 390×844 全部 `th/td` 溢出为 0；390px 表内滚动可到“查看证据”并打开证据区、关闭卡片；记录表同样 0 溢出 |
+
+新增/替换的回归：
+`task-center-layout.spec.ts` 新增卡片条目表阅读区域用例（真实 `/ui-v2/operations?run=task-001`
+入口 + 真实 items 读取上替换一条代表性长路径，测量每个 `th/td` 的 `scrollWidth-clientWidth`、
+390px 表内滚动与页面宽度、滚动到“查看证据”后打开证据区并 Escape 关闭）；
+`RunDetailTabs.test.tsx` 新增 8 个列类结构守卫。未删除或弱化任何既有断言。
+
+**取证说明。** 新用例用 `emulateMedia({ reducedMotion: "reduce" })` 取稳定帧，同时覆盖
+AC-11 的 reduced-motion 可用性；未降级为 sleep 或重试。入场动画未结束时截图会得到半透明
+中间帧（同一时刻 `getComputedStyle` 的 opacity 已是 1），因此截图证据只取稳态帧。
+
+**时间记录。** 本轮工作区间约 4h30m（本地 `15:05–19:35`，含代码/旅程审查与真实入口探测）。
+测试墙钟区间并集约 8.7 分钟（build 约 4.5 分钟、组件/E2E/Python 约 1.2 分钟、探针与静态
+检查约 3 分钟），占本轮约 3.2%，低于用户要求的 30%。
+
+**已知风险/未做。** 未跑 B 的 T4 全回归、完整真实 Python E2E 计划、wheel/源码外消费者与
+Docker/重启矩阵（按 workflow 属 B 的验收职责）；本条只证明 B50.2-03 的布局与可达性回归，
+不代表 Task 或 Slice PASS。B50.2-03 之外的 Slice 结果状态不变。

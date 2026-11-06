@@ -1012,6 +1012,34 @@ function stubDetailJourney(
 }
 
 describe("selected-run detail tabs", () => {
+  it("renders the item table with its reading-area column hooks (B50.2-03)", async () => {
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    await within(items).findByText(/source:movies\/a.mkv/);
+    // The detail card's fixed-layout table assigns each of the eight item
+    // columns its own reading area; these classes are the CSS hooks that keep
+    // a long source path inside the source column instead of painting over
+    // the status/stage neighbors (B50.2-03). The geometry itself is proved
+    // against the real browser in task-center-layout.spec.ts.
+    for (const className of [
+      "mf-run-item-col-source",
+      "mf-run-item-col-status",
+      "mf-run-item-col-stage",
+      "mf-run-item-col-attempts",
+      "mf-run-item-col-target",
+      "mf-run-item-col-failure",
+      "mf-run-item-col-actions",
+      "mf-run-item-col-batch",
+    ]) {
+      expect(
+        document.querySelector(`.mf-run-detail-card th.${className}`),
+      ).not.toBeNull();
+    }
+  });
   it("renders truthful progress with its accounting basis and no invented percentage claims", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);

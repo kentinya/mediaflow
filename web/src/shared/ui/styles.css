@@ -4632,6 +4632,50 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
+/* B50.2-03: the card renders inside .mf-operations-inventory, so the task
+   list's fixed-layout/min-width rule also matched the card's item and record
+   tables; with equal untracked columns an unbreakable source path overflowed
+   its cell and painted over the status/stage neighbors. The card's tables
+   keep their own reading areas: the item table gets explicit column widths,
+   and every value cell wraps long technical tokens inside its own column
+   (full path and status stay readable) instead of crossing the cell edge.
+   The wrapper's inline overflow-x keeps the remaining columns reachable by
+   in-table scrolling on narrow viewports; the card itself never widens. */
+.mf-run-detail-card .mf-run-table-wrap th,
+.mf-run-detail-card .mf-run-table-wrap td {
+  overflow-wrap: anywhere;
+}
+/* The item's technical identity reads as its own line under the full source
+   path, so the path and the id never share one broken token run. */
+.mf-run-detail-card .mf-run-table-wrap .mf-run-identity {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-source {
+  width: 24%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-status {
+  width: 11%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-stage {
+  width: 10%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-attempts {
+  width: 5%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-target {
+  width: 16%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-failure {
+  width: 13%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-actions {
+  width: 11%;
+}
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-batch {
+  width: 10%;
+}
+
 /* Readable fact hierarchy inside the card: the flow/status strip first,
    then the bounded fact list; technical diagnostics collapse. */
 .mf-run-facts {

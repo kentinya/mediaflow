@@ -17,7 +17,7 @@
  * durable link.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { AttachmentResults } from "./AttachmentResults";
 import { formatRunDateTime } from "./run-time";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -822,6 +822,35 @@ function DetailPager({
 
 // -- Items ------------------------------------------------------------------
 
+/**
+ * Render one technical snake_case token (e.g. a pipeline stage) with a break
+ * opportunity after each underscore. Overflow-wrap alone cuts the token at an
+ * arbitrary character on narrow cards; the underscore breaks keep each wrapped
+ * line a complete readable segment (B50.2-03) without changing the text
+ * content other reads depend on.
+ */
+function TechnicalToken({ value }: { readonly value: string }) {
+  const segments = value.split("_");
+  if (segments.length === 1) {
+    return <>{value}</>;
+  }
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <Fragment key={`${segment}-${index}`}>
+          {segment}
+          {index < segments.length - 1 && (
+            <>
+              {"_"}
+              <wbr />
+            </>
+          )}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function RunItemsSection({
   runId,
   state,
@@ -915,21 +944,28 @@ function RunItemsSection({
                   </caption>
                   <thead>
                     <tr>
-                      <th>源文件</th>
-                      <th>状态</th>
-                      <th>阶段</th>
-                      <th>尝试</th>
-                      <th>目标</th>
-                      <th>失败证据</th>
-                      <th>操作</th>
-                      <th>批量分析</th>
+                      {/* B50.2-03: these column classes give the detail card's
+                        fixed-layout table its own reading areas, so a long
+                        source path stays inside the source column instead of
+                        painting over the status/stage neighbors. */}
+                      <th className="mf-run-item-col-source">源文件</th>
+                      <th className="mf-run-item-col-status">状态</th>
+                      <th className="mf-run-item-col-stage">阶段</th>
+                      <th className="mf-run-item-col-attempts">尝试</th>
+                      <th className="mf-run-item-col-target">目标</th>
+                      <th className="mf-run-item-col-failure">失败证据</th>
+                      <th className="mf-run-item-col-actions">操作</th>
+                      <th className="mf-run-item-col-batch">批量分析</th>
                     </tr>
                   </thead>
                   <tbody>
                     {page.items.map((item) => (
                       <tr key={item.itemId}>
                         <td>
-                          {item.storageId}:{item.sourcePath}
+                          {/* B50.2-03: break after the storage prefix so the
+                            full source path wraps inside its own column. */}
+                          {item.storageId}:<wbr />
+                          {item.sourcePath}
                           <span className="mf-run-identity">{item.itemId}</span>
                         </td>
                         <td>
@@ -938,11 +974,15 @@ function RunItemsSection({
                           </span>
                           {item.checkpoint?.blockerKind && (
                             <span className="mf-run-kind">
-                              (阻塞:{item.checkpoint.blockerKind})
+                              (阻塞:
+                              <wbr />
+                              {item.checkpoint.blockerKind})
                             </span>
                           )}
                         </td>
-                        <td>{item.stage}</td>
+                        <td>
+                          <TechnicalToken value={item.stage} />
+                        </td>
                         <td>{item.attempts}</td>
                         <td>{item.destinationPath ?? "—"}</td>
                         <td>

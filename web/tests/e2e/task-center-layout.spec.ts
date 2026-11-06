@@ -588,3 +588,115 @@ for (const viewport of [
     await expect(to).toHaveValue("");
   });
 }
+
+/**
+ * B50.2-03 regression: the detail card's fixed-layout item table must keep
+ * every column's text inside its own reading area. An unbreakable source path
+ * used to overflow its cell and paint over the status/stage neighbors on
+ * narrow viewports. The fake's items stay read-only; this spec substitutes
+ * one representative long source path on the existing items read, exactly
+ * like the source_scope substitutions above. No endpoint is invented.
+ */
+const LONG_ITEM_SOURCE =
+  "Movies/" +
+  "UnbrokenDirectoryNameForLayout".repeat(4) +
+  "/Blade.Runner.2049.2160p.UHD.BluRay.HEVC.DTS-HD.MA.5.1.mkv";
+
+async function installLongItemSource(page: Page): Promise<void> {
+  await page.route(
+    /\/api\/v1\/operations\/runs\/[^/]+\/items(?:\?|$)/,
+    async (route) => {
+      const response = await route.fetch();
+      if (!response.ok()) {
+        await route.fulfill({ response });
+        return;
+      }
+      const payload = (await response.json()) as {
+        items?: Array<Record<string, unknown>>;
+      };
+      if (
+        Array.isArray(payload.items) &&
+        payload.items.length > 0 &&
+        typeof payload.items[0]?.["source_path"] === "string"
+      ) {
+        payload.items[0]["source_path"] = LONG_ITEM_SOURCE;
+      }
+      await route.fulfill({ response, json: payload });
+    },
+  );
+}
+
+/** Cells whose content spills past their own box would paint over neighbors. */
+async function overflowingCells(page: Page, regionName: string) {
+  return page.evaluate((name) => {
+    const region = document.querySelector(`section[aria-label="${name}"]`);
+    if (!region) return null;
+    return Array.from(region.querySelectorAll("th, td"))
+      .map((cell) => ({
+        text: (cell.textContent ?? "").slice(0, 40),
+        overflow: cell.scrollWidth - cell.clientWidth,
+      }))
+      .filter((entry) => entry.overflow > 1);
+  }, regionName);
+}
+
+test("the detail card item table keeps every column in its own reading area", async ({
+  page,
+}, testInfo) => {
+  await installRepresentativeScopes(page);
+  await installLongItemSource(page);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  // Reduced motion keeps the screenshots on settled frames and proves the card
+  // stays usable without its entry animation (AC-11).
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  // The exact selected-run link is one of the card's real entrances.
+  await page.goto("/ui-v2/operations?run=task-001");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByText(LONG_ITEM_SOURCE)).toBeVisible();
+  await expect(
+    page.locator(".mf-run-detail-card th.mf-run-item-col-source"),
+  ).toHaveCount(1);
+  expect(await overflowingCells(page, "主条目")).toEqual([]);
+  await items.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("item-reading-area-1536.png"),
+  });
+
+  // Narrow viewport: no cell spills into its neighbor, the bounded wrap
+  // scrolls internally, and the card never widens the page.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await items.scrollIntoViewIfNeeded();
+  expect(await overflowingCells(page, "主条目")).toEqual([]);
+  const wrap = await items.evaluate(() => {
+    const element = document.querySelector(
+      'section[aria-label="主条目"] .mf-run-table-wrap',
+    );
+    return element
+      ? {
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+        }
+      : null;
+  });
+  expect(wrap).not.toBeNull();
+  expect(wrap!.scrollWidth).toBeGreaterThan(wrap!.clientWidth);
+  expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("item-reading-area-390.png"),
+  });
+
+  // In-table scrolling reaches the per-item evidence action and the card
+  // still closes afterwards.
+  const evidenceButton = items
+    .getByRole("button", { name: "查看证据" })
+    .first();
+  await evidenceButton.scrollIntoViewIfNeeded();
+  await evidenceButton.click();
+  await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(detail).toHaveCount(0);
+});
