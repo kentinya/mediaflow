@@ -3025,18 +3025,30 @@ async function fetchLibraryEditProjection<T>(
     }
     const storages = source.storages.map((value) => {
       const storage = value as Record<string, unknown>;
+      // A Storage name is optional in a legal Active document.  The edit
+      // projection returns the stored value (possibly null/empty), so the
+      // display label falls back to the stable Storage ID exactly like the
+      // other Storage projections; the exact ID remains the submitted value.
       if (
         typeof storage.id !== "string" ||
-        typeof storage.name !== "string" ||
+        !(
+          storage.name === null ||
+          storage.name === undefined ||
+          typeof storage.name === "string"
+        ) ||
         typeof storage.type !== "string" ||
         typeof storage.readOnly !== "boolean" ||
         storage.enabled !== true
       ) {
         throw new Error("invalid edit Storage projection");
       }
+      const name =
+        typeof storage.name === "string" && storage.name.length > 0
+          ? storage.name
+          : storage.id;
       return {
         id: storage.id,
-        name: storage.name,
+        name,
         type: storage.type,
         readOnly: storage.readOnly,
         enabled: true,
@@ -3073,7 +3085,10 @@ export function fetchResourceLibraryEdit(
       return {
         resourceLibraryId: String(item.id),
         name: String(item.name),
-        enabled: item.enabled === true,
+        // A legal Active may omit `enabled`; the runtime and Save contract
+        // both treat that as the enabled default, so an edit must not silently
+        // disable the library the operator only renamed.
+        enabled: item.enabled !== false,
         storageId: String(item.storageId),
         storagePath:
           typeof item.storagePath === "string" ? item.storagePath : "",
@@ -5065,7 +5080,10 @@ export function fetchMediaLibraryEdit(
       return {
         mediaLibraryId: String(item.id),
         name: String(item.name),
-        enabled: item.enabled === true,
+        // A legal Active may omit `enabled`; the runtime and Save contract
+        // both treat that as the enabled default, so an edit must not silently
+        // disable the library the operator only renamed.
+        enabled: item.enabled !== false,
         storageId: String(item.storageId),
         rootPath: typeof item.rootPath === "string" ? item.rootPath : "",
       } satisfies SaveMediaLibraryOptions;

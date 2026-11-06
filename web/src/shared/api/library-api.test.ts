@@ -532,6 +532,98 @@ describe("ResourceLibrary edit API", () => {
     });
   });
 
+  it("labels an unnamed Active Storage by its stable ID", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "resources",
+          name: "Resources",
+          storageId: "source-storage",
+          storagePath: "incoming",
+        },
+        storages: [
+          {
+            id: "source-storage",
+            name: "Source",
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+          {
+            id: "media-target",
+            name: null,
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+        sideEffects: "none",
+      }),
+    );
+    const projection = await fetchResourceLibraryEdit(TOKEN, "resources");
+    expect(projection.ok).toBe(true);
+    if (!projection.ok) return;
+    expect(projection.model.storages).toEqual([
+      {
+        id: "source-storage",
+        name: "Source",
+        type: "local",
+        readOnly: false,
+        enabled: true,
+      },
+      {
+        id: "media-target",
+        name: "media-target",
+        type: "local",
+        readOnly: false,
+        enabled: true,
+      },
+    ]);
+    expect(projection.model.library.storageId).toBe("source-storage");
+    expect(projection.model.library.enabled).toBe(true);
+  });
+
+  it("still fails closed for a non-text Active Storage name", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "resources",
+          name: "Resources",
+          enabled: true,
+          storageId: "source-storage",
+          storagePath: "incoming",
+        },
+        storages: [
+          {
+            id: "source-storage",
+            name: 7,
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+      }),
+    );
+    const result = await fetchResourceLibraryEdit(TOKEN, "resources");
+    expect(result).toEqual({
+      ok: false,
+      status: 200,
+      code: "malformed_response",
+    });
+  });
+
   it("reports projection transport failure once without retry", async () => {
     const fetchMock = stubFetch(async () => {
       throw new TypeError("offline");

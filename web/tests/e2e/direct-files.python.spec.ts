@@ -1757,3 +1757,138 @@ test.describe("disabled origin stays inspectable", () => {
     await reopened.getByRole("button", { name: "关闭", exact: true }).click();
   });
 });
+
+/** Real-API file names of one library directory, for a zero-change proof. */
+async function libraryFileNames(
+  page: Page,
+  namespace: "resource-libraries" | "media-libraries",
+  libraryId: string,
+  path: string,
+): Promise<string[]> {
+  const response = await page.request.get(
+    `/api/v1/${namespace}/${libraryId}/files?path=${encodeURIComponent(path)}&limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  const responseText = await response.text();
+  expect(
+    response.ok(),
+    `${response.status()} ${responseText.slice(0, 300)}`,
+  ).toBe(true);
+  const document = JSON.parse(responseText) as {
+    entries: Array<{ name: string }>;
+  };
+  return document.entries.map((entry) => entry.name);
+}
+
+test("both library edit cards accept a legal Active with an unnamed Storage and save only the name", async ({
+  page,
+}) => {
+  const scenarios = [
+    {
+      kind: "resource" as const,
+      namespace: "resource-libraries" as const,
+      libraryId: "source",
+      libraryKey: "resourceLibrary" as const,
+      trigger: "资源库操作 Unified media source",
+      editLabel: "编辑资源库",
+      originalName: "Unified media source",
+      newName: "Renamed unified source",
+      expectedStorageId: "source-storage",
+      expectedRoot: "",
+    },
+    {
+      kind: "media" as const,
+      namespace: "media-libraries" as const,
+      libraryId: "movies",
+      libraryKey: "mediaLibrary" as const,
+      trigger: "媒体库操作 Movies",
+      editLabel: "编辑媒体库",
+      originalName: "Movies",
+      newName: "Renamed movies",
+      expectedStorageId: "media-target",
+      expectedRoot: "Movies",
+    },
+  ];
+  const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+
+  for (const scenario of scenarios) {
+    const url =
+      scenario.kind === "resource"
+        ? `/ui-v2/resourcelib/files?resourceLibraryId=${scenario.libraryId}`
+        : `/ui-v2/medialib/files?mediaLibraryId=${scenario.libraryId}`;
+    await page.goto(url);
+    await page.getByLabel("API token").fill(ADMIN_TOKEN);
+    await page.getByRole("button", { name: "Connect" }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: scenario.kind === "resource" ? "文件" : "媒体库",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const filesBefore = await libraryFileNames(
+      page,
+      scenario.namespace,
+      scenario.libraryId,
+      "",
+    );
+
+    await page.getByRole("button", { name: scenario.trigger }).click();
+    await page.getByRole("menuitem", { name: scenario.editLabel }).click();
+    const card = page.getByRole("dialog", { name: scenario.editLabel });
+    await expect(card).toBeVisible();
+    await expect(card.getByLabel("名称 *")).toHaveValue(scenario.originalName);
+    await expect(
+      card.getByLabel(
+        scenario.kind === "resource" ? "资源库 ID *" : "媒体库 ID *",
+      ),
+    ).toBeDisabled();
+
+    await card.getByLabel("名称 *").fill(scenario.newName);
+    await card.getByRole("button", { name: "下一步" }).click();
+    await expect(card.getByLabel("Storage *")).toHaveValue(
+      scenario.expectedStorageId,
+    );
+    await expect(
+      card.getByLabel("Storage *").locator('option[value="media-target"]'),
+    ).toHaveText("media-target（media-target）");
+    await card.getByRole("button", { name: "下一步" }).click();
+    await card.getByRole("button", { name: "保存并激活" }).click();
+    await expect(card).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: scenario.newName, exact: true }),
+    ).toBeVisible();
+
+    // The save published one real Active whose kind, ID, binding, root and
+    // enabled state are preserved; only the explicitly edited name changed.
+    const projection = await page.request.get(
+      `/api/v1/${scenario.namespace}/${scenario.libraryId}/edit`,
+      { headers },
+    );
+    expect(projection.ok()).toBe(true);
+    const document = (await projection.json()) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(document[scenario.libraryKey]).toMatchObject({
+      id: scenario.libraryId,
+      name: scenario.newName,
+      enabled: true,
+      storageId: scenario.expectedStorageId,
+    });
+    expect(
+      document[scenario.libraryKey]?.[
+        scenario.kind === "resource" ? "storagePath" : "rootPath"
+      ],
+    ).toBe(scenario.expectedRoot);
+
+    // The edit only published configuration: the real Storage listing is the
+    // same before and after, and the renamed library stays browsable by ID.
+    const filesAfter = await libraryFileNames(
+      page,
+      scenario.namespace,
+      scenario.libraryId,
+      "",
+    );
+    expect(filesAfter).toEqual(filesBefore);
+  }
+});

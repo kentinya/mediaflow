@@ -460,6 +460,99 @@ describe("MediaLibrary edit API", () => {
     });
   });
 
+  it("labels an unnamed Active Storage by its stable ID", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        mediaLibrary: {
+          id: "movies",
+          name: "电影库",
+          storageId: "media-target",
+          rootPath: "Movies",
+        },
+        storages: [
+          {
+            id: "source-storage",
+            name: "Source",
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+          {
+            id: "media-target",
+            name: null,
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+        sideEffects: "none",
+      }),
+    );
+    const projection = await fetchMediaLibraryEdit(TOKEN, "movies");
+    expect(projection.ok).toBe(true);
+    if (!projection.ok) return;
+    expect(projection.model.storages).toEqual([
+      {
+        id: "source-storage",
+        name: "Source",
+        type: "local",
+        readOnly: false,
+        enabled: true,
+      },
+      {
+        id: "media-target",
+        name: "media-target",
+        type: "local",
+        readOnly: false,
+        enabled: true,
+      },
+    ]);
+    expect(projection.model.library.storageId).toBe("media-target");
+    expect(projection.model.library.rootPath).toBe("Movies");
+    expect(projection.model.library.enabled).toBe(true);
+  });
+
+  it("still fails closed for a non-text Active Storage name", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        mediaLibrary: {
+          id: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "media-target",
+          rootPath: "Movies",
+        },
+        storages: [
+          {
+            id: "media-target",
+            name: 7,
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+      }),
+    );
+    const result = await fetchMediaLibraryEdit(TOKEN, "movies");
+    expect(result).toEqual({
+      ok: false,
+      status: 200,
+      code: "malformed_response",
+    });
+  });
+
   it("does not retry an unknown projection outcome", async () => {
     const fetchMock = stubFetch(async () => {
       throw new TypeError("offline");
