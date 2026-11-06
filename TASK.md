@@ -443,6 +443,48 @@ Task Base 仍为 `073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部
 本轮从约 `2026-11-06T13:14Z` 开始，约 `13:56Z` 交接（约 42 分钟）；测试执行约
 8 分钟（含失败运行、按入口恢复修正后的重跑），约占本轮实际用时的 19%，低于 30%。
 
+### Developer Fix Report — 2026-11-06 (B50.3-02 input state)
+
+**READY FOR B REVIEW。** 修正候选为 `995bce3bcbda138e370147888585ffd5832d3b0c`，
+在 `main` 上单个实现 checkpoint；Task Base 仍为
+`073e75a97d08f5ad02d4cbe9e2d9cc1efc89564d`。未推送、未部署，未自验收。
+
+实现事实：
+
+- `ResourceLibraryConfigCard` / `MediaLibraryConfigCard` 的正文输入在
+  `recovery !== null` 或 `verified !== null` 时禁用：保存结果待核对、核对进行中，以及
+  核对证明当前已是本次提交或编辑对象已不存在时，只展示提交值；步骤、核对和原关闭/
+  取消入口继续可用。核对证明当前 Active 与提交不同时，父页面清空待核对状态，正文
+  恢复编辑，显式保存沿用刚读到的 `expectedRevisionId/expectedVersion/expectedDigest`。
+- 编辑 ID 的既有只读、精确投影、提交重发门禁、未知/冲突分类和按入口保留恢复上下文
+  均未改变；未新增草稿/版本系统、后端能力或产品入口。
+- 新增/修改组件测试覆盖待核对与核对中只读、核对完成后仅关闭、核对不同后恢复编辑并
+  提交新候选；页面测试覆盖真实菜单/添加入口的待核对只读、编辑后以新 Active 身份保存；
+  原生 `direct-files.python.spec.ts` 的四个既有恢复场景各补真实入口只读断言。
+
+**本轮实际验证（cwd `web/`）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 4 files / 114 tests passed |
+| `npm run typecheck` | passed |
+| `npm run build` | passed |
+| `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep 'library save recovery'` | 4 passed |
+| `npx eslint <实际改动文件>`、`npx prettier --check <实际改动文件>` | passed |
+| `python3 scripts/check_governance.py`、`git diff --check` | PASS |
+
+原生首次运行有 2 个测试失败：新增的“保存并激活”可用性断言放在第 1 步，按钮只存在于
+第 3 步；将断言移到两步导航之后重跑，4 passed。该失败是测试断言位置错误，不是产品
+行为失败，已保留为实际执行记录。
+
+**未执行（B 自有门禁）：** 完整 Web/Python 套件、`live-files`、Storage/自动化原生
+模块、wheel/源码外 smoke、Docker/重启及完整 T4 视觉/加载验收；这些不是 Developer
+本轮失败的证据。剩余风险：只读态依赖现有禁用呈现，B 仍需在实际桌面/窄屏与键盘/
+reduced-motion 旅程中确认视觉与可达性；核对不同后的编辑恢复由 B 复核真实输入。
+
+本轮从约 `2026-11-06T14:02Z` 开始，约 `14:15Z` 交接（约 13 分钟）；测试执行约 70 秒
+（含一次断言位置修正的失败重跑），约占本轮实际用时的 9%，低于 30%。
+
 ### 激活基线与前序接受事实
 
 激活前分支 `main`、HEAD `b067b34e30f63631477a5a092eba99956cecb893`；治理预检 PASS，
