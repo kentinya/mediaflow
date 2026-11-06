@@ -122,7 +122,7 @@ Developer 与 B 各自本轮的测试时间须小于该轮总用时 50%。记录
 并行时间不重复相加，不空等凑比例。先复现已知阻塞再运行适用门禁；在本轮约束内
 未完成的验收如实记为待完成，不省略后宣告 PASS。
 
-#### Developer — affected tests
+### Developer — affected tests
 
 cwd web/，补充上述行为用例后执行：
 
@@ -140,7 +140,7 @@ cwd web/，补充上述行为用例后执行：
 根目录运行 python3 scripts/check_governance.py 与 git diff --check。
 受影响测试完成后提交 coherent checkpoint，Developer 不承担 B 全量门禁。
 
-#### B — acceptance 与 Slice-final
+### B — acceptance and full regression
 
 独立审查完整 Task Base..候选 Head，复现首页→文件→媒体库→返回、九入口覆盖、
 快速往返、同页详情/标签排除、自动化未保存输入后尝试离开的真实旅程。使用最终生产资产
