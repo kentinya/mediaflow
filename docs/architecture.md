@@ -10,9 +10,47 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Slice52 experience refinement (PLANNED)
+
+[Slice52](../SLICE.md) 只获规划授权；`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
+`V2-AUTO-016` 是 TARGET，下方 CURRENT 及历史接受身份不变。
+
+**Explore presentation and reads:** keep React → authenticated same-origin Explore API →
+ExploreService → provider-neutral port → TMDB transport and the existing trusted image/CSP bounds.
+Reuse the existing page-addressable browse/search endpoints (up to 20 works, pages 1–500); replace
+the accumulated infinite-list presentation with one current-page grid and compact pagination.
+Query identity includes exact conditions/type/keyword/page; pending target and actual visible page
+cannot be confused, late responses cannot relabel old data, and failed-page retry preserves the
+successful same-context page. Cache pages/contexts remain bounded and principal-isolated.
+No new endpoint, persistent catalog or provider behavior is required. Search exit/detail return
+retain the current-page anchor rather than requiring all visited pages to remain rendered.
+Consolidate the Explore heading and tool layout; remove its read-only Files search placeholder.
+Use the shared modal's bounded internal scroll capability, stable background lock/gutter/focus and
+accessible dismissal; detail content must reach its end at desktop, 390px and short viewport heights.
+
+**Shell and library loading:** Router/AuthBoundary/Query retain lifecycle and authority ownership.
+Adjust only the shared destination-identity transition and necessary content-settle presentation;
+avoid stacked fades, strong opacity flashes, page geometry changes and remounts for animation.
+Start tuning around 350ms, validate intermediate frames/actual interaction, and respect reduced motion.
+Do not delay network reads or user interaction. Cold library/directory reads still have independent
+pending states; cached/same-query refresh retains content with busy feedback in stable geometry.
+No transient inserted refresh row, hidden failure, stale cross-path content or bypassed authority read.
+
+**Automation Open retirement:** remove the old definition/editor Web pages, Router registrations,
+destination metadata, list/name entries and exclusive client dependencies; fix occurrence/history
+backlinks to supported list/records. Old routes use ordinary not-found without aliases/redirects.
+Keep lifecycle create/edit cards and valid deep links, focused publication, list Copy/Run once,
+unknown-command reconciliation, records and exact Task links. General revision/successor APIs and
+other shared backend/CLI consumers remain; this is not whole-backend Automation API retirement.
+Do not delete persisted configuration, definitions, Tasks, Results, records or audit history.
+
+No schema, execution engine, permission model, Storage mutation or new recovery state is planned.
+Shared modal/Shell changes require directly affected regression; any actual change to Active,
+permissions, mutation, concurrency or core safety requires Test Level reassessment under the workflow.
+
 ## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
-[Slice51](../SLICE.md) passed independent A Final Review on 2026-11-07, original Base
+[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) passed independent A Final Review on 2026-11-07, original Base
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
 `V2-EXPLORE-001–011` are CURRENT. Dashboard Web/API/CLI and their dedicated implementation and
 consumers are retired without compatibility. No media pipeline, execution authority or schema changed.

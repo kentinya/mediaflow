@@ -1,12 +1,12 @@
 # 文档导航与职责
 
-[Slice51](../SLICE.md) — V2 探索首页替换 Dashboard — 于 2026-11-07 经独立 A 终审
-**PASS / CLOSED**。“浏览 → 筛选／搜索 → 查看详情 → 返回”和真实空态／失败恢复已接受，
-Dashboard Web／API／CLI 及专属后端／消费者完整退出，无兼容。原始 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，
-已审实现 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`；完整证据与限制见 Contract／Progress。
-[TASK.md](../TASK.md) 为无活动实施 Task，下一大 Slice 另由 A 选择。首个计划与退回后修正计划的 B 代行
-例外保持披露，不等同独立验收。[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md)
-及更早接受身份／延期不变；关闭不等于推送、发布或部署。
+[Slice52](../SLICE.md) — 探索、页面切换与自动化入口体验修整 — 为 **PLANNED**，仅获
+2026-11-07 Slice 规划授权。七项问题的要求／旅程／架构均标为 TARGET；[TASK.md](../TASK.md)
+无活动实施 Task，尚未激活、编写实施 Task 或实现产品改动。
+最近接受基线仍为 [Slice51 固定关闭记录](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md)：
+原 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，已审实现
+`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`，原角色例外、独立验收和证据限制保持。
+Slice50／更早接受身份及延期不变；规划不等于实施、推送、发布或部署。
 
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
 开发过程留在 Git。`docs/history/` 是 LEGACY / READ ONLY，不作为当前指令，也不继续追加归档。
@@ -26,7 +26,8 @@ Dashboard Web／API／CLI 及专属后端／消费者完整退出，无兼容。
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
 | 发布与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；当前支持 fresh 新工作及同版本恢复，旧任务迁移/跨版本升级和 V1 不在支持范围；开发关闭和 Git 推送不等于发布 |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；图片是视觉参考，不是运行数据或权限 |
-| 探索首页（CURRENT） | [Slice51 Contract](../SLICE.md) / [稳定要求](v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) / [完整旅程](product-experience.md#current--v2-explore-homepage-slice51-pass--closed) / [架构](architecture.md#current--v2-explore-homepage-slice51-pass--closed)；TMDB 电影／剧集、筛选／搜索、详情和准确返回，Dashboard Web／API／CLI 及专属实现全退出，无兼容；已接受，证据限制见 Contract |
+| 七项体验修整（TARGET／PLANNED） | [Slice52 Contract](../SLICE.md) / [目标要求](v2-requirements.md#target--slice52-experience-refinement-planned) / [目标旅程](product-experience.md#target--slice52-experience-refinement-planned) / [目标架构](architecture.md#target--slice52-experience-refinement-planned)；探索布局／滚动／分页、切页与库读取、自动化旧打开链路退出，仅规划未交付 |
+| 探索首页（CURRENT） | [Slice51 Contract](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) / [稳定要求](v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) / [完整旅程](product-experience.md#current--v2-explore-homepage-slice51-pass--closed) / [架构](architecture.md#current--v2-explore-homepage-slice51-pass--closed)；TMDB 电影／剧集、筛选／搜索、详情和准确返回，Dashboard Web／API／CLI 及专属实现全退出，无兼容；已接受，证据限制见 Contract |
 | 弹卡、可读性与主页面切换（CURRENT） | [Slice50 Contract](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / [原八项与自动化弹卡稳定性补充](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed) / [完整现行旅程](product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)；目录树/抽屉替换、V2 侧栏主页面切换与自动化新建/编辑抖动修复均已接受，保留既有业务与接受事实 |
 | Task 流程、文件结果与自动化成功率 | [Slice48 已接受旅程](product-experience.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed)；Task 五态与文件结果独立，completed 不代表文件全部成功；定时/定义运行一次按 completed/(completed+failed) 统计，取消和未结束不入分母，手动整理/普通操作不参与 |
 | 自动化创建、编辑与运行一次 | [Slice49 现行旅程](product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed) / [稳定要求](v2-requirements.md#automation-forms-and-direct-run-once--current-slice49-pass--closed)；列表直接运行或复制已保存定义，复制紧邻编辑并生成停用副本；创建/编辑共用中文卡片和紧凑启用开关，启停随创建/保存生效；未知结果核对原请求/发布，不重发 |

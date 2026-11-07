@@ -50,16 +50,21 @@ completion neither proves file success nor grants replay.
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
-[Slice51](SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07:
+[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07:
 TMDB Explore is the default homepage, with browse → filter/search → detail → return, truthful empty
 states and independent read recovery. Dashboard Web/API/CLI, dedicated backend and consumers have
 fully retired without compatibility; shared statistics and durable history remain. Original Base
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` is accepted.
 [CURRENT requirements](docs/v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) define the delivered boundary.
-[TASK.md](TASK.md) records no active implementation Task; selecting the next large Slice is a
-separate A action. The user-authorized B planning substitutions remain disclosed in
-the Contract; Task acceptance and A Final Review were independent. Development acceptance is
-distinct from a release or deployment.
+The user-authorized B planning substitutions remain disclosed in that fixed Contract; Task
+acceptance and A Final Review were independent. Development acceptance is distinct from a release
+or deployment.
+
+[Slice52](SLICE.md) is PLANNED under the user's 2026-11-07 planning-only authorization: coordinated
+Explore layout, scrollable details and fixed-page browsing; comfortable page transitions and stable
+library reads; retirement of the old Automation Open Web journey. These are TARGET requirements,
+not delivered changes. [TASK.md](TASK.md) has no active implementation Task; activation precedes B's
+first Task plan, and implementation is not yet authorized.
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,

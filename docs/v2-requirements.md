@@ -25,9 +25,30 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
+## TARGET — Slice52 experience refinement (PLANNED)
+
+用户于 2026-11-07 授权规划 [Slice52](../SLICE.md) 的七项体验修整；本节为 TARGET，尚未
+激活或交付，不改变下方 CURRENT 的接受身份。`V2-EXPLORE-015` 拟替换 `004/006` 中
+追加加载及返回已加载列表的表示；`V2-AUTO-016` 拟取消 `V2-AUTO-001/014` 等对旧 Web
+定义详情／后继草稿编辑入口的保留义务。其余查询、权限、执行和历史边界保持。
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-EXPLORE-012 | 探索主内容只有一个可见标题。 | 移除公共定位文字造成的重复“探索”及其占位；正常侧栏同名入口保留，不能仅以 h1 数量代替可见结果。 |
+| V2-EXPLORE-013 | 搜索、类型、筛选与海报布局协调。 | 搜索输入与按钮实际对齐，控件高度／间距统一；不显示只读文件搜索占位，通知／身份操作保留。常用筛选直接可用，扩展筛选折叠；桌面和390px合理换行、无页面横向溢出，窄屏两列海报，校验提示／长文案仍可读。 |
+| V2-EXPLORE-014 | 详情完整可读且正文可滚动。 | 适配桌面、390px及矮视口；长名称／简介、有无图片、电影／剧集和加载／失败均可用。滚轮／触摸／键盘能读到末尾并操作外链，标题／关闭可达，背景不滚；关闭／Escape／后退恢复条件、页、位置、焦点及滚动条占位。 |
+| V2-EXPLORE-015 | 普通分页限制当前文档长度。 | 浏览／搜索每页最多20项，上一页／下一页、当前页与紧凑页码导航替换网格；不累积全部访问页或自动读取后续页。服务页上限／末页真实。条件变化回第1页，退出搜索及详情恢复原页；迟到响应不串上下文，目标页失败保留成功页、明确实际页与目标页，只重读失败页；缓存有界且鉴权隔离。 |
+| V2-UX-014 | 九个主页面切换舒缓且稳定。 | 比当前200ms更舒缓，以约350ms为调校起点并检查真实过程；减少明暗落差及重复淡入，无闪白／挤压／旧页残留。快速切换、前后退及认证续转保持正确归属；同页交互不重播。交互／读取不等动画、不人为延时，reduced-motion静态可用。 |
+| V2-UX-015 | 文件／媒体库读取反馈不闪现挤动正文。 | 冷读按实际等待区域占位，快响应／有效缓存直接呈现；后台重读、手动刷新及操作后更新用稳定区域反馈，不临时插入正文刷新行。慢读、空／失败／权限／无Active可辨，必要请求／安全刷新保留，跨库／路径不串数据。 |
+| V2-AUTO-016 | 旧“打开”Web功能及其专属链路退出。 | 删除列表“打开”，名称为普通文本；旧 definition／editor 页面、路由、导航身份、入口和专属客户端依赖退出，旧地址普通未找到，无别名／重定向。历史页面返回合法列表／记录。保留现有新建／编辑卡及深链、保存／启停、复制／运行一次、执行记录／Task、未知请求核对和共享管理API／CLI，不删除历史或扩展后端退役范围。 |
+
+完整目标旅程见 [Product Experience TARGET](product-experience.md#target--slice52-experience-refinement-planned)，
+技术边界见 [Architecture TARGET](architecture.md#target--slice52-experience-refinement-planned)。
+具体实施 Task 由激活后的 B 规划；本节不授权实现、不把规划校验当产品验收。
+
 ## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
-[Slice51](../SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
+[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` 至已审实现 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`；
 更新后的 B Closure Packet 为 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`。下列 `V2-EXPLORE-001–011` 全部为 CURRENT。
 探索替换 V2 的 `REQ-WEB-002` 首页职责，明确探索请求可读取外部元数据／图片；其他页面的

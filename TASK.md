@@ -1,20 +1,15 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Slice51 已于 2026-11-07 经独立 A Final Review **PASS / CLOSED**。
+[Slice52](SLICE.md) — 探索、页面切换与自动化入口体验修整 — 为 **PLANNED**。
+用户本轮只授权 Slice 规划；尚未激活，也没有 B 编写的实施 Task。
 
-- Slice Base：`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`；已审 Implementation Head：
-  `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`。
-- Task51.1／51.2 均经独立 B PASS；A51-01 修正经 B 与 A 重新验证，已解决。
-- 更新后的 B PASS／完整 Closure Packet：`e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`。
-  修正计划与 Developer 交接：`30c99f1b:TASK.md`；原两份 B 报告：
-  `01f4e05d:TASK.md`／`ab3edf8d:TASK.md`；首次 A 退回：`58a74866:SLICE.md`。
-- A 已审完整原始 Base..Head，结论、实际验证／复用／原失败与限制见
-  [固定关闭报告](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)；[SLICE.md](SLICE.md) 保留当前合同。
-  本文不把 Task 的 PASS 当作自行关闭 Slice；关闭由 A 完成。既有小版本修正和旧 Slice
-  接受身份／延期继续保留于这些 Git 指针。
+Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
 
-Next Action: A SELECTS THE NEXT LARGE SLICE
-
-不再规划可选完善 Task；选择下一大 Slice 是独立行动。实施、Git 同步和发布／部署
-各按用户授权及 [Development Workflow](docs/development-workflow.md) 执行，关闭本身
-不构成这些行动的授权。预存本地／私有文件保持未纳入提交。
+最近接受基线为 Slice51 **PASS / CLOSED**，原 Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，已审实现
+`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`。
+[固定 A 关闭报告](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)
+及 B Closure Packet `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 保留原两项 Task、
+A51-01 修正、独立验收、角色例外和证据限制；Slice50／更早接受身份与延期保持。
+不重开旧 Slice，不追加可选 Task；流程、Git 和授权遵循
+[Development Workflow](docs/development-workflow.md)。预存本地／私有文件不纳入提交。

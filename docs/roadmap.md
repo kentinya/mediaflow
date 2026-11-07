@@ -37,20 +37,20 @@ only in [the development workflow](development-workflow.md).
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 | 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
+| 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven requested UX issues: one coordinated Explore heading/search/filter layout, complete scrollable detail, fixed-page browsing/search, comfortable main-page transitions and stable Files/MediaLibrary loading; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PLANNED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; explicit 2026-11-07 Slice planning authorization only, activation/Task planning/implementation pending |
 
 ## Current boundary
 
-[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — **PASS / CLOSED**
-after independent A Final Review on 2026-11-07. Original Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`;
-accepted Implementation Head `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`. Explore provides the complete bounded
-movie/TV browse → filter/search → detail → return journey, including genuine empty reads and independent
-recovery. Dashboard Web/API/CLI, dedicated backend/runtime wiring and reachable consumers have retired
-without compatibility; shared reads and durable history remain.
+[Slice52](../SLICE.md) — **Explore, Navigation and Automation Entry Experience** — **PLANNED**.
+Base is `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`. The user's seven Explore/navigation/Automation
+issues define this boundary; requirements, journeys and architecture label the changes TARGET.
+[TASK.md](../TASK.md) has no active implementation Task. Only Slice planning is authorized;
+activation must precede B's first Task plan, and implementation needs its own authorization.
 
-[TASK.md](../TASK.md) has no active implementation Task; **A SELECTS THE NEXT LARGE SLICE** is a
-separate action. No next Slice or optional Task is selected here. Existing deferrals, prior accepted
-identities and Scan/Preview/FileIndex/Job/Pause retirement remain. Git synchronization is distinct
-from release/deployment.
+Latest accepted development remains Slice51 PASS / CLOSED, original Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
+Its Dashboard retirement and all older acceptance identities/deferrals remain; no closed Slice is
+reopened. Git synchronization is distinct from release/deployment.
 
 ## Accepted boundary references
 
