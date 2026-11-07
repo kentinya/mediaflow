@@ -367,6 +367,55 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
   expect(writes).toEqual([]);
 });
 
+test("PATCH-20261107-1 holds the loading placeholder and settles the real content once", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  // Slow only the storage inventory read. Every other request and the page
+  // identity remain the real ones; this is the observed slow-read handoff.
+  await page.route("**/api/v1/storages*", async (route) => {
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.fulfill({ response });
+  });
+  await openSidebarLink(page, "Storage management");
+  // The content-shaped placeholder is visible while the read is pending; the
+  // page does not wait for it to start its own entry.
+  await expect(
+    page.getByRole("status", { name: "正在加载存储管理" }),
+  ).toBeVisible();
+  const surface = page.locator('[data-main-page="storage"]');
+  await expect(surface).toHaveCount(1);
+  await expect
+    .poll(() =>
+      surface.evaluate((element) => getComputedStyle(element).opacity),
+    )
+    .toBe("1");
+
+  // The real content settles in once after the pending placeholder, instead
+  // of popping in after the page fade has already finished.
+  const content = page.locator(".mf-content-settle").first();
+  await expect(content).toBeVisible();
+  await expect(
+    content.getByRole("heading", { name: "存储管理", exact: true }),
+  ).toBeVisible();
+  expect(
+    await content.evaluate(
+      (element) => getComputedStyle(element).animationName,
+    ),
+  ).toBe("mf-content-settle");
+  // The page-level entry is not replayed for the content handoff.
+  await expect
+    .poll(() =>
+      surface.evaluate((element) =>
+        element.classList.contains("mf-page-surface-enter-start"),
+      ),
+    )
+    .toBe(false);
+  await expectNoHorizontalOverflow(page);
+});
+
 test("a forwarded detail card keeps its viewport overlay while the page enters", async ({
   page,
 }) => {

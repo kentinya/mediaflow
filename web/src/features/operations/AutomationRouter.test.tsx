@@ -1142,4 +1142,116 @@ describe("V2 Automation journey", () => {
     );
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
+
+  it("PATCH-20261107-1 removes the standing refresh entry without skipping the create reads", async () => {
+    const user = userEvent.setup();
+    const formAuthority = {
+      active: {
+        revisionId: ACTIVE_REVISION,
+        version: 3,
+        revisionSequence: 2,
+        status: "active",
+        digest: "a".repeat(64),
+      },
+      fields: [
+        "id",
+        "name",
+        "enabled",
+        "resourceLibraryId",
+        "mode",
+        "itemLimit",
+        "intervalSeconds",
+        "cron",
+        "timezone",
+      ],
+      defaults: {},
+      resourceLibraries: [
+        {
+          id: "source",
+          name: "Source",
+          enabled: true,
+          storageId: "source-storage",
+          storagePath: "Media",
+        },
+      ],
+      enums: {
+        modes: ["automatic-organization"],
+        scheduleTypes: ["interval", "cron"],
+      },
+      limits: {
+        id: 64,
+        name: 120,
+        sourceScope: 1024,
+        timezone: 64,
+        itemLimit: { minimum: 1, maximum: 10000 },
+        intervalSeconds: {
+          minimum: 0,
+          exclusiveMinimum: true,
+          maximum: 31536000,
+        },
+      },
+      actions: {
+        create: true,
+        edit: true,
+        copy: true,
+        toggle: true,
+        remove: true,
+      },
+    };
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "automation-operator" });
+      }
+      if (
+        call.url ===
+          "/api/v1/operations/automation/task-definitions?sort=name&limit=20" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(listDocument());
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation");
+
+    await screen.findByRole("heading", { name: "自动化" });
+    await screen.findByText(/Nightly automation/);
+    const main = screen.getByRole("main");
+    // The standing header refresh entry is gone from the workspace.
+    expect(
+      within(main).queryByRole("button", { name: /^(刷新|刷新中…)$/ }),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("link", { name: "新建自动化任务" }));
+    await screen.findByRole("heading", { name: "新建自动化任务" });
+    // Opening the create card cannot add, disable or relabel a refresh entry
+    // that no longer exists.
+    expect(
+      screen.queryByRole("button", { name: /^(刷新|刷新中…)$/ }),
+    ).toBeNull();
+    // The necessary list and authority reads still happened.
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.url ===
+            "/api/v1/operations/automation/task-definitions?sort=name&limit=20",
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.url === "/api/v1/operations/automation/definitions",
+      ),
+    ).toBe(true);
+    // Opening and rendering the card submits no business command.
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  });
 });

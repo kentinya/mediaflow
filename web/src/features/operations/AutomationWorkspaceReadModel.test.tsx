@@ -739,10 +739,18 @@ describe("V2 Automation workspace read model", () => {
         call.url.startsWith("/api/v1/operations/automation/records"),
       ).length;
     const beforeRefresh = recordsCalls();
-    await user.click(screen.getByRole("button", { name: "刷新" }));
+    // The header refresh entry is gone; the records outcome filter is the
+    // existing update path and still only issues GET requests.
+    await user.selectOptions(
+      within(region).getByLabelText("结果"),
+      "completed",
+    );
     await waitFor(() => expect(recordsCalls()).toBeGreaterThan(beforeRefresh));
+    const filteredRegion = await screen.findByRole("region", {
+      name: "自动化执行记录",
+    });
     await waitFor(() =>
-      expect(within(region).getByText(/共 2 条执行记录/)).toBeVisible(),
+      expect(within(filteredRegion).getByText(/共 2 条执行记录/)).toBeVisible(),
     );
     for (const call of calls.filter((call) =>
       call.url.startsWith("/api/v1/operations/automation/records"),
@@ -750,7 +758,7 @@ describe("V2 Automation workspace read model", () => {
       expect(call.method).toBe("GET");
     }
     expect(
-      within(region).queryByRole("button", {
+      within(filteredRegion).queryByRole("button", {
         name: /运行一次|重新分析|暂停|继续|取消|重试/,
       }),
     ).toBeNull();

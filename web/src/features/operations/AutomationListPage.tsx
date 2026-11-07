@@ -1783,19 +1783,6 @@ export function AutomationListPage({
                 新建自动化任务
               </Link>
             )}
-            <RefreshControl
-              label="刷新"
-              refreshingLabel="刷新中…"
-              onRefresh={() => {
-                refreshDefinitionRead();
-                void recordsQuery.refetch();
-              }}
-              refreshing={
-                listQuery.isFetching ||
-                recordsQuery.isFetching ||
-                copyAuthorityQuery.isFetching
-              }
-            />
           </div>
         </header>
 

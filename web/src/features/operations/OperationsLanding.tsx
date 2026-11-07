@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
@@ -1879,22 +1879,6 @@ function RunDetailPanel({
           const run = data.model;
           return (
             <>
-              {/* The controls render from the run overview document itself:
-                  the exact backend projection for this run's durable object
-                  and the exact version the overview read published. */}
-              {run.lifecycle !== null && (
-                <RunLifecycleControls
-                  projection={run.lifecycle}
-                  pendingAction={pendingAction}
-                  result={controlResult}
-                  locked={locked}
-                  reconciling={reconciling}
-                  onReconcile={reconcile}
-                  onInvoke={(action, expectedVersion) =>
-                    void invokeLifecycle(action, expectedVersion)
-                  }
-                />
-              )}
               {/* The admitted preparation's first read and a failed read are
                   explicit states, never an empty panel: the loading notice
                   says the preparation is admitted while its durable state is
@@ -2060,7 +2044,30 @@ function RunDetailPanel({
                 owesRecoveryAction={selectedRunOwesRecovery(run)}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
+                flow={<RunFlowSummary run={run} />}
+                results={{
+                  success: run.successItems,
+                  partial: run.partialItems,
+                  failed: run.failedOnlyItems,
+                  uncertain: run.uncertainEffectItems,
+                  missingResult: run.missingResultItems,
+                }}
                 facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
+                actions={
+                  run.lifecycle === null ? null : (
+                    <RunLifecycleControls
+                      projection={run.lifecycle}
+                      pendingAction={pendingAction}
+                      result={controlResult}
+                      locked={locked}
+                      reconciling={reconciling}
+                      onReconcile={reconcile}
+                      onInvoke={(action, expectedVersion) =>
+                        void invokeLifecycle(action, expectedVersion)
+                      }
+                    />
+                  )
+                }
               />
             </>
           );
@@ -2171,6 +2178,55 @@ function continuationStatusLabel(status: string): string {
  * collapse into a bounded diagnostics group, and the continuation evidence
  * stays visible because it carries the operator's legal next action.
  */
+function RunFlowSummary({ run }: { readonly run: RunSummary }) {
+  return (
+    <section className="mf-run-fact-flow" aria-label="状态与流程">
+      <p className="mf-run-flow-line">
+        <span className="mf-run-flow-label">流程状态</span>
+        <span
+          className={
+            run.attention
+              ? "mf-run-flow-value mf-run-attention"
+              : "mf-run-flow-value"
+          }
+        >
+          {run.recoveredCompletion
+            ? "已完成（恢复成功）"
+            : RUN_STATUS_LABELS[run.status]}
+        </span>
+        {run.recoveredCompletion && (
+          <span className="mf-run-flow-note">
+            ：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。
+          </span>
+        )}
+        {run.pauseRequested && (
+          <span className="mf-run-flow-note">（已请求暂停，等待确认）</span>
+        )}
+        {run.status === "unknown" && (
+          <span className="mf-run-flow-note">（证据不足）</span>
+        )}
+      </p>
+      {run.currentStage !== null && (
+        <p className="mf-run-flow-line">
+          <span className="mf-run-flow-label">当前阶段</span>
+          <span>{RUN_CURRENT_STAGE_LABELS[run.currentStage]}</span>
+        </p>
+      )}
+      {run.problemTypes.length > 0 && (
+        <p className="mf-run-flow-line mf-run-problem-line">
+          <span className="mf-run-flow-label">当前业务问题</span>
+          <span>
+            {run.problemTypes
+              .map((type) => RUN_PROBLEM_LABELS[type])
+              .join("、")}
+            ——在对应列表中逐项处理。
+          </span>
+        </p>
+      )}
+    </section>
+  );
+}
+
 function RunDetailFacts({
   run,
   onSelectRun,
@@ -2178,55 +2234,10 @@ function RunDetailFacts({
   readonly run: RunSummary;
   readonly onSelectRun: (runId: string) => void;
 }) {
-  const detail = detailLinkOf(run);
   const hasDiagnostics =
     run.workerId !== null || run.configurationSnapshotId !== null;
   return (
     <div className="mf-run-facts">
-      <section className="mf-run-fact-flow" aria-label="状态与流程">
-        <p className="mf-run-flow-line">
-          <span className="mf-run-flow-label">状态</span>
-          <span
-            className={
-              run.attention
-                ? "mf-run-flow-value mf-run-attention"
-                : "mf-run-flow-value"
-            }
-          >
-            {run.recoveredCompletion
-              ? "已完成（恢复成功）"
-              : RUN_STATUS_LABELS[run.status]}
-          </span>
-          {run.recoveredCompletion && (
-            <span className="mf-run-flow-note">
-              ：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。
-            </span>
-          )}
-          {run.pauseRequested && (
-            <span className="mf-run-flow-note">（已请求暂停，等待确认）</span>
-          )}
-          {run.status === "unknown" && (
-            <span className="mf-run-flow-note">（证据不足，未知状态）</span>
-          )}
-        </p>
-        {run.currentStage !== null && (
-          <p className="mf-run-flow-line">
-            <span className="mf-run-flow-label">当前阶段</span>
-            <span>{RUN_CURRENT_STAGE_LABELS[run.currentStage]}</span>
-          </p>
-        )}
-        {run.problemTypes.length > 0 && (
-          <p className="mf-run-flow-line mf-run-problem-line">
-            <span className="mf-run-flow-label">当前业务问题</span>
-            <span>
-              {run.problemTypes
-                .map((type) => RUN_PROBLEM_LABELS[type])
-                .join("、")}
-              ——在对应的识别/元数据/分类/冲突列表里逐项处理，保存决定后仍需显式继续安全分析。
-            </span>
-          </p>
-        )}
-      </section>
       <dl className="mf-dashboard-facts">
         <div>
           <dt>触发方式</dt>
@@ -2244,27 +2255,6 @@ function RunDetailFacts({
           <dt>更新时间</dt>
           <dd>{formatDate(run.updatedAt)}</dd>
         </div>
-        {run.totalItems !== null && (
-          <div>
-            <dt>条目</dt>
-            <dd>
-              共 {run.totalItems}；已处理 {run.completedItems ?? 0}；失败{" "}
-              {run.failedOnlyItems ?? 0}
-              {run.status === "running" &&
-                "（已处理数是已结束的处理项，不代表整理成功）"}
-            </dd>
-          </div>
-        )}
-        {detail !== null && (
-          <div>
-            <dt>更详细证据</dt>
-            <dd>
-              <Link to="/operations" search={{ run: run.runId }}>
-                在任务中心查看该运行的详情
-              </Link>
-            </dd>
-          </div>
-        )}
       </dl>
       {run.continuation !== null && (
         <section

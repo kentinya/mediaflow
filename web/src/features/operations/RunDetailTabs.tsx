@@ -57,6 +57,7 @@ import {
   recoveryBatchQueryOptions,
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
+import { taskFailureReason } from "./ProblemFilePanel";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import {
@@ -380,7 +381,7 @@ function PlanEvidenceBlock({
           <dd>
             {evidence.completedOperations.length === 0
               ? "无(未执行任何持久记录的操作)"
-              : evidence.completedOperations.join("、")}
+              : evidence.completedOperations.map(storageStepLabel).join("、")}
           </dd>
         </div>
         <div>
@@ -394,7 +395,9 @@ function PlanEvidenceBlock({
         {evidence.uncertainEffects.length > 0 && (
           <div>
             <dt>未确认效果</dt>
-            <dd>{evidence.uncertainEffects.join("、")}</dd>
+            <dd>
+              {evidence.uncertainEffects.map(storageStepLabel).join("、")}
+            </dd>
           </div>
         )}
       </dl>
@@ -417,7 +420,11 @@ function PlanEvidenceBlock({
                     {index + 1}
                     {effect.rollback ? "(回滚)" : ""}
                   </td>
-                  <td>{safeValue(effect.action)}</td>
+                  <td>
+                    {effect.action === null
+                      ? "—"
+                      : storageStepLabel(effect.action)}
+                  </td>
                   <td>{safeValue(effect.destinationLocation)}</td>
                   <td>{effect.verified ? "已验证" : "未验证"}</td>
                   <td>
@@ -486,7 +493,7 @@ function DurableExecutionSteps({
           <dd>
             {completed.length === 0
               ? "无(最新持久结果未记录已完成步骤)"
-              : completed.join("、")}
+              : completed.map(storageStepLabel).join("、")}
           </dd>
         </div>
         <div>
@@ -501,7 +508,8 @@ function DurableExecutionSteps({
           <dd>
             {uncertain.length === 0
               ? "无"
-              : uncertain.join("、") + "(效果不确定,仅供核查,不自动重放)"}
+              : uncertain.map(storageStepLabel).join("、") +
+                "(效果不确定,仅供核查,不自动重放)"}
           </dd>
         </div>
         <div>
@@ -518,11 +526,6 @@ function DurableExecutionSteps({
           </dd>
         </div>
       </dl>
-      <p className="mf-dashboard-meta">
-        口径:上方数值来自该条目检查点聚合的最新持久结果与各执行结果行的已记录
-        步骤(见“执行结果”表),不是实时重算;逐步骤的捕获详情见下方“计划与分析
-        证据”的 operation 段。
-      </p>
     </>
   );
 }
@@ -538,6 +541,20 @@ function percentOf(processed: number, total: number): number | null {
   return value;
 }
 
+/**
+ * The independent file outcomes of one run, published beside the flow status
+ * and the processed range. Every number is its own durable facet: a partial
+ * file is never counted as a success or as a plain failure, an uncertain
+ * effect is not a success, and an ended attempt without a Result is not zero.
+ */
+export interface RunFileResults {
+  readonly success: number | null;
+  readonly partial: number | null;
+  readonly failed: number | null;
+  readonly uncertain: number | null;
+  readonly missingResult: number | null;
+}
+
 export interface RunDetailTabsProps {
   /** The exact canonical run identity from the overview read. */
   readonly runId: string;
@@ -546,8 +563,14 @@ export interface RunDetailTabsProps {
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   /** Poll the detail reads while the selected run is non-terminal. */
   readonly active: boolean;
-  /** Optional run facts rendered inside 任务详情 above the progress card. */
+  /** The run's flow status/stage/problems, read before progress and results. */
+  readonly flow?: ReactNode;
+  /** The independent per-file outcome counts shown after the progress range. */
+  readonly results?: RunFileResults | null;
+  /** Secondary run facts rendered after the file results. */
   readonly facts?: ReactNode;
+  /** The backend-advertised task operations rendered beside the export. */
+  readonly actions?: ReactNode;
   /**
    * Whether this exact run's durable evidence currently owes a four-type
    * recovery step.  Task Center RO-4 publishes a purely technical failure as
@@ -566,7 +589,10 @@ export function RunDetailTabs({
   state,
   onStateChange,
   active,
+  flow,
+  results,
   facts,
+  actions,
   owesRecoveryAction = false,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
@@ -616,12 +642,14 @@ export function RunDetailTabs({
         >
           操作记录
         </button>
-        <RunExportAction runId={runId} progress={progress} />
+        <RunExportAction runId={runId} progress={progress} actions={actions} />
       </nav>
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
-          {facts}
+          {flow}
           <ProgressCard progress={progress} />
+          <RunFileResultsCard results={results} progress={progress} />
+          {facts}
           <RunItemsSection
             key={JSON.stringify([
               runId,
@@ -667,6 +695,12 @@ export function RunDetailTabs({
 
 // -- Progress ---------------------------------------------------------------
 
+/**
+ * The processed range of the flow. It states how far processing got, not a
+ * success rate; the independent per-file outcomes live in the next block.
+ * Only a pending/active/waiting remainder is mentioned here, because those
+ * are flow states rather than file results.
+ */
 function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
   if (progress === null || !progress.available) {
     return (
@@ -683,19 +717,22 @@ function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
     !progress.indeterminate && progress.processed !== null
       ? percentOf(progress.processed, progress.knownTotal ?? 0)
       : null;
-  const effectEntries = Object.entries(progress.effectCounts).filter(
-    ([, value]) => value > 0,
-  );
+  const unfinished: Array<{ readonly label: string; readonly count: number }> =
+    (["pending", "active", "waiting"] as const)
+      .map((disposition) => ({
+        label: RUN_DISPOSITION_LABELS[disposition],
+        count: progress.dispositions[disposition],
+      }))
+      .filter((entry) => entry.count > 0);
   return (
-    <section className="mf-run-progress" aria-label="整理进度">
-      <h4>进度</h4>
+    <section className="mf-run-progress" aria-label="处理进度">
+      <h4>处理进度</h4>
       {progress.indeterminate || progress.knownTotal === null ? (
-        <p className="mf-dashboard-meta">
+        <p>
           总数未知
           {progress.scanDiscoveryComplete === false
-            ? "(文件发现仍在进行,总数不可知)"
-            : "(该任务尚无可知的总数)"}
-          ;下方为已记录主条目的持久处置。
+            ? "（文件发现仍在进行）"
+            : "（该任务尚无可知的总数）"}
         </p>
       ) : (
         <>
@@ -705,75 +742,115 @@ function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
             aria-valuemin={0}
             aria-valuemax={progress.knownTotal}
             aria-valuenow={progress.processed ?? 0}
-            aria-label="处理进度(非成功率)"
+            aria-label="处理进度"
           >
             <div
               className="mf-progress-fill"
               style={{ width: `${percent ?? 0}%` }}
             />
           </div>
-          <p>
+          <p className="mf-run-progress-count">
             已处理 {progress.processed} / {progress.knownTotal} 个
-            {progress.unit}(处理进度,非成功率)
+            {progress.unit}
           </p>
+          {unfinished.length > 0 && (
+            <p className="mf-dashboard-meta">
+              {unfinished
+                .map((entry) => `${entry.label} ${entry.count}`)
+                .join("　")}
+            </p>
+          )}
         </>
       )}
-      <ul className="mf-disposition-grid" aria-label="条目处置分布">
-        <li>
-          <span className="mf-disposition-value">
-            {progress.confirmedSuccess}
-          </span>
-          <span className="mf-disposition-label">已确认成功</span>
-        </li>
-        {progress.uncertainSuccess > 0 && (
-          <li>
-            <span className="mf-disposition-value">
-              {progress.uncertainSuccess}
-            </span>
-            <span className="mf-disposition-label">效果未确认(不计成功)</span>
-          </li>
+      {progress.scanErrors !== null && progress.scanErrors > 0 && (
+        <p className="mf-run-outcome mf-run-outcome-warning">
+          扫描错误 {progress.scanErrors}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The file result distribution that follows the processed range (V2-UX-006).
+ *
+ * Success, partial success and failure are independent durable facets of the
+ * same run; an uncertain effect and an ended attempt without a Result stay
+ * their own caveats instead of being folded into any of the three. Nothing is
+ * derived from the latest status label, and unknown counts are not printed as
+ * zero.
+ */
+function RunFileResultsCard({
+  results,
+  progress,
+}: {
+  readonly results: RunFileResults | null | undefined;
+  readonly progress: RunProgress | null;
+}) {
+  const extras =
+    progress !== null && progress.available
+      ? (["skipped", "ignored", "cancelled"] as const)
+          .map((disposition) => ({
+            disposition,
+            count: progress.dispositions[disposition],
+          }))
+          .filter((entry) => entry.count > 0)
+      : [];
+  const known =
+    results !== null &&
+    results !== undefined &&
+    (results.success !== null ||
+      results.partial !== null ||
+      results.failed !== null);
+  if (!known && extras.length === 0) {
+    return null;
+  }
+  return (
+    <section className="mf-run-results" aria-label="文件结果">
+      <h4>文件结果</h4>
+      {known &&
+        (results?.success !== null ||
+          results?.partial !== null ||
+          results?.failed !== null) && (
+          <ul className="mf-file-result-grid">
+            {results?.success !== null && results?.success !== undefined && (
+              <li>
+                <span className="mf-file-result-value">{results.success}</span>
+                <span className="mf-file-result-label">成功</span>
+              </li>
+            )}
+            {results?.partial !== null && results?.partial !== undefined && (
+              <li>
+                <span className="mf-file-result-value">{results.partial}</span>
+                <span className="mf-file-result-label">部分成功</span>
+              </li>
+            )}
+            {results?.failed !== null && results?.failed !== undefined && (
+              <li>
+                <span className="mf-file-result-value">{results.failed}</span>
+                <span className="mf-file-result-label">失败</span>
+              </li>
+            )}
+            {extras.map((entry) => (
+              <li key={entry.disposition}>
+                <span className="mf-file-result-value">{entry.count}</span>
+                <span className="mf-file-result-label">
+                  {RUN_DISPOSITION_LABELS[entry.disposition]}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
-        {RUN_DISPOSITIONS.filter(
-          (disposition) =>
-            disposition !== "success" && progress.dispositions[disposition] > 0,
-        ).map((disposition) => (
-          <li key={disposition}>
-            <span className="mf-disposition-value">
-              {progress.dispositions[disposition]}
-            </span>
-            <span className="mf-disposition-label">
-              {RUN_DISPOSITION_LABELS[disposition]}
-            </span>
-          </li>
-        ))}
-        {progress.confirmedSuccess === 0 && progress.uncertainSuccess === 0 && (
-          <li>
-            <span className="mf-disposition-value">0</span>
-            <span className="mf-disposition-label">成功</span>
-          </li>
-        )}
-      </ul>
-      <p className="mf-dashboard-meta">口径:{progress.basis}</p>
-      <p className="mf-dashboard-meta">成功含义:{progress.successMeans}</p>
-      <ul className="mf-dashboard-meta mf-run-separate-counts">
-        {progress.scanErrors !== null && progress.scanErrors > 0 && (
-          <li>扫描错误 {progress.scanErrors}(单独计数,不计入主条目)</li>
-        )}
-        {progress.attachmentSteps > 0 && (
-          <li>附件步骤 {progress.attachmentSteps}(单独计数,不计入主条目)</li>
-        )}
-        {effectEntries.length > 0 && (
-          <li>
-            效果确定性(基于已读结果):
-            {effectEntries
-              .map(
-                ([key, value]) =>
-                  `${RUN_EFFECT_CERTAINTY_LABELS[key] ?? key} ${value}`,
-              )
-              .join("、")}
-          </li>
-        )}
-      </ul>
+      {(results?.uncertain ?? 0) > 0 && (
+        <p className="mf-run-outcome mf-run-outcome-warning">
+          目标文件结果尚未确认 {results?.uncertain} 个
+        </p>
+      )}
+      {(results?.missingResult ?? 0) > 0 && (
+        <p className="mf-run-outcome mf-run-outcome-warning">
+          文件处理已结束，结果未记录 {results?.missingResult} 个
+        </p>
+      )}
     </section>
   );
 }
@@ -976,7 +1053,9 @@ function RunItemsSection({
                             <span className="mf-run-kind">
                               (阻塞:
                               <wbr />
-                              {item.checkpoint.blockerKind})
+                              {BLOCKER_LABELS[item.checkpoint.blockerKind] ??
+                                "等待处理决定"}
+                              )
                             </span>
                           )}
                         </td>
@@ -2166,6 +2245,122 @@ function BatchRecoverySummary({
 
 // -- One item's evidence ----------------------------------------------------
 
+/** The durable item statuses that mean the file's processing attempt ended. */
+const TERMINAL_ITEM_STATUSES = new Set([
+  "success",
+  "partial",
+  "failed",
+  "skipped",
+  "cancelled",
+  "ignored",
+]);
+
+/** Chinese labels for the persisted Result row status values. */
+const RESULT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  pending: "待处理",
+  processing: "进行中",
+  completed: "已完成",
+  success: "成功",
+  partial: "部分完成",
+  partial_success: "部分成功",
+  failed: "失败",
+  skipped: "已跳过",
+  cancelled: "已取消",
+  not_executed: "未执行",
+};
+
+/** Business names for the recorded executor steps; unknown tokens stay exact. */
+const STORAGE_STEP_LABELS: Readonly<Record<string, string>> = {
+  CREATE_DIRECTORY: "创建目录",
+  MOVE: "移动",
+  COPY: "复制",
+  HARD_LINK: "硬链接",
+  SOFT_LINK: "软链接",
+  DELETE: "删除",
+  copy_written: "写入副本",
+  destination_verified: "核对目标",
+  source_deletion: "删除来源",
+};
+
+/** Business names for the four current decision blockers. */
+const BLOCKER_LABELS: Readonly<Record<string, string>> = {
+  recognition_review: "等待识别决定",
+  metadata_review: "等待元数据决定",
+  metadata_correction: "等待元数据修正",
+  classification_review: "等待分类决定",
+  conflict_review: "等待冲突处理",
+  conflict: "等待冲突处理",
+};
+
+function storageStepLabel(step: string): string {
+  const label =
+    STORAGE_STEP_LABELS[step] ??
+    STORAGE_STEP_LABELS[step.toUpperCase()] ??
+    STORAGE_STEP_LABELS[step.toLowerCase()];
+  return label === undefined ? step : `${label}（${step}）`;
+}
+
+function resultStatusLabel(status: string): string {
+  return RESULT_STATUS_LABELS[status] ?? status;
+}
+
+/** Business names for known durable refusal tokens; unknown tokens stay exact. */
+const REFUSAL_REASON_LABELS: Readonly<Record<string, string>> = {
+  waiting_for_decision: "等待处理决定",
+  blocked: "等待处理决定",
+  authority_required: "需要重新明确执行授权",
+  storage_unavailable: "目标存储当前不可用",
+};
+
+/** The last path segment an operator recognises as the processed file. */
+function fileNameOf(path: string): string {
+  const segments = path.split(/[\\/]/).filter((segment) => segment !== "");
+  return segments.at(-1) ?? path;
+}
+
+/**
+ * One file's readable outcome, derived only from its durable status and
+ * Result rows. An ended attempt without a Result is never presented as a
+ * success, and an attempted-but-unverified effect is never presented as a
+ * confirmed result. The sentence is the concrete state of this file, not a
+ * standing tutorial about the statistics.
+ */
+function itemOutcome(evidence: RunItemEvidence): {
+  readonly text: string;
+  readonly tone: "normal" | "warning" | "error";
+} {
+  const status = evidence.item.status;
+  const certainty = evidence.checkpoint.effectCertainty;
+  if (evidence.results.length === 0 && TERMINAL_ITEM_STATUSES.has(status)) {
+    return { text: "文件处理已结束，结果未记录", tone: "warning" };
+  }
+  if (certainty === "attempted_unverified") {
+    return { text: "目标文件结果尚未确认", tone: "warning" };
+  }
+  if (status === "success") {
+    return { text: "文件已整理", tone: "normal" };
+  }
+  if (status === "partial") {
+    return { text: "部分文件已完成", tone: "warning" };
+  }
+  if (status === "failed") {
+    return { text: "处理失败", tone: "error" };
+  }
+  if (status === "cancelled") {
+    return { text: "已取消", tone: "normal" };
+  }
+  if (status === "skipped") {
+    return { text: "已跳过", tone: "normal" };
+  }
+  if (status === "ignored") {
+    return { text: "已忽略", tone: "normal" };
+  }
+  if (status === "dry_run") {
+    return { text: "分析完成（未执行整理）", tone: "normal" };
+  }
+  return { text: RUN_ITEM_STATUS_LABELS[status] ?? status, tone: "normal" };
+}
+
 function RunEvidenceSection({
   runId,
   itemId,
@@ -2185,10 +2380,15 @@ function RunEvidenceSection({
   const query = useQuery(
     runItemEvidenceQueryOptions(token, { runId, itemId, active }),
   );
+  const loaded = query.data?.ok === true ? query.data.model : null;
   return (
     <section className="mf-count-section" aria-label="条目证据">
       <div className="mf-run-items-head">
-        <h4>条目证据:{itemId}</h4>
+        <h4>
+          {loaded === null
+            ? "文件证据"
+            : `文件证据：${fileNameOf(loaded.item.sourcePath)}`}
+        </h4>
         <button
           type="button"
           className="mf-button mf-button-secondary"
@@ -2205,7 +2405,7 @@ function RunEvidenceSection({
           if (data === undefined) {
             return (
               <StatusBanner variant="info" title="正在加载条目证据">
-                <p>正在读取该条目的检查点、结果、计划与日志。</p>
+                <p>正在读取该文件的处理结果、来源与目标、处理经过和记录。</p>
               </StatusBanner>
             );
           }
@@ -2217,185 +2417,190 @@ function RunEvidenceSection({
             );
           }
           const evidence: RunItemEvidence = data.model;
+          const item = evidence.item;
+          const checkpoint = evidence.checkpoint;
+          const outcome = itemOutcome(evidence);
+          const destinations = Array.from(
+            new Set(
+              evidence.results
+                .map((result) => result.destinationPath)
+                .filter((path): path is string => path !== null),
+            ),
+          );
+          const target =
+            destinations.length > 0
+              ? destinations.join("、")
+              : (item.destinationPath ?? null);
+          const failure = item.failure;
+          const failureReason =
+            failure === null
+              ? null
+              : (taskFailureReason(failure.category) ?? "处理未完成");
+          const needsAttention =
+            failure !== null ||
+            checkpoint.refusalReason !== null ||
+            checkpoint.blockerKind !== null ||
+            checkpoint.effectCertainty === "attempted_unverified" ||
+            checkpoint.uncertainEffects.length > 0;
           return (
             <>
-              <dl className="mf-dashboard-facts">
-                <div>
-                  <dt>源文件</dt>
-                  <dd>{evidence.item.sourcePath}</dd>
-                </div>
-                <div>
-                  <dt>状态</dt>
-                  <dd>
-                    {RUN_ITEM_STATUS_LABELS[evidence.item.status] ??
-                      evidence.item.status}
-                    {" / 阶段 "}
-                    {evidence.checkpoint.stage}
-                  </dd>
-                </div>
-                <div>
-                  <dt>效果确定性</dt>
-                  <dd>
-                    {RUN_EFFECT_CERTAINTY_LABELS[
-                      evidence.checkpoint.effectCertainty
-                    ] ?? evidence.checkpoint.effectCertainty}
-                    {" / 重试安全性 "}
-                    {evidence.checkpoint.retrySafety}
-                  </dd>
-                </div>
-                <div>
-                  <dt>阻塞</dt>
-                  <dd>
-                    {evidence.checkpoint.blockerKind !== null
-                      ? `${evidence.checkpoint.blockerKind}${
-                          evidence.checkpoint.blockerId !== null
-                            ? `(${evidence.checkpoint.blockerId})`
-                            : ""
-                        }`
-                      : "无"}
-                  </dd>
-                </div>
-                {evidence.checkpoint.refusalReason !== null && (
+              <section className="mf-run-evidence-block" aria-label="处理结果">
+                <h5>处理结果</h5>
+                <p className={`mf-run-outcome mf-run-outcome-${outcome.tone}`}>
+                  {outcome.text}
+                </p>
+                <dl className="mf-dashboard-facts">
                   <div>
-                    <dt>拒绝原因</dt>
-                    <dd>{evidence.checkpoint.refusalReason}</dd>
+                    <dt>状态</dt>
+                    <dd>
+                      {RUN_ITEM_STATUS_LABELS[item.status] ?? item.status}
+                    </dd>
                   </div>
-                )}
-                {evidence.recoveryKind !== "technical_history" &&
-                  evidence.checkpoint.nextAction !== null && (
-                    <div>
-                      <dt>下一步</dt>
-                      <dd>{evidence.checkpoint.nextAction}</dd>
-                    </div>
-                  )}
-                <div>
-                  <dt>计划 ID</dt>
-                  <dd>{evidence.checkpoint.planId ?? "不可用"}</dd>
-                </div>
-                <div>
-                  <dt>固定配置</dt>
-                  <dd>{evidence.checkpoint.snapshotId ?? "无固定配置快照"}</dd>
-                </div>
-              </dl>
-              <h5>执行结果({evidence.results.length})</h5>
-              {evidence.results.length === 0 ? (
-                <p className="mf-dashboard-meta">尚无持久执行结果。</p>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>结果</th>
-                        <th>操作</th>
-                        <th>状态</th>
-                        <th>效果</th>
-                        <th>已完成步骤</th>
-                        <th>未确认效果</th>
-                        <th>目标</th>
-                        <th>清理</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {evidence.results.map((result) => (
-                        <tr key={result.resultId}>
-                          <td>{result.resultId}</td>
-                          <td>{result.operation ?? "—"}</td>
-                          <td>
-                            {result.status}
-                            <AttachmentResults
-                              primaryCompleted={result.primaryCompleted}
-                              results={result.attachmentResults ?? []}
-                            />
-                          </td>
-                          <td>
-                            {RUN_EFFECT_CERTAINTY_LABELS[
-                              result.effectCertainty
-                            ] ?? result.effectCertainty}
-                          </td>
-                          <td className="mf-run-result-steps">
-                            {result.completedOperations.length === 0
-                              ? "无"
-                              : `${result.completedOperations.length} 步: ${result.completedOperations.join("、")}`}
-                          </td>
-                          <td className="mf-run-result-effects">
-                            {result.uncertainEffects.length === 0
-                              ? "无"
-                              : result.uncertainEffects.join("、")}
-                          </td>
-                          <td>{result.destinationPath ?? "—"}</td>
-                          <td>{cleanupStatusLabel(result.cleanupStatus)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <h5>
-                持久审核计划(
-                {evidence.planEvidence.available ? "已捕获" : "不可用"})
-              </h5>
-              {evidence.planEvidence.available ? (
-                <PlanEvidenceBlock plan={evidence.planEvidence} />
-              ) : (
-                <>
+                  <div>
+                    <dt>效果</dt>
+                    <dd>
+                      {RUN_EFFECT_CERTAINTY_LABELS[
+                        checkpoint.effectCertainty
+                      ] ?? checkpoint.effectCertainty}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>尝试</dt>
+                    <dd>{item.attempts} 次</dd>
+                  </div>
+                </dl>
+                {evidence.results.length === 0 ? (
                   <p className="mf-dashboard-meta">
-                    {
-                      RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
-                        evidence.planEvidence.reason ?? UNAVAILABLE_PLAN_REASON
-                      ]
-                    }
+                    该文件还没有持久执行结果。
                   </p>
-                  <DurableExecutionSteps evidence={evidence} />
-                </>
-              )}
-              <h5>计划与分析证据({evidence.evidence.length})</h5>
-              {evidence.evidence.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  该条目没有流水线阶段的分析证据(历史记录或未捕获,不会现算);上方
-                  持久审核计划独立显示其已捕获的解释。
-                </p>
-              ) : (
-                <ul className="mf-dashboard-meta">
-                  {evidence.evidence.map((value) => (
-                    <li key={value.evidenceId}>
-                      {formatDateTime(value.capturedAt)} — {value.outcome}
-                      (第 {value.attempts} 次尝试
-                      {value.truncated ? ",证据已截断" : ""})
-                      <EvidenceSectionDetails sections={value.sections} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h5>精确关联日志({evidence.logs.length})</h5>
-              {evidence.logs.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  没有与该条目计划精确关联的运行日志;缺失日志不会抹去任何执行结果。
-                </p>
-              ) : (
-                <ul className="mf-dashboard-meta">
-                  {evidence.logs.map((log) => (
-                    <li key={log.recordId}>
-                      {formatDateTime(log.occurredAt)} —{" "}
-                      {log.level ?? "级别未知"} {log.event ?? ""}{" "}
-                      {log.status ? `[${log.status}]` : ""}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h5>控制与恢复审计({evidence.checkpoint.audits.length})</h5>
-              {evidence.checkpoint.audits.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  尚无与该条目关联的审计证据。
-                </p>
-              ) : (
-                <ul className="mf-dashboard-meta">
-                  {evidence.checkpoint.audits.map((audit) => (
-                    <li key={audit.auditId}>
-                      {formatDateTime(audit.occurredAt)} — {audit.kind}
-                      {audit.actor !== null ? `(${audit.actor})` : ""}
-                    </li>
-                  ))}
-                </ul>
+                ) : (
+                  <ul className="mf-run-result-list" aria-label="执行记录">
+                    {evidence.results.map((result, index) => (
+                      <li key={result.resultId}>
+                        <p>
+                          <strong>
+                            第 {index + 1} 次执行：
+                            {resultStatusLabel(result.status)}
+                          </strong>
+                          {result.operation !== null &&
+                            ` · ${storageStepLabel(result.operation)}`}
+                        </p>
+                        {result.failure !== null && (
+                          <p>
+                            失败原因：
+                            {taskFailureReason(result.failure.category) ??
+                              "处理未完成"}
+                          </p>
+                        )}
+                        <p>
+                          效果：
+                          {RUN_EFFECT_CERTAINTY_LABELS[
+                            result.effectCertainty
+                          ] ?? result.effectCertainty}
+                        </p>
+                        {result.uncertainEffects.length > 0 && (
+                          <p>
+                            未确认效果：
+                            {result.uncertainEffects
+                              .map(storageStepLabel)
+                              .join("、")}
+                          </p>
+                        )}
+                        <AttachmentResults
+                          primaryCompleted={result.primaryCompleted}
+                          results={result.attachmentResults ?? []}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+              <section
+                className="mf-run-evidence-block"
+                aria-label="来源与目标"
+              >
+                <h5>来源与目标</h5>
+                <dl className="mf-dashboard-facts">
+                  <div>
+                    <dt>来源</dt>
+                    <dd>
+                      {item.storageId}:{item.sourcePath}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>目标</dt>
+                    <dd>{target ?? "没有已记录的目标文件"}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section className="mf-run-evidence-block" aria-label="处理经过">
+                <h5>处理经过</h5>
+                {evidence.results.length === 0 &&
+                checkpoint.completedOperations.length === 0 ? (
+                  <p className="mf-dashboard-meta">尚无已记录的处理步骤。</p>
+                ) : (
+                  <ul className="mf-run-result-list">
+                    {evidence.results.map((result, index) => (
+                      <li key={result.resultId}>
+                        <strong>第 {index + 1} 次</strong> ·{" "}
+                        {formatDateTime(result.createdAt)}
+                        <p>
+                          {result.completedOperations.length === 0
+                            ? "没有已完成的存储步骤"
+                            : `已完成：${result.completedOperations
+                                .map(storageStepLabel)
+                                .join("、")}`}
+                        </p>
+                        {result.cleanupStatus !== null && (
+                          <p>
+                            源目录：{cleanupStatusLabel(result.cleanupStatus)}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                    {evidence.results.length === 0 && (
+                      <li>
+                        已完成：
+                        {checkpoint.completedOperations
+                          .map(storageStepLabel)
+                          .join("、")}
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </section>
+              {needsAttention && (
+                <section
+                  className="mf-run-evidence-block"
+                  aria-label="需处理原因"
+                >
+                  <h5>需处理原因</h5>
+                  {failure !== null && <p>{failureReason}。</p>}
+                  {checkpoint.refusalReason !== null && (
+                    <p>
+                      未继续原因：
+                      {REFUSAL_REASON_LABELS[checkpoint.refusalReason] ??
+                        checkpoint.refusalReason}
+                    </p>
+                  )}
+                  {checkpoint.blockerKind !== null && (
+                    <p>
+                      当前阻塞：
+                      {BLOCKER_LABELS[checkpoint.blockerKind] ?? "等待处理决定"}
+                    </p>
+                  )}
+                  {checkpoint.effectCertainty === "attempted_unverified" && (
+                    <p>
+                      执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。
+                    </p>
+                  )}
+                  {checkpoint.uncertainEffects.length > 0 && (
+                    <p>
+                      未确认效果：
+                      {checkpoint.uncertainEffects.join("、")}
+                    </p>
+                  )}
+                </section>
               )}
               <TaskItemRecoveryPanel
                 key={`${evidence.taskId}:${itemId}:${token ?? "disconnected"}`}
@@ -2406,6 +2611,131 @@ function RunEvidenceSection({
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
               />
+              <details className="mf-run-fact-diagnostics">
+                <summary>
+                  技术诊断（计划、日志与审计；{evidence.evidence.length}{" "}
+                  条分析证据、{evidence.logs.length} 条日志、
+                  {checkpoint.audits.length} 条审计）
+                </summary>
+                <dl className="mf-dashboard-facts">
+                  <div>
+                    <dt>条目 ID</dt>
+                    <dd>{item.itemId}</dd>
+                  </div>
+                  <div>
+                    <dt>阶段</dt>
+                    <dd>
+                      <TechnicalToken value={checkpoint.rawStage} />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>计划 ID</dt>
+                    <dd>{checkpoint.planId ?? "不可用"}</dd>
+                  </div>
+                  <div>
+                    <dt>固定配置</dt>
+                    <dd>{checkpoint.snapshotId ?? "无固定配置快照"}</dd>
+                  </div>
+                  <div>
+                    <dt>重试安全性</dt>
+                    <dd>{checkpoint.retrySafety}</dd>
+                  </div>
+                  {failure !== null && (
+                    <>
+                      <div>
+                        <dt>失败分类</dt>
+                        <dd>{failure.category}</dd>
+                      </div>
+                      <div>
+                        <dt>持久状态</dt>
+                        <dd>{failure.durableState}</dd>
+                      </div>
+                      <div>
+                        <dt>已知影响</dt>
+                        <dd>{failure.sideEffects}</dd>
+                      </div>
+                      <div>
+                        <dt>服务下一步</dt>
+                        <dd>{failure.nextAction}</dd>
+                      </div>
+                    </>
+                  )}
+                  {checkpoint.nextAction !== null && (
+                    <div>
+                      <dt>服务下一步</dt>
+                      <dd>{checkpoint.nextAction}</dd>
+                    </div>
+                  )}
+                </dl>
+                <h6>
+                  持久审核计划(
+                  {evidence.planEvidence.available ? "已捕获" : "不可用"})
+                </h6>
+                {evidence.planEvidence.available ? (
+                  <PlanEvidenceBlock plan={evidence.planEvidence} />
+                ) : (
+                  <>
+                    <p className="mf-dashboard-meta">
+                      {
+                        RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
+                          evidence.planEvidence.reason ??
+                            UNAVAILABLE_PLAN_REASON
+                        ]
+                      }
+                    </p>
+                    <DurableExecutionSteps evidence={evidence} />
+                  </>
+                )}
+                <h6>计划与分析证据({evidence.evidence.length})</h6>
+                {evidence.evidence.length === 0 ? (
+                  <p className="mf-dashboard-meta">
+                    该条目没有流水线阶段的分析证据(历史记录或未捕获,不会现算);上方
+                    持久审核计划独立显示其已捕获的解释。
+                  </p>
+                ) : (
+                  <ul className="mf-dashboard-meta">
+                    {evidence.evidence.map((value) => (
+                      <li key={value.evidenceId}>
+                        {formatDateTime(value.capturedAt)} — {value.outcome}
+                        (第 {value.attempts} 次尝试
+                        {value.truncated ? ",证据已截断" : ""})
+                        <EvidenceSectionDetails sections={value.sections} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <h6>精确关联日志({evidence.logs.length})</h6>
+                {evidence.logs.length === 0 ? (
+                  <p className="mf-dashboard-meta">
+                    没有与该条目计划精确关联的运行日志;缺失日志不会抹去任何执行结果。
+                  </p>
+                ) : (
+                  <ul className="mf-dashboard-meta">
+                    {evidence.logs.map((log) => (
+                      <li key={log.recordId}>
+                        {formatDateTime(log.occurredAt)} —{" "}
+                        {log.level ?? "级别未知"} {log.event ?? ""}{" "}
+                        {log.status ? `[${log.status}]` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <h6>控制与恢复审计({checkpoint.audits.length})</h6>
+                {checkpoint.audits.length === 0 ? (
+                  <p className="mf-dashboard-meta">
+                    尚无与该条目关联的审计证据。
+                  </p>
+                ) : (
+                  <ul className="mf-dashboard-meta">
+                    {checkpoint.audits.map((audit) => (
+                      <li key={audit.auditId}>
+                        {formatDateTime(audit.occurredAt)} — {audit.kind}
+                        {audit.actor !== null ? `(${audit.actor})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
             </>
           );
         }}
@@ -2606,9 +2936,11 @@ type ExportNotice = {
 function RunExportAction({
   runId,
   progress,
+  actions,
 }: {
   readonly runId: string;
   readonly progress: RunProgress | null;
+  readonly actions?: ReactNode;
 }) {
   const token = useAuthToken();
   const [pending, setPending] = useState(false);
@@ -2676,6 +3008,7 @@ function RunExportAction({
 
   return (
     <div className="mf-run-tab-actions">
+      {actions}
       <button
         type="button"
         className="mf-button mf-button-secondary"

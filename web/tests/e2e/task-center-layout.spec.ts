@@ -700,3 +700,45 @@ test("the detail card item table keeps every column in its own reading area", as
   await page.keyboard.press("Escape");
   await expect(detail).toHaveCount(0);
 });
+
+test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async ({
+  page,
+}, testInfo) => {
+  await installRepresentativeScopes(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui-v2/operations?run=task-001");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await items.getByRole("button", { name: "查看证据" }).first().click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(evidence).toBeVisible();
+  // The readable body is present and bounded on the narrow card.
+  await expect(
+    evidence.getByRole("heading", {
+      name: "文件证据：The Matrix (1999).mkv",
+    }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "处理结果" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "来源与目标" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "处理经过" }),
+  ).toBeVisible();
+  expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+  await evidence.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("patch-file-evidence-390.png"),
+  });
+  // The technical records open on demand and stay inside the card's own
+  // scrolling area.
+  await evidence.getByText(/技术诊断/).click();
+  await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
+  expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+});

@@ -1,6 +1,5 @@
 /**
- * The backend-advertised Pause / Cancel / Continue controls of one selected
- * unified run (Slice 42 RO-5).
+ * The backend-advertised lifecycle action of one selected unified run.
  *
  * This component renders exactly what the backend lifecycle projection
  * advertises for the exact durable object, its current state, the connected
@@ -8,15 +7,22 @@
  * from a run status label, a route parameter or cached page data: an action
  * that is not advertised as `available` is never rendered as a button.
  *
+ * The control is deliberately compact: it belongs next to the task's own
+ * operations (detail/records/export), not in a standing explanatory block.
+ * Projection prose, permission codes and withheld-control lists are not
+ * operator surfaces. Only a real advertised action, an in-flight request, an
+ * accepted request or an unreconciled/refused outcome produces content; a
+ * terminal run with nothing left to do renders nothing at all.
+ *
  * Three honesty rules drive the copy:
  *
- * - A *request* is not an *acknowledgement*. A durable pause/cancel request is
+ * - A *request* is not an *acknowledgement*. A durable cancel request is
  *   stated as stored and acknowledged only at a supported item boundary; the
  *   component never claims work already stopped or effects already undone.
- * - An accepted control reports the backend's own durable outcome and next
- *   action, and offers one explicit refresh. Nothing is replayed or retried.
+ * - An accepted control reports the backend's own durable state in short
+ *   Chinese, and offers one explicit refresh. Nothing is replayed or retried.
  * - A failure whose outcome is unknown (the request may or may not have
- *   reached the API) locks every control until the operator explicitly
+ *   reached the API) locks the action until the operator explicitly
  *   reconciles the durable state. The lock is owned by the parent.
  */
 
@@ -89,7 +95,7 @@ export const RUN_LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
 
 /** The one bounded copy shown while an unknown outcome is unreconciled. */
 export const RUN_LIFECYCLE_RECONCILE_COPY =
-  "控制结果未知:请求可能已到达后端并改变了持久状态。请先刷新核对持久状态;核对完成前不会再次提交任何控制。";
+  "取消结果尚未确认；请先核对持久状态，核对完成前不会再次提交。";
 
 /**
  * Whether one failed control left the durable outcome unknown.
@@ -162,81 +168,63 @@ export function RunLifecycleControls({
   reconciling = false,
 }: RunLifecycleControlsProps) {
   const available = projection.actions.filter((item) => item.available);
-  const withheld = projection.actions.filter(
-    (item) => !item.available && item.unavailableReason !== null,
-  );
   const controlsDisabled = pendingAction !== null || locked;
   const cancellationRequested =
     projection.cancellationRequested === true &&
     projection.state !== "cancelled";
   const unknownOutcome =
     result !== null && !result.ok && isUnknownLifecycleOutcome(result);
+  // Nothing actionable, nothing in flight, no stored request and no recorded
+  // outcome: this task has no operation area at all. An ended run must not
+  // leave an empty block, a permission code or a withheld-control list.
+  if (
+    available.length === 0 &&
+    !cancellationRequested &&
+    result === null &&
+    !locked
+  ) {
+    return null;
+  }
 
   return (
-    <section className="mf-count-section" aria-label="运行控制">
-      <h3>运行控制</h3>
-      {/* The backend's own known-effects statement, rendered verbatim. */}
-      <p className="mf-dashboard-meta">{projection.knownEffects}</p>
-      <p className="mf-dashboard-meta">{projection.nextAction}</p>
-      <p className="mf-dashboard-meta">
-        当前持久状态:{stateLabel(projection.state)}
-        {projection.terminal ? "(终态)" : ""}；权限:
-        {projection.permission}
-      </p>
+    <div className="mf-run-actions" role="group" aria-label="任务操作">
       {cancellationRequested && (
-        <p className="mf-dashboard-meta" role="note">
-          取消请求已持久保存;该对象会在自己的协作边界到达已取消。已记录的效果不会
-          被回滚,已在进行的调用不会被强制中断。
-        </p>
+        <span className="mf-run-action-note" role="note">
+          取消请求已保存；将在安全边界生效。
+        </span>
       )}
-      {available.length === 0 ? (
-        <p className="mf-dashboard-meta">
-          后端没有为该状态与当前主体公告任何可执行的运行控制。
-        </p>
-      ) : (
-        <div className="mf-actions">
-          {available.map((item) => (
-            <button
-              key={item.action}
-              type="button"
-              className="mf-button mf-button-secondary"
-              disabled={controlsDisabled}
-              aria-busy={pendingAction === item.action}
-              onClick={() => onInvoke(item, projection.version)}
-            >
-              {pendingAction === item.action
-                ? "正在提交…"
-                : RUN_LIFECYCLE_ACTION_LABELS[item.action]}
-            </button>
-          ))}
-        </div>
-      )}
-      {withheld.length > 0 && (
-        <ul className="mf-dashboard-meta" aria-label="不可用的运行控制">
-          {withheld.map((item) => (
-            <li key={item.action}>
-              {RUN_LIFECYCLE_ACTION_LABELS[item.action]}:{" "}
-              {item.unavailableReason}
-            </li>
-          ))}
-        </ul>
-      )}
-      {/* The result region is announced without moving focus away from the
+      {available.map((item) => (
+        <button
+          key={item.action}
+          type="button"
+          className="mf-button mf-button-secondary"
+          disabled={controlsDisabled}
+          aria-busy={pendingAction === item.action}
+          onClick={() => onInvoke(item, projection.version)}
+        >
+          {pendingAction === item.action
+            ? "正在取消…"
+            : RUN_LIFECYCLE_ACTION_LABELS[item.action]}
+        </button>
+      ))}
+      {/* The outcome region is announced without moving focus away from the
           control the operator just used. */}
-      <div aria-live="polite" aria-atomic="true">
+      <div
+        className="mf-run-action-feedback"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {locked && (
           <div className="mf-lifecycle-locked" role="note">
             <p>{RUN_LIFECYCLE_RECONCILE_COPY}</p>
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                disabled={reconciling}
-                onClick={onReconcile}
-              >
-                {reconciling ? "正在核对…" : "刷新核对持久状态"}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={reconciling}
+              onClick={onReconcile}
+            >
+              {reconciling ? "正在核对…" : "核对持久状态"}
+            </button>
           </div>
         )}
         {!locked && unknownOutcome && (
@@ -246,39 +234,31 @@ export function RunLifecycleControls({
         )}
         {!locked && result !== null && result.ok && (
           <div role="status">
-            <p>
-              控制已受理;后端记录的持久状态:{stateLabel(result.state)}。
-              {result.durableOutcome ?? ""}
-            </p>
-            <p>{result.nextAction ?? projection.nextAction}</p>
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                disabled={reconciling}
-                onClick={onReconcile}
-              >
-                {reconciling ? "正在刷新…" : "刷新读取持久状态"}
-              </button>
-            </div>
+            <p>取消请求已受理；当前状态：{stateLabel(result.state)}。</p>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={reconciling}
+              onClick={onReconcile}
+            >
+              {reconciling ? "正在刷新…" : "刷新状态"}
+            </button>
           </div>
         )}
         {!locked && result !== null && !result.ok && !unknownOutcome && (
           <div role="alert">
             <p>{runLifecycleRejectionCopy(result)}</p>
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                disabled={reconciling}
-                onClick={onReconcile}
-              >
-                {reconciling ? "正在刷新…" : "刷新读取持久状态"}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={reconciling}
+              onClick={onReconcile}
+            >
+              {reconciling ? "正在刷新…" : "刷新状态"}
+            </button>
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }

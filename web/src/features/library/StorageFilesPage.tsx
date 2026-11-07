@@ -1170,7 +1170,7 @@ function FileBrowseView({
       </RowActionMenu>
     ) : null;
   return (
-    <section className="mf-files" aria-label="文件浏览">
+    <section className="mf-files mf-content-settle" aria-label="文件浏览">
       <div className="mf-files-banner" role="note">
         <span className="mf-banner-icon" aria-hidden="true">
           i

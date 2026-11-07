@@ -184,6 +184,16 @@ const FAILURE_COPY: Readonly<
   },
 };
 
+/** Bounded Chinese reason for one persisted failure category. */
+export function taskFailureReason(
+  category: string | null | undefined,
+): string | null {
+  if (category === null || category === undefined || category === "") {
+    return null;
+  }
+  return FAILURE_COPY[category]?.reason ?? null;
+}
+
 function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] ?? "其他处理阶段";
 }

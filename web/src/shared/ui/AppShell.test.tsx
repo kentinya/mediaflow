@@ -159,6 +159,57 @@ describe("AppShell", () => {
     expect(surfaces[0]).toHaveAttribute("data-page-transition", "enter");
   });
 
+  it("PATCH-20261107-1 keeps one settled surface on same-page updates and rapid round trips", async () => {
+    const user = userEvent.setup();
+    stubShellReads();
+    authStore.setToken("shell-test-token");
+    const { router } = renderApp("/ui-v2/dashboard");
+    await screen.findByRole("heading", { name: "Dashboard" });
+    const surface = document.querySelector<HTMLElement>(
+      '[data-main-page="home"]',
+    );
+    expect(surface).not.toBeNull();
+
+    await user.click(screen.getByRole("link", { name: "任务中心" }));
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+    );
+    // The entry starts once and settles; a same-page deep link keeps the
+    // exact same surface and never re-adds the entry start class.
+    await waitFor(() =>
+      expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
+        false,
+      ),
+    );
+    await act(async () => {
+      await router.navigate({ to: "/operations/tasks" });
+    });
+    expect(router.history.location.pathname).toBe("/ui-v2/operations/tasks");
+    expect(document.querySelector("[data-main-page]")).toBe(surface);
+    expect(surface?.dataset.pageTransition).toBe("enter");
+    expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
+      false,
+    );
+
+    // A rapid A→B→A round trip leaves exactly one surface on the page that
+    // actually arrived, and its entry still settles rather than lingering.
+    await act(async () => {
+      void router.navigate({ to: "/storage" });
+      void router.navigate({ to: "/dashboard" });
+    });
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/dashboard"),
+    );
+    expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
+    expect(document.querySelector("[data-main-page]")).toBe(surface);
+    expect(surface).toHaveAttribute("data-main-page", "home");
+    await waitFor(() =>
+      expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
+        false,
+      ),
+    );
+  });
+
   it("exposes a keyboard-operable narrow navigation control", async () => {
     renderApp("/ui-v2/");
     const toggle = await screen.findByRole("button", { name: "Open menu" });

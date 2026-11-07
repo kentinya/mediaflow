@@ -882,7 +882,6 @@ test("a second lost Copy after a successful copy shows the current unknown and r
     });
   await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
   const afterFirst = await harnessState(page);
   const firstCopy = afterFirst.definitions
     .map((item) => item.id)
@@ -1029,9 +1028,8 @@ test("a conflict refresh updates the Copy authority so the next explicit copy su
   await expect(
     sourceRow().getByRole("cell", { name: "9", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
-  await page.getByRole("button", { name: "刷新" }).click();
-  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
+  // The refusal's read-only refresh (not a standing header entry) has already
+  // updated the Copy authority for the next explicit attempt.
   await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
   expect(copyBodies).toHaveLength(2);

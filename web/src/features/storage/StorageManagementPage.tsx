@@ -27,6 +27,7 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
+import { LoadingPanel } from "../../shared/ui/LoadingPanel";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
   ModalCardShell,
@@ -2066,9 +2067,11 @@ export function StorageManagementPage() {
         {({ data, isPending, isFetching, refresh }) => {
           if (isPending || data === undefined) {
             return (
-              <StatusBanner variant="info" title="正在加载存储管理">
-                <p>正在读取 Active 配置中的存储清单...</p>
-              </StatusBanner>
+              <LoadingPanel
+                variant="rows"
+                title="正在加载存储管理"
+                detail="正在读取 Active 配置中的存储清单…"
+              />
             );
           }
           if (!data.available) {
@@ -2090,7 +2093,7 @@ export function StorageManagementPage() {
             );
           }
           return (
-            <>
+            <div className="mf-content-settle">
               <InventoryHeader
                 canManage={data.canManage && !saveMutation.isPending}
                 available={data.available}
@@ -2344,7 +2347,7 @@ export function StorageManagementPage() {
                   onSave={submitDrawer}
                 />
               )}
-            </>
+            </div>
           );
         }}
       </AuthorizedReadBoundary>

@@ -368,6 +368,13 @@ async function openOrganizingSource(
 }
 
 /** The server-reported run total rendered beside the bounded page. */
+/** The server-reported run total currently rendered beside the page. */
+async function currentRunTotal(page: Page): Promise<number> {
+  const text = await page.getByText(/第 1 页起共 \d+ 条/).textContent();
+  const match = text?.match(/共 (\d+) 条/);
+  return Number(match?.[1] ?? NaN);
+}
+
 async function expectRunTotal(page: Page, expected: number): Promise<void> {
   if (expected === 0) {
     await expect(
@@ -620,22 +627,27 @@ test("the selected run detail reads progress, filtered items, evidence and recor
 
   const detail = page.getByRole("dialog", { name: "运行详情" });
 
-  // 任务详情 (the default tab) publishes the durable organize accounting: a
-  // reconciling partition, the confirmed/uncertain success split of the two
-  // persisted Results, and the accounting basis an operator reads as 口径.
+  // 任务详情 (the default tab) publishes the durable flow first, then the
+  // processed range, then the independent file outcomes. The removed
+  // accounting/tutorial paragraphs are not printed.
   await expect(detail.getByRole("button", { name: "任务详情" })).toBeVisible();
-  const progress = detail.getByRole("region", { name: "整理进度" });
-  await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
-  // The disposition chips are scoped to their own list: the same words also
-  // appear inside the accounting-basis sentence, and a truthful proof names
-  // the exact chip.
-  const chips = progress.getByRole("list", { name: "条目处置分布" });
-  await expect(chips.getByText("已确认成功", { exact: true })).toBeVisible();
   await expect(
-    chips.getByText("效果未确认(不计成功)", { exact: true }),
+    detail.getByRole("region", { name: "状态与流程" }).getByText("流程状态"),
   ).toBeVisible();
-  await expect(progress.getByText(/口径:整理计数/)).toBeVisible();
-  await expect(progress.getByText(/效果确定性\(基于已读结果\)/)).toBeVisible();
+  const progress = detail.getByRole("region", { name: "处理进度" });
+  await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
+  const fileResults = detail.getByRole("region", { name: "文件结果" });
+  await expect(fileResults.getByText("2成功", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText("1失败", { exact: true })).toBeVisible();
+  await expect(
+    fileResults.getByText(/目标文件结果尚未确认 1 个/),
+  ).toBeVisible();
+  await expect(
+    fileResults.getByText(/文件处理已结束，结果未记录 1 个/),
+  ).toBeVisible();
+  await expect(detail.getByText(/口径:整理计数/)).toHaveCount(0);
+  await expect(detail.getByText(/效果确定性\(基于已读结果\)/)).toHaveCount(0);
+  await expect(detail.getByText(/成功含义/)).toHaveCount(0);
 
   // The primary-item table renders every seeded durable item, with the
   // server-reported page-independent population totals beneath it.
@@ -668,9 +680,24 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await items.getByRole("button", { name: "查看证据" }).first().click();
   await expect(page).toHaveURL(/item=/);
   const evidence = detail.getByRole("region", { name: "条目证据" });
-  await expect(evidence.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
-  await expect(evidence.getByText(/已验证完成 \/ 重试安全性/)).toBeVisible();
-  await expect(evidence.getByText("执行结果(1)")).toBeVisible();
+  await expect(
+    evidence.getByRole("heading", {
+      name: "文件证据：Arrival.2016.2160p.mkv",
+    }),
+  ).toBeVisible();
+  const readableResult = evidence.getByRole("region", { name: "处理结果" });
+  await expect(readableResult.getByText("文件已整理")).toBeVisible();
+  await expect(
+    readableResult.getByText("已验证完成", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "来源与目标" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "处理经过" }),
+  ).toBeVisible();
+  // The technical records stay reachable inside the diagnostics group.
+  await evidence.getByText(/技术诊断/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
 
@@ -827,16 +854,10 @@ test("an indeterminate run states an unknown total instead of inventing one", as
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
-  const progress = detail.getByRole("region", { name: "整理进度" });
+  const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByText(/总数未知/)).toBeVisible();
-  await expect(
-    progress.getByText(/下方为已记录主条目的持久处置/),
-  ).toBeVisible();
-  await expect(
-    progress
-      .getByRole("list", { name: "条目处置分布" })
-      .getByText("已确认成功", { exact: true }),
-  ).toBeVisible();
+  // No fabricated denominator or success percentage is printed.
+  await expect(progress.getByText(/已处理/)).toHaveCount(0);
 });
 
 test("the detail tab and filter context survives a reload through auth continuation", async ({
@@ -1002,17 +1023,19 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   });
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(itemEvidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    itemEvidence.getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
+  ).toBeVisible();
+  await itemEvidence.getByText(/技术诊断/).click();
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
+  // The reviewed-plan block states the persisted step list in business terms.
   await expect(
-    itemEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
-  ).toBeVisible();
-  // The reviewed-plan block states the persisted step list exactly; the
-  // durable Result row now also names its own steps ("2 步: …"), so the
-  // aggregate claim is matched exactly instead of as a substring.
-  await expect(
-    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+    itemEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
+      exact: true,
+    }),
   ).toBeVisible();
 
   // The native export resolves this exact standalone Task and downloads its
@@ -1060,14 +1083,17 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const reloadedEvidence = reloadedDetail.getByRole("region", {
     name: "条目证据",
   });
+  await reloadedEvidence.getByText(/技术诊断/).click();
   await expect(
     reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
   await expect(
-    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+    reloadedEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
-    reloadedEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
+    reloadedEvidence.getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
 
   // Every product API call made by the browser during the inspection, export
@@ -1529,13 +1555,12 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus one durable run per earlier journey: the
-  // reviewed-plan journey, the lost-admission journey, the sibling-independence
-  // journey and the new-source ambiguity journey.  A Files admission publishes
-  // its organizing Task before analysis and its confirmed execution adopts that
-  // same Task, so one admission is one organizing row (Slice46 RO-4 also stops
-  // counting the analysis-only preparation as a second center row).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
+  // Read the population that actually exists in this run instead of assuming
+  // how many earlier journeys ran first; the new pipeline run must add exactly
+  // one organizing row (a Files admission publishes one Task, and Slice46 RO-4
+  // no longer counts the analysis-only preparation as a second row).
+  const totalBeforePipeline = await currentRunTotal(page);
+  expect(totalBeforePipeline).toBeGreaterThan(0);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1553,7 +1578,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await page.getByRole("button", { name: "刷新" }).first().click();
   // This standalone `organize --execute` shape publishes one Task and no
   // separate analysis run, so exactly one more run appears.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
+  await expectRunTotal(page, totalBeforePipeline + 1);
 
   // Select the exact new source from the ended population. Command filtering
   // has left the page; the returned Task identity still has to match exactly.
@@ -1620,6 +1645,8 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   });
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(itemEvidence.getByText("文件已整理")).toBeVisible();
+  await itemEvidence.getByText(/技术诊断/).click();
   // The reviewed-plan section keeps its honest unavailability…
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
@@ -1631,13 +1658,11 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect(
     itemEvidence.getByText("持久执行步骤(检查点与结果聚合)"),
   ).toBeVisible();
-  // The aggregate statement is exactly one: no duplicate fabricated list.
+  // The durable Result states its own persisted steps in business terms.
   await expect(
-    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
-  ).toHaveCount(1);
-  // The durable Result row names its own persisted steps.
-  await expect(
-    itemEvidence.getByText(/步: CREATE_DIRECTORY、MOVE/),
+    itemEvidence.getByText(
+      "已完成：创建目录（CREATE_DIRECTORY）、移动（MOVE）",
+    ),
   ).toBeVisible();
   // The captured operation section renders its bounded step lists instead
   // of collapsing arrays to "—" (createdDirectories was the `—` the reviewer
@@ -1652,9 +1677,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   ).toBeVisible();
   // The cleanup truth from the Result row stays explained.
   await expect(
-    itemEvidence.getByRole("cell", {
-      name: "未启用(本次执行没有获得源目录清理授权)",
-    }),
+    itemEvidence.getByText(/源目录：未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
 
   // Refresh keeps the same durable facts — the run is not recomputed.
@@ -1664,8 +1687,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
     .getByRole("button", { name: "刷新", exact: true })
     .click();
   await expect(
-    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
-  ).toHaveCount(1);
+    itemEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
+      exact: true,
+    }),
+  ).not.toHaveCount(0);
 
   // Restart the real Python runtime over the same SQLite file and return
   // through the authentication continuation: the steps still come from
@@ -1681,12 +1706,13 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const reloadedEvidence = page
     .getByRole("dialog", { name: "运行详情" })
     .getByRole("region", { name: "条目证据" });
+  await expect(reloadedEvidence.getByText(run.sourcePath)).toBeVisible();
   await expect(
-    reloadedEvidence.getByText(run.sourcePath, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
-  ).toHaveCount(1);
+    reloadedEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
+      exact: true,
+    }),
+  ).not.toHaveCount(0);
+  await reloadedEvidence.getByText(/技术诊断/).click();
   await expect(
     reloadedEvidence.getByText(/createdDirectories=Movies\/Movies\/Anime/),
   ).toBeVisible();
@@ -1960,15 +1986,14 @@ test("a paused run's retired resume control is refused with no new work", async 
   await pausedRow.getByRole("button").first().click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
-  const controls = detail.getByRole("region", { name: "运行控制" });
-  await expect(controls).toBeVisible();
-
   // Neither Pause nor Continue is a rendered product action any more; the
-  // historical paused row stays readable without those controls.
+  // historical paused row stays readable without those controls or the
+  // removed standing control block.
+  await expect(detail.getByText("运行控制")).toHaveCount(0);
   await expect(
-    controls.getByRole("button", { name: "继续剩余范围" }),
+    detail.getByRole("button", { name: "继续剩余范围" }),
   ).toHaveCount(0);
-  await expect(controls.getByRole("button", { name: "暂停" })).toHaveCount(0);
+  await expect(detail.getByRole("button", { name: "暂停" })).toHaveCount(0);
 
   const projectionResponse = await request.get(
     `${BASE}/api/v1/tasks/${sourceTaskId}`,

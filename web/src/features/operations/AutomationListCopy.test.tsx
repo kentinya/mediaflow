@@ -771,15 +771,10 @@ describe("Automation list Copy", () => {
     const refreshedTable = within(
       screen.getByRole("table", { name: "自动化任务" }),
     );
-    // The page's explicit refresh updates both the rows and the authority the
-    // next Copy will submit against.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "刷新" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled(),
-    );
+    // The refused Copy's own read-back updates both the rows and the
+    // authority the next Copy submits against, so the removed header refresh
+    // is not needed for the next explicit attempt (its request body below
+    // proves the current revision is used).
     expect(within(row(refreshedTable)).getByText("9")).toBeVisible();
     await user.click(
       within(row(refreshedTable)).getByRole("button", { name: "复制" }),

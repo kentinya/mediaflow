@@ -301,6 +301,27 @@ const TASK_RESULTS = [
     completed_operations: ["move"],
     effect_certainty: "verified_complete",
     uncertain_effects: [],
+    // The main file was organized while its Chinese subtitle did not verify.
+    // The two outcomes stay independent (Slice 48 / V2-UX-006).
+    primary_completed: true,
+    attachment_count: 1,
+    attachment_results: [
+      {
+        type: "subtitle",
+        language: "zh",
+        operation: "copy",
+        status: "failed",
+        reason: "verification_failed",
+        source_storage_id: "local-media",
+        source_path: "movies/The Matrix (1999).zh.srt",
+        destination_storage_id: "local-media",
+        destination_path:
+          "Media/Movies/The Matrix (1999)/The Matrix (1999).zh.srt",
+        effect_certainty: "attempted_unverified",
+        completed_operations: ["copy_written"],
+        next_action: "verify the subtitle target before retrying",
+      },
+    ],
   },
 ];
 
@@ -12075,6 +12096,7 @@ const server = createServer(async (req, res) => {
         completed_items: linked?.completed_items ?? null,
         failed_items: linked?.failed_items ?? null,
         pause_requested: linked?.pause_requested ?? false,
+        ...(linked === undefined ? {} : runFileFacets(linked)),
         configuration_snapshot_id: job.configuration_snapshot_id ?? null,
         worker_id: job.worker_id ?? null,
         problem_types: taskProblemTypes(linked),
@@ -12109,6 +12131,7 @@ const server = createServer(async (req, res) => {
         completed_items: task.completed_items,
         failed_items: task.failed_items,
         pause_requested: task.pause_requested,
+        ...runFileFacets(task),
         configuration_snapshot_id: task.configuration_snapshot_id ?? null,
         worker_id: null,
         problem_types: taskProblemTypes(task),
@@ -12121,6 +12144,40 @@ const server = createServer(async (req, res) => {
         ? right.run_id.localeCompare(left.run_id)
         : right.created_at.localeCompare(left.created_at),
     );
+  }
+
+  /**
+   * The independent file outcome facets of one linked Task (Slice 48 RO-3).
+   *
+   * They are published beside the flow status and never replace it: recorded
+   * successes, partial files, the uncertain-effect caveat and a settled file
+   * whose attempt ended without any Result are separate durable facts.
+   */
+  function runFileFacets(task) {
+    const terminalStatuses = new Set([
+      "success",
+      "partial",
+      "failed",
+      "skipped",
+      "cancelled",
+      "ignored",
+    ]);
+    const items = runItemsPopulation(task.task_id);
+    const latest = runLatestResultByItem(task.task_id);
+    return {
+      processed_items: items.filter((item) => terminalStatuses.has(item.status))
+        .length,
+      success_items: items.filter((item) => item.status === "success").length,
+      partial_items: items.filter((item) => item.status === "partial").length,
+      uncertain_effect_items: items.filter(
+        (item) =>
+          latest.get(item.item_id)?.effect_certainty === "attempted_unverified",
+      ).length,
+      missing_result_items: items.filter(
+        (item) =>
+          terminalStatuses.has(item.status) && !latest.has(item.item_id),
+      ).length,
+    };
   }
 
   function runRunDocument(run, progress, lifecycle, continuation) {

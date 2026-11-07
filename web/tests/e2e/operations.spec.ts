@@ -370,9 +370,13 @@ test("a terminal run exposes no control and no request is sent", async ({
   });
   await openCenterRun(page, "job-001");
   await expect(page.getByRole("button", { name: "取消运行" })).toHaveCount(0);
+  // The removed explanatory block leaves no heading, no empty operation area,
+  // no permission token and no withheld-control list behind.
+  await expect(page.getByText(/运行控制/)).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "任务操作" })).toHaveCount(0);
   await expect(
-    page.getByText(/后端没有为该状态与当前主体公告任何可执行的运行控制/),
-  ).toBeVisible();
+    page.getByText(/cancel_job|不可用的运行控制|a completed Task cannot/),
+  ).toHaveCount(0);
   await page.waitForTimeout(250);
   expect(posts).toHaveLength(0);
 });
@@ -731,7 +735,7 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   expect(html).not.toContain(VIEWER_TOKEN);
 });
 
-test("the selected run detail shows truthful progress and its accounting basis", async ({
+test("the selected run detail reads flow, processed range and independent file results", async ({
   page,
 }) => {
   await connect(page);
@@ -745,21 +749,26 @@ test("the selected run detail shows truthful progress and its accounting basis",
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
-  // The 任务详情 tab carries the durable progress projection: a processed
-  // ratio explicitly labelled as processed work (never a success rate), the
-  // reconciling disposition counts and the accounting basis text.
-  const progress = detail.getByRole("region", { name: "整理进度" });
-  await expect(progress).toBeVisible();
+  // The first screen leads with the flow status, then the processed range.
+  const flow = detail.getByRole("region", { name: "状态与流程" });
+  await expect(flow.getByText("流程状态")).toBeVisible();
+  await expect(flow.getByText("已完成", { exact: true })).toBeVisible();
+  const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByRole("progressbar")).toBeVisible();
-  await expect(progress.getByText(/已处理 \d+ \/ \d+ 个/)).toBeVisible();
-  await expect(progress.getByText(/处理进度,非成功率/)).toBeVisible();
+  await expect(progress.getByText(/已处理 \d+ \/ \d+ 个主条目/)).toBeVisible();
+
+  // The independent file outcomes follow, including the settled attempt with
+  // no recorded result. The removed accounting/tutorial copy stays gone.
+  const results = detail.getByRole("region", { name: "文件结果" });
+  await expect(results.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(results.getByText("1失败", { exact: true })).toBeVisible();
   await expect(
-    progress
-      .getByRole("list", { name: "条目处置分布" })
-      .getByText("已确认成功", { exact: true }),
+    results.getByText(/文件处理已结束，结果未记录 1 个/),
   ).toBeVisible();
-  await expect(progress.getByText(/口径:/)).toBeVisible();
-  await expect(progress.getByText(/成功含义:/)).toBeVisible();
+  await expect(detail.getByText(/口径:/)).toHaveCount(0);
+  await expect(detail.getByText(/成功含义:/)).toHaveCount(0);
+  await expect(detail.getByText(/非成功率/)).toHaveCount(0);
+  await expect(detail.getByText(/单独计数/)).toHaveCount(0);
 });
 
 test("item and record filters page on the server and survive a reload", async ({
@@ -850,18 +859,35 @@ test("one item's evidence opens through exact links and closes again", async ({
   await expect(page).toHaveURL(/item=item-001/);
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
+  // The readable body answers which file, what happened, where it went and
+  // what is still open before any technical record.
   await expect(
-    evidence.getByRole("heading", { name: "执行结果(1)" }),
+    evidence.getByRole("heading", {
+      name: "文件证据：The Matrix (1999).mkv",
+    }),
+  ).toBeVisible();
+  const result = evidence.getByRole("region", { name: "处理结果" });
+  await expect(result.getByText("文件已整理")).toBeVisible();
+  await expect(result.getByText("主文件已完成；附件有警告")).toBeVisible();
+  await expect(result.getByText(/subtitle（zh）/)).toBeVisible();
+  await expect(result.getByText(/附件效果尚未验证/)).toBeVisible();
+  const paths = evidence.getByRole("region", { name: "来源与目标" });
+  await expect(
+    paths.getByText("local-media:movies/The Matrix (1999).mkv"),
   ).toBeVisible();
   await expect(
-    evidence.getByRole("heading", { name: "计划与分析证据(1)" }),
+    paths.getByText("Media/Movies/The Matrix (1999)/The Matrix (1999).mkv"),
   ).toBeVisible();
   await expect(
-    evidence.getByRole("heading", { name: "精确关联日志(2)" }),
+    evidence
+      .getByRole("region", { name: "处理经过" })
+      .getByText(/移动（move）/),
   ).toBeVisible();
-  await expect(
-    evidence.getByRole("heading", { name: "控制与恢复审计(1)" }),
-  ).toBeVisible();
+  // The technical plan/log/audit records stay reachable inside diagnostics.
+  await evidence.getByText(/技术诊断/).click();
+  await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
+  await expect(evidence.getByText("精确关联日志(2)")).toBeVisible();
+  await expect(evidence.getByText("控制与恢复审计(1)")).toBeVisible();
   // A legacy-absent plan stays explicit; no digest or fingerprint appears.
   const html = await page.content();
   expect(html).not.toContain("snapshot_digest");
@@ -870,6 +896,111 @@ test("one item's evidence opens through exact links and closes again", async ({
   await evidence.getByRole("button", { name: "关闭证据" }).click();
   await expect(page).not.toHaveURL(/item=item-001/);
   await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
+});
+
+test("PATCH-20261107-1 keeps the mixed completed run and its independent file outcomes readable", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("row", { name: COMPLETED_ROW })
+    .getByRole("button")
+    .first()
+    .click();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  // A completed flow and a mixed file population are stated as their own
+  // facts, not as a tutorial about what the numbers mean.
+  await expect(
+    detail.getByRole("region", { name: "状态与流程" }).getByText("已完成", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    detail
+      .getByRole("region", { name: "处理进度" })
+      .getByText("已处理 2 / 2 个主条目"),
+  ).toBeVisible();
+  const results = detail.getByRole("region", { name: "文件结果" });
+  await expect(results.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(results.getByText("1失败", { exact: true })).toBeVisible();
+  await expect(
+    results.getByText(/文件处理已结束，结果未记录 1 个/),
+  ).toBeVisible();
+  // The removed self-link and standing explanation are gone.
+  await expect(detail.getByText("更详细证据")).toHaveCount(0);
+  await expect(
+    detail.getByText(/口径:|成功含义:|非成功率|单独计数/),
+  ).toHaveCount(0);
+  // Capture a settled frame; the card's own entry animation is not the
+  // subject of this screenshot.
+  await page.waitForTimeout(300);
+  await page.screenshot({
+    path: testInfo.outputPath("patch-mixed-run-1536.png"),
+  });
+
+  // The main file succeeded while its subtitle result is independently
+  // readable under the same evidence entry.
+  const items = detail.getByRole("region", { name: "主条目" });
+  await items.getByRole("button", { name: "查看证据" }).first().click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    evidence.getByRole("heading", {
+      name: "文件证据：The Matrix (1999).mkv",
+    }),
+  ).toBeVisible();
+  await expect(evidence.getByText("文件已整理")).toBeVisible();
+  await expect(evidence.getByText("主文件已完成；附件有警告")).toBeVisible();
+  await expect(evidence.getByText(/subtitle（zh）/)).toBeVisible();
+
+  // The settled failed item has no Result row: it is not backfilled into a
+  // success or an empty state.
+  await items.getByRole("button", { name: "查看证据" }).nth(1).click();
+  await expect(
+    evidence.getByRole("heading", {
+      name: "文件证据：Inception (2010).mkv",
+    }),
+  ).toBeVisible();
+  await expect(evidence.getByText("文件处理已结束，结果未记录")).toBeVisible();
+});
+
+test("PATCH-20261107-1 states an unconfirmed target result instead of a confirmed success", async ({
+  page,
+}) => {
+  await connect(page);
+  // The exact item-evidence entry reads a durable Result whose Storage effect
+  // is still unverified; only that effect facet is changed on the real fake
+  // response so the same operator entry is exercised.
+  await page.route(
+    "**/api/v1/operations/runs/job-001/items/item-001",
+    async (route) => {
+      const response = await route.fetch();
+      const document = (await response.json()) as {
+        item: { checkpoint: { effect_certainty: string } };
+        checkpoint: { effects: { certainty: string } };
+      };
+      document.checkpoint.effects.certainty = "attempted_unverified";
+      document.item.checkpoint.effect_certainty = "attempted_unverified";
+      await route.fulfill({
+        status: response.status(),
+        contentType: "application/json",
+        body: JSON.stringify(document),
+      });
+    },
+  );
+  await openCenterRun(page, "job-001");
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  await items.getByRole("button", { name: "查看证据" }).first().click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    evidence.getByText("目标文件结果尚未确认", { exact: true }),
+  ).toBeVisible();
+  await expect(evidence.getByText("文件已整理")).toHaveCount(0);
 });
 
 test("the native action downloads the eligible linked Task's result package", async ({

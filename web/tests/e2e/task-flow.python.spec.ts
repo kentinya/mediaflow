@@ -158,7 +158,9 @@ test("a mixed file population completes the flow with independent file facts", a
   // Processing progress reached the whole admitted population (2/2) while
   // the file-failure count stays independently readable.
   await expect(detail.getByText(/已处理 2 \/ 2 个主条目/)).toBeVisible();
-  await expect(detail.getByText(/共 2；已处理 2；失败 1/)).toBeVisible();
+  const fileResults = detail.getByRole("region", { name: "文件结果" });
+  await expect(fileResults.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText("1失败", { exact: true })).toBeVisible();
 
   // The Automation execution record reads the exact same flow outcome for the
   // same Task, with its own bounded file facts — never a file-derived
@@ -212,8 +214,14 @@ test("a mixed file population completes the flow with independent file facts", a
   await expect(
     reopenedDetail.getByText(/已处理 2 \/ 2 个主条目/),
   ).toBeVisible();
+  const reopenedResults = reopenedDetail.getByRole("region", {
+    name: "文件结果",
+  });
   await expect(
-    reopenedDetail.getByText(/共 2；已处理 2；失败 1/),
+    reopenedResults.getByText("1成功", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    reopenedResults.getByText("1失败", { exact: true }),
   ).toBeVisible();
 
   // Screenshots for the human review of the desktop and narrow layouts.
@@ -361,7 +369,10 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await endedRow.getByRole("button", { name: /电影/ }).click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail.waitFor();
-  await expect(detail.getByText("失败", { exact: true })).toBeVisible();
+  // The flow status and the independent file result each carry "失败" now;
+  // this assertion names the flow block explicitly.
+  const flow = detail.getByRole("region", { name: "状态与流程" });
+  await expect(flow.getByText("失败", { exact: true })).toBeVisible();
   await expect(detail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
 
   // The Automation record reads the same failed flow with the current
@@ -467,7 +478,11 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await connectOn(page, `/ui-v2/operations?run=${taskId}`);
   const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
   await reopenedDetail.waitFor();
-  await expect(reopenedDetail.getByText("失败", { exact: true })).toBeVisible();
+  await expect(
+    reopenedDetail
+      .getByRole("region", { name: "状态与流程" })
+      .getByText("失败", { exact: true }),
+  ).toBeVisible();
 
   // The same readback holds on a narrow viewport.  The memory-only token is
   // intentionally lost on reload, so the narrow pass re-connects through the
@@ -476,7 +491,11 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await connectOn(page, `/ui-v2/operations?run=${taskId}`);
   const narrowDetail = page.getByRole("dialog", { name: "运行详情" });
   await narrowDetail.waitFor();
-  await expect(narrowDetail.getByText("失败", { exact: true })).toBeVisible();
+  await expect(
+    narrowDetail
+      .getByRole("region", { name: "状态与流程" })
+      .getByText("失败", { exact: true }),
+  ).toBeVisible();
   await expect(narrowDetail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
   await page.screenshot({
     fullPage: true,

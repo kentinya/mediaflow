@@ -190,3 +190,57 @@ for (const width of [1536, 390]) {
     expect(writes).toEqual([]);
   });
 }
+
+test("PATCH-20261107-1 removes the header refresh entry without skipping the create reads", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.request.post("/__test__/reset-automation");
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) {
+      requests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  await page.goto("/ui-v2/operations/automation");
+  await page.getByLabel("API token").fill("e2e-viewer-token");
+  await page.getByRole("button", { name: "Connect" }).click();
+  const title = page.getByRole("heading", { name: "自动化", exact: true });
+  await expect(title).toBeVisible();
+  const header = page.locator(".mf-dashboard-head");
+  // The standing refresh entry is gone from the workspace header.
+  await expect(
+    header.getByRole("button", { name: /^(刷新|刷新中…)$/ }),
+  ).toHaveCount(0);
+
+  await page.getByRole("link", { name: "新建自动化任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务", exact: true }),
+  ).toBeVisible();
+  // Opening the card cannot add, disable or relabel the removed refresh
+  // button; the header actions stay stable.
+  await expect(
+    header.getByRole("button", { name: /^(刷新|刷新中…)$/ }),
+  ).toHaveCount(0);
+  // The necessary list and create-authority reads still happen.
+  await expect
+    .poll(() =>
+      requests.some(
+        (entry) =>
+          entry === "GET /api/v1/operations/automation/task-definitions",
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      requests.some(
+        (entry) => entry === "GET /api/v1/operations/automation/definitions",
+      ),
+    )
+    .toBe(true);
+  // Opening and rendering the card submits nothing.
+  expect(requests.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
+  await page.screenshot({
+    path: testInfo.outputPath("patch-automation-create.png"),
+  });
+});

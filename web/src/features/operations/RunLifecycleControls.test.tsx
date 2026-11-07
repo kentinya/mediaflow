@@ -84,6 +84,32 @@ describe("RunLifecycleControls", () => {
     expect(screen.getByRole("button", { name: "取消运行" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "请求暂停" })).toBeNull();
     expect(screen.queryByRole("button", { name: "继续剩余范围" })).toBeNull();
+    // The removed explanatory block leaves no heading, projection prose or
+    // permission token behind.
+    expect(screen.queryByRole("heading", { name: "运行控制" })).toBeNull();
+    expect(screen.queryByText(/no Storage effect is recorded/)).toBeNull();
+    expect(screen.queryByText(/cancel_job/)).toBeNull();
+  });
+
+  it("renders nothing at all when the backend advertises no action", () => {
+    const { container } = render(
+      <RunLifecycleControls
+        projection={projection({
+          state: "completed",
+          terminal: true,
+          actions: [cancel(false, "terminal")],
+        })}
+        onInvoke={vi.fn()}
+        pendingAction={null}
+        result={null}
+        onReconcile={vi.fn()}
+        locked={false}
+      />,
+    );
+    // A terminal run with nothing left to do has no empty operation block,
+    // no withheld-control list and no permission code.
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByText(/terminal/)).toBeNull();
   });
 
   it("submits exactly one cancellation with the rendered version", async () => {
@@ -115,8 +141,9 @@ describe("RunLifecycleControls", () => {
         locked={false}
       />,
     );
-    expect(screen.getByText(/控制已受理/)).toBeVisible();
-    expect(screen.getByText(/durable cancellation request/)).toBeVisible();
+    expect(screen.getByText(/取消请求已受理/)).toBeVisible();
+    expect(screen.getByText(/当前状态：已取消/)).toBeVisible();
+    expect(screen.queryByText(/durable cancellation request/)).toBeNull();
   });
 
   it("disables the control while a submission is in flight", () => {
@@ -130,6 +157,6 @@ describe("RunLifecycleControls", () => {
         locked={false}
       />,
     );
-    expect(screen.getByRole("button", { name: "正在提交…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在取消…" })).toBeDisabled();
   });
 });

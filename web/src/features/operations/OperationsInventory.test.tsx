@@ -690,20 +690,21 @@ describe("Operations run inventory landing", () => {
     // The disposition filter option shares the status label text, so the
     // bounded presence check uses the All* variant over the detail panel.
     expect(within(detail).getAllByText(/进行中/).length).toBeGreaterThan(0);
-    // The overview shows known durable facts and labels completed items as
-    // not an organize-success claim while running.
-    expect(within(detail).getByText(/不代表整理成功/)).toBeVisible();
+    // The overview leads with the flow status and own facts; the removed
+    // "processed is not organize success" tutorial is not printed.
+    expect(within(detail).getByText("流程状态")).toBeVisible();
+    expect(within(detail).queryByText(/不代表整理成功/)).toBeNull();
     // The historical source and target scope the projection publishes are
     // part of the visible overview (absent evidence renders explicitly).
     expect(within(detail).getByText("Movies")).toBeVisible();
     expect(within(detail).getByText("Library/History")).toBeVisible();
-    // A deep evidence link that stays inside the center's own run context:
-    // the retired mixed Task collection is closed (B46.4-04).
+    // The former self-link back into this same task detail is gone.
+    expect(within(detail).queryByText("更详细证据")).toBeNull();
     expect(
-      within(detail).getByRole("link", {
+      within(detail).queryByRole("link", {
         name: "在任务中心查看该运行的详情",
       }),
-    ).toHaveAttribute("href", "/ui-v2/operations?run=task-001");
+    ).toBeNull();
 
     await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
     await waitFor(() =>
@@ -1536,6 +1537,184 @@ describe("Operations run inventory landing", () => {
     expect(screen.queryByText(/失败 3/)).toBeNull();
   });
 
+  it("PATCH-20261107-1 reads an ended mixed run as flow, processed range and independent file results", async () => {
+    const overview = runDocument({
+      run_id: "task-mixed-ended",
+      task_id: "task-mixed-ended",
+      command: "organize",
+      command_label: "整理",
+      source_scope: "Movies/Mixed",
+      status: "completed",
+      total_items: 10,
+      completed_items: 10,
+      processed_items: 10,
+      success_items: 7,
+      partial_items: 2,
+      failed_items: 3,
+      uncertain_effect_items: 1,
+      missing_result_items: 1,
+      current_stage: null,
+      progress: {
+        available: true,
+        kind: "organize",
+        unit: "主条目",
+        unit_key: "task_items",
+        basis: "整理计数:成功表示已验证的存储操作结果。",
+        success_means: "已验证的存储操作成功",
+        known_total: 10,
+        indeterminate: false,
+        processed: 10,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 7,
+          skipped: 0,
+          failed_partial: 3,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 6,
+        uncertain_success: 1,
+        scan_errors: null,
+        scan_discovery_complete: null,
+        scan_progress: {},
+        attachment_steps: 2,
+        effect_counts: { verified_complete: 6, attempted_unverified: 1 },
+        results_total: 7,
+        results_complete: true,
+        sideEffects: "none",
+      },
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/v1/operations/runs/task-mixed-ended") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-mixed-ended&view=ended");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
+    });
+    await within(flow).findByText("已完成");
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
+    await within(progress).findByText(/已处理 10 \/ 10 个主条目/);
+    const results = await within(detail).findByRole("region", {
+      name: "文件结果",
+    });
+    // The independent outcomes are read directly, including the two caveat
+    // facets; the removed basis/success-meaning/attachment-accounting prose
+    // does not come back under another heading.
+    expect(
+      within(results)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["7成功", "2部分成功", "1失败"]);
+    expect(
+      within(results).getByText(/目标文件结果尚未确认 1 个/),
+    ).toBeVisible();
+    expect(
+      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+    ).toBeVisible();
+    expect(
+      within(detail).queryByText(/口径:|成功含义:|非成功率|单独计数/),
+    ).toBeNull();
+    expect(
+      flow.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      progress.compareDocumentPosition(results) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("PATCH-20261107-1 leaves no empty task operation area on a terminal run", async () => {
+    const overview = runDocument({
+      status: "completed",
+      current_stage: null,
+      lifecycle: {
+        objectType: "task",
+        objectId: "task-001",
+        state: "completed",
+        version: "2026-08-22T12:06:00+00:00",
+        executionPath: "operator_workflow",
+        terminal: true,
+        permitted: true,
+        permission: "cancel_job",
+        knownEffects:
+          "Storage effects are reported only from recorded item results",
+        nextAction: "this Task is terminal; no lifecycle control is available",
+        effectCertainty: "verified_complete",
+        resultsObserved: 1,
+        resultsComplete: true,
+        uncertainResults: 0,
+        pauseRequested: false,
+        cancellationRequested: false,
+        commandKind: null,
+        actions: [
+          {
+            action: "cancel",
+            label: "Cancel Task",
+            method: "POST",
+            path: "/api/v1/tasks/task-001/cancel",
+            available: false,
+            unavailableReason: "a completed Task cannot be cancelled",
+            confirmationRequired: false,
+            cooperative: true,
+            durableOutcome: "a durable cancellation request is stored",
+            sideEffects: "no Storage mutation",
+            retrySafe: false,
+            nextAction: "refresh the Task to read the durable state",
+            recovery: null,
+          },
+        ],
+      },
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findByText("流程状态");
+    // No standing control block, withheld-control list or permission token.
+    expect(
+      within(detail).queryByRole("group", { name: "任务操作" }),
+    ).toBeNull();
+    expect(within(detail).queryByText("运行控制")).toBeNull();
+    expect(
+      within(detail).queryByRole("button", { name: "取消运行" }),
+    ).toBeNull();
+    expect(
+      within(detail).queryByText(
+        /cancel_job|a completed Task cannot be cancelled|不可用的运行控制/,
+      ),
+    ).toBeNull();
+  });
+
   it("renders an honest scan-error run instead of rejecting the page", async () => {
     const requested: string[] = [];
     stubInventoryJourney(
@@ -2058,8 +2237,8 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const controls = await within(detail).findByRole("region", {
-      name: "运行控制",
+    const controls = await within(detail).findByRole("group", {
+      name: "任务操作",
     });
     await user.click(
       within(controls).getByRole("button", { name: "取消运行" }),
@@ -2069,7 +2248,7 @@ describe("Operations run inventory landing", () => {
         within(controls).getByRole("button", { name: "取消运行" }),
       ).toBeDisabled(),
     );
-    expect(within(controls).getByText(/控制结果未知/)).toBeTruthy();
+    expect(within(controls).getByText(/取消结果尚未确认/)).toBeTruthy();
 
     // Closing the card must not drop the unresolved request's context.
     await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
@@ -2078,13 +2257,13 @@ describe("Operations run inventory landing", () => {
     );
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
-    const reopenedControls = await within(reopened).findByRole("region", {
-      name: "运行控制",
+    const reopenedControls = await within(reopened).findByRole("group", {
+      name: "任务操作",
     });
-    expect(within(reopenedControls).getByText(/控制结果未知/)).toBeTruthy();
+    expect(within(reopenedControls).getByText(/取消结果尚未确认/)).toBeTruthy();
     expect(
       within(reopenedControls).getByRole("button", {
-        name: /刷新核对持久状态/,
+        name: "核对持久状态",
       }),
     ).toBeEnabled();
     expect(

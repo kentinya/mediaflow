@@ -9,7 +9,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -96,8 +96,13 @@ function overviewDocument(overrides: Record<string, unknown> = {}) {
     target_scope: null,
     library_kind: "resource",
     total_items: 4,
-    completed_items: 1,
-    failed_items: 0,
+    completed_items: 3,
+    failed_items: 2,
+    processed_items: 3,
+    success_items: 1,
+    partial_items: 1,
+    uncertain_effect_items: 1,
+    missing_result_items: 1,
     pause_requested: false,
     attention: false,
     configuration_snapshot_id: "snap-1",
@@ -1040,29 +1045,209 @@ describe("selected-run detail tabs", () => {
       ).not.toBeNull();
     }
   });
-  it("renders truthful progress with its accounting basis and no invented percentage claims", async () => {
+  it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const progress = await within(detail).findByRole("region", {
-      name: "整理进度",
+    // The first block answers where the flow is; the processed range follows;
+    // the independent file outcomes come after it.
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
     });
-    // The processed ratio is labelled as processed work, never a success
-    // percentage, and the accounting basis stays visible.
+    expect(within(flow).getByText("流程状态")).toBeVisible();
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
     expect(within(progress).getByText(/已处理 3 \/ 4 个主条目/)).toBeVisible();
-    expect(within(progress).getByText(/处理进度,非成功率/)).toBeVisible();
-    expect(within(progress).getByText(/已确认成功/)).toBeVisible();
-    expect(within(progress).getByText(/效果未确认\(不计成功\)/)).toBeVisible();
-    expect(within(progress).getByText(/口径:/)).toBeVisible();
-    expect(within(progress).getByText(/附件步骤 2\(单独计数/)).toBeVisible();
+    const results = await within(detail).findByRole("region", {
+      name: "文件结果",
+    });
+    expect(within(results).getByText("成功")).toBeVisible();
+    expect(within(results).getByText("部分成功")).toBeVisible();
+    expect(within(results).getByText("失败")).toBeVisible();
+    expect(
+      within(results).getByText(/目标文件结果尚未确认 1 个/),
+    ).toBeVisible();
+    expect(
+      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+    ).toBeVisible();
+    // The removed standing explanations stay gone; the remaining text states
+    // facts, not the accounting rules behind them.
+    expect(within(detail).queryByText(/口径:/)).toBeNull();
+    expect(within(detail).queryByText(/成功含义:/)).toBeNull();
+    expect(within(detail).queryByText(/非成功率/)).toBeNull();
+    expect(within(detail).queryByText(/单独计数/)).toBeNull();
+    expect(within(detail).queryByText(/不代表整理成功/)).toBeNull();
     // The tabs the reference promises.
     expect(
       within(detail).getByRole("button", { name: "任务详情" }),
     ).toBeVisible();
     expect(
       within(detail).getByRole("button", { name: "操作记录" }),
+    ).toBeVisible();
+  });
+
+  it("PATCH-20261107-1 keeps flow, processed range and independent file results in reading order", async () => {
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
+    });
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
+    const results = await within(detail).findByRole("region", {
+      name: "文件结果",
+    });
+    await within(results).findByText("成功");
+    // The first screen reads top-down: flow state, processed range, then the
+    // independent file outcomes.
+    expect(
+      flow.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      progress.compareDocumentPosition(results) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Completed flow plus a mixed file population is stated directly, with no
+    // tutorial paragraph re-explaining the numbers.
+    expect(within(results).getByText("部分成功")).toBeVisible();
+    expect(within(results).getByText("失败")).toBeVisible();
+    expect(
+      within(results).getByText(/目标文件结果尚未确认 1 个/),
+    ).toBeVisible();
+    expect(
+      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+    ).toBeVisible();
+    expect(
+      within(detail).queryByText(/口径:|成功含义:|非成功率|单独计数/),
+    ).toBeNull();
+  });
+
+  it("PATCH-20261107-1 keeps a successful main file and a failed subtitle as independent results", async () => {
+    const withAttachment = manualExecutionEvidenceDocument({
+      results: [
+        evidenceResultRow({
+          primary_completed: true,
+          attachment_results: [
+            {
+              type: "subtitle",
+              language: "zh",
+              operation: "copy",
+              status: "failed",
+              reason: "verification_failed",
+              source_storage_id: "source",
+              source_path: "movies/a.zh.srt",
+              destination_storage_id: "target",
+              destination_path: "Movies/a.zh.srt",
+              effect_certainty: "attempted_unverified",
+              completed_operations: ["copy_written"],
+              next_action: "verify the subtitle target before retrying",
+            },
+          ],
+        }),
+      ],
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        return jsonResponse(withAttachment);
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：a.mkv");
+    // The file's own result is readable first…
+    expect(within(evidence).getByText("文件已整理")).toBeVisible();
+    // …and the main file and subtitle keep separate outcomes.
+    expect(
+      within(evidence).getByText("主文件已完成；附件有警告"),
+    ).toBeVisible();
+    expect(within(evidence).getByText(/subtitle（zh）/)).toBeVisible();
+    expect(within(evidence).getByText(/附件效果尚未验证/)).toBeVisible();
+    // The removed tutorial copy stays out of the readable body.
+    expect(within(evidence).queryByText(/口径|成功含义|非成功率/)).toBeNull();
+  });
+
+  it("PATCH-20261107-1 distinguishes an unconfirmed target from an ended attempt without a result", async () => {
+    const unknown = manualExecutionEvidenceDocument();
+    // A persisted Result whose Storage effect is still unverified: the file
+    // is not presented as confirmed success.
+    (
+      unknown as { checkpoint: { effects: { certainty: string } } }
+    ).checkpoint.effects.certainty = "attempted_unverified";
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        return jsonResponse(unknown);
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    let detail = await screen.findByRole("dialog", { name: "运行详情" });
+    let evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：a.mkv");
+    expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
+
+    cleanup();
+    const missing = manualExecutionEvidenceDocument({ results: [] });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument({ status: "completed" }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        return jsonResponse(missing);
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    detail = await screen.findByRole("dialog", { name: "运行详情" });
+    evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：a.mkv");
+    // A settled attempt with no Result row is not backfilled into a success.
+    expect(
+      within(evidence).getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
   });
 
@@ -1134,12 +1319,20 @@ describe("selected-run detail tabs", () => {
     const evidence = await within(detail).findByRole("region", {
       name: "条目证据",
     });
-    await within(evidence).findByText("条目证据:item-2");
+    await within(evidence).findByText("文件证据：b.mkv");
+    // The readable body names the concrete blocker and the file's own result
+    // instead of surfacing the raw review tokens as the primary facts.
+    expect(within(evidence).getByText(/当前阻塞/)).toBeVisible();
+    expect(within(evidence).getByText(/等待元数据决定/)).toBeVisible();
+    expect(
+      within(evidence).getByText(/未继续原因：等待处理决定/),
+    ).toBeVisible();
+    // The technical next action and fixed configuration stay reachable inside
+    // the collapsed diagnostics.
+    await user.click(within(evidence).getByText(/技术诊断/));
     expect(
       within(evidence).getByText(/choose a metadata candidate/),
     ).toBeVisible();
-    expect(within(evidence).getByText(/waiting_for_decision/)).toBeVisible();
-    expect(within(evidence).getByText(/metadata_review/)).toBeVisible();
     expect(within(evidence).getByText(/固定配置/)).toBeVisible();
     // Task 42.2: an item that never came through the reviewed Manual Organize
     // journey shows the plan section as honestly 不可用 with its bounded
@@ -1514,9 +1707,11 @@ describe("selected-run detail tabs", () => {
     const evidence = await within(detail).findByRole("region", {
       name: "条目证据",
     });
-    await within(evidence).findByText("条目证据:item-1");
+    await within(evidence).findByText("文件证据：a.mkv");
+    await user.click(within(evidence).getByText(/技术诊断/));
 
-    // The captured reviewed plan is stated up front, then explained.
+    // The captured reviewed plan stays reachable inside the diagnostics group;
+    // its business explanation is preserved rather than flattened away.
     expect(
       within(evidence).getByRole("heading", {
         name: "持久审核计划(已捕获)",
@@ -1557,7 +1752,9 @@ describe("selected-run detail tabs", () => {
       ),
     ).toBeVisible();
     expect(within(evidence).getByText("执行步骤(持久)")).toBeVisible();
-    expect(within(evidence).getByText("CREATE_DIRECTORY、MOVE")).toBeVisible();
+    expect(
+      within(evidence).getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）"),
+    ).toBeVisible();
     expect(within(evidence).getByText("已验证")).toBeVisible();
     // "已验证完成" appears both in the top checkpoint facts and in the durable
     // step table; both must speak the same label.
@@ -1568,7 +1765,7 @@ describe("selected-run detail tabs", () => {
     // The durable result row explains the cleanup outcome instead of leaving
     // the known `disabled` fact unknown.
     expect(
-      within(evidence).getByText("未启用(本次执行没有获得源目录清理授权)"),
+      within(evidence).getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
     ).toBeVisible();
 
     // Pipeline sections now show their captured bounded detail, not just a
@@ -1614,7 +1811,8 @@ describe("selected-run detail tabs", () => {
     const evidence = await within(detail).findByRole("region", {
       name: "条目证据",
     });
-    await within(evidence).findByText("条目证据:item-9");
+    await within(evidence).findByText("文件证据：standalone.mkv");
+    await userEvent.setup().click(within(evidence).getByText(/技术诊断/));
 
     // The reviewed-plan section keeps its honest unavailability…
     expect(
@@ -1633,17 +1831,25 @@ describe("selected-run detail tabs", () => {
       .getByText("已完成操作")
       .closest("div");
     expect(
-      within(completedRow as HTMLElement).getByText("CREATE_DIRECTORY、MOVE"),
+      within(completedRow as HTMLElement).getByText(
+        "创建目录（CREATE_DIRECTORY）、移动（MOVE）",
+      ),
     ).toBeVisible();
-    // The Result table states each row's own persisted steps and effects —
+    // Each durable result states its own persisted steps and effect —
     // including the second, uncertain result — not just the aggregate.
     expect(
-      within(evidence).getByText(/步: CREATE_DIRECTORY、MOVE/),
+      within(evidence).getByText(
+        "已完成：创建目录（CREATE_DIRECTORY）、移动（MOVE）",
+      ),
     ).toBeVisible();
     expect(
-      within(evidence).getByText(/步: copy_written、destination_verified/),
+      within(evidence).getByText(
+        "已完成：写入副本（copy_written）、核对目标（destination_verified）",
+      ),
     ).toBeVisible();
-    expect(within(evidence).getByText("source_deletion")).toBeVisible();
+    expect(
+      within(evidence).getAllByText(/删除来源（source_deletion）/).length,
+    ).toBeGreaterThan(0);
     // The captured operation section renders its bounded lists instead of
     // collapsing arrays to "—" (the exact strings B observed as `—`).
     expect(

@@ -2376,6 +2376,43 @@ button.mf-grid-button {
   }
 }
 
+/*
+ * A bounded read region that switches from its content-shaped placeholder to
+ * real content settles in once. The animation belongs to the content element
+ * itself, so it runs when the pending placeholder is replaced (or when a
+ * cached page mounts) and never replays for a same-page poll, filter, dialog
+ * or directory update, which keep the same element. Opacity only: a transform
+ * here would establish a containing block for the fixed overlay layers.
+ */
+@keyframes mf-content-settle {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mf-content-settle {
+  animation: mf-content-settle 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* A card opened in the same frame owns its own entry; never dim its layer. */
+.mf-content-settle:has(
+  .mf-modal-layer,
+  .mf-automation-create-layer,
+  .mf-dialog-overlay,
+  .mf-rules-drawer-layer
+) {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-content-settle {
+    animation: none;
+  }
+}
+
 /* --- Slice 37 reference Files composition ------------------------------- */
 .mf-files-page {
   min-height: calc(100vh - 58px);
@@ -4790,6 +4827,143 @@ tr[aria-selected="true"] {
 
 .mf-run-progress h4 {
   margin: 0;
+}
+
+.mf-run-progress-count {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* File result distribution: the three file outcomes are the primary numbers
+   after the processed range, with the caveat facets as short exception lines. */
+.mf-run-results {
+  background: var(--panel, #fff);
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mf-run-results h4 {
+  margin: 0;
+}
+
+.mf-file-result-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.mf-file-result-grid li {
+  background: #f8fafc;
+  border: 1px solid #e2e7ef;
+  border-radius: 8px;
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.mf-file-result-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.mf-file-result-label {
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.mf-run-outcome {
+  margin: 0;
+  font-weight: 600;
+}
+
+.mf-run-outcome-warning {
+  color: #8a4b0f;
+}
+
+.mf-run-outcome-error {
+  color: #b42318;
+}
+
+/* Compact task operations beside detail/records/export; no standing block. */
+.mf-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.mf-run-action-note {
+  font-size: 0.85rem;
+  color: #8a4b0f;
+}
+
+.mf-run-action-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-run-action-feedback p,
+.mf-lifecycle-locked p {
+  margin: 0;
+}
+
+.mf-lifecycle-locked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #8a4b0f;
+}
+
+/* Readable file evidence: result, source/target, steps and reason each get
+   their own short block before the collapsible technical diagnostics. */
+.mf-run-evidence-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.mf-run-evidence-block h5 {
+  margin: 0;
+}
+
+.mf-run-evidence-block .mf-dashboard-facts {
+  margin: 0;
+}
+
+.mf-run-result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mf-run-result-list > li {
+  border-left: 3px solid var(--line, #e2e7ef);
+  padding-left: 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-result-list p {
+  margin: 2px 0 0;
 }
 
 .mf-progress-track {

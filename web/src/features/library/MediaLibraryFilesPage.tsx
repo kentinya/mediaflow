@@ -805,7 +805,7 @@ function MediaBrowseView({
       </RowActionMenu>
     ) : null;
   return (
-    <section className="mf-files" aria-label="媒体库文件浏览">
+    <section className="mf-files mf-content-settle" aria-label="媒体库文件浏览">
       <div className="mf-files-workarea">
         <div className="mf-files-pane" aria-busy={refreshing}>
           <div className="mf-files-toolbar">
