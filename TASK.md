@@ -56,9 +56,13 @@ Next Action: USER AUTHORIZES IMPLEMENTATION OF THIS SINGLE TASK
 
 ### Goal
 
-操作者从左侧栏切换主页面、打开任务详情及文件证据、打开自动化新建/编辑卡片时，能够
-直接读懂结果和可用操作，并看到连贯、稳定的加载与切换过程。六项在同一 Task 内实施、
-交接和独立 B 审查，修正留在同一 Task 的 fix loop，不另拆后续 Task。
+操作者从左侧栏切换主页面、打开任务详情及文件证据时，能够直接读懂结果和可用操作，
+并看到连贯的加载与切换过程；自动化页删除右上角常驻刷新按钮及打开新建时该按钮的闪动。
+六项在同一 Task 内实施、交接和独立 B 审查，修正留在同一 Task 的 fix loop，不另拆后续 Task。
+
+**范围原则：** 只完成上述六项及用户确认的第三项展示设计。取消、四类恢复、权限、日志、
+导出及自动化编辑等已有能力，按本次改动的实际影响验证不退化，不重新开发，也不把其他
+已有体验问题纳入修复目标。与本 Task 无关的既有问题不作为本 Task 新增关闭条件。
 
 | 用户范围 | 本 Task 的明确结果 |
 |---|---|
@@ -166,10 +170,11 @@ CURRENT 架构边界。按以下顺序完成一个整体候选：
    主表面透明度过渡边界。不得用整棵路由 keyed 重挂载、旧页错属新 URL、全局 ready
    等待门或人为延时掩盖问题；同页轮询/筛选/详情/目录/弹卡不重播整页动效。若帧间仍有
    明显停顿，再沿实际渲染链路定位直接原因，不引入全局性能重构。
-5. **移除自动化常驻刷新并稳定背景。** 只移除自动化工作区页头刷新入口；检查新建/关闭
-   和共享编辑路径上的背景切换，消除可见闪动。保持表单真实权限/定义读取、失败时局部
-   重新加载、创建/保存/复制/运行一次后的已有读回以及未知发布/命令核对；不以放宽缓存
-   权限、取消必要读取或增加后台轮询替代按钮。共用 `RefreshControl` 的其他页面保留。
+5. **移除自动化常驻刷新按钮。** 删除自动化工作区页头刷新入口及打开新建时该按钮的
+   文案、禁用和宽度闪动；不以此扩展为新建/关闭/编辑背景或弹卡的整体稳定性改造。
+   保持必要权限/定义读取、已有局部读取失败恢复、操作后读回和未决命令核对。其他弹卡
+   表现只按共享改动的实际影响做不退化检查；若出现本次改动引入的退化，在同一 Task
+   修正。不取消必要读取、不增加轮询，也不删除其他页面的 `RefreshControl`。
 6. **完成整体受影响验证并交接。** 检查桌面/窄屏、键盘、滚动/焦点和实际动态过程；
    更新与实现直接相冲突的页面说明时，只对齐本 Task 的已实现事实，不扩大需求或改写
    历史接受记录。本轮规划只修改 `TASK.md`。Developer 完成后交一个连贯候选及实际结果，
@@ -195,15 +200,17 @@ CURRENT 架构边界。按以下顺序完成一个整体候选：
 - [ ] **AC-5 / 用户5：** 九个现有侧栏主页面连续切换协调；冷/热进入、慢接口、快速往返
   和前后退过程无明显闪白、残影、挤压、长时间淡化或旧页错属。正文实际就绪后的接入也
   纳入可见过程验收，不只证明最初淡入存在；快速读取不被动画拖延。
-- [ ] **AC-6 / 补充：** 自动化页头不再有常驻刷新按钮；新建、关闭、重复打开及共享编辑
-  路径的背景不因权限读取出现按钮/布局闪动。读取失败的局部重新加载、操作成功后的
-  列表更新和未决命令核对仍可用；开关弹卡零业务提交，不跳过权限/定义读取。
+- [ ] **AC-6 / 补充：** 自动化页头不再有常驻刷新按钮，打开新建时不再出现该按钮的
+  文案、禁用或宽度闪动。删除入口不影响必要读取、已有局部重新加载、操作后列表更新
+  或未决命令核对。新建/编辑背景及弹卡的其他表现只验证本次改动没有引入退化，不列为
+  额外体验修复目标；开关弹卡零业务提交。
 - [ ] **AC-7 / 共同兼容：** 主页面内标签、详情深链、切库/目录、开关卡片和轮询不重播
   整页动画。身份/认证续转、401/403 查询隔离、合法列表条件/分页/滚动/回焦、未保存退出
   和在途保护均保留；桌面及390px无页级溢出，reduced-motion 有稳定静态反馈。
 - [ ] **AC-8 / 验收完整性：** 使用同一候选的生产构建查看默认正文、展开详情及切换过程；
-  真实 Python/API/SQLite/Worker 旅程证明结果、取消和四类恢复继续成立。缺失/拒绝/读失败
-  不冒充空态或成功；未执行的门禁如实披露，六项不以局部修复或测试标签代替整体完成。
+  选取直接相关的真实 Python/API/SQLite/Worker 用例核对文件结果与详情读取，取消及四类
+  恢复按实际受影响入口补充回归。缺失/拒绝/读失败不冒充空态或成功；未执行的门禁如实
+  披露，六项不以局部修复或测试标签代替整体完成。
 
 ### Required Tests
 
@@ -214,48 +221,63 @@ CURRENT 架构边界。按以下顺序完成一个整体候选：
 #### Developer — affected tests
 
 仓库根运行 `python3 scripts/check_governance.py`、`git diff --check`。以下命令 cwd 为
-`web/`，使用现有测试文件扩充真实场景；若新增直接相关测试文件，将其明确加入交接命令。
+`web/`；两个详情组件文件是本次直接修改的边界，其余较大的文件按相关用例筛选。新增的
+本 Task 场景名称包含 `PATCH-20261107-1`，便于单独执行；选择器不是验收标准，须检查实际
+匹配用例覆盖对应行为。测试因实现改名/迁移时，交接中更新精确命令，不得空跑或漏掉原断言。
 
 ```sh
-npm run test -- run src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationCreateDialog.test.tsx src/features/operations/AutomationRouter.test.tsx src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+npm run test -- run src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx
+npm run test -- run src/features/operations/OperationsInventory.test.tsx -t 'completed mixed run|slow overview|late overview|unknown control outcome|reopened run|PATCH-20261107-1'
+npm run test -- run src/shared/ui/AppShell.test.tsx -t 'one routed surface|rapid navigation|narrow navigation|PATCH-20261107-1'
+npm run test -- run src/features/operations/AutomationRouter.test.tsx -t 'Active identity|withholds the action|same create dialog|PATCH-20261107-1'
 npm run typecheck
 npm run lint
 npm run format:check
 npm run build
-npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts tests/e2e/page-transition.spec.ts tests/e2e/automation-presentation.spec.ts
+npm run test:e2e -- tests/e2e/page-transition.spec.ts
+npm run test:e2e -- tests/e2e/operations.spec.ts --grep "terminal run exposes no control|center's own run detail|selected run detail|one item's evidence|opening and closing the centered detail|selected run overview|native action downloads|PATCH-20261107-1"
+npm run test:e2e -- tests/e2e/task-center-layout.spec.ts --grep 'detail card item table|PATCH-20261107-1'
+npm run test:e2e -- tests/e2e/automation-presentation.spec.ts --grep 'PATCH-20261107-1'
 ```
 
-上述覆盖终态/可用取消/未知重开、逐项证据、流程与文件结果、返回/认证以及共享切页/弹卡。
+上述覆盖终态/可用取消/未知重开、逐项证据、流程与文件结果、返回/认证以及共享切页。
 `RunDetailTabs.test.tsx` 与详情浏览器场景验证第三项的全成功、混合结果、主文件成功但
 字幕失败、效果未确认及结果未记录；同时核对正文层级和常驻解释已删除，不只断言文字
 不存在。示例数量不作为生产固定值或新的统计口径。
 `page-transition.spec.ts` 补充冷/缓存/慢读取与正文接入的过程断言，不能只测 opacity 到1；
-`automation-presentation.spec.ts` 补充页头刷新删除及新建/关闭不闪动、局部读取失败恢复。
-若修改共享操作/附件/认证/弹卡或两种库组件，再跑其直接受影响测试，例如
-`LibraryFileOperationsDialog.test.tsx`、`AttachmentResults.test.tsx`、`AutomationListCopy.test.tsx`
-和 `AutomationListRunOnce.test.tsx`；不将全库套件改名为受影响测试交给 Developer。
+`automation-presentation.spec.ts` 单独补充本 Task 的页头刷新删除、新建时无该按钮闪动、
+必要读取及已有局部失败恢复场景，不预派整个自动化呈现文件。仅改页头不预派创建表单、
+编辑/复制/运行一次、普通文件操作等其他模块的完整回归；若实际修改到相关共享组件或
+读取/核对链路，再明确列出直接受影响用例和精确命令。不将全库套件改名为受影响测试。
 
 #### B — acceptance and regression
 
 B 独立检查完整 Task Base..候选和六项结果；先复现截图终态、证据正文、慢读取切页及新建
-闪动，再跑门禁。检查并复用自身相同候选/输入的匹配证据；不以 Developer 报告代替验收。
-在生产 build 上执行上方静态检查和四个 fake API 浏览器文件，以及以下真实集成，cwd 为 `web/`：
+时刷新按钮闪动，再跑门禁。检查并复用自身相同候选/输入的匹配证据；不以 Developer 报告
+代替验收。在生产 build 上执行上方静态检查及筛选后的 fake API 用例；真实集成按下面的
+直接相关场景执行，不再预派五个完整测试文件。cwd 为 `web/`：
 
 ```sh
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/task-flow.python.spec.ts tests/e2e/automation-create-dialog.python.spec.ts tests/e2e/automation-lifecycle.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'the selected run detail reads progress|the eligible run exports|an indeterminate run|a real Manual Organize Worker run|a real standalone pipeline run|PATCH-20261107-1'
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --grep 'mixed file population|saved flow failure|acknowledged cancellation'
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-create-dialog.python.spec.ts --grep 'creates one disabled definition from the list card and keeps the list context|opening and cancelling the canonical create deep link creates nothing|PATCH-20261107-1'
 ```
 
-- 真实集成核对四类恢复、未知/缺失结果、主文件/附件独立结果、历史计划/导出和取消；
-  自动化核对创建/编辑、过期/拒绝权限、并发冲突、丢响应核对与成功后的列表读回。
-  不同布局可以更新选择器，但须保留原业务/安全断言。
-- 同一桌面视口与390px检查任务默认/展开长证据及自动化新建/编辑；九主页面覆盖快速连续
-  导航，慢读取选择有代表性的存储及两种库，另验快速/缓存返回、读失败、前后退、认证
+- 上述选定用例核对真实详情/文件结果、已知及未知总数、计划/步骤/导出、流程与文件结果
+  分离，以及删除刷新后新建的零额外提交与原有成功读回。可更新因布局变化失效的选择器，
+  保留业务/安全断言。全成功、部分失败、无 Result/未知效果等直接需求场景须在相应单元
+  或浏览器用例中覆盖，不要求每种状态同时在所有测试层重复证明。
+- 同一桌面视口与390px检查任务默认/展开长证据及自动化刷新删除后的新建；九主页面覆盖
+  快速连续导航，慢读取选择有代表性的存储及两种库，另验快速/缓存返回、读失败、前后退、认证
   续转、键盘及 reduced-motion。观察动画起始、加载中、正文接入、退出全过程，保留必要
   PNG/trace/过程测量；不把固定毫秒、单一坐标、DOM节点身份或任意FPS作为用户验收标准。
-- 路由/开关/只读刷新观测 API 方法，确认没有额外业务提交；进行中取消与未知核对使用
-  隔离 fixture。若两种库普通操作共用控件受影响，另执行
-  `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts`
-  核对原页面归属和独立结果；不能用 operations harness 代替该专用配置。
+- 路由/开关/只读刷新观测 API 方法，确认没有额外业务提交；取消及未知核对使用隔离
+  fixture。四类恢复、编辑/复制/运行一次、并发/丢响应等只对实际受影响入口补充回归，
+  不列为额外交付目标。若需扩测，B 记录“具体改动→影响链路→选定用例及命令”，先选
+  对应用例；只有明确共享影响不能由选定用例覆盖时才扩大到模块/套件。
+- 若两种库普通操作链路实际受影响，使用 `playwright.direct-files.python.config.ts`
+  从 `tests/e2e/direct-files.python.spec.ts` 挑选对应操作/状态用例，并记录带 `--grep` 的
+  实际命令；不能用 operations harness 代替专用配置，不预派普通文件操作完整套件。
 - 本 Task 未改后端/发行/服务生命周期，T3 不预派全量 Python/Web/E2E、wheel 或 Docker
   矩阵；如候选引入超出该判断的共享风险，由 B 给出具体理由调整适用门禁。升为 T4 后
   B 执行 [共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)，不转交 Developer。
@@ -269,6 +291,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 独立 Preview 等已退役边界。除上述六项直接需要的共享呈现/读取衔接外，不重做其他页面
 业务、设计系统、Router/Auth 或缓存架构；不引入全局就绪注册、新轮询/预加载产品、动画
 设置、通用自动重试或媒体回滚。删除自动化页头刷新不删除其他页面刷新或原命令核对。
+不扩展为自动化新建/编辑背景或弹卡的整体改造；其他已有功能只验证本次改动不使其退化。
 
 ### Developer Completion Report
 
