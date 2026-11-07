@@ -52,7 +52,9 @@ a shared Chinese create/edit card and optional enabled creation. The subsequent 
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
 [TASK.md](TASK.md) has no active implementation Task. [Slice51](SLICE.md) is PLANNED under
 planning-only authorization: a TMDB Explore homepage with browse → filter/search → detail → return
-will directly replace the V2 Dashboard Web page, without old-path redirects or compatibility.
+will directly replace the homepage. Dashboard Web/API/CLI and dedicated backend/consumers will
+fully retire under the user's explicit instruction, without redirects, aliases or compatibility;
+shared business statistics and durable data/history remain intact.
 It is TARGET, not delivered; activation and B Task planning remain separate next steps.
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,

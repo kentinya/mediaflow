@@ -30,12 +30,15 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 用户于 2026-11-07 授权规划 [Slice51](../SLICE.md)：直接替换 Dashboard，不做跳转兼容，
 完成“浏览 → 筛选／搜索 → 查看详情 → 返回”。本节是已选择的 TARGET 范围，**尚未激活、
 实施或验收**。现有 Dashboard 仍是 CURRENT，接受后本节才可转为 CURRENT；冻结 V1 含义与
-旧 Slice 身份保留。仅替换 V2 的 `REQ-WEB-002` 首页职责，并为明确探索请求增加外部只读
+旧 Slice 身份保留。替换 V2 的 `REQ-WEB-002` 首页职责，并为明确探索请求增加外部只读
 元数据／图片读取；原其他页面无 Provider 副作用及全部媒体执行安全保持。
+用户随后明确要求 Dashboard API／CLI 也完全删除、不做兼容，新增 `V2-EXPLORE-011`。
+它取消本开发线 Dashboard 专属 API／CLI 及 `V2-TASK-005/014` 等的 Dashboard 消费者义务，
+不改变其他统计／状态入口、历史接受身份或共享持久数据；本节仍仅为待实施 TARGET。
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
-| V2-EXPLORE-001 | 探索成为 V2 默认首页，旧 Dashboard Web 直接退出。 | 侧栏“探索”、默认认证续转和页头一致使用 `/ui-v2/explore`，其他合法深链保持。旧 `/dashboard` 普通未找到，无旧页、重定向、别名、退役说明或兼容解析。移除旧页专属前端依赖／请求，保留仍被其他页使用的共享组件；独立统计 API／CLI 不在删除范围。 |
+| V2-EXPLORE-001 | 探索成为 V2 默认首页，旧 Dashboard Web 直接退出。 | 侧栏“探索”、默认认证续转和页头一致使用 `/ui-v2/explore`，其他合法深链保持。旧 `/dashboard` 普通未找到，无旧页、重定向、别名、退役说明或兼容解析。移除旧页专属前端依赖／请求，保留仍被其他页使用的共享组件；API／CLI 和专属后端全退出见 V2-EXPLORE-011。 |
 | V2-EXPLORE-002 | 提供 TMDB 电影／剧集的真实有界探索。 | 默认热门电影，两类型身份／查询分离；中文展示并诚实回退，标明来源。复用现有部署 Provider 配置／就绪条件，不新增专用初始化或无业务 Active／无库独立启动支持；配置不可用时明确原因和恢复。 |
 | V2-EXPLORE-003 | 有准确的筛选和排序语义。 | 常用题材／原始语言，更多条件含首次上映／首播年份、最低评分和最低评分人数；题材与作品类型匹配，语言不冒充产地。热度、评分、上映／首播日期排序真实作用于后端查询，最高评分排序具有可见的合理评分人数阈值；非法参数安全拒绝。 |
 | V2-EXPLORE-004 | 搜索、分页及结果归属完整。 | 显式提交名称进入独立搜索态，展示真实支持条件；不携带不受支持的探索过滤／排序或用单页假装全量筛选。退出恢复原探索。“加载更多”有界、去重／末页明确，失败保留成功页；条件变化重置页，旧响应不能污染新类型／查询。 |
@@ -45,11 +48,13 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 | V2-EXPLORE-008 | 外部元数据读取保持 Provider 分层和有界资源。 | 业务使用 Provider 抽象及内部浏览模型，复用部署凭据、HTTP 请求控制和缓存；不依赖 TMDB DTO，不把搜索词交 Parser，不改变整理策略／匹配分数。仅明确探索请求可调用 Provider；缓存／并发／分页／时间均有界，不新增账户、隐式 fallback 或持久媒体索引。 |
 | V2-EXPLORE-009 | 图片来源可信、安全显示且缺图可恢复。 | 不锁定同源图片接口、代理或缓存，按实际依赖选最小实现；可受限加载 Provider 公开海报。精确限制可信来源和 CSP，密钥不进入浏览器／URL／cookie／持久存储。若新增服务端代理则验证来源、路径、重定向、私网拒绝、类型／大小／时间和现有权限；若使用缓存／对象 URL 则验证其边界与释放，不为未采用技术增加建设或验收要求。 |
 | V2-EXPLORE-010 | 探索与媒体执行、拥有状态保持独立。 | 列表／搜索／详情／图片不读写媒体 Storage、不建 Task、不发布配置或授予执行权；不声称已入库／已订阅，不触发扫描／识别／整理／下载／播放／通知。其他任务、文件、自动化、设置及非重放语义保持；必要 TMDB 署名可见。 |
+| V2-EXPLORE-011 | Dashboard API／CLI 和专属实现完全退出，无兼容。 | 删除 `/api/v1/dashboard`、`mediaflow dashboard` 的注册／分派／参数／help／渲染、专属模型／服务／repository 聚合及 runtime 注入。旧 API／命令走普通不存在／参数错误，无别名、410／说明页、空成功、替代统计接口或兼容层。清理所有可达旧消费者，包括 V1 Dashboard 窄耦合和测试探针；原认证／启动／安全验证改接到受支持的零工作读接口。共享统计／组件和任务／结果／审核／通知／审计历史保留，不清库或新增迁移。 |
 
 完整旅程见 [Product Experience TARGET](product-experience.md#target--v2-explore-homepage-slice51-planned)，
 技术契约见 [Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
 新源、推荐榜单、订阅／收藏、资源站搜索／下载／播放、演员／相似作品、完整季集浏览及
-本地拥有状态都不在首期；旧 Dashboard API／CLI 的退役也不从 Web 替换推导。
+本地拥有状态都不在首期。Dashboard API／CLI 及专属后端退出已经用户明确授权，不再保留；
+V1 只清理 Dashboard 消费者，不新增 V1 探索或其他 V1 修复／重设计。
 详情独立深链／刷新重连恢复及无 Active 独立启动不作本次交付要求。图片实现由 B 按实际
 依赖选择；T3 集成验证与实际出现 T4 风险时的重评遵循 Contract 和工作流，安全不变量保持。
 

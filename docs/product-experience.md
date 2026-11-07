@@ -23,7 +23,7 @@ progress and four business recovery types; Automation owns saved-definition sche
 
 ## TARGET — V2 Explore homepage (Slice51 PLANNED)
 
-[Slice51](../SLICE.md) 仅授权规划，`V2-EXPLORE-001–010` 是 TARGET，尚未激活／交付。
+[Slice51](../SLICE.md) 仅授权规划，`V2-EXPLORE-001–011` 是 TARGET，尚未激活／交付。
 以下旅程在接受后替换 V2 Dashboard 首页；当前根入口和无 Provider Dashboard 读取规则仍是
 CURRENT。MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅色 Shell／弹卡。
 
@@ -62,8 +62,12 @@ CURRENT。MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有
   始终留在服务端。页面不显示缺乏可靠依据的“已入库／已订阅”，不扫描或改动媒体，不
   创建执行任务／权限，不提供订阅、下载或播放。任务中心／文件／自动化／通知保留原职责。
 
-本次仅退出 V2 Dashboard Web，独立统计 API／CLI 不退役；新数据源、推荐榜单、个人清单、
-演员／相似作品和完整季集浏览不在本 Slice。后端与图片边界见
+Dashboard API／CLI 也按用户明确要求完全退出：旧接口返回普通不存在、旧命令按未知
+命令／参数错误处理，无别名、跳转、退役说明或空成功。删除专属后端及所有旧消费者；
+现存 V1 界面的 Dashboard 按钮／默认调用只作必要断接，不提供 V1 探索。测试／操作说明
+不再要求使用旧接口或命令。任务中心／自动化／通知／系统状态仍提供各自已有信息，
+耐久任务／结果／审计历史保留，不因删除面板清除记录或新增替代统计平台。
+新数据源、推荐榜单、个人清单、演员／相似作品和完整季集浏览不在本 Slice。后端与图片边界见
 [Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)

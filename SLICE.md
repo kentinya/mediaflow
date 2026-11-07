@@ -22,6 +22,8 @@ Next Action: A ACTIVATES SLICE AFTER EXPLICIT AUTHORIZATION; THEN B PLANS THE FI
 Task、不修改产品代码、不推送或部署。`TASK.md` 保持 NO ACTIVE IMPLEMENTATION TASK。
 用户随后授权按范围复核结果收敛：取消详情独立深链／刷新重连恢复、无 Active 独立启动的
 必需承诺，不锁定认证同源图片代理／缓存；测试按实际影响分级，必要安全边界保持。
+用户进一步明确“Dashboard API／CLI 也删了，完全删除不做兼容”：本 Contract 将退出范围
+扩大到 Dashboard 的全部运行入口和专属实现，替代先前保留统计 API／CLI 的边界；仍仅规划。
 生命周期、Git、测试和关闭规则统一遵循 [Development Workflow](docs/development-workflow.md)。
 
 规划开始于 `main` / 上述 Base；治理检查 PASS，工作区和 Git 可写。预存的
@@ -42,7 +44,7 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
 
 | Required Outcome | 用户结果 | 稳定需求 |
 |---|---|---|
-| RO-1 | 探索成为默认首页，旧 Dashboard Web 入口完整移除且无跳转兼容 | `V2-EXPLORE-001` |
+| RO-1 | 探索成为默认首页，Dashboard Web／API／CLI 和专属实现完整退出且无兼容 | `V2-EXPLORE-001/011` |
 | RO-2 | TMDB 电影／剧集的真实有界浏览、筛选、排序、搜索与分页 | `V2-EXPLORE-002–004` |
 | RO-3 | 美观可读的海报网格、作品详情卡与准确返回 | `V2-EXPLORE-005/006` |
 | RO-4 | 完整加载／空态／失败／恢复与安全的元数据、图片读取 | `V2-EXPLORE-007–010` |
@@ -50,7 +52,8 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
 定义见 [V2 Requirements TARGET](docs/v2-requirements.md#target--v2-explore-homepage-slice51-planned)，
 完整旅程见 [Product Experience TARGET](docs/product-experience.md#target--v2-explore-homepage-slice51-planned)，
 边界见 [Architecture TARGET](docs/architecture.md#target--v2-explore-homepage-slice51-planned)。
-本规划仅对 V2 的 `REQ-WEB-002` 首页职责和原 Dashboard 无 Provider 读取约定定义未来替换；
+本规划替换 V2 的 `REQ-WEB-002` 首页职责、原 Dashboard 无 Provider 读取约定，并退役运行中
+Dashboard API／CLI；原 `V2-TASK-005/014` 等 Dashboard 消费者义务仅在这条退出垂直取消。
 `REQ-WEB-001/005/006`、`REQ-API-002/003`、`REQ-META-001–004/009/010`、`UX-001–010`、
 `REQ-SAFE-*`、`V2-UX-001–013` 及既有认证、处理流水线、任务／文件独立结果和非重放保持。
 所有 TARGET 均未交付，CURRENT Dashboard 事实在接受前保留。
@@ -64,6 +67,10 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
   独立探索列表、面向浏览的分页／评分模型和作品详情 Web API，图片展示也需按实际方案接入。
   服务端 TMDB 凭据来自部署环境；现有图片路径字段不能直接成为可信 URL，现行 CSP 默认
   仅允许同源。这些事实要求接入可用链路，不构成必须新增认证图片代理的理由。
+- 后端仍有 `/api/v1/dashboard`、`mediaflow dashboard --recent-limit`、CLI 分派／渲染、
+  Dashboard domain/application 和 SQLite 专属聚合；API runtime binding 仍注入该服务及
+  库计数。旧 `operator_ui.py` 仍调用 Dashboard，部分原生／打包／安全测试也把它当认证
+  探针。全量退出需移除或改接这些消费者，不能只删 HTTP 分支后保留专属后端或悬空调用。
 - 对照 [MoviePilot V2 探索入口](https://github.com/jxxghp/MoviePilot-Frontend/blob/19cead06f72c859732afdeccea7a37c0a770a947/src/pages/discover.vue)、
   [TMDB 筛选视图](https://github.com/jxxghp/MoviePilot-Frontend/blob/19cead06f72c859732afdeccea7a37c0a770a947/src/views/discover/TheMovieDbView.vue)
   与海报列表／详情源码；探索与推荐是不同入口。本 Slice 不引入多榜单推荐页。
@@ -73,7 +80,7 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
   [Attribution](https://developer.themoviedb.org/docs/faq)。引用是交互／接口依据，不是媒体样本。
   未部署或登录 MoviePilot 做验收；未调用用户凭据／真实 TMDB 验证本 Slice，不声称已实施。
 
-## RO-1 — Default entry and direct Web replacement
+## RO-1 — Default entry and complete Dashboard retirement
 
 新增 `/ui-v2/explore`，侧栏显示“探索”，浏览器标题和内容页头一致。`/ui-v2/` 仍通过现有
 认证入口，正常连接后的默认目的地改为探索；访问其他合法深链时仍续转原目的地。
@@ -84,8 +91,24 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
 旧 `/ui-v2/dashboard` 使用普通未找到行为；不保留旧页、重定向、别名、退役说明页或兼容
 参数解析，也不在未找到页面推荐旧入口。探索不得继续请求旧 dashboard 数据作为首页内容。
 
-本 Slice 的退出范围为 V2 Web。现有独立 Dashboard 统计 API／CLI、后台统计服务及 V1
-历史界面不纳入删除或修复；保留它们不构成旧 V2 页面兼容，也不借此保留旧前端入口。
+同时移除 `GET /api/v1/dashboard` 及其专属参数解析、注册／路由和审计分类分支，移除
+`mediaflow dashboard` 的 CLI 注册、分派、参数、help 与输出渲染，不新增替代统计端点或
+命令别名。旧 API 按正常未知路由规则处理，旧命令按正常未知命令／参数错误处理；无
+重定向、410／退役说明、空成功响应、适配器或其他兼容层。拒绝旧入口不解析旧参数、不
+初始化 Dashboard／Storage／Provider 或建立工作；沿用正常全局认证／路由行为。
+
+删除仅服务 Dashboard 的 domain model／protocol、application service、repository 聚合
+方法、runtime binding／构造注入／库计数参数、导入和死代码。按实际引用保留共享能力：
+任务中心／自动化／通知／系统状态的统计与只读查询、共享组件和 generic 审计仍正常。
+不把专属统计服务换名保留，也不删除 Task／Result／review／notification 表、记录或既有
+审计历史，不新增 schema 清理、数据迁移、运行数据删除或跨版本兼容工程。
+
+清理所有可达 Dashboard 消费者，包括现存 V1 `operator_ui.py` 的按钮／默认 view／渲染和
+API 调用；这是移除悬空依赖的窄耦合例外，不新增 V1 探索或重设计／恢复其余 V1 功能。
+移除专属正向测试／fixture；把共用认证、启动、生产资产／安装包／安全检查中的 Dashboard
+探针改接实际受支持且零工作／零 Provider 的读接口，保留原验证目的。必要操作说明改用
+探索或现有对应页面，旧命令／接口不再作为支持入口；历史文档／Git 接受事实不抹除。
+
 原九个侧栏主页面中的首页身份由探索接替；其他页面业务及已接受切换／弹卡行为保持。
 
 ## RO-2 — Browse, filter, search and bounded paging
@@ -162,12 +185,14 @@ C 使用 A 的 Naming／Classification 仍为 C，以及成功／未知效果不
 Python 探索 application/API、Provider 抽象扩展／TMDB adapter、安全可用的图片展示、必要
 请求控制／CSP、直接受影响测试与操作说明。复用现有配置、缓存与组件，只按实际依赖改
 共享结构，不重构整个设计系统，不把具体图片交付技术写成额外必建平台。
+Dashboard 全垂直退出所需的 CLI、Python domain/application/repository/runtime 接线、旧
+消费者及测试／探针／操作说明清理也属必需表面；具体依赖清单由 B 按实际代码制定。
 
 明确不含：豆瓣／Bangumi／AniList 等新源、推荐榜单／个性化／轮播、订阅／收藏／想看、
 资源站点搜索／下载／播放、演员或相似作品扩展旅程、完整季集浏览、“已入库／缺集”判断、
 本地文件匹配或从海报直接整理、全库媒体数／FileIndex 恢复、新账户／权限模型、凭据编辑器／
-Secret Store、全局代理管理、任务队列／引擎／schema 重设计、V1 改造、旧 Dashboard API／CLI
-退役及独立统计问题修复、生产连接／部署验收。详情独立深链与刷新／重认证恢复详情、
+Secret Store、全局代理管理、任务队列／引擎／schema 重设计、除 Dashboard 消费者断接之外的
+V1 改造、独立统计问题修复、生产连接／部署验收。详情独立深链与刷新／重认证恢复详情、
 无业务 Active／无库的独立启动支持也不在本次必需交付中。保留其他 Slice 的所有延期。
 
 ## Acceptance and final validation
@@ -184,12 +209,15 @@ Secret Store、全局代理管理、任务队列／引擎／schema 重设计、V
 | AC-8 | 元数据 API 复用后端认证，参数／Provider 请求有界，图片来源可信、CSP 精确、密钥不泄露；代理／缓存／对象 URL 仅按实际采用方案验证其边界，不要求建设未采用的路径。 |
 | AC-9 | 在现有合法配置／就绪条件下探索可用，缺配置有准确恢复；不新增独立启动／初始化流程，无 Storage／Task／执行／发布副作用，不影响既有配置／整理／任务语义。 |
 | AC-10 | 生产构建资产通过真实 Python API＋本地假 TMDB 及图片响应的桌面／窄屏完整旅程；CURRENT／TARGET 与操作说明在接受后准确对齐，原接受身份保持。 |
+| AC-11 | Dashboard Web／API／CLI 的入口、help／参数、专属 domain/application/repository/runtime 接线、专属消费者／fixture 无运行残留；旧 API／命令按通用不存在／参数错误处理，无兼容或副作用。共用探针改接支持接口且保留原认证／启动／安全验证目的；共享统计、持久历史和其他业务不受损。 |
 
 Final Test Level **T3 — INTEGRATION**：按复用现有认证／配置和请求控制、只读探索 API／Web
 及可信公开海报展示评估跨层集成风险；不再用预选图片代理作为整套 T4 的依据。此处不是
 安全豁免：若实际方案引入新的服务端图片代理、改变权限／凭据隔离、Active、schema、核心
 流水线／并发执行安全等 T4 风险，B 必须在实施前按工作流重评并提高相应 Task／Slice 等级，
 不能沿用 T3 绕过必需安全验证；改变本 Contract 边界仍须 A checkpoint。
+Dashboard 退出增加 CLI 分派、API 绑定／库计数注入、专属 repository 读取和旧消费者的
+直接受影响回归，不授权改变权限语义、schema、Task／Result 或核心执行路径来方便删除。
 
 激活后 B 规划连贯 Tasks，并负责验收和 Slice 最终验证：覆盖探索 Provider／API／Web 与
 直接受影响的认证／默认导航／共享弹卡回归，完成相关静态检查、生产 Web 构建，以及真实
@@ -197,6 +225,9 @@ Python API＋本地假 TMDB／图片的桌面／390px 全旅程。按 AC 验证�
 请求竞态、失败恢复、权限／脱敏、图片来源和零媒体变更。全量 Python／Web／E2E 只在
 具体共享影响或 T4 重评需要时运行；安装包／Docker 门禁只按实际交付变更和工作流适用性
 安排，不新增全发布矩阵，也不为未改动的处理引擎单独增加验收工程。
+另按 AC-11 验证旧 API（包括原查询参数／已注册入口）和 CLI（help／原参数）的自然退出，
+无专属服务残留；检查 API 构造／配置绑定、其余 CLI 命令／共享统计和既有持久记录不回归。
+对改接的认证／打包／安全探针运行其直接受影响检查，不删除原证明或改成自动联系 TMDB。
 Developer 只运行当前 Task 新增／修改及直接受影响测试与静态检查，B 承担所需更广回归。
 使用临时根、fake／mock 和本地服务，不依赖真实 TMDB、用户凭据或用户媒体。本次规划
 修订只做治理、范围／链接和 `git diff --check`，不把未来功能／集成验收记为完成。
@@ -204,5 +235,5 @@ Developer 只运行当前 Task 新增／修改及直接受影响测试与静态�
 ## Final validation, Closure Packet and A Final Review
 
 Implementation Head: NOT SET。没有产品实施、B Task 验收、Closure Packet 或 A Final Review；
-AC-1–10 均待验收，当前不是 PASS。A 已完成的仅是本 PLANNED Contract 和 TARGET 文档范围
+AC-1–11 均待验收，当前不是 PASS。A 已完成的仅是本 PLANNED Contract 和 TARGET 文档范围
 规划。下一步须先明确授权激活，再由 B 规划首个 Task；不得从本规划自动开始实现。

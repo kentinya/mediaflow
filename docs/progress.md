@@ -9,8 +9,9 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 [Slice51](../SLICE.md) is **PLANNED** under the user's 2026-11-07 planning-only authorization:
-TMDB movie/TV browse → filter/search → detail → return replaces the V2 Dashboard Web homepage,
-with no old-path redirect or compatibility. Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`,
+TMDB movie/TV browse → filter/search → detail → return replaces the homepage. The user additionally
+authorized complete Dashboard Web/API/CLI and dedicated backend/consumer retirement without
+compatibility; shared business data/history stays intact. Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`,
 Implementation Head NOT SET; no active implementation Task or accepted51 outcome. Activation and
 B Task planning remain separate next steps. Current production code/behavior is unchanged.
 Slice50 remains the latest accepted large Slice; the closure ledger and all earlier Base/Head,

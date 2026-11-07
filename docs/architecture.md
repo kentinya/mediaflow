@@ -11,9 +11,10 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — V2 Explore homepage (Slice51 PLANNED)
 
-[Slice51](../SLICE.md) 仅规划 `V2-EXPLORE-001–010`，未激活或实现。CURRENT Dashboard、
-无 Provider 状态读取、现有 API／CLI 和安全边界继续如后文；接受后以本节精确替换所选 V2
-首页职责和外部读取入口。没有新媒体处理流水线、Storage provider、执行 authority 或 schema。
+[Slice51](../SLICE.md) 仅规划 `V2-EXPLORE-001–011`，未激活或实现。CURRENT Dashboard、
+无 Provider 状态读取及现有 API／CLI 仍是当前代码事实；接受后以本节替换首页、完整退出
+Dashboard Web／API／CLI 专属运行契约，并加入明确探索外部读取。其他安全边界保持，
+没有新媒体处理流水线、Storage provider、执行 authority 或 schema。
 
 **分层与数据：** React → 同源 Python 探索 API → 探索 application service → Provider
 抽象的浏览能力 → TMDB adapter／HTTP transport。扩展现有 Provider 或组合独立浏览端口，
@@ -60,8 +61,26 @@ Provider 返回归一化后再暴露，非法身份／参数、缺失、限流�
 **路由／Shell：** `/ui-v2/explore` 是新默认认证后入口；其他安全 intended-route 仍优先。
 替换导航模型／页头／页面身份／默认返回，移除 `/dashboard` 的路由／专属组件、query、
 model、客户端调用和仅旧页使用的 fixture／样式／测试。旧 URL 普通 not-found，无 redirect、
-别名、退役页或参数兼容。保留共享 CountGrid／RefreshControl／CSS 的有效使用者；现有独立
-Dashboard API／CLI／后台服务及 V1 不纳入删除。没有 V2 旧页作为兼容消费端残留。
+别名、退役页或参数兼容。保留共享 CountGrid／RefreshControl／CSS 的有效使用者；不机械
+改名其他页仍使用的共享类或抹去历史记录。Dashboard 全垂直退役见下段，不保留旧消费端。
+
+**Dashboard 后端／CLI 退出：** 用户明确扩大删除范围。移除 `/api/v1/dashboard` 的注册／
+GET handler、专属 query 校验和审计路由分类，移除 `mediaflow dashboard` 注册／分派／
+`--recent-limit`／help／渲染。请求走通用未知路由和既有全局认证规则；CLI 走通用未知
+命令／参数错误，无新 alias、410、说明页、空成功或其他兼容分支，不为旧入口解析参数、
+构造专属服务或初始化媒体工作。历史审计中的 route 字符串仍是原始事实，不重写。
+
+移除 `domain/dashboard.py`、`application/dashboard.py`、SQLite Dashboard 专属聚合和
+只被它们使用的 helper，以及 `_ApiRuntimeBinding.dashboard`、DashboardService 构造／
+库计数注入／导入等专属接线；以实际引用证明删除范围。Task Center／Automation／通知／
+系统状态的共享计数、repository 查询、模型与正常配置绑定继续工作。没有 Dashboard 专属
+数据迁移义务，不删除原 Task／Result／review／notification／审计记录或任何业务表。
+
+移除所有可达旧消费者：V2、CLI、现存 `operator_ui.py` 的 Dashboard view／默认读取，
+以及只为 Dashboard 服务的测试／fixture／文档入口。V1 仅作必要耦合断接，不新增探索／
+默认产品旅程或恢复其他 V1 功能。将共用认证／启动／生产资产／安装包／安全探针改为
+受支持且零工作／零 Provider 的读接口，保持原权限／副作用证明，不能删除测试目的或
+改用可能调用 TMDB 的探索来充当健康探针。历史接受文档与 Git 中的旧事实保留。
 
 **详情／返回：** 复用当前 ModalCard 的滚动锁定、焦点和局部导航，按精确 Provider/type/ID
 在当前页面读取详情。关闭卡片／Escape／后退恢复探索／搜索、已加载页、滚动与焦点。
@@ -80,6 +99,9 @@ Provider／图片响应证明核心旅程，覆盖直接受影响模块和认证
 若方案引入新服务端图片代理或改变权限／凭据隔离、Active、schema、核心执行安全等 T4
 风险，B 必须实施前重评等级及适用门禁，边界变化须 A checkpoint。全量回归／安装包／
 Docker 门禁按工作流和具体共享／交付影响安排，不因本探索页默认增加全发布矩阵。
+API／CLI 退出需补充旧路由／命令自然失效、专属运行时／模型／查询无残留、API 构造／
+配置绑定和其他命令／共享统计正常、持久历史不受损，以及改接探针的直接受影响回归；
+不以退出能力为由改变认证或 schema。最终适用等级仍按实际影响及工作流判定。
 不依赖用户运行库、生产媒体、真实 TMDB 或安装运行 MoviePilot。
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)

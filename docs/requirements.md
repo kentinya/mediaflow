@@ -97,10 +97,13 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 
 用户于 2026-11-07 授权按“浏览 → 筛选／搜索 → 查看详情 → 返回”规划
 [Slice51](../SLICE.md)，并明确直接替换 Dashboard、不做跳转兼容。
-`V2-EXPLORE-001–010` 为 [TARGET / PLANNED](v2-requirements.md#target--v2-explore-homepage-slice51-planned)，
-未激活或交付。接受后仅替换 `REQ-WEB-002` 在 V2 的首页 Dashboard 展示职责：探索为默认
-首页，旧 Dashboard Web／路径直接退出，无重定向、别名或退役说明；独立 Dashboard
-统计 API／CLI 不在删除范围。冻结 V1 及历史接受含义保留，不以本规划声称 CURRENT 已替换。
+`V2-EXPLORE-001–011` 为 [TARGET / PLANNED](v2-requirements.md#target--v2-explore-homepage-slice51-planned)，
+未激活或交付。用户随后明确要求 Dashboard API／CLI 也完全删除、不做兼容。接受后
+`REQ-WEB-002` 的 V2 首页由探索替换，运行中的 Dashboard Web、API／CLI 及专属模型／
+服务／查询／接线完整退出；旧入口走普通不存在／命令错误，无重定向、别名、410／退役说明
+或空成功兼容。`V2-TASK-005/014` 等 Dashboard 消费者义务仅在该退出垂直取消，其他状态／
+统计／历史和安全要求保持。现存 V1 Dashboard 调用只作必要断接，不要求 V1 探索／重设计。
+冻结 V1 定义和历史接受含义保留，不因此在运行时保留旧 Dashboard，也不声称已实施。
 
 探索显式请求可通过 Provider 抽象读取有界外部元数据／图片；这不是系统／配置状态页面，
 `REQ-WEB-006` 的无外部媒体服务读取规则在其原状态表面继续适用。探索本身零媒体 Storage
@@ -403,7 +406,7 @@ the release contract, not a new media-processing engine.
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|
 | REQ-WEB-001 | REQUIRED | Web UI is the primary V1 management surface for setup, configuration, daily work, review, recovery and explicit execution. | §最终管理界面; §第一阶段 MVP / UI | Required journeys are discoverable and complete without CLI-only knowledge. |
-| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard; Slice51 TARGET amendment above | Counts link to the underlying actionable scope and do not expose secrets. The planned V2 Web replacement is not yet delivered and does not rewrite frozen V1 or retire the standalone statistics API/CLI. |
+| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard; Slice51 TARGET amendment above | Counts link to the underlying actionable scope and do not expose secrets. Slice51 plans Explore as the V2 homepage and complete Dashboard Web/API/CLI retirement without compatibility; this is not delivered and preserves frozen historical meaning rather than requiring a live legacy implementation. |
 | REQ-WEB-003 | REQUIRED | Files provide bounded live library-scoped entries and applicable actions; processing explanations/results remain on supported Task/Result surfaces. The current V2 amendment retires FileIndex catalog/detail and display feedback. | §文件列表; §搜索与筛选; §媒体详情; V2-FILES-005/006 | CLI and both library pages share live Storage reads without recording a file catalog. Users inspect processing outcomes through native task journeys; live membership never depends on recognition, metadata or historical results. |
 | REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and zero-mutation analysis through organizing/Rules/configuration checks; V2-OPS-013 removes standalone Preview management. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界; V2-OPS-013 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
