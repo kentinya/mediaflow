@@ -4,14 +4,14 @@
 Slice ID: 51
 Name: V2 Explore Homepage Replacing Dashboard
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 214b69b1e64b24fc22068c2e1760cd1b0c6ac787
-Implementation Head: NOT SET
+Implementation Head: d91a9dd2fd5833a5977a319e90d0283b05625e9a
 Working Branch: main
-Development Authorization: IMPLEMENTATION AUTHORIZED FOR ACTIVE TASK 51.2 ONLY
+Development Authorization: EXISTING TASK 51.1 CORRECTION ONLY; B GUIDANCE PENDING
 Risk: Medium
 Final Test Level: T3
-Next Action: DEVELOPER IMPLEMENTS TASK 51.2; B ACCEPTANCE PENDING
+Next Action: B CONTINUES TASK 51.1 FOR A51-01; THEN RENEW SLICE CLOSURE PACKET
 ```
 
 ## Authority and accepted baseline
@@ -28,10 +28,11 @@ Next Action: DEVELOPER IMPLEMENTS TASK 51.2; B ACCEPTANCE PENDING
 角色例外披露，不构成独立验收或 A Final Review。用户随后明确“激活 Task”，将已提交的
 Task51.1 草案转为正式活动实施 Task。Task51.1 后经独立 B 验收 PASS，完整结论与限制见
 `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`。
-用户本轮明确“激活Task”，授权实施已修订的 Task51.2：Dashboard API／CLI、专属后端与
-消费者完整退出。B 按该明确指令仅同步授权／阶段事实，Required Outcomes、边界和测试
-等级保持；这不是 A Final Review。本次只激活 Task51.2，尚未开始其 Developer 实施，
-不推送或部署，不扩大 Slice／Task 边界。
+用户随后明确“激活Task”，授权实施 Task51.2：Dashboard API／CLI、专属后端与消费者
+完整退出。Task51.2 已由 B 独立验收 PASS，并于 `ab3edf8d:TASK.md` 提交 Closure Packet。
+用户本轮指定 A 并要求继续；本次 A 独立审查完整 Base..Implementation Head，因 A51-01
+退回原 Task51.1 修正。原 Task ID／Base／Goal／Scope／High／T3 保持，B 负责后续修正指导
+与独立验收；不把 A 的退回通知当作 B 新计划，不实施产品、推送或部署。
 生命周期、Git、测试和关闭规则统一遵循 [Development Workflow](docs/development-workflow.md)。
 
 规划开始于 `main` / 上述 Base；治理检查 PASS，工作区和 Git 可写。预存的
@@ -64,7 +65,8 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
 Dashboard API／CLI；原 `V2-TASK-005/014` 等 Dashboard 消费者义务仅在这条退出垂直取消。
 `REQ-WEB-001/005/006`、`REQ-API-002/003`、`REQ-META-001–004/009/010`、`UX-001–010`、
 `REQ-SAFE-*`、`V2-UX-001–013` 及既有认证、处理流水线、任务／文件独立结果和非重放保持。
-Task51.1 已获 B PASS；Slice 尚未整体接受，CURRENT／TARGET 的整体协调由 A 最终接受后完成。
+Task51.1／51.2 的原 B PASS 和证据保持可追溯；本次 A 终审为 FIX REQUIRED，
+CURRENT／TARGET 的整体协调仍须等待 A 最终接受。
 
 ## Initial investigation and evidence limit
 
@@ -256,11 +258,66 @@ Developer 只运行当前 Task 新增／修改及直接受影响测试与静态�
 
 ## Final validation, Closure Packet and A Final Review
 
-Implementation Head: NOT SET（Slice 最终候选尚未提交）。Task51.1 已经独立 B 验收 PASS：
-已审范围 `3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`，
-产品实现 `de86eab84e8627c0f656e51cea66e17e8ef1baf2`；原始失败、复现、证据及限制见
-`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`，不声称全仓测试通过。
-RO-2／3／4 的 Task 范围已完成；RO-1 的 V2 首页已完成，Dashboard API／CLI／专属后端与
-旧消费者退出由已激活的 Task51.2（PLANNED，Medium／T3）交付。该 Task 尚未开始实施。
-全部结果仍需在最终候选重评；没有 Closure Packet 或 A Final Review，Slice51 保持 ACTIVE。
-Slice50 的接受身份与全部延期保持；本次激活不转正 CURRENT 文档或关闭 Slice。
+```text
+A Final Review: 2026-11-07
+Reviewed Base: 214b69b1e64b24fc22068c2e1760cd1b0c6ac787
+Reviewed Implementation Head: d91a9dd2fd5833a5977a319e90d0283b05625e9a
+B Closure Packet: ab3edf8d3973012b2fb4f7152a18b90a0bf6e3f8:TASK.md
+Decision: FIX REQUIRED
+Blocker: A51-01 — P1, genuine zero-result pages are rejected as malformed
+Next: B continues existing Task51.1 correction; new candidate and renewed Closure Packet required
+```
+
+**完整范围与仍有效事实。** A 核对完整 99 文件 Base..Head：探索 domain/application／
+Provider 与原整理模型分离、TMDB transport／缓存扩展、READ API／审计／CSP、前端查询／
+状态／图片／详情与返回、路由／认证／共享入口、Dashboard API／CLI／SQLite 聚合／runtime
+注入／V1 消费者退出、修改测试／harness／探针和操作文档。没有新 schema、媒体变更或
+执行权限。Dashboard 全垂直退出与共享读功能的 B 证据成立，RO-1 未发现阻塞；浏览／
+筛选／搜索／分页及详情返回的已验证成功路径保持。A51-01 使 RO-2 的空结果与 RO-4／
+AC-7 的“真实空与读取失败分开”不满足，不能用其余通过用例关闭 Slice。
+
+**A51-01 — 必需修正。** 从现有 `/ui-v2/` 连接进入探索，选择导致零结果的合法筛选，
+或用页面作品名搜索提交无匹配关键词。当 TMDB 成功返回
+`{"page":1,"total_pages":0,"total_results":0,"results":[]}` 时，
+`mediaflow/infrastructure/tmdb.py:821` 的 `< 1` 将合法零页判为畸形，API 返回
+`502 / provider_malformed`，页面显示“探索读取失败”并引导重读；同次重读仍失败。
+域 `ExplorePage` 与前端 `totalPages` 也设了至少 1 页的假定。既有
+`scripts/explore_harness.py:224` 用 `max(1, …)`，adapter 空结果测试也固定为 1，因而
+原有绿灯未验证这一上游边界。[TMDB 官方 OpenAPI](https://developer.themoviedb.org/openapi/tmdb-api.json)
+的分页响应允许整数 0，并未规定总页数至少 1；页请求仍从 1 开始，两者不能混用。
+该问题由 `f8015b97a0b82db0b3cce1aea33088ff6c8d366e`（2026-11-07 18:34:54 +08:00）
+引入，不是既有 Slice 的独立小 bug。
+
+B 在原 Task51.1 边界内安排一致的上游零页归一化，允许合法真实空结果通过整条链路；
+可以保留内部至少一个展示页的约定，但不得继续拒绝上游合法零页。不要简单吞掉所有
+畸形响应，负数／错误类型和实际不可用数据仍须失败。修正空结果夹具，补充生产 adapter
+→ application/API → 生产 Web 的空筛选及电影／剧集无匹配搜索，验证正常空态、清除条件／
+修改关键词／退出搜索恢复、无虚假分页且零媒体／任务效果；保留非空、末页和真实失败
+的直接受影响回归。B 再按原 T3 范围独立验收并重交 Slice 最终包，不扩张功能或测试矩阵。
+
+**A 独立验证与证据边界。** 本机稳定目录
+`.git/validation-evidence/d91a9dd2/a51-final/` 保存范围 patch／manifest、初始工作区、
+命令／cwd／退出码／日志及复现脚本；本机证据不承诺远程可访问。
+
+- A 独立运行 148 个 Python 测试、9 文件／142 个 Web 测试、原真实 Python 探索 E2E
+  10 条，全部通过、无 skip。实际命令与结果在 `python-check`／`web-focused`／
+  `native-baseline` 的 JSON／日志；jsdom scrollTo、NO_COLOR 提示保持披露。
+- 当前生产资产全部摘要及依赖锁与 B 最终证据一致，见 `identity.json`。A 抽查 B 原始
+  日志、Task51.1 原失败／Base 对照／同义验证与 Task51.2 的 309 条 Python、10 条原生、
+  配置切换／历史保留、干净源码 wheel 与改接探针证据；未把标签或被污染 wheel 当通过。
+  B 未运行全仓／完整发布矩阵及原测试定位／共享夹具限制继续保留，详见原两份 B 报告。
+- A 额外沿现有探索页面操作，保留生产 API／adapter／资产，只将既有本地假上游的空页
+  总数从夹具强制的 1 改为符合官方契约的 0；没有拦截探索 JSON、构造新产品入口或直接
+  调用内部解析器。空筛选、电影／剧集搜索和重读均复现上述 502；清除／退出恢复非空
+  列表，44 个受监控业务表计数不变、Storage 调用为零。原始上游与响应分别在
+  `upstream-empty-pages.jsonl`／`empty-journey-details.json`，截图在 `empty-*-error.png`。
+  这是契约驱动的本地上游验证，未使用真实 TMDB、用户凭据或用户媒体。
+- 同一浏览器检查桌面／390px 详情、Escape 回焦并检视截图。首次 A 自写脚本误把已有
+  Refresh 按钮定位为 Retry 而超时；修正定位后完成，原失败保存在 `empty-journey-initial`。
+  直接 urllib 读取公开 OpenAPI 遇到 403，随后通过 Web 工具读取官方 schema，摘要与限制
+  见 `tmdb-schema-note.json`。这两项不是产品缺陷，也不计为产品验收通过。
+
+本次不做 closure reconciliation、不转正 CURRENT、不新增关闭账本行或经验条目。
+恢复原 Task51.1 的 FIX REQUIRED 边界，是为将 A51-01 交回 B 并保持治理状态一致；
+Task51.2 原 PASS 及两份 B 报告保留在 Git。原 Base／候选 Head、全部延期和 Slice50／
+更早接受身份不变。A 本轮仅提交审查／交接文档，预存 dirty／私有文件保留，未推送或部署。

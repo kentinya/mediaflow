@@ -40,25 +40,24 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — is **ACTIVE**.
-The user authorized activation and first-Task planning on 2026-11-07: browse → filter/search →
-detail → return, directly replacing the V2 homepage and, under the user's subsequent explicit instruction, fully retiring
-Dashboard Web/API/CLI and dedicated models/services/queries/wiring/consumers without compatibility.
-Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET.
-Task51.1 has independent B PASS; its exact reviewed range, original failures and evidence limits
-remain at `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`.
-The user has now explicitly activated [Task51.2](../TASK.md) (PLANNED, Medium / T3) to retire the
-remaining Dashboard API/CLI, dedicated backend and consumers. Implementation is authorized only
-within its existing plan; ID/Base/goal/scope and test allocation remain unchanged. This checkpoint
-only activates the Task and synchronizes current pointers; it adds no product implementation,
-push, deployment or A Final Review. Slice-level acceptance and CURRENT reconciliation remain
-pending. Shared statistics and task/result/review/notification/audit history remain; V1 changes
-are limited to disconnecting its Dashboard consumer. No data/schema cleanup is planned.
-The original same-agent first-plan role exception remains disclosed in the Contract.
+[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — remains open;
+**A Final Review: FIX REQUIRED (2026-11-07)**. Roadmap status stays ACTIVE during correction.
+Immutable Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; reviewed Implementation Head
+`d91a9dd2fd5833a5977a319e90d0283b05625e9a`. B's original two Task PASS decisions and Closure Packet
+remain at `01f4e05d:TASK.md` / `ab3edf8d:TASK.md`; A reviewed the entire Slice range independently.
 
-Slice50 remains PASS / CLOSED with its original accepted identities. Current shared transitions
-stay limited to sidebar destination identities; tabs, details, library/path changes, cards and
-refreshes retain their own navigation/loading/local-motion behavior.
+A51-01 is one P1 in the required Explore journey: a successful zero-result upstream page with
+`total_pages=0` is rejected as malformed, so valid empty filters/searches show a read failure.
+A reproduced through existing browser entries and the production API/adapter over a local upstream;
+no real TMDB, private runtime or user media was used. The original harness forced empty pages to 1.
+B continues [Task51.1](../TASK.md) in its original ID/Base/goal/scope/High/T3, gives correction guidance,
+independently accepts the corrected candidate and renews the Slice Closure Packet. Task51.2's complete
+Dashboard retirement and other verified facts remain; no new capability or optional Task is selected.
+
+Slice51 is not accepted or closed; CURRENT reconciliation remains pending. The original first-plan
+role exception, all deferrals, shared business history and safety boundaries remain. Slice50 and all
+older accepted identities stay unchanged. Shared transitions remain tied to sidebar destination
+identities; same-page tabs, details, paths and refreshes retain local behavior. No push or deployment.
 
 ## Accepted boundary references
 

@@ -8,18 +8,22 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice51](../SLICE.md) remains **ACTIVE**, Base
-`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`, final Implementation Head NOT SET.
-Task51.1 has independent B PASS for Explore and the V2 homepage replacement; exact review and
-failure/evidence limits remain at `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`.
-The user explicitly activated [Task51.2](../TASK.md) (PLANNED, Medium / T3) for the remaining
-Dashboard API/CLI, dedicated backend and consumer retirement without compatibility. Its existing
-ID/Base/goal/scope/test allocation remain unchanged; implementation is authorized only in that
-Task. This activation adds no product implementation or acceptance. Slice final validation,
-Closure Packet, A Final Review and CURRENT reconciliation remain pending. Shared business data
-and history stay intact; the original first-plan role exception remains in the Contract.
-Slice50 remains the latest accepted large Slice; the closure ledger and all earlier Base/Head,
-acceptance, deferrals and evidence limits remain unchanged. Activation is not release or deployment.
+[Slice51](../SLICE.md) is **FIX REQUIRED after independent A Final Review (2026-11-07)**.
+Original Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` and reviewed Implementation Head
+`d91a9dd2fd5833a5977a319e90d0283b05625e9a` remain fixed. A51-01 (P1) prevents acceptance:
+valid zero-result upstream pages are treated as malformed; the normal Explore filter/search journey
+shows a read error instead of its required empty state. Existing UI → Python API → production adapter
+with a contract-correct local upstream reproduces it. Independent A checks also passed 148 Python,
+142 Web and 10 real-Python browser cases; those passing fixtures do not cover the zero-page response.
+Actual evidence, limits and correction boundary are in the Contract's A Final Review.
+
+B's original Task51.1 PASS/report (`01f4e05d:TASK.md`) and Task51.2 PASS/Closure Packet
+(`ab3edf8d:TASK.md`) remain immutable history; final readiness is returned by A51-01.
+[Task51.1](../TASK.md) is restored as FIX REQUIRED with its original ID/Base/goal/scope/High/T3;
+B owns correction guidance, independent acceptance and renewed Closure Packet. Task51.2 retirement
+and other proven facts are preserved. There is no new large Slice, closure ledger entry or CURRENT
+promotion. Slice50 remains the latest accepted large Slice, with all previous identities, deferrals
+and evidence limits unchanged. No implementation, push, release or deployment occurs in this review.
 
 ## Latest accepted closure — Slice50
 
