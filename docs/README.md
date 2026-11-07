@@ -5,6 +5,8 @@
 由 A 另行选择。Slice49 及更早接受身份保留；关闭不等于推送、发布或部署。
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
 开发过程留在 Git。`docs/history/` 是 LEGACY / READ ONLY，不作为当前指令，也不继续追加归档。
+最近的[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已由 B 验收 PASS：任务状态/进度/文件结果分层、文件处理经过可读、切页加载衔接和自动化
+页头刷新删除。现行行为见完整旅程及页面规范；原 Slice 接受身份保留。
 
 | 需要了解 | 入口与职责 |
 |---|---|

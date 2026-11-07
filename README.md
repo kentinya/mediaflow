@@ -57,6 +57,11 @@ consistent library loading and stable Automation create/edit. [CURRENT requireme
 preserve existing business/safety boundaries. [Progress](docs/progress.md) keeps original Base/Head,
 closure evidence, deferrals and validation limits. This is unreleased V2 development acceptance.
 
+The subsequent [accepted readability/navigation correction](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md) presents Task details as flow status → processed range → file results. File evidence explains the
+captured work identity, naming and classification before technical diagnostics. Cancellation appears
+with Task actions when available. Automation has no standing header refresh button; failed reads
+retain local reload actions and successful commands update the list.
+
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
 authorized population with normal paging. Manual refresh uses Chinese busy feedback; background

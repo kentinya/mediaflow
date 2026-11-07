@@ -29,6 +29,8 @@ progress and four business recovery types; Automation owns saved-definition sche
 它们替换原任务侧详情、所选存储/库抽屉与两页目录树；旧图片/历史接受事实保留，更早 CURRENT
 中的业务、权限、独立结果与非重放规则继续适用。
 
+后续[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已于 2026-11-07 经 B 验收 PASS，下列旅程包含该修正的现行呈现。原 Slice 接受身份保留。
+
 **任务中心详情（用户 1、2）：**
 
 - 目标/入口：在任务中心点击任务名称，查看该任务并完成已有允许的操作；既有精确任务
@@ -36,7 +38,12 @@ progress and four business recovery types; Automation owns saved-definition sche
 - 可见状态/动作：列表作为背景打开居中详情卡，不挤窄列表。效果与自动化新建卡片协调，
   内容按详情设计。先呈现任务名称、流程状态、阶段/等待、进度、独立文件/附件结果与需
   处理项，再按层级查看来源/目标、条目、记录和诊断；技术标识可折叠，证据不能丢失。
-  日志/审计/计划解释/JSON 导出、现有控制和四类决定→分析→精确摘要→明确继续仍可达。
+  概览按“流程状态→处理进度→文件结果”阅读，实际失败/未知/未记录结果就近说明。
+  可用取消放在任务操作行，已结束且无操作时不显示空控制区。
+  点击文件的“查看证据”，先看处理结果、来源/目标，再看从该文件固定历史计划捕获的
+  识别/作品匹配、命名和分类依据及存储步骤；成功文件直接显示完成事实。原始状态、策略 ID、
+  拒绝码和计划/日志/审计进入可展开诊断，任务级 JSON 导出及四类决定→分析→精确摘要→
+  明确继续仍可达。
 - 成功/退出：人能够区分“流程已完成；部分文件失败”和文件全部成功。长名称/路径和多
   条目在桌面/窄屏可读，键盘与必要操作可用；关闭/返回恢复原合法视图、时间筛选、页、
   滚动和入口焦点。开关卡片不执行或取消工作。
@@ -813,6 +820,9 @@ rate follow accepted48, and creation/editing/list Run once follow accepted49 abo
   One Chinese content title, flat tabs and readable controls align with Task Center/Files on desktop
   and narrow screens. Routine statistics/tutorial paragraphs are omitted; unavailable metrics retain
   their correction guidance, and wide tables scroll inside the workspace rather than the page.
+  The standing header refresh button is removed. Failed list/record reads keep their local reload
+  action; successful create/edit/copy and other existing commands read back the current list. Opening
+  the create card still reads its required authority/definition without changing a header button.
 - **Create:** `自动化 → 新建自动化任务` opens one Chinese card over the current list; the creation
   deep links reach the same experience. Enter a name, choose a ResourceLibrary and its whole scope
   or a bounded subdirectory, then set the interval/daily/weekly/advanced Cron schedule and item limit.

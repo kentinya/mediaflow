@@ -32,6 +32,16 @@ Product Experience 旅程，原 Slice46 接受身份不变。
 等待/混合文件结果及动态开关/返回须验收；旧参考图保留，目标不受原侧详情布局约束。
 下方 CURRENT 业务规则继续适用；本次只替换详情呈现，不增加恢复能力。
 
+### CURRENT — 任务正文与文件证据
+
+[独立修正 B PASS](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)细化现行呈现：概览依次显示流程状态、处理进度、文件结果，实际异常在对应文件/区域说明。
+可用取消位于任务操作行；已结束且无可用动作时没有空控制区。“更详细证据”自链接已删除。
+
+点击“查看证据”后，正文按处理结果→来源/目标→处理经过→实际需处理原因组织。处理经过
+解释已捕获的识别/作品匹配、命名目录/文件名、分类目的地和命中依据，以及实际存储步骤。
+成功文件显示完成事实；主文件与附件分别展示结果，效果未确认及结果未记录各自说明。
+技术状态、拒绝码、策略 ID 和原始计划/日志/审计可展开查看；历史解释来自该任务固定记录。
+
 ### CURRENT — Slice48 Task 流程状态（PASS / CLOSED，2026-11-04）
 
 [Slice48](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、

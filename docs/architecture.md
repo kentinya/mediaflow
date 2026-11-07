@@ -45,6 +45,11 @@ grouped/collapsed but stays reachable; priority summaries must preserve flow/fil
 actual failure/unknown effects and four-type decision/analysis/summary/explicit continuation.
 Closing is presentation only, not cancellation or a fresh command; unconfirmed command identity
 and reconciliation must survive the existing allowed leave/reopen paths.
+The accepted [standalone presentation correction](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md) orders the overview as flow → progress → independent file results and renders available cancellation
+in the Task action row. File processing summaries read the exact item's captured plan/analysis,
+including identity, naming and classification; raw tokens and read-only recovery diagnostics are
+collapsible. Storage and library bodies settle in when their placeholders are replaced, using local
+presentation only; Router/Query retain ownership of reads and mounted route lifecycles.
 
 **Storage and libraries:** replace the selected drawer containers with centered cards and improve
 their action menus/confirmation presentation while using existing exact Active projections,
@@ -137,6 +142,8 @@ Create/edit use one compact accessible enable switch; only Create/Save publishes
 separate lifecycle toggle/copy/refresh group is removed, while reference-safe removal and retained
 unknown publication reconciliation remain. The shared shell suppresses its extra location line for
 the list and its create/legacy-create/edit backgrounds, preserving their common layout.
+The list header also omits its standing refresh button. Local read-failure refresh controls and
+command-success invalidation/readback remain; opening a card continues the necessary authority reads.
 
 **Direct list command:** read the backend's exact saved-definition/configuration identity and action
 availability, then use the existing Run once admission and request-lookup service from the row.
