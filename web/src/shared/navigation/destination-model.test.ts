@@ -13,7 +13,7 @@ import {
 describe("destination model", () => {
   it("defines one operator-oriented route contract", () => {
     expect(destinations.map((item) => item.label)).toEqual([
-      "Overview",
+      "探索",
       "Library",
       "任务中心",
       "Review & Recovery",
@@ -51,7 +51,8 @@ describe("destination model", () => {
   });
 
   it("resolves paths without duplicating route metadata", () => {
-    expect(destinationForPath("/dashboard")?.id).toBe("overview");
+    expect(destinationForPath("/explore")?.id).toBe("explore");
+    expect(destinationForPath("/dashboard")).toBeUndefined();
     expect(destinationForPath("/medialib/files")?.id).toBe("library");
     expect(destinationForPath("/resourcelib/files")?.id).toBe("library-files");
     expect(destinationForPath("/rules")?.id).toBe("rules");
@@ -73,7 +74,7 @@ describe("destination model", () => {
 
   it("groups every sidebar main page with its existing children only", () => {
     const expected: ReadonlyArray<readonly [string, string]> = [
-      ["/dashboard", "home"],
+      ["/explore", "home"],
       ["/resourcelib/files", "files"],
       ["/medialib/files", "library"],
       ["/storage", "storage"],
@@ -269,8 +270,20 @@ describe("destination model", () => {
       }
     });
 
+    it("keeps only the bounded Explore detail token through reconnect", () => {
+      expect(
+        allowlistedDestinationSearch("/explore", "detail=tv-603&token=secret"),
+      ).toBe("detail=tv-603");
+      expect(
+        allowlistedDestinationSearch("/explore", "detail=movie-0&x=1"),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch("/explore", "detail=%2e%2e%2fetc"),
+      ).toBeNull();
+    });
+
     it("returns null for non-library/files routes", () => {
-      expect(allowlistedDestinationSearch("/dashboard", "q=test")).toBeNull();
+      expect(allowlistedDestinationSearch("/explore", "q=test")).toBeNull();
       expect(
         allowlistedDestinationSearch("/operations", "storage=local-1"),
       ).toBeNull();

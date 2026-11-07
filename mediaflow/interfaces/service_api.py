@@ -46,6 +46,7 @@ from mediaflow.application.direct_file_transfers import (
     durable_transfer_read_service,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.explore import ExploreService
 from mediaflow.application.library_file_operations import (
     LibraryFileOperationError,
     LibraryFileOperationHistoryService,
@@ -148,6 +149,7 @@ from mediaflow.domain.direct_files import (
     DirectFileOperation,
     LibraryKind,
 )
+from mediaflow.domain.explore import ExploreError, ExploreErrorCode
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
@@ -217,6 +219,49 @@ _AUTOMATION_DEFINITION_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 # Historical Task/Job/TaskItem/Result keys that must never leave the API: claim
 # and fence evidence, internal scope hints and fingerprint values.  The V2
 # Operations projection uses an explicit allowlist on top of this filter.
+# The shared static security headers. The V2 artifact response adds exactly
+# one directive: its posters are loaded directly from the fixed TMDB image
+# host and nothing else. V1 static responses, connect/script/style sources,
+# object/base/frame/form restrictions and every other header stay identical.
+_STATIC_CSP = (
+    "default-src 'self'; connect-src 'self'; "
+    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
+    "frame-ancestors 'none'; form-action 'none'"
+)
+_V2_STATIC_CSP = (
+    "default-src 'self'; connect-src 'self'; "
+    "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
+    "object-src 'none'; base-uri 'none'; "
+    "frame-ancestors 'none'; form-action 'none'"
+)
+
+# One normalized HTTP status per Explore failure category. Upstream TMDB
+# 401/403 surface as their own HTTP status with a ``provider_*`` body code, so
+# a client can distinguish them from this API's own ``unauthorized``/
+# ``forbidden`` answers and never clears the connected principal on an
+# upstream credential failure.
+_EXPLORE_HTTP_STATUS: dict[ExploreErrorCode, int] = {
+    ExploreErrorCode.INVALID_REQUEST: 400,
+    ExploreErrorCode.NOT_FOUND: 404,
+    ExploreErrorCode.PROVIDER_AUTHENTICATION: 401,
+    ExploreErrorCode.PROVIDER_PERMISSION: 403,
+    ExploreErrorCode.PROVIDER_RATE_LIMITED: 429,
+    ExploreErrorCode.PROVIDER_TIMEOUT: 504,
+    ExploreErrorCode.PROVIDER_UNAVAILABLE: 502,
+    ExploreErrorCode.PROVIDER_MALFORMED: 502,
+    ExploreErrorCode.PROVIDER_NOT_CONFIGURED: 503,
+}
+#: Read-only Explore failures where repeating the identical request is a
+#: useful, safe recovery without any operator configuration change.
+_EXPLORE_RETRYABLE: frozenset[ExploreErrorCode] = frozenset(
+    {
+        ExploreErrorCode.PROVIDER_RATE_LIMITED,
+        ExploreErrorCode.PROVIDER_TIMEOUT,
+        ExploreErrorCode.PROVIDER_UNAVAILABLE,
+        ExploreErrorCode.PROVIDER_MALFORMED,
+    }
+)
+
 _HIDDEN_DOCUMENT_FIELDS = frozenset(
     {
         "claim_token",
@@ -532,6 +577,10 @@ class MediaFlowApi:
                 self._notification_recovery_targets if configuration_service else None
             ),
         )
+        # The read-only Explore application service holds only the lazy
+        # provider-registry factory: no Provider is constructed or contacted
+        # here, and no Active/runtime binding is changed by its existence.
+        self._explore = ExploreService(metadata_provider_registry_factory)
         self._bootstrap_document = bootstrap_document
         from mediaflow.infrastructure.runtime_configuration import (
             is_minimal_management_bootstrap,
@@ -727,7 +776,12 @@ class MediaFlowApi:
                 if v2_asset is None:
                     return self._error(start_response, 404, "not_found", "route was not found")
                 content_type, body = v2_asset
-                return self._static_response(start_response, content_type, body)
+                return self._static_response(
+                    start_response,
+                    content_type,
+                    body,
+                    content_security_policy=_V2_STATIC_CSP,
+                )
             if not path.startswith("/api/v1"):
                 return self._error(start_response, 404, "not_found", "route was not found")
             principal = self._authenticate(environ)
@@ -1440,6 +1494,38 @@ class MediaFlowApi:
                     ),
                 },
             )
+        except ExploreError as error:
+            # One normalized, secret-free Explore outcome: an invalid query, a
+            # genuinely missing title or one bounded upstream failure family,
+            # each with its durable state (nothing changed), retry posture and
+            # explicit next action. Upstream 401/403 keep their HTTP status but
+            # carry a ``provider_*`` body code and no local auth challenge, so
+            # a client never confuses them with this API rejecting the caller.
+            status = _EXPLORE_HTTP_STATUS[error.code]
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "explore-read",
+                "denied" if status < 500 else "error",
+                status,
+            )
+            details: dict[str, object] = {
+                "sideEffects": "none",
+                "retrySafe": error.code in _EXPLORE_RETRYABLE,
+            }
+            if error.next_action is not None:
+                details["nextAction"] = error.next_action
+            return self._error(
+                start_response,
+                status,
+                error.code.value,
+                error.message,
+                details=details,
+                challenge=error.code is not ExploreErrorCode.PROVIDER_AUTHENTICATION,
+            )
         except (ValueError, json.JSONDecodeError) as error:
             self._safe_audit(
                 environ,
@@ -1524,6 +1610,7 @@ class MediaFlowApi:
             "configuration",
             "confirmations",
             "dashboard",
+            "explore",
             "files",
             "logs",
             "management",
@@ -6853,6 +6940,33 @@ class MediaFlowApi:
                     binding.dashboard.snapshot(recent_limit=self._dashboard_limit(environ))
                 ),
             )
+        if parts[:3] == ["api", "v1", "explore"] and method == "GET":
+            # Slice 51 Task 51.1: one read-only Explore boundary. A legitimate
+            # READ is proven before any query parsing, Provider resolution,
+            # catalog read or cache access, so an unauthorized principal can
+            # never trigger an upstream read. All errors normalize through the
+            # dedicated ExploreError handler in ``__call__``.
+            if tuple(parts) not in {
+                ("api", "v1", "explore", "browse"),
+                ("api", "v1", "explore", "search"),
+                ("api", "v1", "explore", "options"),
+            } and not (len(parts) == 5 and parts[3] in {"movie", "tv"}):
+                return self._error(start_response, 404, "not_found", "route was not found")
+            self._require(principal, ApiPermission.READ)
+            if len(parts) == 5:
+                # One exact provider+type+id detail; no name re-matching and no
+                # extra query fields.
+                self._require_empty_query(environ, "explore detail")
+                document = self._explore.detail(parts[3], parts[4])
+            else:
+                params = self._explore_query(environ)
+                if parts[3] == "browse":
+                    document = self._explore.browse(params)
+                elif parts[3] == "search":
+                    document = self._explore.search(params)
+                else:
+                    document = self._explore.options(params)
+            return self._response(start_response, 200, document)
         if parts == ["api", "v1", "metadata-reviews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             limit = self._metadata_review_limit(environ)
@@ -8027,7 +8141,12 @@ class MediaFlowApi:
         return quote(value, safe="")
 
     def _static_response(
-        self, start_response: Callable, content_type: str, body: bytes
+        self,
+        start_response: Callable,
+        content_type: str,
+        body: bytes,
+        *,
+        content_security_policy: str = _STATIC_CSP,
     ) -> list[bytes]:
         start_response(
             "200 OK",
@@ -8037,9 +8156,7 @@ class MediaFlowApi:
                 ("Cache-Control", "no-store"),
                 (
                     "Content-Security-Policy",
-                    "default-src 'self'; connect-src 'self'; "
-                    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
-                    "frame-ancestors 'none'; form-action 'none'",
+                    content_security_policy,
                 ),
                 ("X-Content-Type-Options", "nosniff"),
                 ("Referrer-Policy", "no-referrer"),
@@ -9484,6 +9601,23 @@ class MediaFlowApi:
             and parts[4] in {"cancel", "pause", "resume"}
         ):
             return f"/api/v1/tasks/{{id}}/{parts[4]}"
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "explore"]
+            and parts[3]
+            in {
+                "browse",
+                "search",
+                "options",
+            }
+        ):
+            # Explore reads are audited by operation: no keyword or filter
+            # value enters security-audit route evidence.
+            return f"/api/v1/explore/{parts[3]}"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "explore"]:
+            # The work identity is logged through its immutable type+id shape,
+            # never through a search keyword.
+            return "/api/v1/explore/{mediaType}/{id}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
         if (
@@ -9763,6 +9897,17 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError("metadata correction limit must be between 1 and 100")
         return limit
+
+    @staticmethod
+    def _explore_query(environ: dict) -> dict[str, list[str]]:
+        """One bounded raw query dictionary; duplicate/unknown field checks
+        belong to the Explore service's strict single-value parser."""
+
+        raw = str(environ.get("QUERY_STRING", ""))
+        try:
+            return parse_qs(raw, keep_blank_values=True, max_num_fields=32)
+        except ValueError as error:
+            raise ValueError("explore query is malformed") from error
 
     @staticmethod
     def _require_empty_query(environ: dict, resource: str) -> None:
@@ -20167,7 +20312,9 @@ class MediaFlowApi:
         return value
 
     @staticmethod
-    def _response(start_response: Callable, status: int, document: dict) -> list[bytes]:
+    def _response(
+        start_response: Callable, status: int, document: dict, *, challenge: bool = True
+    ) -> list[bytes]:
         body = json.dumps(document, ensure_ascii=False, sort_keys=True).encode("utf-8")
         labels = {
             200: "OK",
@@ -20182,8 +20329,11 @@ class MediaFlowApi:
             410: "Gone",
             413: "Payload Too Large",
             422: "Unprocessable Entity",
+            429: "Too Many Requests",
             500: "Internal Server Error",
+            502: "Bad Gateway",
             503: "Service Unavailable",
+            504: "Gateway Timeout",
         }
         headers = [
             ("Content-Type", "application/json; charset=utf-8"),
@@ -20193,7 +20343,7 @@ class MediaFlowApi:
             ("Referrer-Policy", "no-referrer"),
             ("X-Frame-Options", "DENY"),
         ]
-        if status == 401:
+        if status == 401 and challenge:
             headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
         start_response(f"{status} {labels[status]}", headers)
         return [body]
@@ -20274,8 +20424,9 @@ class MediaFlowApi:
         message: str,
         *,
         details: dict[str, object] | None = None,
+        challenge: bool = True,
     ):
         error = {"code": code, "message": redact_manual_text(message)}
         if details:
             error["details"] = redact_manual_value(details)
-        return cls._response(start_response, status, {"error": error})
+        return cls._response(start_response, status, {"error": error}, challenge=challenge)

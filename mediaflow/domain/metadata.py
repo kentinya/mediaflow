@@ -306,6 +306,10 @@ class MetadataErrorCode(StrEnum):
     CONNECTION_FAILED = "connection_failed"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     MALFORMED_RESPONSE = "malformed_response"
+    #: One response body exceeded an explicitly requested read limit (Explore
+    #: enforces a 2 MiB metadata bound, including responses without a
+    #: Content-Length header). Terminal: retrying an oversized body cannot help.
+    RESPONSE_TOO_LARGE = "response_too_large"
     UNSUPPORTED_OPERATION = "unsupported_operation"
     UNKNOWN = "unknown"
 

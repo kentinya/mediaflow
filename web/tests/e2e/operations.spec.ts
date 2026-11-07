@@ -55,7 +55,7 @@ async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
 }
 
@@ -403,37 +403,6 @@ test("an unknown Operations route renders the not-found boundary", async ({
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-});
-
-test("Dashboard counts and recent failures link to exact Operations state", async ({
-  page,
-}) => {
-  await connect(page);
-
-  await page
-    .getByRole("link", { name: /Failed/ })
-    .first()
-    .click();
-  // The Task count links into the center's own filtered population.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks\?status=failed$/);
-  await expect(
-    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "打开任务中心" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-
-  await page.getByRole("link", { name: "Overview" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
-  // A recorded Task failure resolves to that exact Task inside the center; it
-  // never becomes a second mixed list or an old Job identity.
-  await expect(
-    page.getByRole("link", { name: "Open this Task in the Task Center" }),
-  ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Open this Task in the Task Center" })
-    .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-004$/);
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 });
 
 test("the 媒体库 entry and Operations workspace cross-link without a retired route", async ({

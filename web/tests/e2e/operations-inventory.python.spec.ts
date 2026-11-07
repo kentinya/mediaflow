@@ -52,7 +52,7 @@ async function connect(page: Page, token = TOKEN): Promise<void> {
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
 }
 
@@ -2735,7 +2735,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
         page.getByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
       const next = page.getByRole("link", {
-        name: "Return to Overview",
+        name: "Return to Explore",
         exact: true,
       });
       await next.focus();
@@ -2760,7 +2760,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
       await expect(page.getByLabel("API token")).toBeVisible();
       await page.getByLabel("API token").fill(ADMIN_TOKEN);
       await page.getByRole("button", { name: "Connect" }).click();
-      await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+      await expect(page).toHaveURL(/\/ui-v2\/explore$/);
     }
   }
   expect(

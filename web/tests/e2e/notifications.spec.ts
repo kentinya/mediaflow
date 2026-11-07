@@ -27,7 +27,7 @@ async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
 }
 
@@ -404,12 +404,19 @@ test("a split-identity activation success document never renders as success", as
 test("the delivery list filters dead letters and the detail page requeues with explicit confirmation", async ({
   page,
 }) => {
-  await connect(page);
-  // Dashboard deep link: the dead-letter count opens the filtered deliveries.
-  await page.getByRole("link", { name: /Dead-letter notifications/ }).click();
+  // The dead-letter filter lives at its own durable deep link (its retired
+  // Dashboard entry closed with Task 51.1); entering through the supported
+  // boundary continuation drives the same recovery journey below.
+  await connectOn(
+    page,
+    "/ui-v2/operations/notifications/deliveries?status=dead-letter",
+  );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
     page.getByRole("heading", { name: "Notification deliveries" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Dead letter" }).first(),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Open delivery" }).first().click();

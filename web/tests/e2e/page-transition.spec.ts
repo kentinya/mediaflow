@@ -32,7 +32,7 @@ async function connect(page: Page): Promise<void> {
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
 }
 
@@ -178,10 +178,10 @@ const DESTINATIONS: ReadonlyArray<{
     heading: "媒体库",
   },
   {
-    name: "Overview",
+    name: "Explore",
     page: "home",
-    path: "/ui-v2/dashboard",
-    heading: "Dashboard",
+    path: "/ui-v2/explore",
+    heading: "探索",
   },
   {
     name: "Storage management",
@@ -310,7 +310,7 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
 
   // Rapid A→B→C keeps only the page that actually arrived; the finished
   // animations of rejected intermediate pages cannot cover it.
-  await openSidebarLink(page, "Overview");
+  await openSidebarLink(page, "Explore");
   await openSidebarLink(page, "Files");
   await openSidebarLink(page, "Library");
   await expect.poll(() => currentPath(page)).toBe("/ui-v2/medialib/files");
@@ -436,13 +436,13 @@ test("a forwarded detail card keeps its viewport overlay while the page enters",
   await expect(detail).toHaveCount(0);
   await expect(operationsSurface).toHaveCount(1);
 
-  // Go back to the dashboard without discarding the forward entries, then use
-  // real browser Forward twice. The second Forward re-enters the exact
-  // selected-run URL, so the new page surface and its detail card exist in the
-  // same frame; the fixed card/backdrop must not be transformed, clipped or
-  // confined by the page-entry transition.
+  // Go back to the Explore homepage without discarding the forward entries,
+  // then use real browser Forward twice. The second Forward re-enters the
+  // exact selected-run URL, so the new page surface and its detail card exist
+  // in the the same frame; the fixed card/backdrop must not be transformed,
+  // clipped or confined by the page-entry transition.
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
   await page.goForward();
   await expect(table).toBeVisible();
   await startNavigationSampler(page);

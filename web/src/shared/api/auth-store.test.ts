@@ -36,15 +36,15 @@ describe("authStore", () => {
 
   it("tracks the intended path and clears it with disconnect", () => {
     expect(authStore.getIntendedPath()).toBeNull();
-    authStore.setIntendedPath("/dashboard");
-    expect(authStore.getIntendedPath()).toBe("/dashboard");
+    authStore.setIntendedPath("/explore");
+    expect(authStore.getIntendedPath()).toBe("/explore");
     authStore.clearIntendedPath();
     expect(authStore.getIntendedPath()).toBeNull();
   });
 
   it("rejects an intended path that is not an allowlisted route", () => {
-    authStore.setIntendedPath("/dashboard");
-    expect(authStore.getIntendedPath()).toBe("/dashboard");
+    authStore.setIntendedPath("/explore");
+    expect(authStore.getIntendedPath()).toBe("/explore");
     authStore.clearIntendedPath();
     // The typed API only accepts DestinationPath values; the runtime guard is
     // still exercised with untyped strings to prove arbitrary targets fail.
@@ -92,7 +92,7 @@ describe("authStore", () => {
 
   it("explicit disconnect clears a rejected principal to the neutral state", () => {
     authStore.setToken("rejected-token");
-    authStore.setIntendedPath("/dashboard");
+    authStore.setIntendedPath("/explore");
     authStore.clearRejectedAuthority();
     expect(authStore.isRejected()).toBe(true);
     authStore.clearToken();
@@ -192,7 +192,7 @@ describe("authStore", () => {
 
   it("leaves every persistent browser storage surface untouched", () => {
     authStore.setToken("principal-token");
-    authStore.setIntendedPath("/dashboard");
+    authStore.setIntendedPath("/explore");
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
     expect(document.cookie).toBe("");

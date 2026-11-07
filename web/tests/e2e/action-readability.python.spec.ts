@@ -360,7 +360,7 @@ test.describe("readable V2 actions", () => {
     await expect(page.locator("#main-content")).toBeVisible();
 
     const surfaces: readonly { label: string; path: string }[] = [
-      { label: "Dashboard", path: "/dashboard" },
+      { label: "Explore", path: "/explore" },
       {
         label: "ResourceLibrary Files",
         path: "/resourcelib/files?resourceLibraryId=source",

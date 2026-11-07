@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
-import { dashboardPayload } from "../../../tests/fixtures";
 
 /**
  * Component/router proof for the V2 Notification journey.
@@ -1398,44 +1397,5 @@ describe("DeliveryDetailPage recovery", () => {
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
     expect(await screen.findByText(/could not be understood/)).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
-  });
-});
-
-describe("Dashboard notification links", () => {
-  it("links the exact delivery for a notification failure", async () => {
-    recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/dashboard")) {
-        return jsonResponse({
-          ...dashboardPayload,
-          dead_letter_notifications: 1,
-          recent_failures: [
-            {
-              kind: "notification",
-              identifier: "delivery-1",
-              status: "dead-letter",
-              occurred_at: "2026-09-12T00:00:00+00:00",
-              category: "delivery_failed",
-            },
-          ],
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp("/ui-v2/dashboard");
-    const link = await screen.findByRole("link", {
-      name: "Open this delivery",
-    });
-    expect(link.getAttribute("href")).toBe(
-      "/ui-v2/operations/notifications/deliveries/delivery-1",
-    );
-    const notificationsSection = screen
-      .getByText("Notifications")
-      .closest("section");
-    expect(notificationsSection).not.toBeNull();
-    const deadLetterLink = within(
-      notificationsSection as HTMLElement,
-    ).getByRole("link", { name: /Dead-letter notifications/ });
-    expect(deadLetterLink.getAttribute("href")).toContain("status=dead-letter");
   });
 });

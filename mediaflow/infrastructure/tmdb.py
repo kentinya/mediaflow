@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -7,6 +9,20 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mediaflow.application.metadata import MetadataCache, MetadataCacheKey
+from mediaflow.domain.explore import (
+    EXPLORE_MAX_ITEMS,
+    EXPLORE_MAX_OPTIONS,
+    ExploreBrowseQuery,
+    ExploreDetail,
+    ExploreGenre,
+    ExploreItem,
+    ExploreLanguage,
+    ExploreOptions,
+    ExplorePage,
+    ExploreSearchQuery,
+    ExploreSort,
+    safe_image_path,
+)
 from mediaflow.domain.metadata import (
     EpisodeIdentity,
     MediaCandidate,
@@ -79,19 +95,45 @@ class HTTPTransport(Protocol):
         params: dict[str, Any],
         headers: dict[str, str],
         timeout: Any,
+        max_response_bytes: int | None = None,
     ) -> HTTPResponse: ...
 
 
+class _BoundedJsonResponse:
+    """One body already read under an explicit byte bound."""
+
+    def __init__(self, status_code: int, headers: Any, body: bytes) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+
+    def json(self) -> Any:
+        return json.loads(self._body)
+
+
 class HttpxTransport:
-    def __init__(self, config: TMDBConfig) -> None:
+    def __init__(self, config: TMDBConfig, *, client: Any | None = None) -> None:
         try:
             import httpx
         except ImportError as error:
             raise RuntimeError("TMDBProvider requires the 'tmdb' optional dependency") from error
         self._httpx = httpx
-        self._client = httpx.Client(proxy=config.proxy)
+        # An injected client is a test seam (local fake transport); production
+        # construction is unchanged.
+        self._client = client if client is not None else httpx.Client(proxy=config.proxy)
 
-    def request(self, method, url, *, params, headers, timeout):
+    def request(self, method, url, *, params, headers, timeout, max_response_bytes=None):
+        if max_response_bytes is None:
+            return self._request_unbounded(
+                method, url, params=params, headers=headers, timeout=timeout
+            )
+        return self._request_bounded(
+            method, url, params=params, headers=headers, timeout=timeout, limit=max_response_bytes
+        )
+
+    def _request_unbounded(self, method, url, *, params, headers, timeout):
+        """The historical eager path: byte-for-byte unchanged behavior."""
+
         try:
             return self._client.request(
                 method, url, params=params, headers=headers, timeout=timeout
@@ -100,6 +142,48 @@ class HttpxTransport:
             raise TimeoutError("TMDB request timed out") from error
         except self._httpx.RequestError as error:
             raise OSError("TMDB connection failed") from error
+
+    def _request_bounded(self, method, url, *, params, headers, timeout, limit):
+        """Read at most ``limit`` bytes, including responses with no declared
+        Content-Length; an oversized body fails as a terminal provider error
+        instead of being buffered whole."""
+
+        try:
+            request = self._client.build_request(
+                method, url, params=params, headers=headers, timeout=timeout
+            )
+            response = self._client.send(request, stream=True)
+        except self._httpx.TimeoutException as error:
+            raise TimeoutError("TMDB request timed out") from error
+        except self._httpx.RequestError as error:
+            raise OSError("TMDB connection failed") from error
+        try:
+            declared = response.headers.get("content-length")
+            if declared is not None:
+                try:
+                    if int(declared) > limit:
+                        raise MetadataError(
+                            MetadataErrorCode.RESPONSE_TOO_LARGE,
+                            "TMDB response exceeded the configured read limit",
+                        )
+                except ValueError:
+                    pass
+            body = bytearray()
+            try:
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > limit:
+                        raise MetadataError(
+                            MetadataErrorCode.RESPONSE_TOO_LARGE,
+                            "TMDB response exceeded the configured read limit",
+                        )
+            except self._httpx.TimeoutException as error:
+                raise TimeoutError("TMDB request timed out") from error
+            except self._httpx.RequestError as error:
+                raise OSError("TMDB connection failed") from error
+            return _BoundedJsonResponse(response.status_code, response.headers, bytes(body))
+        finally:
+            response.close()
 
 
 class TMDBClient:
@@ -121,7 +205,14 @@ class TMDBClient:
         *,
         request_timeout: float | None = None,
         retry_policy: RetryPolicy | None = None,
-    ) -> dict[str, Any]:
+        max_response_bytes: int | None = None,
+        expect_array: bool = False,
+    ) -> Any:
+        """One bounded GET; ``max_response_bytes`` is opt-in per caller so the
+        historical organize read path keeps its exact transport behavior.
+        ``expect_array`` only lets a known top-level JSON array endpoint (the
+        TMDB language catalog) pass the object-shape guard."""
+
         if not self.config.enabled:
             raise MetadataError(MetadataErrorCode.PROVIDER_UNAVAILABLE, "TMDB provider is disabled")
         url = self.config.base_url.rstrip("/") + "/" + path.lstrip("/")
@@ -140,6 +231,9 @@ class TMDBClient:
         retry_max_delay = (
             self.config.retry_max_delay if retry_policy is None else retry_policy.max_delay
         )
+        transport_options: dict[str, Any] = (
+            {} if max_response_bytes is None else {"max_response_bytes": max_response_bytes}
+        )
         last_error: MetadataError | None = None
         for attempt in range(retry_count + 1):
             try:
@@ -150,6 +244,7 @@ class TMDBClient:
                         params=safe_params,
                         headers=headers,
                         timeout=(self.config.connect_timeout, effective_timeout),
+                        **transport_options,
                     )
             except (TimeoutError, OSError) as error:
                 code = (
@@ -192,7 +287,7 @@ class TMDBClient:
                 raise MetadataError(
                     MetadataErrorCode.MALFORMED_RESPONSE, "TMDB returned invalid JSON", cause=error
                 ) from error
-            if not isinstance(payload, dict):
+            if not isinstance(payload, dict) and not (expect_array and isinstance(payload, list)):
                 raise MetadataError(
                     MetadataErrorCode.MALFORMED_RESPONSE,
                     "TMDB returned an unexpected response shape",
@@ -216,12 +311,74 @@ class TMDBClient:
         return min(retry_max_delay, retry_base_delay * (2**attempt))
 
 
+# The one Explore read locale: Chinese-first with honest provider fallback
+# (TMDB returns zh-CN titles/overviews where they exist, original text where
+# they do not). It is part of every Explore cache key.
+_EXPLORE_LANGUAGE = "zh-CN"
+_EXPLORE_LIST_TTL = 300.0
+_EXPLORE_DETAIL_TTL = 3600.0
+#: The Explore cache is one bounded in-memory TTL cache, never a new platform.
+_EXPLORE_CACHE_MAX_ENTRIES = 256
+#: The 2 MiB metadata response bound for Explore reads.
+_EXPLORE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+_EXPLORE_SORT_PARAMS: dict[ExploreSort, str] = {
+    ExploreSort.POPULAR: "popularity.desc",
+    ExploreSort.RATING: "vote_average.desc",
+    ExploreSort.DATE: "primary_release_date.desc",
+}
+_EXPLORE_TV_SORT_PARAMS: dict[ExploreSort, str] = {
+    ExploreSort.POPULAR: "popularity.desc",
+    ExploreSort.RATING: "vote_average.desc",
+    ExploreSort.DATE: "first_air_date.desc",
+}
+
+#: Chinese-first display labels for common ISO-639-1 language codes; a code
+#: without a label falls back to the provider's real English/native name.
+_EXPLORE_LANGUAGE_LABELS: dict[str, str] = {
+    "ar": "阿拉伯语",
+    "cs": "捷克语",
+    "da": "丹麦语",
+    "de": "德语",
+    "el": "希腊语",
+    "en": "英语",
+    "es": "西班牙语",
+    "fi": "芬兰语",
+    "fr": "法语",
+    "he": "希伯来语",
+    "hi": "印地语",
+    "hu": "匈牙利语",
+    "id": "印度尼西亚语",
+    "it": "意大利语",
+    "ja": "日语",
+    "ko": "韩语",
+    "ms": "马来语",
+    "nl": "荷兰语",
+    "no": "挪威语",
+    "pl": "波兰语",
+    "pt": "葡萄牙语",
+    "ro": "罗马尼亚语",
+    "ru": "俄语",
+    "sv": "瑞典语",
+    "th": "泰语",
+    "tl": "他加禄语",
+    "tr": "土耳其语",
+    "uk": "乌克兰语",
+    "vi": "越南语",
+    "zh": "中文",
+}
+_LANGUAGE_CODE = re.compile(r"[a-z]{2,3}")
+
+
 class TMDBProvider:
     capabilities = ProviderCapabilities(True, True, True, True, True, True, True)
 
     def __init__(self, client: TMDBClient, cache: MetadataCache | None = None) -> None:
         self._client = client
         self._cache = cache or MetadataCache()
+        # Explore reads keep their own capacity-bounded TTL cache alongside
+        # the historical organize cache, which stays byte-identical.
+        self._explore_cache = MetadataCache(max_entries=_EXPLORE_CACHE_MAX_ENTRIES)
 
     @property
     def provider_id(self) -> str:
@@ -476,6 +633,404 @@ class TMDBProvider:
             policy.cache_policy.search_ttl if result else policy.cache_policy.negative_ttl,
         )
         return result
+
+    # -- Explore reads (optional browse capability, Slice 51 Task 51.1) -----
+    #
+    # These four reads reuse this adapter's client, transport, concurrency,
+    # retry and 429 controls plus a dedicated 256-entry TTL cache. They never
+    # change the organize ``MetadataProvider`` methods above, and every
+    # upstream call carries the explicit 2 MiB response bound.
+
+    def browse(self, query: ExploreBrowseQuery) -> ExplorePage:
+        sort_params = (
+            _EXPLORE_TV_SORT_PARAMS if query.media_type is MediaType.TV else _EXPLORE_SORT_PARAMS
+        )
+        params: dict[str, Any] = {
+            "language": _EXPLORE_LANGUAGE,
+            "page": query.page,
+            "include_adult": "false",
+            "sort_by": sort_params[query.sort],
+        }
+        if query.sort is ExploreSort.RATING:
+            params["vote_count.gte"] = str(query.effective_min_votes)
+        if query.genre_id is not None:
+            params["with_genres"] = str(query.genre_id)
+        if query.original_language is not None:
+            params["with_original_language"] = query.original_language
+        if query.year is not None:
+            year_field = (
+                "primary_release_year"
+                if query.media_type is MediaType.MOVIE
+                else "first_air_date_year"
+            )
+            params[year_field] = str(query.year)
+        if query.min_rating is not None:
+            params["vote_average.gte"] = _number_param(query.min_rating)
+        kind = query.media_type.value
+        key = self._explore_key(
+            "browse",
+            media_type=kind,
+            sort=query.sort.value,
+            genre_id=query.genre_id,
+            original_language=query.original_language,
+            year=query.year,
+            min_rating=query.min_rating,
+            min_votes=query.effective_min_votes,
+            page=query.page,
+        )
+        if (cached := self._explore_cache.get(key)) is not None:
+            return cached
+        payload = self._explore_get(f"discover/{kind}", params)
+        page = _explore_page(
+            payload,
+            query.media_type,
+            self.provider_id,
+            page=query.page,
+            sort=query.sort,
+            genre_id=query.genre_id,
+            original_language=query.original_language,
+            year=query.year,
+            min_rating=query.min_rating,
+            min_votes=query.effective_min_votes,
+        )
+        self._explore_cache.put(key, page, _EXPLORE_LIST_TTL)
+        return page
+
+    def search(self, query: ExploreSearchQuery) -> ExplorePage:
+        key = self._explore_key(
+            "search",
+            media_type=query.media_type.value,
+            keyword=query.keyword,
+            page=query.page,
+        )
+        if (cached := self._explore_cache.get(key)) is not None:
+            return cached
+        payload = self._explore_get(
+            f"search/{query.media_type.value}",
+            {
+                "language": _EXPLORE_LANGUAGE,
+                "query": query.keyword,
+                "page": query.page,
+                "include_adult": "false",
+            },
+        )
+        page = _explore_page(
+            payload,
+            query.media_type,
+            self.provider_id,
+            page=query.page,
+            sort=ExploreSort.POPULAR,
+            keyword=query.keyword,
+            min_votes=None,
+        )
+        self._explore_cache.put(key, page, _EXPLORE_LIST_TTL)
+        return page
+
+    def detail(self, media_type: MediaType, provider_id: int) -> ExploreDetail:
+        key = self._explore_key("detail", media_type=media_type.value, provider_id=provider_id)
+        if (cached := self._explore_cache.get(key)) is not None:
+            return cached
+        payload = self._explore_get(
+            f"{media_type.value}/{provider_id}",
+            {"language": _EXPLORE_LANGUAGE},
+        )
+        detail = _explore_detail(payload, media_type, self.provider_id, provider_id)
+        self._explore_cache.put(key, detail, _EXPLORE_DETAIL_TTL)
+        return detail
+
+    def options(self, media_type: MediaType) -> ExploreOptions:
+        key = self._explore_key("options", media_type=media_type.value)
+        if (cached := self._explore_cache.get(key)) is not None:
+            return cached
+        kind = media_type.value
+        genre_payload = self._explore_get(f"genre/{kind}/list", {"language": _EXPLORE_LANGUAGE})
+        language_payload = self._explore_get("configuration/languages", expect_array=True)
+        options = ExploreOptions(
+            self.provider_id,
+            media_type,
+            _explore_genres(genre_payload),
+            _explore_languages(language_payload),
+        )
+        self._explore_cache.put(key, options, _EXPLORE_DETAIL_TTL)
+        return options
+
+    def _explore_get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        expect_array: bool = False,
+    ) -> Any:
+        return self._client.get(
+            path,
+            params,
+            max_response_bytes=_EXPLORE_MAX_RESPONSE_BYTES,
+            expect_array=expect_array,
+        )
+
+    def _explore_key(self, operation: str, **arguments: Any) -> MetadataCacheKey:
+        """One key carrying source instance, locale and every applied value."""
+
+        values: dict[str, Any] = {
+            "source": self._client.config.base_url,
+            "locale": _EXPLORE_LANGUAGE,
+        }
+        values.update(arguments)
+        return MetadataCacheKey(
+            self.provider_id,
+            f"explore_{operation}",
+            tuple(sorted((name, str(value)) for name, value in values.items())),
+        )
+
+
+def _malformed(message: str) -> MetadataError:
+    return MetadataError(MetadataErrorCode.MALFORMED_RESPONSE, message)
+
+
+def _number_param(value: float) -> str:
+    return format(value, "g")
+
+
+def _explore_page(
+    payload: Any,
+    media_type: MediaType,
+    provider: str,
+    *,
+    page: int,
+    sort: ExploreSort,
+    keyword: str | None = None,
+    genre_id: int | None = None,
+    original_language: str | None = None,
+    year: int | None = None,
+    min_rating: float | None = None,
+    min_votes: int | None = None,
+) -> ExplorePage:
+    """One bounded provider page; a malformed/over-size page fails safely
+    instead of degrading into a believable empty result."""
+
+    if not isinstance(payload, dict):
+        raise _malformed("TMDB page is malformed")
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise _malformed("TMDB page results are malformed")
+    total_pages = payload.get("total_pages")
+    total_results = payload.get("total_results")
+    if (
+        not isinstance(total_pages, int)
+        or isinstance(total_pages, bool)
+        or total_pages < 1
+        or not isinstance(total_results, int)
+        or isinstance(total_results, bool)
+        or total_results < 0
+    ):
+        raise _malformed("TMDB page totals are malformed")
+    items = tuple(_explore_item(raw, media_type, provider) for raw in results[:EXPLORE_MAX_ITEMS])
+    return ExplorePage(
+        provider,
+        media_type,
+        page,
+        total_pages,
+        total_results,
+        items,
+        sort,
+        genre_id=genre_id,
+        original_language=original_language,
+        year=year,
+        min_rating=min_rating,
+        min_votes=min_votes,
+        keyword=keyword,
+    )
+
+
+def _explore_text(payload: dict[str, Any], key: str, *, required: bool) -> str | None:
+    value = payload.get(key)
+    if value is None or value == "":
+        if required:
+            raise _malformed(f"TMDB item is missing required field {key!r}")
+        return None
+    if not isinstance(value, str):
+        raise _malformed(f"TMDB item field {key!r} is malformed")
+    return value
+
+
+def _explore_item(payload: Any, media_type: MediaType, provider: str) -> ExploreItem:
+    if not isinstance(payload, dict) or not isinstance(payload.get("id"), int):
+        raise _malformed("TMDB item is missing an integer id")
+    identifier = payload["id"]
+    if isinstance(identifier, bool) or identifier < 1:
+        raise _malformed("TMDB item id is out of range")
+    title_key, original_key, date_key = (
+        ("title", "original_title", "release_date")
+        if media_type is MediaType.MOVIE
+        else ("name", "original_name", "first_air_date")
+    )
+    title = _explore_text(payload, title_key, required=True)
+    original = _explore_text(payload, original_key, required=False)
+    release_date = _explore_text(payload, date_key, required=False)
+    vote_count = payload.get("vote_count")
+    if not isinstance(vote_count, int) or isinstance(vote_count, bool) or vote_count < 0:
+        raise _malformed("TMDB item vote_count is malformed")
+    vote_average: float | None
+    raw_average = payload.get("vote_average")
+    if vote_count == 0:
+        # Unrated means unrated: never publish a fabricated 0-point score.
+        vote_average = None
+    elif (
+        not isinstance(raw_average, (int, float))
+        or isinstance(raw_average, bool)
+        or not (0 <= float(raw_average) <= 10)
+    ):
+        raise _malformed("TMDB item vote_average is malformed")
+    else:
+        vote_average = float(raw_average)
+    genre_ids_raw = payload.get("genre_ids")
+    if genre_ids_raw is None:
+        genre_ids: tuple[int, ...] = ()
+    elif isinstance(genre_ids_raw, list) and all(
+        isinstance(value, int) and not isinstance(value, bool) for value in genre_ids_raw
+    ):
+        genre_ids = tuple(dict.fromkeys(genre_ids_raw))
+    else:
+        raise _malformed("TMDB item genre_ids are malformed")
+    return ExploreItem(
+        provider,
+        str(identifier),
+        media_type,
+        title,  # type: ignore[arg-type]
+        original,
+        _year(release_date),
+        release_date,
+        vote_average,
+        vote_count,
+        safe_image_path(payload.get("poster_path")),
+        safe_image_path(payload.get("backdrop_path")),
+        genre_ids,
+    )
+
+
+def _explore_detail(
+    payload: Any, media_type: MediaType, provider: str, expected_id: int
+) -> ExploreDetail:
+    if not isinstance(payload, dict) or not isinstance(payload.get("id"), int):
+        raise _malformed("TMDB detail is missing an integer id")
+    if payload["id"] != expected_id:
+        raise _malformed("TMDB detail id does not match the requested work")
+    title_key, original_key, date_key = (
+        ("title", "original_title", "release_date")
+        if media_type is MediaType.MOVIE
+        else ("name", "original_name", "first_air_date")
+    )
+    title = _explore_text(payload, title_key, required=True)
+    original = _explore_text(payload, original_key, required=False)
+    release_date = _explore_text(payload, date_key, required=False)
+    overview = _explore_text(payload, "overview", required=False)
+    vote_count = payload.get("vote_count")
+    if not isinstance(vote_count, int) or isinstance(vote_count, bool) or vote_count < 0:
+        raise _malformed("TMDB detail vote_count is malformed")
+    raw_average = payload.get("vote_average")
+    vote_average: float | None = None
+    if vote_count > 0:
+        if not isinstance(raw_average, (int, float)) or isinstance(raw_average, bool):
+            raise _malformed("TMDB detail vote_average is malformed")
+        if not (0 <= float(raw_average) <= 10):
+            raise _malformed("TMDB detail vote_average is malformed")
+        vote_average = float(raw_average)
+    genres_raw = payload.get("genres")
+    if not isinstance(genres_raw, list):
+        raise _malformed("TMDB detail genres are malformed")
+    genres: list[str] = []
+    for entry in genres_raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            raise _malformed("TMDB detail genre is malformed")
+        name = entry["name"].strip()
+        if name and name not in genres:
+            genres.append(name)
+    runtime = _explore_optional_int(payload, "runtime")
+    seasons = _explore_optional_int(payload, "number_of_seasons")
+    first_air = (
+        _explore_text(payload, "first_air_date", required=False)
+        if media_type is MediaType.TV
+        else None
+    )
+    return ExploreDetail(
+        provider,
+        str(expected_id),
+        media_type,
+        title,  # type: ignore[arg-type]
+        original,
+        _year(release_date),
+        release_date,
+        vote_average,
+        vote_count,
+        tuple(genres),
+        overview,
+        runtime,
+        first_air,
+        seasons,
+        safe_image_path(payload.get("poster_path")),
+        safe_image_path(payload.get("backdrop_path")),
+        f"https://www.themoviedb.org/{media_type.value}/{expected_id}",
+    )
+
+
+def _explore_optional_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise _malformed(f"TMDB detail {key} is malformed")
+    return value
+
+
+def _explore_genres(payload: Any) -> tuple[ExploreGenre, ...]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("genres"), list):
+        raise _malformed("TMDB genre catalog is malformed")
+    genres: list[ExploreGenre] = []
+    seen: set[int] = set()
+    for entry in payload["genres"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), int):
+            raise _malformed("TMDB genre catalog entry is malformed")
+        genre_id = entry["id"]
+        name = entry.get("name")
+        if isinstance(genre_id, bool) or genre_id < 1 or not isinstance(name, str):
+            raise _malformed("TMDB genre catalog entry is malformed")
+        cleaned = name.strip()
+        if not cleaned or genre_id in seen:
+            continue
+        seen.add(genre_id)
+        genres.append(ExploreGenre(genre_id, cleaned))
+        if len(genres) >= EXPLORE_MAX_OPTIONS:
+            break
+    return tuple(genres)
+
+
+def _explore_languages(payload: Any) -> tuple[ExploreLanguage, ...]:
+    if not isinstance(payload, list):
+        raise _malformed("TMDB language catalog is malformed")
+    languages: list[ExploreLanguage] = []
+    seen: set[str] = set()
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise _malformed("TMDB language catalog entry is malformed")
+        code = entry.get("iso_639_1")
+        if not isinstance(code, str) or not _LANGUAGE_CODE.fullmatch(code) or code in seen:
+            continue
+        # Chinese label first; otherwise the provider's own real English or
+        # native name; an entry with no displayable name is not published.
+        english = entry.get("english_name")
+        native = entry.get("name")
+        label = _EXPLORE_LANGUAGE_LABELS.get(code)
+        if label is None and isinstance(english, str) and english.strip():
+            label = english.strip()
+        if label is None and isinstance(native, str) and native.strip():
+            label = native.strip()
+        if label is None:
+            continue
+        seen.add(code)
+        languages.append(ExploreLanguage(code, label))
+        if len(languages) >= EXPLORE_MAX_OPTIONS:
+            break
+    return tuple(languages)
 
 
 def _candidate(

@@ -607,7 +607,7 @@ test("the preparation reconnects to the same durable record with its return cont
   // A full browser reload clears memory-only auth and lands on the V2
   // entry; the shared route/auth continuation model has recorded the exact
   // durable preparation destination plus its bounded Files return context, so
-  // reconnecting continues the same preparation instead of the Dashboard.
+  // reconnecting continues the same preparation instead of the Explore home.
   await page.reload();
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);

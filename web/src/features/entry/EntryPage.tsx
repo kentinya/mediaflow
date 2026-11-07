@@ -18,7 +18,7 @@ import { TextField } from "../../shared/ui/TextField";
  * is never displayed again. The post-connect destination is derived from the
  * router-aware `AuthBoundary`, which records the safe intended route when an
  * unauthenticated operator opens a deep link. Root entry falls through to
- * the Dashboard default. Disconnect clears the token, the query cache, and
+ * the Explore default homepage. Disconnect clears the token, the query cache, and
  * the intended route so no hidden continuation survives.
  */
 export function EntryPage() {
@@ -30,8 +30,8 @@ export function EntryPage() {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const openDashboard = () => {
-    void navigate({ to: "/dashboard" });
+  const openExplore = () => {
+    void navigate({ to: "/explore" });
   };
 
   const disconnect = () => {
@@ -42,7 +42,7 @@ export function EntryPage() {
   };
 
   const continueToIntended = () => {
-    const next = intendedPath ?? "/dashboard";
+    const next = intendedPath ?? "/explore";
     const rawSearch = intendedSearch ?? "";
     const search =
       rawSearch.length > 0 && !rawSearch.startsWith("?")
@@ -73,7 +73,7 @@ export function EntryPage() {
           persisted and never displayed again after entry.
         </p>
         <div className="mf-actions">
-          <Button onClick={openDashboard}>Open Dashboard</Button>
+          <Button onClick={openExplore}>Open Explore</Button>
           <Button variant="secondary" onClick={disconnect}>
             Disconnect
           </Button>

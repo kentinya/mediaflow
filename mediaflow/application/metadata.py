@@ -78,8 +78,21 @@ class _CacheEntry:
 
 
 class MetadataCache:
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    """In-memory TTL cache with an optional capacity bound.
+
+    Without ``max_entries`` the historical unbounded behavior is unchanged.
+    With it, inserting past the bound evicts the oldest live entry (FIFO), so
+    one bounded consumer (the Explore cache) can reuse this cache without a
+    second cache platform or any change to existing callers.
+    """
+
+    def __init__(
+        self, clock: Callable[[], float] = time.monotonic, *, max_entries: int | None = None
+    ) -> None:
+        if max_entries is not None and max_entries < 1:
+            raise ValueError("metadata cache capacity must be a positive integer")
         self._clock = clock
+        self._max_entries = max_entries
         self._entries: dict[MetadataCacheKey, _CacheEntry] = {}
         self._lock = threading.Lock()
 
@@ -98,6 +111,16 @@ class MetadataCache:
             return
         with self._lock:
             self._entries[key] = _CacheEntry(value, self._clock() + ttl)
+            if self._max_entries is None:
+                return
+            while len(self._entries) > self._max_entries:
+                for candidate, entry in self._entries.items():
+                    if entry.expires_at <= self._clock():
+                        del self._entries[candidate]
+                        break
+                else:
+                    del self._entries[next(iter(self._entries))]
+                    break
 
     def invalidate(self, key: MetadataCacheKey) -> None:
         with self._lock:

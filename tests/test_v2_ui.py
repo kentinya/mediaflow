@@ -108,8 +108,19 @@ class V2UiStaticTests(unittest.TestCase):
     def test_v2_static_responses_carry_the_existing_safe_headers(self) -> None:
         _, headers, _ = request(self.api, "/ui-v2/")
         self.assertEqual(headers["Cache-Control"], "no-store")
+        # Slice 51: only the V2 artifact response gains the exact TMDB image
+        # source; every other directive and header is unchanged, and the V1
+        # static response below keeps its historical policy.
         self.assertEqual(
             headers["Content-Security-Policy"],
+            "default-src 'self'; connect-src 'self'; "
+            "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
+            "object-src 'none'; base-uri 'none'; "
+            "frame-ancestors 'none'; form-action 'none'",
+        )
+        _, v1_headers, _ = request(self.api, "/ui")
+        self.assertEqual(
+            v1_headers["Content-Security-Policy"],
             "default-src 'self'; connect-src 'self'; "
             "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
             "frame-ancestors 'none'; form-action 'none'",

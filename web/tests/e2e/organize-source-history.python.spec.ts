@@ -57,7 +57,7 @@ async function connect(page: Page): Promise<void> {
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
 }
 

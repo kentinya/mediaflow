@@ -3,7 +3,7 @@ import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { authStore } from "../api/auth-store";
-import { ApiReadError, DashboardApiError } from "../api/api-errors";
+import { ApiReadError, SystemStatusApiError } from "../api/api-errors";
 import { renderWithProviders } from "../../../tests/utils";
 import {
   AuthorizedReadBoundary,
@@ -65,7 +65,7 @@ describe("AuthorizedReadBoundary", () => {
       <AuthorizedReadBoundary
         query={makeQuery({
           isError: true,
-          error: new DashboardApiError("unauthorized"),
+          error: new SystemStatusApiError("unauthorized"),
           refetch,
         })}
       >
@@ -93,7 +93,7 @@ describe("AuthorizedReadBoundary", () => {
       <AuthorizedReadBoundary
         query={makeQuery({
           isError: true,
-          error: new DashboardApiError("forbidden"),
+          error: new SystemStatusApiError("forbidden"),
         })}
       >
         {renderContent}
@@ -122,7 +122,7 @@ describe("AuthorizedReadBoundary", () => {
       <AuthorizedReadBoundary
         query={makeQuery({
           isError: true,
-          error: new DashboardApiError("unavailable"),
+          error: new SystemStatusApiError("unavailable"),
           refetch,
         })}
         unavailableTitle="Feature unavailable"
@@ -165,7 +165,7 @@ describe("AuthorizedReadBoundary", () => {
   });
   it("applies the same 401-clearing lifecycle to a non-Dashboard read error", async () => {
     // A later product feature that throws the plain feature-neutral ApiReadError
-    // (not DashboardApiError) must inherit the shared authority/cache transition.
+    // (not the status-read class) must inherit the shared authority/cache transition.
     const refetch = vi.fn(async () => undefined);
     const queryClient = new QueryClient();
     queryClient.setQueryData(["feature", "read"], { cached: true });

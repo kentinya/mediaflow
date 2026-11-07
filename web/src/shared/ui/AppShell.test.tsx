@@ -10,17 +10,26 @@ import {
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
 import { rulesPayload } from "../../entities/rules/rules-workspace.test";
-import { dashboardPayload } from "../../../tests/fixtures";
+import {
+  exploreBrowsePayload,
+  exploreDetailPayload,
+  exploreOptionsPayload,
+} from "../../../tests/fixtures";
 import { renderApp } from "../../../tests/utils";
 
-/** One bounded read stub: a real Dashboard document plus another page's reads. */
+/** One bounded read stub: the real Explore contract plus another page's reads. */
 function stubShellReads(): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
-      const payload = String(input).includes("/api/v1/dashboard")
-        ? dashboardPayload
-        : rulesPayload;
+      const url = String(input);
+      const payload = url.includes("/api/v1/explore/options")
+        ? exploreOptionsPayload
+        : url.includes("/api/v1/explore/browse")
+          ? exploreBrowsePayload
+          : url.includes("/api/v1/explore/")
+            ? exploreDetailPayload
+            : rulesPayload;
       return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -70,9 +79,9 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/dashboard");
+    const { router } = renderApp("/ui-v2/explore");
 
-    await screen.findByRole("heading", { name: "Dashboard" });
+    await screen.findByRole("heading", { name: "探索" });
     const shellSurface = document.querySelector<HTMLElement>(
       '[data-main-page="home"]',
     );
@@ -139,8 +148,8 @@ describe("AppShell", () => {
   it("lands on the last requested sidebar page after rapid navigation", async () => {
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/dashboard");
-    await screen.findByRole("heading", { name: "Dashboard" });
+    const { router } = renderApp("/ui-v2/explore");
+    await screen.findByRole("heading", { name: "探索" });
 
     // Real Route/Query state still decides the page; the presentation layer
     // only follows the identity that ultimately arrives, so an interrupted
@@ -163,8 +172,8 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/dashboard");
-    await screen.findByRole("heading", { name: "Dashboard" });
+    const { router } = renderApp("/ui-v2/explore");
+    await screen.findByRole("heading", { name: "探索" });
     const surface = document.querySelector<HTMLElement>(
       '[data-main-page="home"]',
     );
@@ -195,10 +204,10 @@ describe("AppShell", () => {
     // actually arrived, and its entry still settles rather than lingering.
     await act(async () => {
       void router.navigate({ to: "/storage" });
-      void router.navigate({ to: "/dashboard" });
+      void router.navigate({ to: "/explore" });
     });
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/dashboard"),
+      expect(router.history.location.pathname).toBe("/ui-v2/explore"),
     );
     expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
     expect(document.querySelector("[data-main-page]")).toBe(surface);
@@ -219,7 +228,7 @@ describe("AppShell", () => {
       "aria-expanded",
       "true",
     );
-    expect(screen.getByRole("link", { name: /Overview/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: /Explore/ })).toBeVisible();
   });
 
   it("does not render the unsupported system-storage capacity block", async () => {

@@ -162,7 +162,7 @@ test("removed Scan deep links render the ordinary not-found route", async ({
   await page.getByRole("link", { name: "Connect API token" }).click();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
   expect(
     apiRequests.filter((url) => url.includes("/api/v1/manual-actions")).length,
   ).toBe(0);

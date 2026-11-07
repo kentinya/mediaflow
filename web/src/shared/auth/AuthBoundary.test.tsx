@@ -3,6 +3,10 @@ import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+import {
+  DEFAULT_BROWSE_FILTERS,
+  browseContextId,
+} from "../../features/explore/explore-query";
 
 const TOKEN = "boundary-connect-token";
 
@@ -46,10 +50,10 @@ describe("AuthBoundary", () => {
     expect(authStore.getIntendedPath()).toBeNull();
   });
 
-  it("redirects an unauthenticated Dashboard deep entry and preserves /dashboard", async () => {
-    renderApp("/ui-v2/dashboard");
+  it("redirects an unauthenticated Explore deep entry and preserves /explore", async () => {
+    renderApp("/ui-v2/explore");
     expect(await screen.findByLabelText("API token")).toBeVisible();
-    expect(authStore.getIntendedPath()).toBe("/dashboard");
+    expect(authStore.getIntendedPath()).toBe("/explore");
     expect(
       await screen.findByRole("heading", { name: "V2 entry" }),
     ).toBeVisible();
@@ -147,24 +151,32 @@ describe("AuthBoundary", () => {
     );
   });
 
-  it("clears a rejected dashboard authority in place and retains the intended route", async () => {
+  it("clears a rejected explore authority in place and retains the intended route", async () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
-    authStore.setIntendedPath("/dashboard");
-    const { queryClient } = renderApp("/ui-v2/dashboard");
+    authStore.setIntendedPath("/explore");
+    const { queryClient } = renderApp("/ui-v2/explore");
     // The 401 clears the rejected principal and its query cache while the
     // operator stays on the route behind a bounded unauthorized state; the
-    // intended /dashboard destination survives for explicit re-entry.
+    // intended /explore destination survives for explicit re-entry. The
+    // upstream/provider failure families are separate codes and never reach
+    // this authority transition.
     expect(
-      await screen.findByRole("heading", { name: "Not authorized" }),
+      await screen.findByRole("heading", { name: "身份被拒绝" }),
     ).toBeVisible();
     expect(authStore.getToken()).toBeNull();
     expect(authStore.isRejected()).toBe(true);
-    expect(authStore.getIntendedPath()).toBe("/dashboard");
-    // The authenticated dashboard query state was cleared from the cache.
-    expect(queryClient.getQueryData(["dashboard", 10])).toBeUndefined();
-    // The rejected read was not automatically replayed.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(authStore.getIntendedPath()).toBe("/explore");
+    // The authenticated explore query state was cleared from the cache.
+    const exploreKey = [
+      "explore",
+      browseContextId(DEFAULT_BROWSE_FILTERS),
+    ] as const;
+    expect(queryClient.getQueryData(exploreKey)).toBeUndefined();
+    // The initial homepage opens exactly its own two reads (browse and
+    // options); the rejected read is not automatically replayed once the
+    // authority is cleared and the queries are disabled.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("filters raw query keys on 401 and only retains allowed Storage Files state", async () => {

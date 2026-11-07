@@ -28,7 +28,7 @@ test("a Unicode principal can admit and reconcile a batch after reload", async (
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "探索", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   const batchRun = page.getByRole("button", {

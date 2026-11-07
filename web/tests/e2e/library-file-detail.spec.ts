@@ -193,7 +193,7 @@ test("retired FileIndex catalog and detail routes render the bounded not-found s
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Return to Overview" }),
+    page.getByRole("link", { name: "Return to Explore" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "FileIndex record" }),

@@ -2,7 +2,7 @@
  * Local fake API + static server for the minimal Playwright browser path.
  *
  * It serves the built V2 artifact from web/dist under /ui-v2/ and fake
- * /api/v1/dashboard, /api/v1/system/status, /api/v1/file-index and
+ * /api/v1/explore/*, /api/v1/system/status, /api/v1/file-index and
  * /api/v1/storage/files GET
  * documents that mirror the existing Python contracts. Every unsupported
  * method is rejected with 405; no production credentials, media, Storage or
@@ -157,56 +157,124 @@ function bumpTimestamp(value) {
   return new Date(base + 60_000).toISOString();
 }
 
-const DASHBOARD_SNAPSHOT = {
-  as_of: "2026-08-22T12:00:00+00:00",
-  resource_libraries: 1,
-  media_libraries: 1,
-  tasks: {
-    total: 4,
-    pending: 1,
-    running: 1,
-    completed: 1,
-    partial_success: 0,
-    failed: 1,
-    cancelled: 0,
-    paused: 0,
-  },
-  jobs: {
-    total: 2,
-    pending: 1,
-    running: 0,
-    completed: 1,
-    failed: 0,
-    cancelled: 0,
-  },
-  pending_confirmations: 0,
-  pending_metadata_reviews: 1,
-  pending_classification_reviews: 0,
-  dead_letter_notifications: 0,
-  recent_failures: [
-    {
-      kind: "job",
-      identifier: "job-005",
-      status: "failed",
-      occurred_at: "2026-08-22T11:58:00+00:00",
-      category: "processing_error",
-    },
-    {
-      kind: "task",
-      identifier: "task-004",
-      status: "failed",
-      occurred_at: "2026-08-22T11:57:00+00:00",
-      category: "task_failed",
-    },
-    {
-      kind: "notification",
-      identifier: "delivery-e2e-1",
-      status: "dead-letter",
-      occurred_at: "2026-08-22T11:56:00+00:00",
-      category: "delivery_failed",
-    },
+const EXPLORE_GENRES = {
+  movie: [
+    { id: 28, name: "动作" },
+    { id: 878, name: "科幻" },
+    { id: 18, name: "剧情" },
+    { id: 35, name: "喜剧" },
+    { id: 10749, name: "爱情" },
+  ],
+  tv: [
+    { id: 10759, name: "动作与冒险" },
+    { id: 16, name: "动画" },
+    { id: 18, name: "剧情" },
+    { id: 35, name: "喜剧" },
+    { id: 10765, name: "科幻与奇幻" },
   ],
 };
+
+const EXPLORE_LANGUAGES = [
+  { code: "zh", name: "中文" },
+  { code: "en", name: "英语" },
+  { code: "ja", name: "日语" },
+  { code: "ko", name: "韩语" },
+];
+
+/** Deliberate fixed stems: one long Chinese title and honest unrated works. */
+const EXPLORE_TITLE_STEMS = {
+  movie: [
+    "深空回声",
+    "城市边缘的光",
+    "沉默的第十二个夏天",
+    "在所有被命名的河流都干涸之前我们仍然记得那座灯塔与归途",
+    "午夜法庭",
+    "纸飞机计划",
+    "低语山谷",
+    "第二次日落",
+  ],
+  tv: [
+    "北岸列车",
+    "未完成的交响",
+    "山海邮局",
+    "漫长的一致",
+    "午夜厨房",
+    "昨日星球",
+    "孤岛来信",
+    "漫长的春天",
+  ],
+};
+
+/** Three pages of movie works and two pages of TV works, deterministic. */
+const EXPLORE_WORK_COUNTS = { movie: 45, tv: 34 };
+
+const EXPLORE_WORKS = Object.fromEntries(
+  Object.keys(EXPLORE_WORK_COUNTS).map((mediaType) => {
+    const stems = EXPLORE_TITLE_STEMS[mediaType];
+    const genres = EXPLORE_GENRES[mediaType];
+    const works = Array.from(
+      { length: EXPLORE_WORK_COUNTS[mediaType] },
+      (_, index) => {
+        const cycle = Math.floor(index / stems.length);
+        const title =
+          cycle === 0
+            ? stems[index]
+            : `${stems[index % stems.length]} 第 ${cycle + 1} 部`;
+        const rated = index % 9 !== 7;
+        const year = 1995 + ((index * 3) % 30);
+        return {
+          provider: "tmdb",
+          providerId: String(index + 1),
+          mediaType,
+          title,
+          originalTitle: `Original ${title}`,
+          year,
+          releaseDate: `${year}-${String((index % 9) + 1).padStart(2, "0")}-1${index % 9}`,
+          voteAverage: rated ? 5 + ((index * 13) % 45) / 10 : null,
+          voteCount: rated ? 120 + index * 53 : 0,
+          // No image references in the Node fake path: the poster placeholder
+          // journey stays fully offline, while the Python harness serves real
+          // fixture posters through a fixed-host interception.
+          posterPath: null,
+          backdropPath: null,
+          genreIds: [
+            genres[index % genres.length].id,
+            genres[(index + 2) % genres.length].id,
+          ],
+          originalLanguage:
+            EXPLORE_LANGUAGES[index % EXPLORE_LANGUAGES.length].code,
+        };
+      },
+    );
+    return [mediaType, works];
+  }),
+);
+
+const EXPLORE_PAGE_SIZE = 20;
+
+function explorePageOf(mediaType, works, page, applied) {
+  const totalResults = works.length;
+  const totalPages = Math.max(1, Math.ceil(totalResults / EXPLORE_PAGE_SIZE));
+  return {
+    provider: "tmdb",
+    mediaType,
+    page,
+    totalPages,
+    totalResults,
+    hasMore: page * EXPLORE_PAGE_SIZE < totalResults,
+    pageLimit: 500,
+    applied,
+    items: works.slice(
+      (page - 1) * EXPLORE_PAGE_SIZE,
+      page * EXPLORE_PAGE_SIZE,
+    ),
+  };
+}
+
+function explorePageNumber(raw) {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 500 ? parsed : 1;
+}
 
 // --- Operations fake data ---
 
@@ -4644,6 +4712,134 @@ function manualSession(req) {
   return null;
 }
 
+/**
+ * The bounded Explore read family of the real Python contract: `OPTIONS`
+ * catalogs, one browse page, one search page and one exact work detail.
+ * Every answer mirrors the strict normalized shapes (`page`, `applied`,
+ * `items`, `pageLimit`, `total*`) so the shipped V2 asset can run its whole
+ * journey against documented read endpoints only.
+ */
+function serveExplore(res, url) {
+  if (url.pathname === "/api/v1/explore/options") {
+    const mediaType =
+      url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
+    sendJson(res, 200, {
+      provider: "tmdb",
+      mediaType,
+      genres: EXPLORE_GENRES[mediaType],
+      languages: EXPLORE_LANGUAGES,
+    });
+    return;
+  }
+  if (url.pathname === "/api/v1/explore/search") {
+    const mediaType =
+      url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
+    const query = url.searchParams.get("query") ?? "";
+    const page = explorePageNumber(url.searchParams.get("page"));
+    const needle = query.trim().toLowerCase();
+    const matches = EXPLORE_WORKS[mediaType].filter((work) => {
+      return (
+        work.title.toLowerCase().includes(needle) ||
+        work.originalTitle.toLowerCase().includes(needle)
+      );
+    });
+    sendJson(
+      res,
+      200,
+      explorePageOf(mediaType, matches, page, { mediaType, page, query }),
+    );
+    return;
+  }
+  if (url.pathname === "/api/v1/explore/browse") {
+    const mediaType =
+      url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
+    const page = explorePageNumber(url.searchParams.get("page"));
+    const sort = url.searchParams.get("sort") ?? "popular";
+    const applied = { mediaType, sort, page };
+    const genreId = url.searchParams.get("genreId");
+    const originalLanguage = url.searchParams.get("originalLanguage");
+    const year = url.searchParams.get("year");
+    const minRating = url.searchParams.get("minRating");
+    const minVotes = url.searchParams.get("minVotes");
+    let works = [...EXPLORE_WORKS[mediaType]];
+    if (genreId !== null) {
+      applied.genreId = Number(genreId);
+      works = works.filter((work) => work.genreIds.includes(Number(genreId)));
+    }
+    if (originalLanguage !== null) {
+      applied.originalLanguage = originalLanguage;
+      works = works.filter(
+        (work) => work.originalLanguage === originalLanguage,
+      );
+    }
+    if (year !== null) {
+      applied.year = Number(year);
+      works = works.filter((work) => work.year === Number(year));
+    }
+    if (minRating !== null) {
+      applied.minRating = Number(minRating);
+      works = works.filter(
+        (work) =>
+          work.voteAverage !== null && work.voteAverage >= Number(minRating),
+      );
+    }
+    if (minVotes !== null) {
+      applied.minVotes = Number(minVotes);
+      works = works.filter((work) => work.voteCount >= Number(minVotes));
+    }
+    if (sort === "rating") {
+      works.sort((a, b) => (b.voteAverage ?? -1) - (a.voteAverage ?? -1));
+    } else if (sort === "date") {
+      works.sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
+    }
+    sendJson(res, 200, explorePageOf(mediaType, works, page, applied));
+    return;
+  }
+  const detailMatch = url.pathname.match(
+    /^\/api\/v1\/explore\/(movie|tv)\/([1-9][0-9]*)$/,
+  );
+  if (detailMatch !== null) {
+    const mediaType = detailMatch[1];
+    const providerId = detailMatch[2];
+    const work = EXPLORE_WORKS[mediaType].find(
+      (candidate) => candidate.providerId === providerId,
+    );
+    if (work === undefined) {
+      sendJson(res, 404, {
+        error: { code: "not_found", message: "work not found" },
+      });
+      return;
+    }
+    const genreNames = work.genreIds.map(
+      (id) =>
+        EXPLORE_GENRES[mediaType].find((genre) => genre.id === id)?.name ?? "",
+    );
+    sendJson(res, 200, {
+      provider: "tmdb",
+      providerId: work.providerId,
+      mediaType: work.mediaType,
+      title: work.title,
+      originalTitle: work.originalTitle,
+      year: work.year,
+      releaseDate: work.releaseDate,
+      firstAirDate: mediaType === "tv" ? work.releaseDate : null,
+      voteAverage: work.voteAverage,
+      voteCount: work.voteCount,
+      genres: genreNames,
+      overview: `${work.title}是本假服务为探索旅程提供的有界作品简介,用于验证详情卡字段、外链与缺图占位的诚实呈现。`,
+      runtime:
+        mediaType === "movie" ? 90 + (Number(work.providerId) % 60) : null,
+      numberOfSeasons:
+        mediaType === "tv" ? 1 + (Number(work.providerId) % 6) : null,
+      posterPath: null,
+      backdropPath: null,
+      externalUrl: `https://www.themoviedb.org/${mediaType}/${work.providerId}`,
+    });
+    return;
+  }
+  sendJson(res, 404, { error: { code: "not_found" } });
+}
+
 function sendJson(res, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
   res.writeHead(status, {
@@ -8921,7 +9117,16 @@ const server = createServer(async (req, res) => {
     url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
   }
 
-  if (url.pathname === "/api/v1/dashboard") {
+  const explorePath =
+    url.pathname === "/api/v1/explore/options" ||
+    url.pathname === "/api/v1/explore/browse" ||
+    url.pathname === "/api/v1/explore/search" ||
+    /^\/api\/v1\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url.pathname);
+  if (explorePath) {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
     if (LIMITED_TOKENS.has(token)) {
       sendJson(res, 403, {
         error: {
@@ -8943,7 +9148,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 200, DASHBOARD_SNAPSHOT);
+    serveExplore(res, url);
     return;
   }
   if (url.pathname === "/api/v1/system/status") {

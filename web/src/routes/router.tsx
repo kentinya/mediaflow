@@ -7,8 +7,9 @@ import {
   Outlet,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
+import { ExplorePage } from "../features/explore/ExplorePage";
+import { parseExploreDetailToken } from "../entities/explore/explore";
 import { MigrationPage } from "../features/migration/MigrationPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { StorageManagementPage } from "../features/storage/StorageManagementPage";
@@ -60,7 +61,7 @@ function NotFoundRoute() {
         area to continue.
       </p>
       <div className="mf-actions">
-        <Link to="/dashboard">Return to Overview</Link>
+        <Link to="/explore">Return to Explore</Link>
       </div>
     </StatusBanner>
   );
@@ -96,10 +97,22 @@ const entryRoute = createRoute({
   component: EntryPage,
 });
 
-const dashboardRoute = createRoute({
+/**
+ * The default connected homepage. The optional `detail` search param opens
+ * one exact work's detail card in-place: it is bounded to `movie|tv` plus a
+ * positive work ID, so an arbitrary or tampered value simply renders the
+ * plain list instead of a detail. The retired `/dashboard` address has no
+ * route, redirect or alias and lands on the ordinary not-found component.
+ */
+const exploreRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "dashboard",
-  component: DashboardPage,
+  path: "explore",
+  validateSearch: (search: Record<string, unknown>): { detail?: string } => {
+    const parsed = parseExploreDetailToken(search["detail"]);
+    if (parsed === null) return {};
+    return { detail: `${parsed.mediaType}-${parsed.providerId}` };
+  },
+  component: ExplorePage,
 });
 
 const retiredLibraryRoute = createRoute({
@@ -303,7 +316,7 @@ const rulesEditRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   entryRoute,
-  dashboardRoute,
+  exploreRoute,
   retiredLibraryRoute,
   retiredLibraryFilesRoute,
   mediaLibraryFilesRoute,

@@ -30,8 +30,8 @@ export function MigrationPage() {
         >
           Open current Web UI
         </a>
-        <Link className="mf-button mf-button-secondary" to="/dashboard">
-          Return to Overview
+        <Link className="mf-button mf-button-secondary" to="/explore">
+          Return to Explore
         </Link>
       </div>
     </StatusBanner>

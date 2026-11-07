@@ -78,6 +78,25 @@ describe("retired Library routes", () => {
   });
 });
 
+describe("retired Dashboard route", () => {
+  it("answers the removed default address with the ordinary not-found page", async () => {
+    // Slice 51 RO-1: `/ui-v2/dashboard` keeps no route, redirect, alias or
+    // retirement notice. The React not-found component owns it (the Python
+    // SPA fallback still serves index.html for a deep link, which is the
+    // client layer's job, not proof the old page exists), and mounting it
+    // starts no read at all.
+    stubJson({ error: { code: "not_found" } }, 404);
+    authStore.setToken("route-separation-token");
+    renderApp("/ui-v2/dashboard");
+
+    expect(
+      await screen.findByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    expect(document.body.textContent ?? "").not.toMatch(/Dashboard/);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
+
 describe("retired arrange-preview route", () => {
   it("answers the removed plan destination with the ordinary not-found page", async () => {
     // The independent plan/Preview destination is gone. An old browser address

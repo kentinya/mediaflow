@@ -10,7 +10,9 @@ import { expect, test, type Page } from "@playwright/test";
  * Covered journeys:
  * - Direct unauthenticated deep entry redirects to the in-shell connection
  *   boundary without any API request.
- * - Root entry connects deterministically to Overview/Dashboard.
+ * - The retired `/ui-v2/dashboard` address is an ordinary React not-found
+ *   (the Python SPA HTML fallback layer) and starts no API request.
+ * - Root entry connects deterministically to the Explore homepage.
  * - A real deep link connects back to that exact allowlisted route.
  * - Refresh proves memory-only semantics and safe reconnection.
  * - Disconnect clears token, intent and cache without hidden retry.
@@ -26,45 +28,6 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const EXPIRED_TOKEN = "e2e-expired-token";
 const LIMITED_TOKEN = "e2e-limited-token";
 
-/** Wire-format snapshot mirroring the fake API's /api/v1/dashboard response. */
-const DASHBOARD_SNAPSHOT = {
-  as_of: "2026-08-22T12:00:00+00:00",
-  resource_libraries: 1,
-  media_libraries: 1,
-  files: { total: 12, ready: 9, unstable: 1, missing: 1, errors: 1 },
-  tasks: {
-    total: 4,
-    pending: 1,
-    running: 1,
-    completed: 1,
-    partial_success: 0,
-    failed: 1,
-    cancelled: 0,
-    paused: 0,
-  },
-  jobs: {
-    total: 2,
-    pending: 1,
-    running: 0,
-    completed: 1,
-    failed: 0,
-    cancelled: 0,
-  },
-  pending_confirmations: 0,
-  pending_metadata_reviews: 1,
-  pending_classification_reviews: 0,
-  dead_letter_notifications: 0,
-  recent_failures: [
-    {
-      kind: "job",
-      identifier: "job-e2e-1",
-      status: "failed",
-      occurred_at: "2026-08-22T11:58:00+00:00",
-      category: "processing_error",
-    },
-  ],
-};
-
 function apiRequestsOf(page: Page): string[] {
   const seen: string[] = [];
   page.on("request", (request) => {
@@ -75,11 +38,31 @@ function apiRequestsOf(page: Page): string[] {
   return seen;
 }
 
+function exploreReadsOf(page: Page): string[] {
+  const seen: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/explore/")) {
+      seen.push(request.url());
+    }
+  });
+  return seen;
+}
+
+function exploreAuthorizationOf(page: Page): string[] {
+  const seen: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/explore/")) {
+      seen.push(request.headers()["authorization"] ?? "");
+    }
+  });
+  return seen;
+}
+
 test("direct deep entry redirects to the in-shell connection boundary without an API request", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/dashboard");
+  await page.goto("/ui-v2/explore");
   // Shell context is present on the connection boundary.
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect(page.getByText("MediaFlow", { exact: true })).toBeVisible();
@@ -93,15 +76,45 @@ test("direct deep entry redirects to the in-shell connection boundary without an
   await expect.poll(() => apiRequests.length, { timeout: 3_000 }).toBe(0);
 });
 
-test("connect from root opens Overview/Dashboard and stays oriented", async ({
+test("the retired Dashboard address is an ordinary not-found layer, not a page", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  // The Python SPA-safe static serve still answers 200 with index.html for the
+  // deep link (compatibility of the asset serve, not of the removed page);
+  // the React not-found layer owns the address with no redirect, no alias and
+  // no retirement copy, and starts no read at all.
+  const fallback = await page.request.get("/ui-v2/dashboard");
+  expect(fallback.status()).toBe(200);
+  expect(fallback.headers()["content-type"]).toContain("text/html");
+
+  await page.goto("/ui-v2/dashboard");
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(
+    page.getByRole("link", { name: "Return to Explore" }),
+  ).toBeVisible();
+  await expect.poll(() => apiRequests.length, { timeout: 3_000 }).toBe(0);
+});
+
+test("connect from root opens the Explore homepage and stays oriented", async ({
   page,
 }) => {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByText("Resource libraries")).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
+  // The default browse context is visible: its applied conditions echo and
+  // at least one honest poster card.
+  await expect(page.getByText(/已应用:电影/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /深空回声/ }).first(),
+  ).toBeVisible();
   // Token is absent from DOM after entry.
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
   // Token is absent from every persistent browser surface.
@@ -191,7 +204,9 @@ test("no supported page emits a retired Library address into the DOM", async ({
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
 
   // Task46.3 RO-2: a generic creation URL now guides to ResourceLibrary Files
   // instead of offering another library picker.  Memory-only authority is
@@ -240,7 +255,9 @@ test("refresh keeps memory-only semantics and reconnects to the same supported p
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
 
   // A full reload clears the memory-only store; the current supported path
   // becomes the safe intended destination shown at the connection boundary.
@@ -259,20 +276,24 @@ test("refresh keeps memory-only semantics and reconnects to the same supported p
   // raw-token copy beyond the existing principal-entry interaction.
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
 });
 
 test("disconnect clears token, intent and cache with no hidden retry or redirect", async ({
   page,
 }) => {
-  const apiRequests = apiRequestsOf(page);
+  const exploreReads = exploreReadsOf(page);
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  expect(
-    apiRequests.filter((url) => url.includes("/api/v1/dashboard")),
-  ).toHaveLength(1);
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
+  // The homepage opens exactly its own reads for the default context: one
+  // browse page and one options catalog.
+  await expect.poll(() => exploreReads.length).toBe(2);
 
   // Disconnect from the shell returns to the entry boundary.
   await page.getByRole("button", { name: "Disconnect" }).click();
@@ -280,52 +301,40 @@ test("disconnect clears token, intent and cache with no hidden retry or redirect
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(page.getByText("API token active in memory")).toHaveCount(0);
   // No request is replayed after disconnect.
-  await expect
-    .poll(
-      () =>
-        apiRequests.filter((url) => url.includes("/api/v1/dashboard")).length,
-    )
-    .toBe(1);
+  await expect.poll(() => exploreReads.length).toBe(2);
 
   // Reconnect proves token, intent and cache were fully cleared.
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect
-    .poll(
-      () =>
-        apiRequests.filter((url) => url.includes("/api/v1/dashboard")).length,
-    )
-    .toBe(2);
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => exploreReads.length).toBe(4);
 });
 
 test("401 clears rejected authority and an explicit new credential continues to the same route", async ({
   page,
 }) => {
-  const dashboardRequests: string[] = [];
-  page.on("request", (request) => {
-    if (request.url().includes("/api/v1/dashboard")) {
-      dashboardRequests.push(request.headers()["authorization"] ?? "");
-    }
-  });
+  const exploreAuthorization = exploreAuthorizationOf(page);
 
-  // Deep entry to Dashboard so the intended route is the exact destination.
-  await page.goto("/ui-v2/dashboard");
+  // Deep entry to Explore so the intended route is the exact destination.
+  await page.goto("/ui-v2/explore");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(EXPIRED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
   // The 401 clears the rejected authority and query cache in place; the
   // operator stays on the intended route behind a bounded unauthorized state.
-  await expect(
-    page.getByRole("heading", { name: "Not authorized" }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(page.getByRole("heading", { name: "身份被拒绝" })).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
   await expect(page.getByText("API token active in memory")).toHaveCount(0);
   await expect(page.getByText(EXPIRED_TOKEN)).toHaveCount(0);
-  // The rejected read was not automatically replayed.
-  await expect.poll(() => dashboardRequests.length).toBe(1);
-  expect(dashboardRequests[0]).toBe(`Bearer ${EXPIRED_TOKEN}`);
+  // The rejected reads were not automatically replayed: browse + options.
+  await expect.poll(() => exploreAuthorization.length).toBe(2);
+  expect(exploreAuthorization.slice(0, 2)).toEqual([
+    `Bearer ${EXPIRED_TOKEN}`,
+    `Bearer ${EXPIRED_TOKEN}`,
+  ]);
 
   // Explicit re-entry with a fresh credential continues to the same route.
   await page
@@ -334,10 +343,17 @@ test("401 clears rejected authority and an explicit new credential continues to 
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByText("Resource libraries")).toBeVisible();
-  await expect.poll(() => dashboardRequests.length).toBe(2);
-  expect(dashboardRequests[1]).toBe(`Bearer ${VIEWER_TOKEN}`);
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /深空回声/ }).first(),
+  ).toBeVisible();
+  await expect.poll(() => exploreAuthorization.length).toBe(4);
+  expect(exploreAuthorization.slice(2)).toEqual([
+    `Bearer ${VIEWER_TOKEN}`,
+    `Bearer ${VIEWER_TOKEN}`,
+  ]);
 });
 
 test("403 is visibly distinct from 401 and retains the authenticated principal", async ({
@@ -347,13 +363,15 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
-  await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(
-    page.getByText(/does not have permission to view this area/),
+    page.getByRole("heading", { name: "没有读取权限" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Not authorized" }),
-  ).toHaveCount(0);
+    page.getByText("当前 API 主令牌没有读取探索的权限。"),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "身份被拒绝" })).toHaveCount(
+    0,
+  );
   // A 403 does not discard the still-authenticated principal; the shared
   // account control remains available even though the status copy is not
   // part of the reference top-bar composition.
@@ -373,20 +391,22 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
 });
 
 test("an unavailable read shows a bounded state and explicit retry recovers", async ({
   page,
 }) => {
-  const dashboardRequests: string[] = [];
+  const browseAuthorization: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/dashboard")) {
-      dashboardRequests.push(request.headers()["authorization"] ?? "");
+    if (request.url().includes("/api/v1/explore/browse")) {
+      browseAuthorization.push(request.headers()["authorization"] ?? "");
     }
   });
   let attempts = 0;
-  await page.route("**/api/v1/dashboard*", async (route) => {
+  await page.route("**/api/v1/explore/browse*", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({
@@ -396,28 +416,27 @@ test("an unavailable read shows a bounded state and explicit retry recovers", as
       });
       return;
     }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(DASHBOARD_SNAPSHOT),
-    });
+    await route.fallback();
   });
 
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard unavailable" }),
+    page.getByRole("heading", { name: "探索读取失败" }),
   ).toBeVisible();
-  await expect(page.getByText(/currently unavailable/)).toBeVisible();
+  await expect(page.getByText("数据源暂时不可用")).toBeVisible();
+  await expect(page.getByText(/没有产生任何媒体或任务效果/)).toBeVisible();
+  // The raw upstream body never reaches the operator.
   await expect(page.getByText("gateway timeout")).toHaveCount(0);
 
   // Explicit bounded retry repeats only the same read-only request.
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByText("Resource libraries")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /深空回声/ }).first(),
+  ).toBeVisible();
   expect(attempts).toBe(2);
-  expect(dashboardRequests).toEqual([
+  expect(browseAuthorization).toEqual([
     `Bearer ${VIEWER_TOKEN}`,
     `Bearer ${VIEWER_TOKEN}`,
   ]);
@@ -428,7 +447,7 @@ test("a malformed read stays bounded and retry recovers without exposing payload
   page,
 }) => {
   let attempts = 0;
-  await page.route("**/api/v1/dashboard*", async (route) => {
+  await page.route("**/api/v1/explore/browse*", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({
@@ -438,29 +457,23 @@ test("a malformed read stays bounded and retry recovers without exposing payload
       });
       return;
     }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(DASHBOARD_SNAPSHOT),
-    });
+    await route.fallback();
   });
 
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dashboard unavailable" }),
+    page.getByRole("heading", { name: "探索读取失败" }),
   ).toBeVisible();
-  await expect(
-    page.getByText(
-      "The Dashboard response could not be understood as the expected read-only contract.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("接口返回内容与探索契约不符")).toBeVisible();
   // The malformed payload itself is never rendered.
   await expect(page.getByText("payload shape")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /深空回声/ }).first(),
+  ).toBeVisible();
   expect(attempts).toBe(2);
 });
 
@@ -474,7 +487,7 @@ test("unknown route preserves shell context and a meaningful title", async ({
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Return to Overview" }),
+    page.getByRole("link", { name: "Return to Explore" }),
   ).toBeVisible();
   await expect(page.getByText("nonexistent-route")).toHaveCount(0);
 });

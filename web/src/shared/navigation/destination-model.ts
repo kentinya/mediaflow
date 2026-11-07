@@ -22,13 +22,12 @@ import {
 
 const destinationData = [
   {
-    id: "overview",
-    label: "Overview",
-    path: "/dashboard",
-    title: "Overview | MediaFlow",
+    id: "explore",
+    label: "探索",
+    path: "/explore",
+    title: "探索 | MediaFlow",
     availability: "implemented" as const,
-    description:
-      "Read-only operational snapshot for the connected MediaFlow instance.",
+    description: "浏览 TMDB 电影与剧集海报,按条件筛选或按作品名搜索。",
   },
   {
     id: "library",
@@ -355,11 +354,11 @@ export const destinations: readonly Destination[] = destinationData;
 export const shellDestinations: readonly ShellDestination[] = [
   {
     id: "home",
-    label: "首页",
-    ariaLabel: "Overview",
-    path: "/dashboard",
+    label: "探索",
+    ariaLabel: "Explore",
+    path: "/explore",
     icon: "home",
-    isActive: (pathname) => pathname === "/dashboard",
+    isActive: (pathname) => pathname === "/explore",
   },
   {
     id: "files",
@@ -459,7 +458,9 @@ export type ShellPageId =
  */
 export function shellPageForPath(pathname: string): ShellPageId | undefined {
   const path = pathname.replace(/\/$/, "") || "/";
-  if (path === "/dashboard") return "home";
+  // The Explore homepage inherits the primary page identity; the retired
+  // `/dashboard` address is an ordinary unknown route, so it has no identity.
+  if (path === "/explore") return "home";
   if (path === "/resourcelib/files") return "files";
   if (path === "/medialib/files") return "library";
   if (path === "/storage") return "storage";
@@ -1000,6 +1001,18 @@ export function allowlistedDestinationSearch(
       (RULE_FAMILIES as readonly string[]).includes(section)
     ) {
       allowed.set("section", section);
+    }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/explore") {
+    // The Explore detail card (`detail=movie-603`) may travel through an
+    // authentication continuation: one bounded media-type + work-ID token,
+    // nothing else. Refresh/natural recovery is accepted, not promised.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    const detail = current.get("detail");
+    if (detail !== null && /^(?:movie|tv)-[1-9][0-9]{0,9}$/.test(detail)) {
+      allowed.set("detail", detail);
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
