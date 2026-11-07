@@ -398,6 +398,7 @@ def _detail_document(detail: ExploreDetail) -> dict[str, object]:
         "runtime": detail.runtime,
         "firstAirDate": detail.first_air_date,
         "numberOfSeasons": detail.number_of_seasons,
+        "numberOfEpisodes": detail.number_of_episodes,
         "posterPath": detail.poster_path,
         "backdropPath": detail.backdrop_path,
         "externalUrl": detail.external_url,

@@ -20,9 +20,16 @@ The journey must prove zero side effects:
 
 Failure journeys use the real provider failure families through
 ``POST /__harness__/failure``: ``upstream_auth`` makes every upstream read
-answer 401 (provider authentication failure: the API principal must survive)
-and ``search_500`` fails exactly one search read with HTTP 500 before
-self-healing (bounded first-load failure plus explicit retry).
+answer 401 (provider authentication failure: the API principal must survive),
+``search_500`` fails the search read with HTTP 500 before self-healing
+(bounded first-load failure plus explicit retry) and ``genre_503`` fails only
+the filter-catalog read so the options error/recovery entry can be exercised
+next to an already-successful work list.
+
+``/__harness__/stats`` additionally reports every ``vote_count.gte`` floor the
+adapter actually sent (``voteFloors``), so a browser assertion can prove the
+chosen minimum vote count really reached the fake upstream instead of only
+appearing in the echoed query.
 """
 
 from __future__ import annotations
@@ -117,7 +124,7 @@ PAGE_SIZE = 20
 _lock = threading.Lock()
 _failure_mode = "none"
 _search_failures_used = 0
-_stats = {"tmdb_requests": 0, "routes": {}}
+_stats = {"tmdb_requests": 0, "routes": {}, "vote_floors": []}
 
 
 def _works(media_type: str) -> list[dict[str, object]]:
@@ -153,6 +160,7 @@ def _works(media_type: str) -> list[dict[str, object]]:
                 ),
                 "runtime": 90 + index % 60,
                 "seasons": 1 + index % 6,
+                "episodes": (1 + index % 6) * 12 + index % 5,
             }
         )
     return works
@@ -237,6 +245,7 @@ def _detail_payload(media_type: str, work_id: str) -> dict[str, object] | None:
                 **work,
                 "genres": [{"name": name} for name in genre_names if name],
                 "number_of_seasons": work["seasons"],
+                "number_of_episodes": work["episodes"],
             }
     return None
 
@@ -263,6 +272,11 @@ def _failure_response(request: httpx.Request) -> httpx.Response | None:
                 500,
                 json={"status_code": 500, "status_message": "harness upstream fault"},
             )
+        if mode == "genre_503" and "/genre/" in request.url.path:
+            return httpx.Response(
+                503,
+                json={"status_code": 503, "status_message": "harness catalog fault"},
+            )
         return None
 
 
@@ -281,6 +295,11 @@ def fake_tmdb_transport(request: httpx.Request) -> httpx.Response:
     params: dict[str, list[str]] = {}
     for key, value in request.url.params.multi_items():
         params.setdefault(key, []).append(value)
+    floors = params.get("vote_count.gte")
+    if floors:
+        # Evidence: the adapter really sent this floor on this discover route.
+        with _lock:
+            _stats["vote_floors"].append(f"{path}:{floors[0]}")
     if path.startswith("discover/"):
         return httpx.Response(200, json=_list_payload(path.split("/")[1], params))
     if path.startswith("search/"):
@@ -375,6 +394,7 @@ def application(environ, start_response):  # noqa: ANN001, ANN201
                     "failureMode": _failure_mode,
                     "tmdbRequests": _stats["tmdb_requests"],
                     "upstreamRoutes": dict(_stats["routes"]),
+                    "voteFloors": list(_stats["vote_floors"]),
                 }
             database = STATE["database"]
             if isinstance(database, Path):
@@ -384,7 +404,7 @@ def application(environ, start_response):  # noqa: ANN001, ANN201
             length = int(environ.get("CONTENT_LENGTH") or 0)
             payload = json.loads(environ["wsgi.input"].read(length) or b"{}")
             requested = str(payload.get("mode") or "none")
-            if requested not in {"none", "upstream_auth", "search_500"}:
+            if requested not in {"none", "upstream_auth", "search_500", "genre_503"}:
                 document = {"error": "unknown failure mode"}
             else:
                 with _lock:

@@ -23,6 +23,7 @@ import {
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
+import { ExploreAttribution } from "./ExploreAttribution";
 import { ExploreDetailCard } from "./ExploreDetailCard";
 import { ExplorePosterGrid } from "./ExplorePosterGrid";
 import {
@@ -77,7 +78,13 @@ export function ExplorePage() {
   const router = useRouter();
   const exploreSearch = useSearch({ from: "/explore" });
 
+  /** The browse anchor: only browse-mode actions may change it, so exiting
+   * a search always lands on the exact conditions the operator left. */
   const [mediaType, setMediaType] = useState<ExploreMediaType>("movie");
+  /** Search owns its own type: switching it inside search mode never edits
+   * the browse context behind it. */
+  const [searchMediaType, setSearchMediaType] =
+    useState<ExploreMediaType>("movie");
   const [sort, setSort] = useState<ExploreSort>("popular");
   const [genreId, setGenreId] = useState<number | null>(null);
   const [originalLanguage, setOriginalLanguage] = useState<string | null>(null);
@@ -113,7 +120,9 @@ export function ExplorePage() {
   const activeListContext =
     activeKeyword === null
       ? browseContext
-      : searchContextId(mediaType, activeKeyword);
+      : searchContextId(searchMediaType, activeKeyword);
+  /** The type the toolbar shows/switches: browse context vs search context. */
+  const visibleType = activeKeyword === null ? mediaType : searchMediaType;
   const browseEnabled = token !== null && activeKeyword === null;
   const searchEnabled = token !== null && activeKeyword !== null;
 
@@ -122,12 +131,15 @@ export function ExplorePage() {
     enabled: browseEnabled,
   });
   const searchQuery = useInfiniteQuery({
-    ...exploreSearchQuery(token, mediaType, activeKeyword ?? ""),
+    ...exploreSearchQuery(token, searchMediaType, activeKeyword ?? ""),
     enabled: searchEnabled,
   });
   const optionsQuery = useQuery(exploreOptionsQuery(token, mediaType));
   const activeQuery = activeKeyword === null ? browseQuery : searchQuery;
   useAuthorizedReadAuthorityRecovery(activeQuery);
+  // A rejected identity reaches the filter catalog through the shared
+  // authority recovery as well; an upstream credential failure does not.
+  useAuthorizedReadAuthorityRecovery(optionsQuery);
 
   // Bounded Explore cache: the active list context is always the freshest
   // retained entry; idle entries outlive only five minutes (query gcTime).
@@ -173,6 +185,17 @@ export function ExplorePage() {
   }, [detailTarget]);
 
   const options = optionsQuery.data;
+  const optionsFailed = optionsQuery.isError && options === undefined;
+  const optionsLoading =
+    optionsQuery.isPending ||
+    (options === undefined && optionsQuery.isFetching);
+  const optionsError: unknown = optionsFailed ? optionsQuery.error : null;
+  const optionsErrorText =
+    optionsError instanceof ExploreApiError
+      ? optionsError.nextAction === null
+        ? optionsError.message
+        : `${optionsError.message} 下一步:${optionsError.nextAction}`
+      : "筛选选项读取未能完成,作品列表不受影响,本次读取没有产生任何媒体或任务效果。可重新读取当前类型的筛选选项。";
   const pages = activeQuery.data?.pages;
   const items = useMemo(() => flattenExplorePages(pages), [pages]);
   const lastPage = lastExplorePage(pages);
@@ -184,13 +207,24 @@ export function ExplorePage() {
 
   const authCategory =
     firstLoadError instanceof ExploreApiError ? firstLoadError.category : null;
-  const showUnauthorized = authCategory === "unauthorized";
-  const showForbidden = authCategory === "forbidden";
+  const optionsAuthCategory =
+    optionsError instanceof ExploreApiError ? optionsError.category : null;
+  const showUnauthorized =
+    authCategory === "unauthorized" || optionsAuthCategory === "unauthorized";
+  const showForbidden =
+    authCategory === "forbidden" || optionsAuthCategory === "forbidden";
 
   // Genre/language selections are catalog-bound; a new type carries its own
   // catalog, so the applied pair is re-derived from the new type's options and
   // a stale selection can never reach the backend as an illegal combination.
+  // In search mode the type buttons switch only the search: the browse
+  // anchor (type, conditions, loaded pages, scroll) stays untouched so exit
+  // restores exactly what the operator left.
   const switchType = (next: ExploreMediaType) => {
+    if (activeKeyword !== null) {
+      if (next !== searchMediaType) setSearchMediaType(next);
+      return;
+    }
     if (next === mediaType) return;
     setMediaType(next);
     setGenreId(null);
@@ -204,7 +238,13 @@ export function ExplorePage() {
       setSearchError("请输入作品名后再搜索。");
       return;
     }
-    savedScrollRef.current.browse = window.scrollY;
+    // The browse anchor is captured only on the browse → search transition;
+    // later search submissions never overwrite it, and the search starts
+    // from the browse type the operator was reading.
+    if (activeKeyword === null) {
+      savedScrollRef.current.browse = window.scrollY;
+      setSearchMediaType(mediaType);
+    }
     setSearchError(null);
     setActiveKeyword(trimmed);
   };
@@ -353,9 +393,9 @@ export function ExplorePage() {
               key={value}
               type="button"
               className={`mf-explore-type-button${
-                mediaType === value ? " is-active" : ""
+                visibleType === value ? " is-active" : ""
               }`}
-              aria-pressed={mediaType === value}
+              aria-pressed={visibleType === value}
               onClick={() => switchType(value)}
             >
               {EXPLORE_MEDIA_TYPE_LABELS[value]}
@@ -371,18 +411,49 @@ export function ExplorePage() {
         </p>
       ) : (
         <div className="mf-explore-filters">
+          {optionsLoading ? (
+            <p className="mf-explore-options-status" role="status">
+              正在读取筛选选项...
+            </p>
+          ) : null}
+          {optionsError !== null ? (
+            <div className="mf-explore-options-error" role="alert">
+              <p className="mf-explore-options-error-title">筛选选项读取失败</p>
+              <p>{optionsErrorText}</p>
+              <div className="mf-actions">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => void optionsQuery.refetch()}
+                  disabled={optionsQuery.isFetching}
+                >
+                  {optionsQuery.isFetching
+                    ? "正在重新读取..."
+                    : "重新读取筛选选项"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <div className="mf-filter-field">
             <label htmlFor="explore-genre">题材</label>
             <select
               id="explore-genre"
               value={genreId === null ? "" : String(genreId)}
+              disabled={options === undefined}
+              aria-busy={optionsLoading}
               onChange={(event) =>
                 setGenreId(
                   event.target.value === "" ? null : Number(event.target.value),
                 )
               }
             >
-              <option value="">全部题材</option>
+              <option value="">
+                {options === undefined
+                  ? optionsFailed
+                    ? "筛选选项读取失败"
+                    : "读取中..."
+                  : "全部题材"}
+              </option>
               {(options?.genres ?? []).map((genre) => (
                 <option key={genre.id} value={String(genre.id)}>
                   {genre.name}
@@ -395,13 +466,21 @@ export function ExplorePage() {
             <select
               id="explore-language"
               value={originalLanguage ?? ""}
+              disabled={options === undefined}
+              aria-busy={optionsLoading}
               onChange={(event) =>
                 setOriginalLanguage(
                   event.target.value === "" ? null : event.target.value,
                 )
               }
             >
-              <option value="">全部语言</option>
+              <option value="">
+                {options === undefined
+                  ? optionsFailed
+                    ? "筛选选项读取失败"
+                    : "读取中..."
+                  : "全部语言"}
+              </option>
               {(options?.languages ?? []).map((language) => (
                 <option key={language.code} value={language.code}>
                   {language.name} ({language.code})
@@ -539,6 +618,8 @@ export function ExplorePage() {
           onClose={closeDetail}
         />
       ) : null}
+
+      <ExploreAttribution />
     </section>
   );
 }

@@ -111,6 +111,7 @@ class FakeExploreProvider:
             100 if media_type is MediaType.MOVIE else None,
             None if media_type is MediaType.MOVIE else "2019-01-15",
             None if media_type is MediaType.MOVIE else 2,
+            None if media_type is MediaType.MOVIE else 24,
             "/alpha.jpg",
             "/alpha-bg.jpg",
             f"https://www.themoviedb.org/{media_type.value}/{provider_id}",
@@ -234,6 +235,12 @@ class ExploreApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(detail["title"], "Alpha Movie")
         self.assertEqual(detail["externalUrl"], "https://www.themoviedb.org/movie/603")
+        # The nullable episode count runs through the wire contract as-is.
+        self.assertIsNone(detail["numberOfEpisodes"])
+        status, _, show = request(self.api, "/api/v1/explore/tv/603")
+        self.assertEqual(status, 200)
+        self.assertEqual(show["numberOfEpisodes"], 24)
+        self.assertEqual(show["numberOfSeasons"], 2)
 
         browse_calls = [entry for entry in self.provider.calls if entry[0] == "browse"]
         self.assertEqual(browse_calls[0][1].sort, ExploreSort.RATING)

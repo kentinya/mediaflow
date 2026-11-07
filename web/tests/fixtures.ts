@@ -157,6 +157,7 @@ export const exploreDetailPayload: Record<string, unknown> = {
   runtime: 136,
   firstAirDate: null,
   numberOfSeasons: null,
+  numberOfEpisodes: null,
   posterPath: "/matrix.jpg",
   backdropPath: "/matrix-bg.jpg",
   externalUrl: "https://www.themoviedb.org/movie/603",
@@ -172,5 +173,6 @@ export const exploreTvDetailPayload: Record<string, unknown> = {
   firstAirDate: "2019-01-15",
   runtime: null,
   numberOfSeasons: 4,
+  numberOfEpisodes: 42,
   externalUrl: "https://www.themoviedb.org/tv/603",
 };

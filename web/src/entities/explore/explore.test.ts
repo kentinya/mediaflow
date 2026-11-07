@@ -114,10 +114,23 @@ describe("normalizeExploreDetail", () => {
     expect(model.externalUrl).toBe("https://www.themoviedb.org/movie/603");
     expect(model.runtime).toBe(136);
     expect(model.firstAirDate).toBeNull();
+    expect(model.numberOfEpisodes).toBeNull();
 
     const show = normalizeExploreDetail(exploreTvDetailPayload);
     expect(show.numberOfSeasons).toBe(4);
+    expect(show.numberOfEpisodes).toBe(42);
     expect(show.runtime).toBeNull();
+
+    // A TV detail without the episode count stays an honest null;
+    // a wrongly-typed one is malformed, never printed as a number.
+    const missing = clone(exploreTvDetailPayload);
+    delete missing.numberOfEpisodes;
+    expect(normalizeExploreDetail(missing).numberOfEpisodes).toBeNull();
+    const malformed = clone(exploreTvDetailPayload);
+    malformed.numberOfEpisodes = "42集";
+    expect(() => normalizeExploreDetail(malformed)).toThrow(
+      ExploreNormalizationError,
+    );
   });
 
   it.each([

@@ -89,6 +89,8 @@ export interface ExploreDetailModel {
   readonly runtime: number | null;
   readonly firstAirDate: string | null;
   readonly numberOfSeasons: number | null;
+  /** TV total episode count; `null` is an honest missing value. */
+  readonly numberOfEpisodes: number | null;
   readonly posterPath: string | null;
   readonly backdropPath: string | null;
   readonly externalUrl: string;
@@ -388,6 +390,12 @@ export function normalizeExploreDetail(payload: unknown): ExploreDetailModel {
     0,
     10000,
   );
+  const numberOfEpisodes = readOptionalWindow(
+    source,
+    "numberOfEpisodes",
+    0,
+    100000,
+  );
   return {
     provider,
     providerId,
@@ -407,6 +415,7 @@ export function normalizeExploreDetail(payload: unknown): ExploreDetailModel {
     runtime: runtime ?? null,
     firstAirDate: readText(source, "firstAirDate", 40),
     numberOfSeasons: numberOfSeasons ?? null,
+    numberOfEpisodes: numberOfEpisodes ?? null,
     posterPath: readImage(source, "posterPath"),
     backdropPath: readImage(source, "backdropPath"),
     externalUrl,

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { resetExploreContextOrder } from "./explore-query";
@@ -12,6 +18,7 @@ import {
   exploreTvBrowsePayload,
   exploreTvOptionsPayload,
   exploreDetailPayload,
+  exploreTvDetailPayload,
 } from "../../../tests/fixtures";
 
 const TOKEN = "explore-journey-token";
@@ -46,19 +53,42 @@ interface BrowseBehavior {
  * actually requests is recorded, and each answer is steered by the mutable
  * behavior so a failure/recovery sequence happens through the same entry the
  * operator uses (the first-load error panel's own refresh control).
+ *
+ * The default browse/search answers echo exactly the conditions found in the
+ * request URL — the way the real Python `applied` document behaves — so a test
+ * can verify that the displayed conditions and the requested context really
+ * match after mode round trips.
  */
+function conditionsEchoedIn(url: string): Record<string, unknown> {
+  const params = new URL(url, "http://explore.test").searchParams;
+  const applied: Record<string, unknown> = {
+    mediaType: params.get("mediaType") ?? "movie",
+    page: Number(params.get("page") ?? "1"),
+    sort: params.get("sort") ?? "popular",
+  };
+  for (const numeric of ["genreId", "year", "minRating", "minVotes"] as const) {
+    const value = params.get(numeric);
+    if (value !== null) applied[numeric] = Number(value);
+  }
+  const language = params.get("originalLanguage");
+  if (language !== null) applied.originalLanguage = language;
+  return applied;
+}
+
 function stubExploreFetch(): {
   urls: string[];
   count: (needle: string) => number;
   browse: BrowseBehavior | null;
-  search: (() => Response) | null;
-  detail: (() => Response) | null;
+  search: BrowseBehavior | null;
+  detail: BrowseBehavior | null;
+  options: BrowseBehavior | null;
   browseLater: BrowseBehavior | null;
 } {
   const state = {
     browse: null as BrowseBehavior | null,
-    search: null as (() => Response) | null,
-    detail: null as (() => Response) | null,
+    search: null as BrowseBehavior | null,
+    detail: null as BrowseBehavior | null,
+    options: null as BrowseBehavior | null,
     browseLater: null as BrowseBehavior | null,
   };
   const urls: string[] = [];
@@ -68,6 +98,7 @@ function stubExploreFetch(): {
       const url = String(input);
       urls.push(url);
       if (url.startsWith("/api/v1/explore/options")) {
+        if (state.options !== null) return state.options(url);
         return jsonResponse(
           url.includes("mediaType=tv")
             ? exploreTvOptionsPayload
@@ -75,27 +106,47 @@ function stubExploreFetch(): {
         );
       }
       if (url.startsWith("/api/v1/explore/search")) {
-        return state.search?.() ?? jsonResponse(exploreSearchPayload);
+        if (state.search !== null) return state.search(url);
+        const params = new URL(url, "http://explore.test").searchParams;
+        const mediaType = params.get("mediaType") ?? "movie";
+        const base =
+          mediaType === "tv" ? exploreTvBrowsePayload : exploreSearchPayload;
+        return jsonResponse({
+          ...base,
+          applied: {
+            mediaType,
+            page: Number(params.get("page") ?? "1"),
+            query: params.get("query") ?? "",
+          },
+        });
       }
       if (url.startsWith("/api/v1/explore/browse")) {
         const behavior = state.browse ?? state.browseLater;
         if (behavior !== null) return behavior(url);
-        return jsonResponse(
-          url.includes("mediaType=tv")
-            ? exploreTvBrowsePayload
-            : exploreBrowsePayload,
-        );
+        const base = url.includes("mediaType=tv")
+          ? exploreTvBrowsePayload
+          : exploreBrowsePayload;
+        return jsonResponse({
+          ...base,
+          applied: conditionsEchoedIn(url),
+        });
       }
       if (/\/api\/v1\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url)) {
-        return (
-          state.detail?.() ??
-          jsonResponse({
-            ...exploreDetailPayload,
-            providerId: "27205",
-            title: "Inception",
-            externalUrl: "https://www.themoviedb.org/movie/27205",
-          })
-        );
+        if (state.detail !== null) return state.detail(url);
+        if (url.includes("/tv/")) {
+          return jsonResponse({
+            ...exploreTvDetailPayload,
+            providerId: "603",
+            title: "同号剧集",
+            externalUrl: "https://www.themoviedb.org/tv/603",
+          });
+        }
+        return jsonResponse({
+          ...exploreDetailPayload,
+          providerId: "27205",
+          title: "Inception",
+          externalUrl: "https://www.themoviedb.org/movie/27205",
+        });
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }),
@@ -113,14 +164,20 @@ function stubExploreFetch(): {
     get search() {
       return state.search;
     },
-    set search(value: (() => Response) | null) {
+    set search(value: BrowseBehavior | null) {
       state.search = value;
     },
     get detail() {
       return state.detail;
     },
-    set detail(value: (() => Response) | null) {
+    set detail(value: BrowseBehavior | null) {
       state.detail = value;
+    },
+    get options() {
+      return state.options;
+    },
+    set options(value: BrowseBehavior | null) {
+      state.options = value;
     },
     get browseLater() {
       return state.browseLater;
@@ -343,5 +400,196 @@ describe("Explore homepage journey", () => {
     expect(
       within(alert).getByRole("button", { name: "重试第 2 页" }),
     ).toBeVisible();
+  });
+
+  it("restores the browse anchor after a search-mode type switch", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    // Browse anchor: movie + genre 动作 (after the catalog arrives).
+    await screen.findByRole("option", { name: "动作" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "题材" }),
+      "28",
+    );
+    expect(
+      await screen.findByText(/已应用:电影 · 热度优先 · 动作/),
+    ).toBeVisible();
+    const browseCalls = stub.count("/api/v1/explore/browse?");
+
+    // Enter search, then switch the search's own type to TV.
+    await user.type(screen.getByLabelText("作品名搜索"), "matrix");
+    await user.click(screen.getByRole("button", { name: "搜索" }));
+    expect(
+      await screen.findByRole("button", { name: "The Matrix (1999)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/已应用:电影 · 搜索「matrix」/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "剧集" }));
+    expect(
+      await screen.findByRole("button", { name: "同号剧集 (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/已应用:剧集 · 搜索「matrix」/)).toBeVisible();
+    // The browse conditions were never edited by the search-mode switch.
+    expect(screen.queryByRole("combobox", { name: "题材" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "退出搜索" }));
+
+    // Exit restores the exact browse anchor: type, genre, context works.
+    expect(
+      await screen.findByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/已应用:电影 · 热度优先 · 动作/)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "题材" })).toHaveValue("28");
+    expect(screen.queryByText(/搜索模式/)).toBeNull();
+    // The anchor context comes from its own bounded cache, not a new read.
+    expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
+    expect(stub.count("explore/browse?mediaType=tv")).toBe(0);
+  });
+
+  it("keeps a failed filter catalog visible and recoverable beside the list", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.options = () => providerEnvelope("provider_unavailable", 502);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+
+    // The successful work list stays readable while the catalog fails.
+    expect(
+      await screen.findByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("筛选选项读取失败")).toBeVisible();
+    expect(within(alert).getByText(/数据源暂时不可用/)).toBeVisible();
+    expect(
+      within(alert).getByRole("button", { name: "重新读取筛选选项" }),
+    ).toBeVisible();
+    // Not treated as a legitimate empty catalog: the select states the
+    // failure and stays disabled instead of silently offering nothing.
+    const genreSelect = screen.getByRole("combobox", {
+      name: "题材",
+    }) as HTMLSelectElement;
+    expect(genreSelect).toBeDisabled();
+    expect(genreSelect.options[genreSelect.selectedIndex].text).toBe(
+      "筛选选项读取失败",
+    );
+    // An upstream/provider family failure keeps this deployment's identity.
+    expect(authStore.getToken()).toBe(TOKEN);
+    expect(screen.queryByText("身份被拒绝")).toBeNull();
+
+    const browseCalls = stub.count("/api/v1/explore/browse?");
+    stub.options = null;
+    await user.click(screen.getByRole("button", { name: "重新读取筛选选项" }));
+
+    // The recovery re-reads only the current type's catalog.
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    await waitFor(() => expect(genreSelect).toBeEnabled());
+    expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
+    // Real catalog options are back and legal to apply.
+    await user.selectOptions(genreSelect, "28");
+    expect(
+      await screen.findByText(/已应用:电影 · 热度优先 · 动作/),
+    ).toBeVisible();
+  });
+
+  it("shows the TV backdrop and episode counts with honest fallbacks", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    const { router, queryClient } = renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "剧集" }));
+    await user.click(screen.getByRole("button", { name: "同号剧集 (2019)" }));
+    let dialog = await screen.findByRole("dialog");
+    // The real backdrop renders at the fixed w780 rendition.
+    const backdrop = within(dialog).getByAltText("同号剧集 背景图");
+    expect(backdrop).toHaveAttribute("src", expect.stringMatching(/\/w780\//));
+    // Season and total-episode counts of this exact show.
+    expect(within(dialog).getByText("4 季")).toBeVisible();
+    expect(within(dialog).getByText("42 集")).toBeVisible();
+    // The required TMDB notice is reachable inside the card as well.
+    expect(
+      within(dialog).getByText(
+        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+      ),
+    ).toBeVisible();
+
+    // A broken backdrop image drops out while every fact stays readable.
+    fireEvent.error(backdrop);
+    await waitFor(() =>
+      expect(within(dialog).queryByAltText("同号剧集 背景图")).toBeNull(),
+    );
+    expect(within(dialog).getByText("42 集")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "关闭作品详情" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // A TV detail without the episode count shows the honest missing value
+    // (the second exact read is a fresh detail, not the retained first one).
+    queryClient.removeQueries({ queryKey: ["explore", "detail"] });
+    stub.detail = () =>
+      jsonResponse({
+        ...exploreTvDetailPayload,
+        providerId: "603",
+        numberOfEpisodes: null,
+        title: "同号剧集",
+        externalUrl: "https://www.themoviedb.org/tv/603",
+      });
+    await user.click(screen.getByRole("button", { name: "同号剧集 (2019)" }));
+    dialog = await screen.findByRole("dialog");
+    const episodesRow = within(dialog).getByText("集数").parentElement;
+    expect(episodesRow).not.toBeNull();
+    expect(within(episodesRow as HTMLElement).getByText("缺项")).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // A movie detail carries no season/episode rows at all.
+    stub.detail = null;
+    await user.click(screen.getByRole("button", { name: "剧集" }));
+    await user.click(screen.getByRole("button", { name: "电影" }));
+    await user.click(screen.getByRole("button", { name: "Inception (2019)" }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText("集数")).toBeNull();
+    expect(within(dialog).queryByText("季数")).toBeNull();
+    expect(within(dialog).getByText("136 分钟")).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(router.state.location.search.detail).toBeUndefined();
+  });
+
+  it("publishes the TMDB attribution area with the approved logo and notice", async () => {
+    authStore.setToken(TOKEN);
+    stubExploreFetch();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    const attribution = screen.getByRole("region", {
+      name: "数据来源与署名",
+    });
+    expect(attribution).toBeVisible();
+    expect(
+      within(attribution).getByText(
+        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+      ),
+    ).toBeVisible();
+    // The approved logo, served from this origin only.
+    expect(within(attribution).getByAltText("TMDB")).toHaveAttribute(
+      "src",
+      expect.stringContaining("tmdb-logo.svg"),
+    );
+    expect(
+      within(attribution).getByText(/作品数据与图片来自 TMDB/),
+    ).toBeVisible();
+    // The required link-back is real and keyboard reachable.
+    const link = within(attribution).getByRole("link");
+    expect(link).toHaveAttribute("href", "https://www.themoviedb.org");
+    link.focus();
+    expect(link).toHaveFocus();
+    // Notices stay below the journey: the page heading still leads.
+    const heading = screen.getByRole("heading", { name: "探索", level: 1 });
+    expect(heading.compareDocumentPosition(attribution) & 4).toBeTruthy();
   });
 });

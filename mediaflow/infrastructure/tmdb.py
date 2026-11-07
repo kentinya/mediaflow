@@ -651,7 +651,10 @@ class TMDBProvider:
             "include_adult": "false",
             "sort_by": sort_params[query.sort],
         }
-        if query.sort is ExploreSort.RATING:
+        # The vote floor applies to every sort as soon as the operator chose
+        # one; the 100-vote default belongs to the rating sort only. The echo
+        # (``applied``) and the upstream parameter must describe the same read.
+        if query.effective_min_votes is not None:
             params["vote_count.gte"] = str(query.effective_min_votes)
         if query.genre_id is not None:
             params["with_genres"] = str(query.genre_id)
@@ -947,6 +950,7 @@ def _explore_detail(
             genres.append(name)
     runtime = _explore_optional_int(payload, "runtime")
     seasons = _explore_optional_int(payload, "number_of_seasons")
+    episodes = _explore_optional_int(payload, "number_of_episodes")
     first_air = (
         _explore_text(payload, "first_air_date", required=False)
         if media_type is MediaType.TV
@@ -967,6 +971,7 @@ def _explore_detail(
         runtime,
         first_air,
         seasons,
+        episodes,
         safe_image_path(payload.get("poster_path")),
         safe_image_path(payload.get("backdrop_path")),
         f"https://www.themoviedb.org/{media_type.value}/{expected_id}",

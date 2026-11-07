@@ -8528,3 +8528,90 @@ tr[aria-selected="true"] {
     animation: none;
   }
 }
+
+/* Filter catalog read states: a pending or failed options read is visible
+   and recoverable while the successful list and the operator's input stay. */
+.mf-filter-field select:disabled {
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
+  border-color: var(--disabled-line);
+  cursor: not-allowed;
+}
+
+.mf-explore-options-status {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mf-explore-options-error {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.mf-explore-options-error p {
+  margin: 0 0 8px;
+}
+
+.mf-explore-options-error-title {
+  font-weight: 600;
+}
+
+/* TMDB attribution: a small, lower-page source area with the approved local
+   logo and the required notice; never a first-screen banner. */
+.mf-explore-attribution {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 28px 0 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mf-explore-attribution-compact {
+  margin: 4px 0 0;
+  padding-top: 8px;
+  padding-bottom: 4px;
+  border-top: 1px dashed var(--line);
+}
+
+.mf-explore-attribution-logo {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.mf-explore-attribution-logo img {
+  display: block;
+  height: 18px;
+  width: auto;
+}
+
+.mf-explore-attribution-notice,
+.mf-explore-attribution-note {
+  margin: 0;
+  max-width: 64ch;
+  line-height: 1.5;
+}
+
+/* The work's real backdrop spans the detail card above poster and facts. */
+.mf-explore-detail-backdrop {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.mf-explore-detail-backdrop img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--disabled-surface);
+}

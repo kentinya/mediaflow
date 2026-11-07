@@ -14,6 +14,7 @@ import {
   useModalCardExit,
   useModalLayer,
 } from "../../shared/ui/modal-card";
+import { ExploreAttribution } from "./ExploreAttribution";
 import { exploreDetailQuery } from "./explore-query";
 import { EXPLORE_MEDIA_TYPE_LABELS } from "./explore-state";
 
@@ -116,6 +117,7 @@ export function ExploreDetailCard({
   } else if (detail !== undefined) {
     body = (
       <div className="mf-explore-detail-body">
+        <DetailBackdrop path={detail.backdropPath} title={detail.title} />
         <div className="mf-explore-detail-art">
           <DetailPoster
             mediaType={mediaType}
@@ -159,14 +161,24 @@ export function ExploreDetailCard({
                 </dd>
               </div>
             ) : (
-              <div>
-                <dt>季数</dt>
-                <dd>
-                  {detail.numberOfSeasons !== null
-                    ? `${detail.numberOfSeasons} 季`
-                    : "缺项"}
-                </dd>
-              </div>
+              <>
+                <div>
+                  <dt>季数</dt>
+                  <dd>
+                    {detail.numberOfSeasons !== null
+                      ? `${detail.numberOfSeasons} 季`
+                      : "缺项"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>集数</dt>
+                  <dd>
+                    {detail.numberOfEpisodes !== null
+                      ? `${detail.numberOfEpisodes} 集`
+                      : "缺项"}
+                  </dd>
+                </div>
+              </>
             )}
           </dl>
           <p className="mf-explore-detail-overview">
@@ -175,6 +187,7 @@ export function ExploreDetailCard({
           <p className="mf-explore-detail-source">
             信息来自 TMDB,与本地媒体库无关;本页不表示该作品已入库。
           </p>
+          <ExploreAttribution compact />
           <a
             className="mf-explore-detail-link"
             href={detail.externalUrl}
@@ -207,6 +220,32 @@ export function ExploreDetailCard({
     >
       {body}
     </ModalCardShell>
+  );
+}
+
+/**
+ * The work's real backdrop (fixed w780). Missing or failed art simply drops
+ * out: the poster, facts, external link and both close paths stay readable.
+ */
+function DetailBackdrop({
+  path,
+  title,
+}: {
+  readonly path: string | null;
+  readonly title: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = tmdbImageUrl(path, "w780");
+  if (url === null || failed) return null;
+  return (
+    <div className="mf-explore-detail-backdrop">
+      <img
+        src={url}
+        alt={`${title} 背景图`}
+        decoding="async"
+        onError={() => setFailed(true)}
+      />
+    </div>
   );
 }
 

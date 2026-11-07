@@ -361,6 +361,9 @@ class ExploreDetail:
     runtime: int | None = None
     first_air_date: str | None = None
     number_of_seasons: int | None = None
+    #: TV total episode count when the provider publishes one; ``None`` stays
+    #: an honest missing value and is never fabricated from season data.
+    number_of_episodes: int | None = None
     poster_path: str | None = None
     backdrop_path: str | None = None
     external_url: str = ""

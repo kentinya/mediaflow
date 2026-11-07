@@ -165,6 +165,20 @@ def routes_for_movie_browse() -> dict[str, object]:
             "poster_path": "/matrix.jpg",
             "backdrop_path": "/matrix-bg.jpg",
         },
+        "tv/9001": {
+            "id": 9001,
+            "name": "Episode Show",
+            "original_name": "Episode Show",
+            "first_air_date": "2018-01-09",
+            "vote_average": 6.6,
+            "vote_count": 300,
+            "genres": [{"id": 18, "name": "剧情"}],
+            "overview": "剧集简介",
+            "number_of_seasons": 2,
+            "number_of_episodes": 24,
+            "poster_path": "/show9001.jpg",
+            "backdrop_path": "/show9001-bg.jpg",
+        },
     }
 
 
@@ -174,6 +188,47 @@ def make_provider(
     transport = ScriptedTransport(routes)
     config = replace(TMDBConfig(TOKEN), **config_changes)
     return TMDBProvider(TMDBClient(config, transport)), transport
+
+
+def tv_item(identifier: int, name: str, *, votes: float = 7.9, count: int = 90) -> dict:
+    return {
+        "id": identifier,
+        "name": name,
+        "original_name": name,
+        "first_air_date": "2021-07-04",
+        "vote_average": votes,
+        "vote_count": count,
+        "genre_ids": [18],
+        "poster_path": f"/show{identifier}.jpg",
+    }
+
+
+class FilteringDiscoverTransport:
+    """A discover/search stand-in that honours only the parameters it actually
+    received: if a vote floor never reaches the upstream call, the low-vote
+    works come straight back, so the assertion below can only pass when the
+    adapter really sent the condition."""
+
+    def __init__(self, works: list[dict]) -> None:
+        self.works = works
+        self.calls: list[dict[str, object]] = []
+
+    def request(self, method, url, *, params, headers, timeout, max_response_bytes=None):
+        path = url.split("/3/", 1)[-1] if "/3/" in url else url
+        self.calls.append({"path": path, "params": dict(params)})
+        floor = params.get("vote_count.gte")
+        matched = list(self.works)
+        if floor is not None:
+            matched = [work for work in matched if work["vote_count"] >= int(floor)]
+        return FakeResponse(
+            200,
+            {"page": 1, "total_pages": 1, "total_results": len(matched), "results": matched},
+        )
+
+
+def make_filtering(works: list[dict]) -> tuple[TMDBProvider, FilteringDiscoverTransport]:
+    transport = FilteringDiscoverTransport(works)
+    return TMDBProvider(TMDBClient(TMDBConfig(TOKEN), transport)), transport
 
 
 def make_with_sequence(responses: list[object]):
@@ -281,6 +336,71 @@ class TMDBExploreAdapterTests(unittest.TestCase):
         self.assertEqual(params["sort_by"], "first_air_date.desc")
         self.assertEqual(params["first_air_date_year"], "2019")
 
+    def test_vote_floor_reaches_upstream_for_every_sort_and_gates_results(self) -> None:
+        """A chosen minimum vote count is honoured by popular/date sorts too,
+        for both media types, and the returned works really satisfy it."""
+
+        pools = {
+            MediaType.MOVIE: [
+                movie_item(1, "Low", count=120),
+                movie_item(2, "Unrated", votes=0, count=0),
+                movie_item(3, "Kept2000", count=2000),
+                movie_item(4, "Kept5000", count=5000),
+            ],
+            MediaType.TV: [
+                tv_item(11, "Low Show", count=173),
+                tv_item(12, "Kept Show", count=4100),
+            ],
+        }
+        for media_type in (MediaType.MOVIE, MediaType.TV):
+            for sort in ExploreSort:
+                with self.subTest(media_type=media_type, sort=sort):
+                    provider, transport = make_filtering(pools[media_type])
+                    page = provider.browse(ExploreBrowseQuery(media_type, sort, min_votes=2000))
+                    params = transport.calls[-1]["params"]
+                    # The upstream request itself carries the floor...
+                    self.assertEqual(params["vote_count.gte"], "2000")
+                    self.assertIn("discover", str(transport.calls[-1]["path"]))
+                    # ...so every returned work satisfies it and the low-vote
+                    # and unrated works never came back.
+                    self.assertTrue(page.items)
+                    self.assertTrue(
+                        all(item.vote_count >= 2000 for item in page.items),
+                        [item.vote_count for item in page.items],
+                    )
+                    self.assertTrue(
+                        all(item.vote_count > 0 for item in page.items),
+                        "an unrated work slipped through the requested floor",
+                    )
+                    self.assertEqual(
+                        page.total_results,
+                        sum(1 for work in pools[media_type] if work["vote_count"] >= 2000),
+                    )
+
+    def test_vote_floor_defaults_stay_sort_scoped_and_explicit_zero_wins(self) -> None:
+        works = [movie_item(1, "Any", count=120), movie_item(2, "Kept", count=5000)]
+        # Default popular: no vote condition at all.
+        provider, transport = make_filtering(list(works))
+        provider.browse(ExploreBrowseQuery(MediaType.MOVIE))
+        self.assertNotIn("vote_count.gte", transport.calls[-1]["params"])
+        # Default date sort: the operator chose no floor, none is invented.
+        provider, transport = make_filtering(list(works))
+        provider.browse(ExploreBrowseQuery(MediaType.MOVIE, ExploreSort.DATE))
+        self.assertNotIn("vote_count.gte", transport.calls[-1]["params"])
+        # Default rating sort keeps its documented 100-vote floor.
+        provider, transport = make_filtering(list(works))
+        provider.browse(ExploreBrowseQuery(MediaType.MOVIE, ExploreSort.RATING))
+        self.assertEqual(transport.calls[-1]["params"]["vote_count.gte"], "100")
+        # An explicit floor always wins over the default, whatever the sort.
+        provider, transport = make_filtering(list(works))
+        provider.browse(ExploreBrowseQuery(MediaType.MOVIE, ExploreSort.RATING, min_votes=250))
+        self.assertEqual(transport.calls[-1]["params"]["vote_count.gte"], "250")
+        # An explicit 0 stays a real (inclusive) condition, not "unset".
+        provider, transport = make_filtering(list(works))
+        page = provider.browse(ExploreBrowseQuery(MediaType.MOVIE, min_votes=0))
+        self.assertEqual(transport.calls[-1]["params"]["vote_count.gte"], "0")
+        self.assertEqual({item.vote_count for item in page.items}, {120, 5000})
+
     def test_search_reads_one_page_with_no_explore_filters(self) -> None:
         routes = {
             "search/movie": {
@@ -387,6 +507,7 @@ class TMDBExploreAdapterTests(unittest.TestCase):
             "genres": [{"id": 18, "name": "剧情"}],
             "overview": "剧集简介",
             "number_of_seasons": 3,
+            "number_of_episodes": 30,
             "poster_path": "/show.jpg",
         }
         provider, transport = make_provider(routes)
@@ -400,6 +521,10 @@ class TMDBExploreAdapterTests(unittest.TestCase):
         self.assertEqual(movie.external_url, "https://www.themoviedb.org/movie/603")
         self.assertEqual(show.title, "Alpha Show")
         self.assertEqual(show.number_of_seasons, 3)
+        # The TV total-episode count runs through the whole contract; a movie
+        # (or a TV payload without it) stays an honest null.
+        self.assertEqual(show.number_of_episodes, 30)
+        self.assertIsNone(movie.number_of_episodes)
         self.assertIsNone(show.runtime)
         self.assertEqual(show.external_url, "https://www.themoviedb.org/tv/603")
 
@@ -635,6 +760,27 @@ class ExploreServiceTests(unittest.TestCase):
         with self.assertRaises(ExploreError) as caught:
             unsupported.search({"mediaType": ["movie"], "query": ["x"]})
         self.assertEqual(caught.exception.code, ExploreErrorCode.PROVIDER_NOT_CONFIGURED)
+
+    def test_applied_min_votes_echo_matches_the_upstream_request(self) -> None:
+        popular = self.service.browse({"sort": ["popular"], "minVotes": ["2000"]})
+        self.assertEqual(popular["applied"]["minVotes"], 2000)
+        self.assertEqual(self.transport.calls[-1]["params"]["vote_count.gte"], "2000")
+        date = self.service.browse({"sort": ["date"], "minVotes": ["500"]})
+        self.assertEqual(date["applied"]["minVotes"], 500)
+        self.assertEqual(self.transport.calls[-1]["params"]["vote_count.gte"], "500")
+        rating = self.service.browse({"sort": ["rating"]})
+        self.assertEqual(rating["applied"]["minVotes"], 100)
+        self.assertEqual(self.transport.calls[-1]["params"]["vote_count.gte"], "100")
+        default = self.service.browse({})
+        self.assertNotIn("minVotes", default["applied"])
+        self.assertNotIn("vote_count.gte", self.transport.calls[-1]["params"])
+
+    def test_detail_document_carries_nullable_episode_counts(self) -> None:
+        movie = self.service.detail("movie", "603")
+        self.assertIsNone(movie["numberOfEpisodes"])
+        self.assertEqual(movie["backdropPath"], "/matrix-bg.jpg")
+        show = self.service.detail("tv", "9001")
+        self.assertEqual(show["numberOfEpisodes"], 24)
 
     def test_paging_normalizes_real_totals(self) -> None:
         last_page = self.service.browse({"page": ["9"]})
