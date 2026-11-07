@@ -1,43 +1,16 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261107-1 — V2 任务详情可读性与导航稳定性修正
 
-Slice50 已由 A 于 2026-11-07 独立最终审查 **PASS / CLOSED**；原八项要求及自动化新建/编辑
-稳定性补充全部接受。没有活动实施 Task；下一步 **A SELECTS THE NEXT LARGE SLICE**，另行选择。
-本次关闭不自动实施、推送或部署。用户于 2026-11-07 授权将下方六项调查结果合为一个独立
-Task 并开始规划，随后确认第三项的具体展示设计并授权写入 Task；本文件下方为已规划草案，
-未授权实施。流程遵循
-[Development Workflow](docs/development-workflow.md)。
-
-```text
-Last Task: 50.4 — V2 侧栏主页面切换体验
-Task Decision: PASS (B)
-Task Reviewed Base: ea8aad6166d60c5524aaeb4a46f5c7ebb7ccb749
-Task Reviewed Head: ab5589340b7a9c72f30b0cbc955a95924a089b87
-Slice: 50 — PASS / CLOSED
-Slice Base: 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0
-Slice Implementation Head: 6b0927328a7bf0873faffce9cb38007fd4607764
-B Closure Packet: 60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md
-Development Authorization: NONE
-Next Action: A SELECTS THE NEXT LARGE SLICE
-```
-
-完整 B 收尾包、逐项结果、原始日志/资产摘要、历史 Task/fix 指针及失败/skip/限制保留于
-[不可变报告](https://github.com/kentinya/mediaflow/blob/60798c3e50fdc62a6d46b6ee439e2406751ecfd3/TASK.md)，不以本摘要替代。
-A 的完整范围、独立复验、接受及延期见 [SLICE.md](SLICE.md#final-validation-closure-packet-and-a-final-review)；
-[Progress](docs/progress.md) 记录原 Base/Head 与关闭事实。原两轮 Task50.4 阻塞与 B 测试耗时
-比例偏差继续披露；未将过程偏差、外部服务 skip 或未运行的 Docker 矩阵记作通过。
-
----
-
-## Planning-only draft — PATCH-20261107-1 — V2 任务详情可读性与导航稳定性修正
-
-**仅规划，尚无活动实施 Task。** 用户先要求调查、不改文档代码，随后明确要求“合到一个
-Task 吧，开始规划”；本次授权仅将该范围写为一个计划，不开始 Developer 实施、调用其他
-角色、推送或部署。实施获授权时再用本草案替换顶部无活动任务通知；开始前重跑治理并核对
-Base 后的实际变更，不能静默换 Base 或沿用过期调查。
-
-Authority: 用户本次六项界面修正及合并规划指令；独立修正路径遵循
+Authority: 用户本次六项界面修正、已确认的第三项展示设计及 2026-11-07 的 Task 激活指令；
+独立修正路径遵循
 [workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)。
-Slice50 是相关已接受基线，不是 Parent；不重开它，也不改原 Base/Head/关闭结论或
+本 Task 已从规划稿转为正式 **PLANNED**，限定 Developer 实施下述范围；本轮只完成激活，
+尚未开始实现，不自动转入其他角色、推送或部署。
+
+Slice50 是相关已接受基线，不是 Parent；其 **PASS / CLOSED**、原 Base/Head、审查及延期
+保留于 [SLICE.md](SLICE.md#final-validation-closure-packet-and-a-final-review)、
+[Progress](docs/progress.md) 和
+[B 固定收尾包](https://github.com/kentinya/mediaflow/blob/60798c3e50fdc62a6d46b6ee439e2406751ecfd3/TASK.md)。
+不重开它，也不改原 Base/Head/关闭结论或
 SLICE/Roadmap/Progress。B/Developer 分别读取相应 [角色经验](AGENTS.md#testing-and-roles)。
 
 ```text
@@ -50,9 +23,14 @@ Difficulty: High
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
-Development Authorization: NONE
-Next Action: USER AUTHORIZES IMPLEMENTATION OF THIS SINGLE TASK
+Development Authorization: USER AUTHORIZED — THIS TASK ONLY
+Next Action: DEVELOPER IMPLEMENTS THIS TASK
 ```
+
+激活前分支 `main`，HEAD `ba12493cbcd81aa073e687a31263251e8669478c`，治理检查 PASS。
+原 Task Base 到该 HEAD 仅 `TASK.md` 规划与澄清变化，没有执行源码/测试/依赖/构建配置变化；
+保留原 Base、六项范围、已确认设计、验收及测试计划，原调查继续适用。预存 dirty/untracked
+仍保留；本轮仅 checkpoint `TASK.md`。Developer 开始前重跑治理并核对当时 HEAD/工作区。
 
 ### Goal
 
@@ -179,7 +157,7 @@ CURRENT 架构边界。按以下顺序完成一个整体候选：
    修正。不取消必要读取、不增加轮询，也不删除其他页面的 `RefreshControl`。
 6. **完成整体受影响验证并交接。** 检查桌面/窄屏、键盘、滚动/焦点和实际动态过程；
    更新与实现直接相冲突的页面说明时，只对齐本 Task 的已实现事实，不扩大需求或改写
-   历史接受记录。本轮规划只修改 `TASK.md`。Developer 完成后交一个连贯候选及实际结果，
+   历史接受记录。本轮激活只修改 `TASK.md`。Developer 完成后交一个连贯候选及实际结果，
    由独立 B 对完整 Base..Head 验收，六项全部满足后结束。
 
 ### Acceptance Criteria
@@ -317,11 +295,11 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-cr
 
 ### Developer Completion Report
 
-未实施。授权后由 Developer 填：完整 checkpoint SHA、READY FOR B REVIEW、实际变化、
+未实施。由 Developer 按已激活范围实现并填：完整 checkpoint SHA、READY FOR B REVIEW、实际变化、
 受影响测试结果/已知失败和剩余风险；完整 B 验收待独立审查，不自评 PASS。
 
 ### B Review Result
 
-未审查；本轮只完成一个规划草案。实施后按 workflow 对同一 Task 给 PASS 或 FIX REQUIRED，
+未审查；本轮完成 Task 激活，状态 PLANNED。实施后按 workflow 对同一 Task 给 PASS 或 FIX REQUIRED，
 记录精确 Base..Head、实际验收结果与六项是否全部满足。独立修正 PASS 后恢复简洁的
 NO ACTIVE IMPLEMENTATION TASK 通知并保留固定审查指针；不改 Slice50/Roadmap/Progress。
