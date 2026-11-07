@@ -32,7 +32,8 @@ A 于 2026-11-07 独立审查完整原 Base..Implementation Head，判定 **PASS
 生命周期与测试分工遵循
 [Development Workflow](docs/development-workflow.md)。
 
-Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设它。规划时分支为 `main`，HEAD 如上；
+Base 是原 Slice 实施前的源码基线 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`；
+规划/激活、最终关闭和后续事实治理均不重设它。规划时分支为 `main`；
 治理检查 PASS，工作区与 Git 可写。既有 `mediaflow/.DS_Store` 修改及未跟踪的 `.DS_Store`、
 日志、`15`、`output/` 调查产物等均为预存工作，不纳入本 Slice checkpoint；不读取/修改用户
 运行数据库、私有配置和生产媒体。
@@ -75,31 +76,11 @@ Base 是本轮规划前的源码基线；纯规划/激活文档提交不重设�
 
 ## Investigation and evidence limit
 
-- `OperationsLanding.tsx` / `RunDetailTabs.tsx`：任务名称选择当前打开列表旁的详情，桌面
-  CSS 分配约 34% 宽度；概况、进度、多列表格、计划/日志/恢复证据较密，内部标识与日常
-  信息并列。需要同时改变容器与信息层级。
-- `StorageManagementPage.tsx` / `StorageEditDrawer.tsx`：查看、添加、编辑是右侧抽屉；
-  “更多”用 `details/summary`，`mf-storage-more` / `mf-storage-more-menu` 无专属样式。
-- `LibraryCardStrip.tsx`、两种 `*FilesPage.tsx`：库菜单共享，添加/编辑是三步抽屉，两页各有
-  目录树；已有面包屑、根目录和文件夹导航可承接移除目录树后的浏览。
-- `AppShell.tsx` / `styles.css`：未见统一切页过渡。资源库用文字加载块；媒体库
-  `listQuery.data?.items ?? []` 在初次数据未返回时可进入“尚未添加媒体库”分支，需先区分
-  加载与真实空态，再协调加载到内容的过渡。
-- `automation-card-shell.tsx` 与现有样式提供遮罩、居中卡片、标题/正文/底部操作、进出动画、
-  焦点/退出保护和 reduced-motion 基准；其自动化字段/命令不属于其他页面模型。
-- 自动化新建后续隔离 Chromium 逐帧调查已复现三种变化：路由默认 `scrollTo({top: 0})`
-  使滚动 50px 的背景回顶；`body.overflow = hidden` 在占位滚动条环境释放 15px 宽度；
-  1536×900 下异步表单就绪使卡片高度由约 158px 变为 810px、顶部由 371px 变为 45px。
-  reduced-motion 下仍出现。编辑由用户补报同样症状，源码确认它也切换路由、复用滚动锁定
-  外壳，并从读取状态切为完整表单；本次没有把新建的测量数值当作编辑实测。
-  现有 E2E 仅核对页顶停稳后标题纵坐标，未覆盖打开中间帧、横向重排或已滚动背景。
-
-初轮八项调查依据为源码及现行契约，当时浏览器工具不可用；后续自动化调查使用当前构建
-产物、隔离 fake API、可控读取延迟及桌面/窄屏 Chromium，未观察用户生产部署。
-本地证据在 `.git/validation-evidence/d9a7b5b4/automation-open-investigation/`，不宣称远程可取。
-这些是缺陷调查，不是修复验收；两入口仍须补最终候选的实际桌面/窄屏和动态交互证据。
-现行 Files/MediaLibrary 规范中的目录树和抽屉由本 Slice 目标明确替换；
-旧图片保留为参考，目标验收不再要求复现用户删除的结构，也不改写历史接受事实。
+实施前的源码调查、自动化新建逐帧测量与编辑入口证据边界保留于
+[关闭 checkpoint 的原调查](https://github.com/kentinya/mediaflow/blob/348171b6bacccc7ddac67f2e1803b513b3b7d086/SLICE.md#investigation-and-evidence-limit)。
+原调查未观察用户生产部署；本地隔离 fake API 证据不等于修复验收，也不宣称远程可取。
+最终候选已完成真实 Python、桌面/窄屏及动态交互验收，见本文 A Final Review；不再将实施前
+的侧详情、抽屉、目录树和有限停稳测试描述为当前实现。旧图片与旧 Slice 接受事实保留。
 
 ## RO-1 — 任务详情卡片与人类可读的信息层级
 

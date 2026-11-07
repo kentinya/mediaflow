@@ -2523,9 +2523,10 @@ Root：/Media
 
 #### **46.3 V2 媒体库文件管理页面（CURRENT；Slice 38 PASS / CLOSED）**
 
-下述旧目录树/抽屉几何已由 [Slice50 CURRENT](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)
-替换：两页去目录树，配置采用居中弹卡，改善菜单、加载与主页面切换。以下原业务/权限/
-文件保留规则继续有效；旧几何仅保留为历史参考，不改写 Slice38 的原接受事实。
+本节保留 Slice38 的业务/权限/文件保留规则，并采用已接受的
+[Slice50 CURRENT 呈现](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)：
+两页无页内目录树，配置采用居中弹卡，菜单、加载与主页面切换按现行规范工作。
+原 Slice38 的验收身份与图片保留，不要求复现已被替换的几何。
 
 V2 媒体库页以 `docs/pics/媒体库页.png` 为视觉参考，管理已配置 MediaLibrary 根目录中的真实
 文件。资源库文件页使用 `/ui-v2/resourcelib/files`，媒体库页使用
@@ -2533,8 +2534,9 @@ V2 媒体库页以 `docs/pics/媒体库页.png` 为视觉参考，管理已配�
 访问旧地址提供明确的新入口，不保留旧页面或自动跳转别名。上述地址是 Web 路由，后端继续使用
 `/api/v1/*` 及同一应用权限、安全规则。
 
-媒体库页提供库卡片、目录树、面包屑、刷新、列表/网格、有界选择与分页，以及
-“基本信息 → 存储位置 → 确认”的添加媒体库抽屉。以实际 Storage 为文件列表来源，展示目录、
+媒体库页提供库卡片、文件夹打开、精确面包屑、上一级/根目录、刷新、列表/网格、有界选择与分页，
+不显示页内目录树或其占位。添加/编辑媒体库通过“基本信息 → 存储位置 → 确认”的居中弹卡完成。
+以实际 Storage 为文件列表来源，展示目录、
 视频、字幕、NFO、图片等真实条目；不以 FileIndex、识别结果或历史整理记录限制可见文件。
 路径精确字符包括前后空格必须保留；刷新必须移除失效目录/选择并提供真实读取失败的恢复路径。
 
@@ -2557,10 +2559,12 @@ MediaLibrary 与 ResourceLibrary 的库类型、根目录、权限、游标/证�
 删除/覆盖意图、逐项结果和禁止不确定变更自动重放等约束。共享界面与执行机制时，Slice37
 文件页的已有功能、整理链路及返回目录上下文必须完整保留，只调整必要的地址和导航引用。
 
-Slice 38 已交付上述媒体库文件管理、独立资源库文件路由、受限常用文件维护、配置新增/编辑/移除，
+Slice38 的原始交付包括媒体库文件管理、独立资源库文件路由、受限常用文件维护、配置新增/编辑/移除，
 以及 ResourceLibrary/MediaLibrary 对称的页面级编辑与 checked atomic activation。实现范围、明确
-延后能力和最终审查证据见 `SLICE.md`；用户旅程见 `docs/product-experience.md`，视觉解释见
-`docs/media-library-page-visual-spec.md`。
+延后能力和最终审查证据见
+[Slice38 固定 Contract/A review](https://github.com/kentinya/mediaflow/blob/d02539e49d5c99c3e3c0c70de5e994e42824a18e/SLICE.md)；
+现行用户旅程见 [Product Experience](product-experience.md)，视觉解释见
+[MediaLibrary specification](media-library-page-visual-spec.md)。
 
 ### **最终路径生成**
 
@@ -3821,16 +3825,13 @@ V2 Files 常用文件管理要求（Slice 37 PASS / CLOSED，2026-09-23）：
 - 成功后以 live Storage 刷新为准；Slice37 原有 FileIndex best-effort reconciliation 已在45退役。
   结果或展示失败仍禁止自动重放已完成或结果不确定的 Storage mutation。
 
-V2 Files 与共享 Shell 视觉要求（Slice 37 PASS / CLOSED，2026-09-20）：`docs/pics/文件页.png` 是
-`1536 x 1024` 成功态的唯一视觉权威。其浅色左侧导航栏和顶部栏必须作为统一共享 AppShell 替换
-原 V2 深色横向顶部 Shell，并应用到所有支持的 V2 route；不得把参考图中的 Files 内容作为卡片
-嵌入旧 Shell。非 Files 页的 route、认证、数据查询和业务交互保持不变，仅共享外层 chrome 按新
-Shell 更新。Files 页的资源库摘要、目录树、文件表、选择操作栏、常用文件操作和打开状态的
-`添加资源库` 抽屉按 `docs/file-page-visual-spec.md` 验收。
-
-Slice50 已接受的 CURRENT 呈现替换上述页内目录树和添加/编辑抽屉，改善库菜单、加载与
-现有 V2 侧栏主页面切换；见同一视觉规范 CURRENT 节与 `V2-UX-005–012`。
-不要求复现冲突的旧几何；Slice37 的原接受事实不变。
+V2 Files 与共享 Shell 的现行视觉要求见 [Files specification](file-page-visual-spec.md)：
+保留 Slice37 已接受的浅色左侧导航栏、顶部栏及 `docs/pics/文件页.png` 的视觉层级，
+全局共享 AppShell 覆盖所有支持的 V2 route。Slice50 的 `V2-UX-005–013` 替换所选旧几何：
+Files 以库卡片、精确面包屑、完整可用宽度的文件表、选择操作栏和常用文件操作完成浏览，
+无页内目录树；添加/编辑库采用居中弹卡。菜单、库/目录加载及现有侧栏主页面切换遵循同一
+规范的 CURRENT 节，保留 route、认证、权限、业务交互和各操作原有归属。
+`1536 x 1024` 桌面及窄屏按现行呈现验收；旧图片不可改写，Slice37 的原接受事实不变。
 
 ### **搜索与筛选**
 

@@ -13,7 +13,8 @@ Detailed superseded delivery notes are retained at
 
 ## Current journey boundary
 
-Current journeys incorporate accepted Slice49 Automation amendments `V2-AUTO-013–015`, Slice48 flow/rate amendments `V2-TASK-012–014` /
+Current journeys incorporate accepted Slice50 presentation/loading/stability amendments `V2-UX-005–013`,
+Slice49 Automation amendments `V2-AUTO-013–015`, Slice48 flow/rate amendments `V2-TASK-012–014` /
 `V2-AUTO-012`, Slice47 Task-only scheduling/settings/history `V2-TASK-001–011`, and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` and `V2-AUTO-010/011`. Historical43/45/46 acceptance facts and original deferrals
 remain in [Progress](progress.md) and their Git Contracts; they are not additional operator steps.

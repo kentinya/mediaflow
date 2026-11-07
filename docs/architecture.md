@@ -2,12 +2,11 @@
 
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
-owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live listing and
-Scan/Preview/FileIndex retirement below are CURRENT. Slice43 is also PASS / CLOSED; its Automation
-workspace/settings foundation remains accepted. Slice46 is PASS / CLOSED; its current amendments
-below replace selected entry/query/intent behavior without changing prior acceptance or deferrals.
-Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Task-only
-scheduling/settings/history contracts below supersede the affected earlier foundations.
+owns scope. Accepted CURRENT contracts include Slice50 presentation/loading/stability, Slice49
+Automation forms/direct Run once, Slice48 independent Task flow/file outcomes, Slice47 Task-owned
+scheduling/settings, and the retained Automation/Task Center/live-list foundations and retirements.
+The sections below state the current component contracts; original acceptance identities, evidence
+and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)

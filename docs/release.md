@@ -18,11 +18,14 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-Slice49 is PASS / CLOSED; [Progress](progress.md) retains its original Base, accepted implementation
-Head and validation limits, alongside earlier closures. Automation now shares create/edit cards,
-offers explicit optional enabled creation and directly runs saved definitions from the list with
-correct confined sources. Accepted48 flow/rate semantics keep Task flow independent of file results;
-execution-record status follows that same durable Task.
+Slice50 is PASS / CLOSED; [Progress](progress.md) retains its original Base, accepted implementation
+Head and validation limits, alongside earlier closures. The accepted presentation includes readable
+Task details, Storage/library cards and menus, both library pages without page-local trees, nine
+main-page transitions, consistent library loading and stable Automation create/edit. These Web-only
+changes add no backend, schema or deployment capability. Accepted49 Automation intent and accepted48
+flow/rate semantics remain: saved definitions run with confined sources, Task flow is independent
+of file results, and execution records read that same durable Task. Closure evidence is not a new
+container, external-service or production validation claim.
 This is development acceptance, not a V2 release. Current support is fresh initialization
 → submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
 migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are

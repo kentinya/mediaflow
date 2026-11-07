@@ -7,7 +7,10 @@ installation, health, restart, backup/upgrade/restore and failure-recovery proce
 
 ## Boundary
 
-- This deployment document describes the MediaFlow V1.0.0 release baseline.
+- This guide describes the current unreleased V2 `main` deployment, retaining the one-image/four-service
+  foundation accepted for V1.0.0. Historical release facts belong to [Release](release.md); current
+  support is fresh initialization and same-version recovery, not old-task migration or cross-version
+  upgrade/rollback. A Slice closure or Git push does not publish an image or deploy a service.
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
