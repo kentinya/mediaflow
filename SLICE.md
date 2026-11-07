@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: 214b69b1e64b24fc22068c2e1760cd1b0c6ac787
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVATION AND FIRST TASK PLANNING ONLY; NO IMPLEMENTATION
+Development Authorization: IMPLEMENTATION AUTHORIZED FOR ACTIVE TASK 51.1 ONLY
 Risk: Medium
 Final Test Level: T3
-Next Action: B PLANS THE FIRST TASK UNDER THE COMMITTED ACTIVE CONTRACT
+Next Action: DEVELOPER IMPLEMENTS TASK 51.1; B ACCEPTANCE PENDING
 ```
 
 ## Authority and accepted baseline
@@ -23,10 +23,11 @@ Next Action: B PLANS THE FIRST TASK UNDER THE COMMITTED ACTIVE CONTRACT
 必需承诺，不锁定认证同源图片代理／缓存；测试按实际影响分级，必要安全边界保持。
 用户进一步明确“Dashboard API／CLI 也删了，完全删除不做兼容”：本 Contract 将退出范围
 扩大到 Dashboard 的全部运行入口和专属实现，替代先前保留统计 API／CLI 的边界。
-用户于 2026-11-07 进一步明确“没问题就激活 Slice 并代替 B 规划第一个 Task”：本次由
+用户于 2026-11-07 进一步明确“没问题就激活 Slice 并代替 B 规划第一个 Task”：
 同一代理先以 A 身份提交 ACTIVE Contract，再按用户明确授权代替 B 规划首个 Task；这是
-角色例外披露，不构成独立验收或 A Final Review。授权限于激活与规划，不开始 Developer
-实施、不推送或部署；首个 Task 计划在 NO ACTIVE IMPLEMENTATION TASK 下明确标为草案。
+角色例外披露，不构成独立验收或 A Final Review。用户随后明确“激活 Task”，将已提交的
+Task51.1 草案转为正式活动实施 Task，实施授权仅限其既定范围。本次只完成激活，尚未
+开始 Developer 实施；不推送或部署，不扩大 Slice／Task 边界。
 生命周期、Git、测试和关闭规则统一遵循 [Development Workflow](docs/development-workflow.md)。
 
 规划开始于 `main` / 上述 Base；治理检查 PASS，工作区和 Git 可写。预存的
@@ -251,5 +252,5 @@ Developer 只运行当前 Task 新增／修改及直接受影响测试与静态�
 
 Implementation Head: NOT SET。没有产品实施、B Task 验收、Closure Packet 或 A Final Review；
 AC-1–11 均待验收，当前不是 PASS。A 已按用户授权激活本 Contract；TARGET 尚未实施。
-本次 checkpoint 后由同一代理按已披露的角色例外代替 B 规划首个 Task；规划不授权自动
-开始 Developer 实施。Slice50 的接受身份与全部延期保持。
+Task51.1 已由同一代理按已披露的角色例外完成规划，并按用户后续明确授权激活为正式
+活动实施 Task；当前 PLANNED，尚未开始 Developer 实施。Slice50 的接受身份与全部延期保持。

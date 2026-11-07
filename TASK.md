@@ -1,23 +1,7 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 51.1 — 探索完整旅程与 V2 首页切换
 
-最近独立修正 **PATCH-20261107-1：B PASS（2026-11-07）**。
-
-- 已审完整范围：`fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c..67103db5c2ae4a1ae193dc3195d02c53490dcf44`。
-- 最终源码 `0232364073401aebd126c2ed7f6e68d3ec31d85a`；最终测试补充
-  `96fcbbd0017c919e0753e95a019776a5102a71b8`。
-- [固定 B 验收报告](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)保留全部六项交付、52 条单元 / 24 条页面 / 15 条不同真实集成用例、原生交互、
-  首次共享测试数据冲突与独立运行通过结果、未运行门禁和本地证据限制。
-- Slice50 保持 PASS / CLOSED，原 Base/已接受 Head、Roadmap 关闭项和 Progress 接受账本不变。
-
-无活动实施 Task。[Slice51](SLICE.md) 已在 A checkpoint
-`3c8053b06c218e76084ec1c06cf57f03259da84c` 激活为 **ACTIVE**。
-用户明确授权同一代理代替 B 规划首个 Task；下列为 **PLANNING-ONLY DRAFT**，
-不授权 Developer 实施，也不是 B 验收或 A Final Review。用户授权实施后才将本文件切为
-正式活动 Task；保持同一 Task ID、Base 和目标，不自动开始开发。
-
-## Draft — Task 51.1：探索完整旅程与 V2 首页切换
-
-Authority: committed [SLICE.md](SLICE.md) at the A activation checkpoint above;
+Authority: committed [SLICE.md](SLICE.md), activated by A at
+`3c8053b06c218e76084ec1c06cf57f03259da84c`;
 [Development Workflow](docs/development-workflow.md) and
 [B experience](docs/agent-experience/task-planner-reviewer.md) govern planning/review.
 
@@ -30,10 +14,26 @@ Task Base: 3c8053b06c218e76084ec1c06cf57f03259da84c
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B — user-authorized substitution for this plan; review pending
-Implementation Authorization: NOT AUTHORIZED — PLANNING-ONLY DRAFT
+Implementation Authorization: AUTHORIZED — TASK 51.1 ONLY; USER ACTIVATION 2026-11-07
 ```
 
-### Goal
+用户于 2026-11-07 明确“激活 Task”，将已提交的 Task51.1 草案转为正式活动实施 Task。
+目标、范围、Task ID／Base、High／T3 及测试分工保持，实施授权仅限本 Task。
+当前为 PLANNED，等待 Developer 开始后转 IN PROGRESS；本次只激活，尚未修改产品代码。
+同一代理代替 B 规划的既有用户授权及角色例外继续披露，不构成 B 验收或 A Final Review。
+
+## Accepted baseline
+
+最近独立修正 **PATCH-20261107-1：B PASS（2026-11-07）**。
+
+- 已审完整范围：`fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c..67103db5c2ae4a1ae193dc3195d02c53490dcf44`。
+- 最终源码 `0232364073401aebd126c2ed7f6e68d3ec31d85a`；最终测试补充
+  `96fcbbd0017c919e0753e95a019776a5102a71b8`。
+- [固定 B 验收报告](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)保留全部六项交付、52 条单元 / 24 条页面 / 15 条不同真实集成用例、原生交互、
+  首次共享测试数据冲突与独立运行通过结果、未运行门禁和本地证据限制。
+- Slice50 保持 PASS / CLOSED，原 Base/已接受 Head、Roadmap 关闭项和 Progress 接受账本不变。
+
+## Goal
 
 完成 Slice51 RO-2／RO-3／RO-4 和 RO-1 的 V2 Web 首页替换：连接后进入“探索”，从真实
 TMDB 电影／剧集列表筛选或按名称搜索，加载更多，打开准确作品详情，再回到原列表位置。
@@ -44,7 +44,7 @@ Slice AC-1–9 及 AC-10 的实际浏览器旅程；不把 API／CLI 退役未�
 匹配候选页，评分模型用于匹配；不能直接充当探索分页／TMDB 评分。V2 Router／Entry／
 导航仍默认 Dashboard，图片 CSP 仍为同源；没有探索 application/API 或列表／详情状态。
 
-### Implementation Scope
+## Implementation Scope
 
 1. **建立只读探索端口，复用现有 TMDB。** 在 `mediaflow/domain/explore.py` 定义内部查询、
    有界页、筛选选项、作品摘要／详情及 `ExploreProvider`；application service 放在
@@ -143,7 +143,7 @@ Slice AC-1–9 及 AC-10 的实际浏览器旅程；不把 API／CLI 退役未�
    Python 链路，不能访问真实 TMDB／生产配置／用户媒体。测试目录隔离，普通 Node suite
    不误收集 Python 专属用例。必要操作说明只描述真实可用入口，Slice TARGET 保持待验收。
 
-### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] 认证默认到探索；其他合法目标优先。旧 Dashboard Web 为普通未找到，无兼容／旧请求；其他主页面正常，Python API／CLI 启动和静态资产服务保留。
 - [ ] 电影／剧集、类型题材、语言、年份、评分／人数、排序真实到达 Provider，实际 applied 条件可见；搜索模式无假过滤，退出完整恢复浏览。
@@ -154,14 +154,14 @@ Slice AC-1–9 及 AC-10 的实际浏览器旅程；不把 API／CLI 退役未�
 - [ ] 本地假上游＋真实 Python API＋生产资产完成桌面／390px 全旅程；证明零媒体 Storage 读取／变更、零新增 Task／执行权／配置发布。允许原有鉴权审计和启动初始化，不以数据库完全无写入作断言。
 - [ ] 不改变整理匹配／MetadataPolicy、其他功能和历史记录；无 Active／无库及刷新详情的非必需场景不作预期失败断言。RO-1 的 Dashboard API／CLI／专属后端退出和 AC-11 明确仍待完成，不能声明 Slice PASS。
 
-### Required Tests
+## Required Tests
 
 本 Task 按只读 Provider／API／Web 集成定为 **T3**：复用既有 READ 权限及部署能力，
 未修改权限语义、Active 发布、schema、媒体执行或并发 authority。新增外部读取与共享请求
 边界须做下列安全回归；若实施实际改变这些高风险语义，先回 B 按工作流重评等级，不能
 凭 T3 标签省略必要门禁。下列新增测试路径是交付文件名，未实现前不声称已运行。
 
-#### Developer — affected tests
+### Developer — affected tests
 
 在仓库根运行，新增 `tests/test_explore.py`（模型／adapter／有界请求／缓存）与
 `tests/test_explore_api.py`（真实路由／权限／错误／零业务效果），并运行直接受影响模块：
@@ -202,7 +202,7 @@ npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explo
 清理；原生用例覆盖桌面／390px、后退／Escape／焦点／滚动和真实 CSP 下的图片。
 Developer 另跑自己改动的既有 E2E 用例，使用其正确 Node／Python config，不跑无关全矩阵。
 
-#### B — acceptance and regression
+### B — acceptance and regression
 
 B 对提交的精确 Task Base..candidate 审查上述断言与实际实现，重现关键场景并记录真实结果：
 
@@ -216,7 +216,7 @@ T3 不默认跑全 Python／Web／E2E 或 Docker／安装包全发布矩阵；�
 改变时由 B 补充相应门禁，达到 T4 时适用[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)。
 PASS 后重新核对全部 Slice 结果；Dashboard API／CLI 和专属后端仍在，不能交 A 关闭。
 
-### Non-goals
+## Non-goals
 
 本 Task 不删除 Dashboard API／CLI、domain/application/repository 聚合／runtime 注入，
 也不改接 V1 Dashboard 或仍使用旧后端的打包／安全探针；它们仍是本 ACTIVE Slice 必须
@@ -225,12 +225,12 @@ PASS 后重新核对全部 Slice 结果；Dashboard API／CLI 和专属后端仍
 Active 启动／初始化、图片代理／缓存平台、新设置／权限、schema 或核心处理改造。
 不为非必需能力增加反向失败断言，不删除共享样式／统计／历史来追求 dashboard 字符串归零。
 
-### Developer Completion Report
+## Developer Completion Report
 
-尚无实施 checkpoint 或受影响测试结果。开发授权到来后按模板提交
-READY FOR B REVIEW、实际变更／命令结果和剩余风险；B 验收待执行。
+Task 已激活，尚未开始实施；没有实施 checkpoint 或受影响测试结果。Developer 完成后
+按模板提交 READY FOR B REVIEW、实际变更／命令结果和剩余风险；B 验收待执行。
 
-### B Review Result
+## B Review Result
 
-尚未评审；本文件仅为用户授权的首个 Task 规划草案。没有 PASS／FIX REQUIRED、
-功能验收结果或 Slice Closure Packet。
+尚未评审；Task 已按用户明确授权激活，当前没有 PASS／FIX REQUIRED、功能验收结果或
+Slice Closure Packet。规划时的角色例外不构成验收授权或已完成独立审查。

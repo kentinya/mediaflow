@@ -36,7 +36,7 @@ only in [the development workflow](development-workflow.md).
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
-| 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | ACTIVE | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
+| 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | ACTIVE | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
 
 ## Current boundary
 
@@ -44,10 +44,12 @@ only in [the development workflow](development-workflow.md).
 The user authorized activation and first-Task planning on 2026-11-07: browse → filter/search →
 detail → return, directly replacing the V2 homepage and, under the user's subsequent explicit instruction, fully retiring
 Dashboard Web/API/CLI and dedicated models/services/queries/wiring/consumers without compatibility.
-Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET. No active
-implementation Task yet. After the A activation checkpoint, the same agent is explicitly authorized
-to substitute for B and plan the first Task; this role exception is not independent acceptance.
-No product implementation, push or deployment is authorized by this planning request. TMDB-only
+Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET.
+[Task51.1](../TASK.md) is now the active implementation Task (PLANNED, High / T3), explicitly
+activated by the user after planning. Implementation is authorized only within that Task.
+The same agent substituted for B for the first plan under explicit user authorization; that role
+exception is not independent acceptance. This activation checkpoint contains no product
+implementation, push or deployment. TMDB-only
 discovery and safe poster display are TARGET, not CURRENT delivery. Shared statistics, task/result/review/notification/audit history remain;
 V1 changes are limited to disconnecting its Dashboard consumer. No data/schema cleanup is planned.
 

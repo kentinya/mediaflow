@@ -4,7 +4,8 @@
 激活为 **ACTIVE**：“浏览 → 筛选／搜索 → 查看详情 → 返回”，完整退出 Dashboard
 Web／API／CLI 及专属后端／消费者，不做任何兼容。尚未实施；A 激活 checkpoint 后，
 同一代理按用户授权代替 B 规划首个 Task，角色例外不构成独立验收。
-[TASK.md](../TASK.md) 保持无活动实施 Task；本次只激活和规划，不自动开始开发。
+[Task51.1](../TASK.md) 已按用户后续明确授权激活为正式活动实施 Task（PLANNED，High／T3）；
+实施授权仅限该 Task。本次只完成激活，尚未开始开发。
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md)
 保持 PASS / CLOSED，Slice49 及更早接受身份保留。规划／关闭不等于推送、发布或部署。
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细

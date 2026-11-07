@@ -78,8 +78,8 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
 原八项与自动化新建/编辑稳定性补充 `V2-UX-005–013` 为 [CURRENT 定义](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)，
 替换所选任务侧详情、存储/库抽屉和两页目录树，保留原业务/权限/安全及历史接受事实。
-[TASK.md](../TASK.md) 无活动实施 Task；[Slice51](../SLICE.md) 已授权激活为 ACTIVE，
-本次只激活和规划首个 Task，尚未实施或验收。
+[Slice51](../SLICE.md) 保持 ACTIVE；[Task51.1](../TASK.md) 已按用户明确授权激活为正式
+活动实施 Task（PLANNED，High／T3），授权仅限其既定范围，尚未实施或验收。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
 `V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
@@ -99,7 +99,7 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 用户于 2026-11-07 授权按“浏览 → 筛选／搜索 → 查看详情 → 返回”规划
 [Slice51](../SLICE.md)，并明确直接替换 Dashboard、不做跳转兼容。
 `V2-EXPLORE-001–011` 为 [TARGET / ACTIVE](v2-requirements.md#target--v2-explore-homepage-slice51)，
-已授权激活与首个 Task 规划，尚未实施或交付。用户另明确要求 Dashboard API／CLI
+Slice 与首个 Task51.1 均已授权激活，尚未实施或交付。用户另明确要求 Dashboard API／CLI
 也完全删除、不做兼容。接受后
 `REQ-WEB-002` 的 V2 首页由探索替换，运行中的 Dashboard Web、API／CLI 及专属模型／
 服务／查询／接线完整退出；旧入口走普通不存在／命令错误，无重定向、别名、410／退役说明
