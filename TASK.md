@@ -9,17 +9,18 @@ Authority: committed [SLICE.md](SLICE.md), activated by A at
 Task ID: 51.1
 Task Type: SLICE
 Parent Slice: 51
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 3c8053b06c218e76084ec1c06cf57f03259da84c
 Difficulty: High
 Test Level: T3
-Planner / Reviewer: B — user-authorized substitution for this plan; review pending
+Planner / Reviewer: Original plan — user-authorized B substitution; current review — B
 Implementation Authorization: AUTHORIZED — TASK 51.1 ONLY; USER ACTIVATION 2026-11-07
 ```
 
 用户于 2026-11-07 明确“激活 Task”，将已提交的 Task51.1 草案转为正式活动实施 Task。
 目标、范围、Task ID／Base、High／T3 及测试分工保持，实施授权仅限本 Task。
-当前为 PLANNED，等待 Developer 开始后转 IN PROGRESS；本次只激活，尚未修改产品代码。
+当前实现候选为 `f8015b97a0b82db0b3cce1aea33088ff6c8d366e`；B 已独立审查并给出
+FIX REQUIRED。修正留在 Task51.1，Task Base／目标／范围／High／T3 不变。
 同一代理代替 B 规划的既有用户授权及角色例外继续披露，不构成 B 验收或 A Final Review。
 
 ## Accepted baseline
@@ -40,7 +41,7 @@ TMDB 电影／剧集列表筛选或按名称搜索，加载更多，打开准确
 加载、空态、配置或读取失败有明确状态与就近恢复。对应 `V2-EXPLORE-001–010`、
 Slice AC-1–9 及 AC-10 的实际浏览器旅程；不把 API／CLI 退役未完成误报为 Slice 完成。
 
-实际缺口：现有 `MetadataProvider` 搜索依赖 ParseResult，`TMDBProvider._search` 会合并
+Task Base 时的实际缺口：`MetadataProvider` 搜索依赖 ParseResult，`TMDBProvider._search` 会合并
 匹配候选页，评分模型用于匹配；不能直接充当探索分页／TMDB 评分。V2 Router／Entry／
 导航仍默认 Dashboard，图片 CSP 仍为同源；没有探索 application/API 或列表／详情状态。
 
@@ -227,10 +228,144 @@ Active 启动／初始化、图片代理／缓存平台、新设置／权限、s
 
 ## Developer Completion Report
 
-Task 已激活，尚未开始实施；没有实施 checkpoint 或受影响测试结果。Developer 完成后
-按模板提交 READY FOR B REVIEW、实际变更／命令结果和剩余风险；B 验收待执行。
+已有实现 checkpoint：`f8015b97a0b82db0b3cce1aea33088ff6c8d366e`，提交了探索
+domain/application/API/TMDB adapter、React 完整页面骨架、默认首页切换和测试。
+该提交未更新本段和 Task 状态；提交说明中的测试声明不替代 Developer 的实际命令／结果
+交接。以下验收结果均为 B 本轮独立执行，不代写 Developer 已完成的证明。
+Developer 修正后将本 Task 转为 READY FOR B REVIEW，并提交新的不可变 checkpoint、
+新增／改动及直接受影响测试结果、剩余风险；不重设 Base，不自行实现下一 Task。
 
 ## B Review Result
 
-尚未评审；Task 已按用户明确授权激活，当前没有 PASS／FIX REQUIRED、功能验收结果或
-Slice Closure Packet。规划时的角色例外不构成验收授权或已完成独立审查。
+```text
+Reviewed: 3c8053b06c218e76084ec1c06cf57f03259da84c..f8015b97a0b82db0b3cce1aea33088ff6c8d366e
+Decision: FIX REQUIRED
+Review date: 2026-11-07
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 审查整个 Task 范围的规划／激活提交和实现提交，核对只读 Provider → application →
+API → Web、默认认证入口、旧 Web 退出、共享调用改接和测试改动。实际实现保持本轮
+只读集成的 T3 边界；没有媒体执行、权限语义、Active 发布或 schema 改动。
+本轮不修改 Slice／Roadmap／Progress，不给出 Slice Final Review 或 Closure Packet。
+
+### Task blockers and Developer guidance
+
+以下均属于现有 Task 的必需结果，按下面顺序修正；不新建 Task 或增加产品能力。
+
+1. **最低评分人数在热度／日期排序下没有生效（P1；RO-2／AC-2）。**
+   用户连接探索 → 保留默认热度排序 → 更多筛选输入最低评分人数 2000 → 应用筛选，
+   页面显示“评分人数 ≥ 2000”，实际仍返回 120 人、173 人和未评分作品。
+   `TMDBProvider.browse` 只在 rating 排序时发送 `vote_count.gte`，却对所有排序回显人数。
+   修改 `mediaflow/infrastructure/tmdb.py`：有效最低人数非空时都传给 discover；仅评分
+   排序且用户未填时补默认 100。覆盖电影／剧集的热门、评分、日期排序，显式 0 保持有效，
+   默认热门未选人数时保持无人数条件。断言 fake 上游实际收到的参数与返回作品满足条件，
+   不只断言 `applied` 或前端 URL。
+
+2. **退出搜索丢失原浏览类型和条件（P1；RO-2／AC-3）。**
+   用户在电影浏览中选择“动作＋英语” → 搜索“午夜” → 搜索态切到剧集 → 退出搜索，
+   实际落到“剧集＋全部题材＋全部语言”，原电影浏览上下文已被修改。
+   在 `ExplorePage.tsx` 分开保存浏览状态与搜索类型；搜索态切类型只改变当前搜索，退出
+   时恢复进入搜索前的浏览类型、条件、已加载页和滚动。仅在浏览进入搜索时保存浏览锚点，
+   后续搜索提交不要覆盖它。复用现有 query key、页缓存和页面内详情返回，不新增持久会话
+   或独立详情路由。补正常搜索切类型再退出的组件／真实 Python 浏览器用例，核对恢复后的
+   作品和条件，不以提示文案存在代替恢复成功。
+
+3. **筛选目录读取失败没有可见状态或恢复入口（P1；RO-4／AC-7）。**
+   用户进入探索或切到剧集，作品列表读取成功、题材目录暂时 503 时，Python options
+   返回 502；页面仍显示作品，但两个下拉只剩“全部题材／全部语言”，没有错误或重读操作。
+   `ExplorePage.tsx` 只取 `optionsQuery.data`，未呈现其 pending/error，也没有目录重读。
+   为筛选区域补真实加载、就近错误及“重新读取筛选选项”；失败保留成功列表和仍合法的
+   用户输入，恢复只重读当前类型的目录。接入现有身份错误处理，上游凭据失败保持本方
+   有效身份；不把目录失败当成合法空目录。扩展现有 fake 上游，使 genre/list 临时失败后
+   恢复，从正常切类型入口验证提示、重读和可选题材恢复；无需新增测试管理接口或框架。
+
+4. **约定的详情内容尚未完整呈现（P1；RO-3／AC-6）。**
+   用户从海报打开有背景图的作品，API 已返回 `backdropPath`，详情卡却只使用海报；
+   既定的剧集总集数字段也没有贯穿 domain、adapter、API、Web，当前仅显示季数。
+   在现有居中详情卡展示合法背景图（固定 w780）并保留缺图／加载失败时的文字与返回；
+   将同一 TV detail 响应已有的总集数作为可空字段贯穿内部契约并显示，缺项据实显示。
+   不增加逐集读取、额外详情请求或轮播。补同一作品的背景图／季集数及缺项用例，检视
+   桌面和 390px 的实际截图、内容滚动、关闭／Escape／后退及入口焦点。
+
+5. **探索缺少合同约定的 TMDB 署名（P1；RO-4／V2-EXPLORE-010）。**
+   用户浏览作品、打开详情，目前只有评分中的 TMDB 字样、来源一句话和作品外链；
+   没有可达的署名区、认可的 TMDB 标识和必要声明。
+   复用探索页的轻量来源说明，提供就近可达的署名区，使用 TMDB 认可标识及其必要声明：
+   “This product uses the TMDB API but is not endorsed or certified by TMDB.”
+   不新增全局设置／关于产品，不让署名占据首屏主体，不扩大外部图片来源或 CSP。
+   依据合同已引用的 [TMDB 官方署名要求](https://developer.themoviedb.org/docs/faq#what-are-the-attribution-requirements)，
+   核对可见性、键盘可达和窄屏布局。只补本轮已经承诺的来源信息。
+
+### Correction acceptance and affected-test instructions
+
+本轮 Developer 先补上述正常操作路径的回归，再修对应代码。复用现有
+`tests/test_explore.py`、`tests/test_explore_api.py`、Explore entity/API/页面测试和
+`scripts/explore_harness.py`／`explore.python.spec.ts`；本地上游替身仍走生产 TMDB
+adapter 和真实 Python API，不拦截探索 JSON。图片可用本地 fixture，测试不联系真实 TMDB。
+按用户本轮约束，各修正／复核轮的测试耗时须低于该轮总耗时的 50%；优先关键复现，
+尚未完成的必需验收明确保留为 B 待执行项。
+
+- 应用筛选后，三种排序的实际 Provider 请求、`applied` 与返回作品一致；默认评分人数
+  仍为 100，显式人数始终优先。
+- 浏览电影并加载多页后进入搜索、切类型、再退出，恢复同一浏览类型、题材、语言、
+  其他条件、作品集合和位置；原三种详情返回方式保持。
+- 只让目录请求临时失败时，成功作品仍可读，目录的失败原因和重读入口可见；上游恢复后
+  点击该入口得到真实可选题材／语言，不重新读取已成功作品页。
+- 详情已有背景图和剧集季集数可读，缺项／图片失败时仍能阅读、关闭和返回；来源署名可达。
+
+Developer 命令仍用上文的 affected-test 计划：根目录探索测试＋`test_metadata.py`，以及
+实际改动 Python 文件的 Ruff；在 `web/` 跑探索 entity／API／页面测试、typecheck、
+实际改动文件 ESLint／Prettier、生产 build 和现有 Python 探索 spec。只有直接改到
+API 权限或静态 CSP 时才补其直接受影响检查，不跑全仓／全发布矩阵。
+修正时同步更新确实改变的 fixture／契约和 Completion Report，不删断言来迁就现状。
+B 对新 candidate 重新审查完整 Base..Head，完成原 B 计划尚未执行的门禁再决定 PASS。
+
+### Actual B validation and evidence
+
+证据为本机稳定忽略目录 `.git/validation-evidence/f8015b97/b-review-20261107/`，
+不是远程可访问材料。`runs-initial.json`、`runs-web.json`、`runs-static.json` 记录完整
+命令／cwd／退出码／时长，各同名 `.log` 保留原始输出；未复用 Developer 的 PASS 声明。
+
+| B 实际运行 | 结果 |
+|---|---|
+| `python3 scripts/check_governance.py`；完整范围 `git diff --check` | PASS |
+| 根目录 `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'` | 37 PASS，无 skip |
+| 根目录 `.venv/bin/python -m unittest discover -s tests -p 'test_metadata.py'` | 36 PASS，无 skip |
+| 上文 Web focused 命令（探索、API、认证、默认入口、导航、共享弹卡） | 13 文件／176 PASS |
+| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`（cwd `web/`） | 6 PASS，无 skip |
+| 实际修改的 10 个 Python 文件 Ruff check／format；Web typecheck、修改文件 ESLint／Prettier；`npm --prefix web run build` | 全部 PASS |
+| 独立原生复现：现有首页 → 正常筛选／搜索／切类型／退出／详情（真实 Python＋生产 adapter＋本地 fake） | 上述 1–3 项缺陷重现；390px 无水平溢出；桌面／窄屏详情和网格已检视 |
+
+`reproduction.json` 记录实际已应用条件、低于阈值的作品人数、搜索前后条件、options 的
+502 和缺少恢复入口；`upstream-requests.jsonl` 记录无凭据的真实上游路径／参数。
+`repro-server.py` 仅复用已提交 harness，在既有 `genre/tv/list` 注入临时 503；
+`repro-browser.cjs` 通过普通页面控件复现，没有构造额外业务入口。截图
+`min-votes-popular.png`、`options-failure-and-search-return.png`、`desktop-detail.png`、
+`mobile-grid.png`、`mobile-detail.png` 保留现场；最终截图停稳后检视。海报为本地色块
+fixture，图像内容本身不作为真实海报美术验收。原 6 条 spec 的截图另存于
+`developer-spec-screenshots/`。只读和零媒体／Task／配置效果的原生证明通过。
+
+已确认产品阻塞，按工作流 §6 提前 FIX REQUIRED；未运行 API security／V2 UI 专项、
+Node deep-link／page-transition 及其余改接 E2E，也未完成竞态、reduced-motion 和其余
+失败恢复的全部 B 验收。这些仍由 B 在修正候选上执行，不能把本次绿灯记成 Task PASS。
+本轮不需要全 Python／Web／E2E 或安装包／Docker 全发布矩阵。
+测试／构建／静态检查的计时时长与本轮总耗时见该目录 `time-allocation.json`；按累计
+命令时间保守计入复现与治理检查，测试时间低于本轮的 50%。
+
+### Slice outcome reassessment
+
+| Slice 结果 | 本候选状态 |
+|---|---|
+| RO-1：首页替换和 Dashboard 全退出 | V2 默认进入探索、旧 Web 普通未找到已证；API／CLI、专属后端和 V1 消费者仍在，按本 Task 非目标留待后续，不是当前修正项 |
+| RO-2：真实浏览／筛选／搜索／分页 | 主链路已接通；最低人数和搜索退出不满足必需结果，见 1–2 |
+| RO-3：海报／准确详情／返回 | 桌面／390px 和现有详情关闭路径通过；约定详情内容尚缺，见 4 |
+| RO-4：加载／空态／失败恢复和安全读取 | 现有权限／上游错误区分、可信图片和零业务效果已有证据；筛选目录失败恢复及署名未完成，见 3／5 |
+
+先完成 Task51.1 修正。当前不规划下一 Task，不提交 SLICE READY FOR A REVIEW，
+不改写 Slice50 或此前独立修正的接受身份。
+
+本轮工作区：`main`，开始 HEAD 为上述候选；预存 `mediaflow/.DS_Store` 修改和全部未跟踪
+日志／`.DS_Store`／`.explore_adapter_block.py`／`15`／output 调查产物均原样保留、未暂存。
+本轮仅维护 B 拥有的 `TASK.md` 和本机忽略证据；不修改产品实现，不推送或部署。
