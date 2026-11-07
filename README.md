@@ -61,8 +61,10 @@ acceptance and A Final Review were independent. Development acceptance is distin
 or deployment.
 
 [Slice52](SLICE.md) is PLANNED under the user's 2026-11-07 planning-only authorization: coordinated
-Explore layout, scrollable details and fixed-page browsing; comfortable page transitions and stable
-library reads; retirement of the old Automation Open Web journey. These are TARGET requirements,
+whole-page Explore layout, scrollable details and browsing without accumulating document length;
+smooth transitions/read feedback/content handoff across all nine main pages, including library
+refresh-message flashes; retirement of the old Automation Open Web journey. Pagination controls and
+motion timing are implementation choices. These are TARGET requirements,
 not delivered changes. [TASK.md](TASK.md) has no active implementation Task; activation precedes B's
 first Task plan, and implementation is not yet authorized.
 

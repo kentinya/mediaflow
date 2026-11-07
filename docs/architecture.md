@@ -13,28 +13,39 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 ## TARGET — Slice52 experience refinement (PLANNED)
 
 [Slice52](../SLICE.md) 只获规划授权；`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
-`V2-AUTO-016` 是 TARGET，下方 CURRENT 及历史接受身份不变。
+`V2-AUTO-016` 是 TARGET，下方 CURRENT 及历史接受身份不变。用户明确闪烁感涉及全部
+主页面切换的完整过程，两种库刷新提示是其中的具体问题。
 
 **Explore presentation and reads:** keep React → authenticated same-origin Explore API →
 ExploreService → provider-neutral port → TMDB transport and the existing trusted image/CSP bounds.
-Reuse the existing page-addressable browse/search endpoints (up to 20 works, pages 1–500); replace
-the accumulated infinite-list presentation with one current-page grid and compact pagination.
-Query identity includes exact conditions/type/keyword/page; pending target and actual visible page
-cannot be confused, late responses cannot relabel old data, and failed-page retry preserves the
-successful same-context page. Cache pages/contexts remain bounded and principal-isolated.
+Reuse the existing page-addressable browse/search endpoints (up to 20 works, pages 1–500).
+The required outcome is bounded document length/rendered entries while later results and earlier
+positions remain reachable. Ordinary pagination is recommended; the exact UI page size and page-number
+controls are implementation choices, not new user requirements. Do not add page-size settings or
+another paging API. Preserve exact conditions/type/keyword/page query identity; distinguish the
+pending target from visible results, reject late cross-context responses and retain successful
+same-context results after a failed read. Cache pages/contexts remain bounded and principal-isolated.
 No new endpoint, persistent catalog or provider behavior is required. Search exit/detail return
-retain the current-page anchor rather than requiring all visited pages to remain rendered.
+retain the browsing anchor without requiring all visited results to remain rendered.
 Consolidate the Explore heading and tool layout; remove its read-only Files search placeholder.
+Validate the whole page's visual hierarchy, density, proportions, spacing and typography/colour
+consistency through same-viewport before/after views and actual browsing, beyond individual alignment.
 Use the shared modal's bounded internal scroll capability, stable background lock/gutter/focus and
 accessible dismissal; detail content must reach its end at desktop, 390px and short viewport heights.
 
-**Shell and library loading:** Router/AuthBoundary/Query retain lifecycle and authority ownership.
-Adjust only the shared destination-identity transition and necessary content-settle presentation;
-avoid stacked fades, strong opacity flashes, page geometry changes and remounts for animation.
-Start tuning around 350ms, validate intermediate frames/actual interaction, and respect reduced motion.
-Do not delay network reads or user interaction. Cold library/directory reads still have independent
-pending states; cached/same-query refresh retains content with busy feedback in stable geometry.
-No transient inserted refresh row, hidden failure, stale cross-path content or bypassed authority read.
+**All main-page transitions and content handoff:** Router/AuthBoundary/Query retain lifecycle and
+authority ownership. Cover all nine existing sidebar destinations from transition through actual
+pending states to ready content, including necessary page-local presentation changes; the scope is
+not confined to Shell opacity or the two library pages. Avoid stacked fades, strong opacity flashes,
+transient loading-text/skeleton flashes, geometry changes and remounts for animation. Duration and
+easing are tuning choices, not fixed numeric requirements; validate complete intermediate frames
+and actual interaction under quick/cached/slow reads and reduced motion. Do not delay network reads
+or user interaction. Use stable feedback where reads actually remain pending, preserve errors and
+necessary requests, and do not require one universal skeleton or redesign other page business flows.
+The two library pages additionally retain separate library/directory pending states and same-query
+refresh content. Entering a page must not flash the directory-refresh message; moving that message
+to a fixed location alone is insufficient. No temporary inserted refresh row, hidden failure,
+stale cross-path content or bypassed authority read.
 
 **Automation Open retirement:** remove the old definition/editor Web pages, Router registrations,
 destination metadata, list/name entries and exclusive client dependencies; fix occurrence/history
