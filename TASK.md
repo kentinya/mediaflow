@@ -243,7 +243,9 @@ Status after this report: READY FOR B REVIEW (Developer 不自签 PASS)
    本地拦截海报图片。
 5. **Adapter 直接测试** `tests/test_explore.py`：新增公开 `browse/search` ×
    电影／剧集零页成功用例，以及零页正总数／带条目、负数、bool、错误类型、
-   负总数仍失败的边界用例；原 `total_pages=1` 空页兼容用例保留。
+   负总数仍失败的边界用例；原 `total_pages=1` 空页兼容用例保留。先以修正前
+   代码运行零页成功用例，得到 4 errors（browse/search × 电影／剧集均以
+   `MALFORMED_RESPONSE` 失败），再加归一化修正转绿。
 
 ### 本轮实际执行命令与结果
 
