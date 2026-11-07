@@ -140,12 +140,15 @@ git diff --check
    `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`；
    检视桌面／390px 浏览到详情再返回。沿真实 Python 入口读取任务中心、自动化、通知和
    系统状态，验证 binding 没有因位置参数删除而错配；复用已有测试入口／夹具。
-3. 根目录执行 `.venv/bin/python scripts/rules_identity_browser_proof.py`，验证改接后的
-   认证探针及原身份／深链目的；对安全脚本改动运行 Developer 段所述本地 probe 验证。
+3. 对 `rules_identity_browser_proof.py`，仅在已有真实 Python 临时服务上验证改接的
+   认证请求：合法 READ 返回 200、无身份返回 401，且无 Provider／媒体工作；保留原
+   断言目的。本次不要求运行该脚本的完整 Rules 身份／编辑／发布／深链旅程。
+   对安全脚本改动运行 Developer 段所述本地 probe 验证。
    对 CLI／删除模块的分发影响，由 B 执行
-   `.venv/bin/python -m pip wheel . --no-deps -w <isolated-wheel-dir>`，再用精确 wheel 运行
-   `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>`；补查源目录外安装入口
-   help／未知命令／正常命令及已删除模块不再打包，不能用源码副本代替 wheel。
+   `.venv/bin/python -m pip wheel . --no-deps -w <isolated-wheel-dir>`，将精确 wheel
+   安装到隔离环境，在源目录外验证顶层 help、旧命令（含原参数）的解析拒绝、相同临时
+   配置下 `tasks list` 成功，以及已删除模块不再打包。记录实际安装／验证命令与 wheel
+   身份；不要求运行完整 `wheel_smoke_test.py` 中的升级等无关流程。
    本 Task 不变更 Docker／服务生命周期，不要求完整 Docker 发布矩阵；改动的安全探针
    本身必须有实际运行证据，不能因未跑 Docker 就声称该脚本整体通过。
 4. Slice 最终逐项重评 RO-1–4／AC-1–11；Task51.1 的证据只在源、测试、夹具、依赖和
@@ -180,7 +183,8 @@ Developer 激活后交完整 checkpoint SHA、READY FOR B REVIEW、实际改动�
 
 ### Planning checkpoint
 
-本轮基线：`main` / `01f4e05d5cc03822d2e9ced3dfa91a2838990f62`；治理检查 PASS。
+本轮草案修订基线：`main` / `13fa0d2fc4fffa46d055f8e88a64b7f796e9e713`；治理检查 PASS。
+按用户要求收窄 Rules 认证探针和 wheel 安装验证，Task Base、开发范围及其余必要验收保持。
 预存 `mediaflow/.DS_Store` 修改、所有未跟踪 `.DS_Store`、日志、`.explore_adapter_block.py`、
 `15` 和 output 调查产物全部保留、不暂存。本轮仅修改 `TASK.md`，未改产品／仓库测试，
 未运行功能验收、未推送或部署。检查仅限文档／引用／治理；不把规划当成产品通过。
