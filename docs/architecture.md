@@ -10,9 +10,10 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Slice52 experience refinement (PLANNED)
+## TARGET — Slice52 experience refinement (ACTIVE)
 
-[Slice52](../SLICE.md) 只获规划授权；`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
+[Slice52](../SLICE.md) 已为用户授权的 A 代 B 首 Task 规划激活，产品实施尚未授权；
+`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
 `V2-AUTO-016` 是 TARGET，下方 CURRENT 及历史接受身份不变。用户明确闪烁感涉及全部
 主页面切换的完整过程，两种库刷新提示是其中的具体问题。
 

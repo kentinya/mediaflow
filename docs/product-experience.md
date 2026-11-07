@@ -22,9 +22,10 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Slice52 experience refinement (PLANNED)
+## TARGET — Slice52 experience refinement (ACTIVE)
 
-[Slice52](../SLICE.md) 仅获规划授权，以下为七项体验问题的目标旅程；下方 CURRENT 及
+[Slice52](../SLICE.md) 已为首个 Task 规划激活，用户授权 A 代 B 规划 Task52.1，实施尚未
+授权；以下仍为七项体验问题的未交付目标旅程，下方 CURRENT 及
 旧 Slice 的接受事实保留。稳定要求为 `V2-EXPLORE-012–015`、`V2-UX-014/015`、`V2-AUTO-016`。
 用户补充明确：闪烁感涉及全部主页面切换，两种库刷新提示是需要一并解决的具体表现。
 

@@ -1,9 +1,10 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-[Slice52](SLICE.md) — 探索、页面切换与自动化入口体验修整 — 为 **PLANNED**。
-用户本轮只授权 Slice 规划；尚未激活，也没有 B 编写的实施 Task。
+[Slice52](SLICE.md) — 探索、页面切换与自动化入口体验修整 — 已为首个 Task 规划激活为
+**ACTIVE**。用户授权 A 代 B 规划 Task52.1；该角色例外只限规划，产品实施尚未授权。
+首个 Task 计划将在本激活 checkpoint 之后编写。
 
-Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
+Next Action: PLAN TASK52.1 ONLY; IMPLEMENTATION REQUIRES SEPARATE AUTHORIZATION
 
 最近接受基线为 Slice51 **PASS / CLOSED**，原 Base
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，已审实现

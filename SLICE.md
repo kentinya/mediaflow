@@ -4,22 +4,23 @@
 Slice ID: 52
 Name: Explore, Navigation and Automation Entry Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: SLICE ACTIVATION AND TASK52.1 PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
 Risk: Medium
 Planned Test Level: T3; reassess if implementation changes T4 boundaries
-Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
+Next Action: USER AUTHORIZES IMPLEMENTATION AFTER TASK52.1 PLANNING
 ```
 
 ## Authority and accepted baseline
 
 用户于 2026-11-07 提出探索页四项、页面切换两项、自动化页一项体验问题，先授权只读调查，
 随后明确要求“开始规划 Slice”，并授权修正规划，澄清闪烁感指全部页面切换，两种库的
-刷新文案只是具体表现。本 checkpoint 只确定用户结果、边界和验收；不激活 Slice、
-不代 B 编写实施 Task、不修改产品代码，也不授权推送、发布或部署。
+刷新文案只是具体表现。用户随后明确授权“代替B规划第一个Task”；按工作流先激活本 Slice
+并 checkpoint，再由 A 代 B 规划 Task52.1。角色例外仅限这一次规划，后续 B 独立 Task
+验收及 A 独立终审保持；不授权产品实施、推送、发布或部署。
 
 Base 固定为调查及规划前的接受基线 `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`；
 后续规划／激活提交不重设 Base。Slice51 原 Base、已审实现、终审及全部限制保留于
@@ -46,9 +47,9 @@ Slice50 和其他已关闭 Slice／独立修正的身份、延期与历史同样
 | RO-3 全部主页面切换与内容接入平顺 | 切页 1 全页面动画太快／闪烁抖动；2 两种库短暂刷新提示 | `V2-UX-014/015` |
 | RO-4 自动化旧打开功能退出 | 自动化 1 删除“打开”按钮及连带功能 | `V2-AUTO-016` |
 
-稳定定义见 [V2 TARGET](docs/v2-requirements.md#target--slice52-experience-refinement-planned)，
-完整旅程见 [Product Experience TARGET](docs/product-experience.md#target--slice52-experience-refinement-planned)，
-组件边界见 [Architecture TARGET](docs/architecture.md#target--slice52-experience-refinement-planned)。
+稳定定义见 [V2 TARGET](docs/v2-requirements.md#target--slice52-experience-refinement-active)，
+完整旅程见 [Product Experience TARGET](docs/product-experience.md#target--slice52-experience-refinement-active)，
+组件边界见 [Architecture TARGET](docs/architecture.md#target--slice52-experience-refinement-active)。
 本规划拟替换 `V2-EXPLORE-004/006` 中追加加载及“已加载列表”的返回表示，细化
 `V2-EXPLORE-005/006`、`V2-UX-012`，并取消 `V2-AUTO-001/014` 等对旧 Web 定义详情／
 后继草稿编辑入口的保留义务；CURRENT 在实现和独立验收前仍为既有接受基线。
@@ -195,6 +196,7 @@ T4，不将其藏在视觉调整中，也不预先要求无关全发布矩阵。
 
 ## Closure Packet and A Final Review
 
-尚无实施 Task、实现 checkpoint、产品验收或关闭结论。规划校验只证明文档／治理一致，
+当前仅授权 Task52.1 规划，尚无产品实施、实现 checkpoint、产品验收或关闭结论。
+规划校验只证明文档／治理一致，
 不证明七项体验已修复。后续 B 提交精确 Base..Implementation Head 的 Closure Packet；
 A 独立审查本合同全部结果和表面后才能宣布 PASS / CLOSED。

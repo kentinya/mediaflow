@@ -8,10 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice52](../SLICE.md) — Explore, Navigation and Automation Entry Experience — is **PLANNED**
-from Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`, under the user's 2026-11-07 planning-only
-authorization. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK; activation precedes B's
-first Task plan. No implementation or product acceptance is claimed, and no closure row is added.
+[Slice52](../SLICE.md) — Explore, Navigation and Automation Entry Experience — is **ACTIVE**
+from unchanged Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` for first-Task planning only.
+The user authorized A to substitute for B for Task52.1 planning; activation satisfies its workflow
+prerequisite. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK; implementation still needs
+separate authorization. No product acceptance or closure row is added.
 Latest accepted Slice51 and all older identities, deferrals and evidence limits remain unchanged.
 
 ## Latest accepted closure — Slice51

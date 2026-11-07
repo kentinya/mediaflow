@@ -60,13 +60,14 @@ The user-authorized B planning substitutions remain disclosed in that fixed Cont
 acceptance and A Final Review were independent. Development acceptance is distinct from a release
 or deployment.
 
-[Slice52](SLICE.md) is PLANNED under the user's 2026-11-07 planning-only authorization: coordinated
+[Slice52](SLICE.md) is ACTIVE for first-Task planning under the user's 2026-11-07 delegation: coordinated
 whole-page Explore layout, scrollable details and browsing without accumulating document length;
 smooth transitions/read feedback/content handoff across all nine main pages, including library
 refresh-message flashes; retirement of the old Automation Open Web journey. Pagination controls and
 motion timing are implementation choices. These are TARGET requirements,
-not delivered changes. [TASK.md](TASK.md) has no active implementation Task; activation precedes B's
-first Task plan, and implementation is not yet authorized.
+not delivered changes. [TASK.md](TASK.md) has no active implementation Task. The user authorized A
+to substitute for B for Task52.1 planning only; prerequisite activation is complete, implementation
+is not authorized, and independent Task/final review remains required.
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,

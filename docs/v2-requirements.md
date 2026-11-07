@@ -25,10 +25,10 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## TARGET — Slice52 experience refinement (PLANNED)
+## TARGET — Slice52 experience refinement (ACTIVE)
 
-用户于 2026-11-07 授权规划 [Slice52](../SLICE.md) 的七项体验修整；本节为 TARGET，尚未
-激活或交付，不改变下方 CURRENT 的接受身份。`V2-EXPLORE-015` 拟替换 `004/006` 中
+用户于 2026-11-07 授权 [Slice52](../SLICE.md) 规划及 A 代 B 规划 Task52.1；本 Slice
+已为首个 Task 规划激活，本节仍为未实施／验收的 TARGET，不改变下方 CURRENT 的接受身份。`V2-EXPLORE-015` 拟替换 `004/006` 中
 追加加载及返回已加载列表的表示；`V2-AUTO-016` 拟取消 `V2-AUTO-001/014` 等对旧 Web
 定义详情／后继草稿编辑入口的保留义务。用户进一步明确闪烁感涉及全部主页面切换，
 两种库刷新文案只是具体表现。其余查询、权限、执行和历史边界保持。
@@ -43,9 +43,10 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 | V2-UX-015 | 全部主页面读取反馈与内容接入平顺。 | 按各页实际读取状态处理；快速响应／缓存避免加载提示或骨架突兀闪出又消失，确有等待时稳定反馈并平顺接入，必要请求／失败恢复保持。不以出现过加载反馈本身判失败。两种库切页进入不再短暂闪出“正在刷新当前目录”；后台重读、手动刷新及操作后更新不因瞬时插入／移除刷新行而突兀闪灭或挤动列表，仅移到固定位置后仍突兀闪现不算修复。真实空／失败／权限／无Active可辨，不串库／路径／页面；只作必要呈现修正，不重设计其他业务或强制统一骨架。 |
 | V2-AUTO-016 | 旧“打开”Web功能及其专属链路退出。 | 删除列表“打开”，名称为普通文本；旧 definition／editor 页面、路由、导航身份、入口和专属客户端依赖退出，旧地址普通未找到，无别名／重定向。历史页面返回合法列表／记录。保留现有新建／编辑卡及深链、保存／启停、复制／运行一次、执行记录／Task、未知请求核对和共享管理API／CLI，不删除历史或扩展后端退役范围。 |
 
-完整目标旅程见 [Product Experience TARGET](product-experience.md#target--slice52-experience-refinement-planned)，
-技术边界见 [Architecture TARGET](architecture.md#target--slice52-experience-refinement-planned)。
-具体实施 Task 由激活后的 B 规划；本节不授权实现、不把规划校验当产品验收。
+完整目标旅程见 [Product Experience TARGET](product-experience.md#target--slice52-experience-refinement-active)，
+技术边界见 [Architecture TARGET](architecture.md#target--slice52-experience-refinement-active)。
+首个 Task 由用户授权 A 代 B 规划，角色例外只限规划；实施仍需另行授权，B 独立验收与
+A 独立终审保持，不把规划校验当产品验收。
 
 ## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
