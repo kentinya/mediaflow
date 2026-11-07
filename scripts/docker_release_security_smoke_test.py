@@ -159,7 +159,7 @@ def assert_v2_static_serving(base: str, canaries) -> None:
         return body
 
     entry = probe(f"{base}/ui-v2/", content_type="text/html")
-    for path in ("/ui-v2", "/ui-v2/dashboard", "/ui-v2/unknown-client-route"):
+    for path in ("/ui-v2", "/ui-v2/explore", "/ui-v2/unknown-client-route"):
         if probe(f"{base}{path}", content_type="text/html") != entry:
             raise RuntimeError(f"{path} did not serve the V2 entry document")
 
@@ -191,10 +191,10 @@ def assert_v2_static_serving(base: str, canaries) -> None:
     probe(f"{base}/ui/app.js", content_type="text/javascript")
     probe(f"{base}/ui/style.css", content_type="text/css")
 
-    status, _, _ = request_full(f"{base}/api/v1/dashboard")
+    status, _, _ = request_full(f"{base}/api/v1/auth/principal")
     if status != 401:
         raise RuntimeError(
-            "unauthenticated /api/v1/dashboard is not denied beside V2 static serving"
+            "unauthenticated /api/v1/auth/principal is not denied beside V2 static serving"
         )
 
 
@@ -798,7 +798,7 @@ def assert_projection_exports(
         "/api/v1/configuration/packages/export/results?taskId=release-security-task&limit=10",
         "/api/v1/logs?limit=100",
         "/api/v1/notifications?limit=100",
-        "/api/v1/dashboard?recentLimit=10",
+        "/api/v1/system/status",
     )
     for path in paths:
         token = auditor if path == "/api/v1/security-audit" else admin

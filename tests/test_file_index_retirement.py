@@ -97,9 +97,12 @@ class FileIndexRetirementTests(unittest.TestCase):
             database = root / "runtime.sqlite3"
             _activate(database, document)
             # A full runtime command opens/initializes the database; the fresh
-            # schema must not include any FileIndex product table.
-            code, _ = _cli(["--config", str(config), "dashboard"])
+            # schema must not include any FileIndex product table.  Slice 51
+            # retired the Dashboard command, so this uses the supported bounded
+            # task read as the opening command.
+            code, output = _cli(["--config", str(config), "tasks", "list"])
             self.assertEqual(0, code)
+            self.assertIn("TASKS", output)
             connection = sqlite3.connect(database)
             try:
                 tables = {

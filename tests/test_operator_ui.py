@@ -97,11 +97,18 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("token = ''", script)
         self.assertIn("'Authorization': `Bearer ${token}`", script)
 
-    def test_dashboard_and_review_requests_are_bounded(self) -> None:
+    def test_retired_dashboard_is_gone_from_the_v1_client_and_reviews_stay_bounded(self) -> None:
         html = INDEX_HTML.decode()
         script = APP_JS.decode()
         self.assertIn('data-view="files"', html)
-        self.assertIn("/api/v1/dashboard?recentLimit=10", script)
+        # Slice 51 RO-1: the V1 console only disconnects the retired Dashboard
+        # view, button, renderer and request; no statistic stand-in replaces it.
+        self.assertNotIn('data-view="dashboard"', html)
+        self.assertIn('data-view="configuration" class="active"', html)
+        self.assertNotIn("/api/v1/dashboard", script)
+        self.assertNotIn("renderDashboard", script)
+        self.assertIn("let view = 'configuration';", script)
+        self.assertNotIn("let view = 'dashboard';", script)
         self.assertIn("?status=pending&limit=100", script)
         self.assertIn("?limit=100", script)
         self.assertIn("/api/v1/storage/files?", script)

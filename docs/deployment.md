@@ -186,7 +186,7 @@ The production artifact flow is one image, two stages, one Python runtime:
   exact directory in the image configuration. No Node executable, npm,
   `node_modules`, frontend source, Vite/dev server, SSR process, CDN runtime
   or second HTTP service exists in, or is required by, the runtime image.
-- The existing API service serves `/ui-v2/`, the current Dashboard, Library and
+- The existing API service serves `/ui-v2/`, the current Explore, Library and
   Operations route families, the Review & Recovery and Configuration migration
   landings (unknown client routes fall back to the entry document), and the
   referenced hashed assets from that directory through the Python static-serving
@@ -420,13 +420,13 @@ before any release claim:
   requests create no Task, notification, execution authority or Storage
   mutation.
 - The running API service is probed live for V2 static serving: the entry
-  document, the `/ui-v2/dashboard` deep route, every referenced hashed JS/CSS
+  document, the `/ui-v2/explore` deep route, every referenced hashed JS/CSS
   asset and the V1 `/ui` assets with their safe headers; a V2 POST request and
   missing/traversal-like asset paths fail closed; and an unauthenticated
-  `/api/v1/dashboard` request stays denied beside V2 serving.
+  `/api/v1/auth/principal` request stays denied beside V2 serving.
 - Bounded response/export scans cover Web assets, configuration status,
-  managed configuration and result exports, audit/log projections, dashboard
-  and service logs. Durable SQLite evidence is scanned directly. Failures
+  managed configuration and result exports, audit/log projections, system
+  status and service logs. Durable SQLite evidence is scanned directly. Failures
   identify only the affected canary class or surface and never echo the value
   being sought.
 

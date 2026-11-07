@@ -35,11 +35,6 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewDecisionAudit,
     ClassificationReviewStatus,
 )
-from mediaflow.domain.dashboard import (
-    DashboardPersistentState,
-    DashboardTaskCounts,
-    RecentOperationalFailure,
-)
 from mediaflow.domain.direct_files import LibraryKind
 from mediaflow.domain.execution_authorization import (
     ExecutionAuthorization,
@@ -1534,75 +1529,6 @@ class SQLiteTaskRepository:
             origin_definition_id=row["origin_definition_id"],
             origin_definition_name=row["origin_definition_name"],
             origin_kind=row["origin_kind"],
-        )
-
-    def load_dashboard_state(self, *, recent_limit: int) -> DashboardPersistentState:
-        if isinstance(recent_limit, bool) or not isinstance(recent_limit, int):
-            raise ValueError("dashboard recent limit must be an integer")
-        if recent_limit < 1 or recent_limit > 50:
-            raise ValueError("dashboard recent limit must be between 1 and 50")
-        with self._lock:
-            task_counts = self._status_counts("tasks", "status")
-            pending_confirmations = self._count_where("conflict_confirmations", "status", "pending")
-            pending_metadata_reviews = self._count_where("metadata_reviews", "status", "pending")
-            pending_classification_reviews = self._count_where(
-                "classification_reviews", "status", "pending"
-            )
-            dead_letters = self._count_where("notification_deliveries", "status", "dead-letter")
-            failures = self._recent_operational_failures(recent_limit)
-        return DashboardPersistentState(
-            tasks=DashboardTaskCounts(
-                total=sum(task_counts.values()),
-                pending=task_counts.get("pending", 0),
-                running=task_counts.get("running", 0),
-                completed=task_counts.get("completed", 0),
-                partial_success=task_counts.get("partial_success", 0),
-                failed=task_counts.get("failed", 0),
-                cancelled=task_counts.get("cancelled", 0),
-                paused=task_counts.get("paused", 0),
-            ),
-            pending_confirmations=pending_confirmations,
-            pending_metadata_reviews=pending_metadata_reviews,
-            pending_classification_reviews=pending_classification_reviews,
-            dead_letter_notifications=dead_letters,
-            recent_failures=failures,
-        )
-
-    def _status_counts(self, table: str, column: str) -> dict[str, int]:
-        rows = self._connection.execute(
-            f"SELECT {column}, COUNT(*) AS value_count FROM {table} GROUP BY {column}"
-        ).fetchall()
-        return {str(row[column]): int(row["value_count"]) for row in rows}
-
-    def _count_where(self, table: str, column: str, value: str) -> int:
-        row = self._connection.execute(
-            f"SELECT COUNT(*) AS value_count FROM {table} WHERE {column}=?", (value,)
-        ).fetchone()
-        return int(row["value_count"])
-
-    def _recent_operational_failures(self, limit: int) -> tuple[RecentOperationalFailure, ...]:
-        rows = self._connection.execute(
-            """
-            SELECT 'task' AS kind, task_id AS identifier, status, updated_at AS occurred_at,
-                   'task_failed' AS category
-            FROM tasks WHERE status IN ('failed', 'partial_success')
-            UNION ALL
-            SELECT 'notification', delivery_id, status, updated_at, 'delivery_failed'
-            FROM notification_deliveries WHERE status='dead-letter'
-            ORDER BY occurred_at DESC, kind, identifier
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        return tuple(
-            RecentOperationalFailure(
-                row["kind"],
-                row["identifier"],
-                row["status"],
-                datetime.fromisoformat(row["occurred_at"]),
-                row["category"],
-            )
-            for row in rows
         )
 
     def upsert_item(self, item: PersistentTaskItem) -> None:

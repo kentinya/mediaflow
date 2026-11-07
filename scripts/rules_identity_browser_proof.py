@@ -283,8 +283,14 @@ try {
   if (missing.status() !== 404) throw new Error('unknown asset returned ' + missing.status());
   const traversal = await context.request.get(BASE + '/ui-v2/..%2f..%2fetc%2fpasswd');
   if (traversal.status() !== 404) throw new Error('traversal returned ' + traversal.status());
-  const unauth = await context.request.get(BASE + '/api/v1/dashboard');
+  const unauth = await context.request.get(BASE + '/api/v1/auth/principal');
   if (unauth.status() !== 401) throw new Error('unauthenticated API returned ' + unauth.status());
+  const authed = await context.request.get(BASE + '/api/v1/auth/principal', {
+    headers: { Authorization: 'Bearer ' + process.env.MF_PROOF_TOKEN },
+  });
+  if (authed.status() !== 200) {
+    throw new Error('authenticated principal read returned ' + authed.status());
+  }
   console.log(JSON.stringify({ ok: true }));
 } finally {
   await browser.close();

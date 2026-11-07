@@ -1263,8 +1263,8 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 {"expectedVersion": body["version"]},
             )
             self.assertEqual(201, status, preview)
-            status, dashboard = self._request(value, "/api/v1/dashboard")
-            self.assertEqual(200, status)
+            status, tasks = self._request(value, "/api/v1/tasks")
+            self.assertEqual(200, status, tasks)
 
 
 class _ExactAdmissionMixin:

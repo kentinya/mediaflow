@@ -1340,8 +1340,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
                 system_status=None,
                 schedules=(),
                 metadata_policies=(),
-                resource_library_count=0,
-                media_library_count=0,
             )
             self.assertIsNone(binding.direct_media_transfers)
             self.assertIsNone(binding.direct_transfers)

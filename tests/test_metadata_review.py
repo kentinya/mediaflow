@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.strategy_test import StrategyTestResult
@@ -245,7 +244,7 @@ class MetadataReviewTests(unittest.TestCase):
             history = (root / "history.jsonl").read_text(encoding="utf-8")
             self.assertIn("WAITING_METADATA", history)
 
-    def test_cli_api_dashboard_rbac_limits_redaction_and_zero_storage(self) -> None:
+    def test_cli_api_rbac_limits_redaction_and_zero_storage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -256,10 +255,10 @@ class MetadataReviewTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataReviewService(repository).create(item, identification(), "C")
-                dashboard = DashboardService(
-                    repository, resource_library_count=1, media_library_count=1
-                ).snapshot()
-                self.assertEqual(dashboard.pending_metadata_reviews, 1)
+                stored = repository.list_metadata_reviews()
+                self.assertEqual(len(stored), 1)
+                self.assertEqual(stored[0].review_id, review.review_id)
+                self.assertEqual(stored[0].status, review.status)
             output = io.StringIO()
             with patch.object(
                 RuntimeConfiguration,

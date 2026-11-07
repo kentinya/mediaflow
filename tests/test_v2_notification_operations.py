@@ -1355,8 +1355,12 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 harness.close()
 
 
-class DashboardLinkTests(unittest.TestCase):
-    def test_dashboard_notification_failure_carries_the_exact_delivery(self) -> None:
+class DeliveryEvidenceTests(unittest.TestCase):
+    def test_dead_letter_failure_is_carried_by_the_existing_delivery_reads(self) -> None:
+        """Slice 51 Task 51.2: the retired Dashboard aggregation is gone, so the
+        dead-letter failure evidence must come from the supported notification
+        list/detail reads, keeping the exact delivery identity linkable."""
+
         with tempfile.TemporaryDirectory() as directory:
             harness = NotificationHarness(directory)
             try:
@@ -1368,22 +1372,37 @@ class DashboardLinkTests(unittest.TestCase):
                     body={"expectedRevisionId": revision_id, "expectedVersion": version},
                 )
                 self.assertEqual(status, 200)
-                dead = harness.publish_delivery("event-dashboard")
+                dead = harness.publish_delivery("event-delivery-evidence")
                 harness.run_worker(transport=FakeTransport(400), attempts=1)
-                status, dashboard = _request(harness.api, "/api/v1/dashboard")
+
+                # The supported detail read carries the exact dead delivery.
+                status, detail = _request(
+                    harness.api,
+                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                )
                 self.assertEqual(status, 200)
-                self.assertEqual(dashboard["dead_letter_notifications"], 1)
-                notification_failures = [
-                    failure
-                    for failure in dashboard["recent_failures"]
-                    if failure["kind"] == "notification"
-                ]
-                self.assertTrue(notification_failures)
-                self.assertEqual(notification_failures[0]["identifier"], dead.delivery_id)
-                # The identifier is one bounded URI-safe segment: safe to link.
-                identifier = notification_failures[0]["identifier"]
-                self.assertNotIn("/", identifier)
-                self.assertNotIn("\\", identifier)
+                self.assertEqual(detail["status"], "dead-letter")
+                _assert_operator_document_clean(detail)
+
+                # The supported list read surfaces exactly this dead letter.
+                status, listing = _request(
+                    harness.api,
+                    "/api/v1/notifications",
+                    query="limit=50&status=dead-letter",
+                )
+                self.assertEqual(status, 200)
+                identifiers = [item["deliveryId"] for item in listing["items"]]
+                self.assertEqual(identifiers, [dead.delivery_id])
+
+                # The identifier is one bounded URI-safe segment: safe to link
+                # through the detail route, which stays bounded for unknown ids.
+                self.assertNotIn("/", dead.delivery_id)
+                self.assertNotIn("\\", dead.delivery_id)
+                status, missing = _request(
+                    harness.api,
+                    "/api/v1/operations/notifications/deliveries/unknown-delivery",
+                )
+                self.assertEqual(status, 404, missing)
             finally:
                 harness.close()
 

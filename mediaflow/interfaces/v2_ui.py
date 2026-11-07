@@ -160,7 +160,7 @@ def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
 
     Known built asset paths and the entry document are served. Unknown
     client-side routes fall back to the entry document so deep V2 routes such
-    as ``/ui-v2/dashboard`` work. A dotted final segment is treated as an
+    as ``/ui-v2/explore`` work. A dotted final segment is treated as an
     unknown asset and rejected so only built artifact bytes ever leave the
     process — except the one allowlisted rules edit route whose final segment
     is a backend object identity (dots included), never a filename. Traversal

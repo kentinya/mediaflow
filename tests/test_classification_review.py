@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.classification_review import ClassificationReviewService
-from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import (
@@ -155,10 +154,10 @@ class ClassificationReviewTests(unittest.TestCase):
                 final = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
                 # Slice 48 RO-1: the waiting decision keeps the flow unfinished.
                 self.assertEqual(final.status, PersistentTaskStatus.RUNNING)
-                dashboard = DashboardService(
-                    repository, resource_library_count=1, media_library_count=1
-                ).snapshot()
-                self.assertEqual(dashboard.pending_classification_reviews, 1)
+                stored = repository.list_classification_reviews()
+                self.assertEqual(len(stored), 1)
+                self.assertEqual(stored[0].review_id, review.review_id)
+                self.assertEqual(stored[0].status, ClassificationReviewStatus.PENDING)
             with SQLiteTaskRepository(database) as reopened:
                 self.assertEqual(len(reopened.list_classification_reviews()), 1)
 

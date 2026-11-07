@@ -16,7 +16,6 @@ INDEX_HTML = b"""<!doctype html>
       autocomplete="off" spellcheck="false"><button id="connect">Connect</button>
       <button id="disconnect" class="secondary">Disconnect</button></div></header>
   <nav aria-label="Operator views">
-    <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
     <button data-view="files">Files</button>
     <button data-view="schedules">Schedules</button>
@@ -28,7 +27,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="metadata-corrections">Metadata correction</button>
     <button data-view="classification-reviews">Classification</button>
-    <button data-view="configuration">Configuration</button>
+    <button data-view="configuration" class="active">Configuration</button>
     <button data-view="settings">Settings</button>
     <button data-view="system">System</button>
     <button data-view="workers">Workers</button>
@@ -71,7 +70,7 @@ table{display:block;overflow:auto}dl{grid-template-columns:1fr}}
 APP_JS = b"""(() => {
   'use strict';
   let token = '';
-  let view = 'dashboard';
+  let view = 'configuration';
   let canManageConfiguration = false;
   let canActivateConfiguration = false;
   const content = document.getElementById('content');
@@ -162,21 +161,6 @@ APP_JS = b"""(() => {
       card.append(text('span', label), text('strong', value)); grid.append(card);
     });
     return grid;
-  }
-  function renderDashboard(data) {
-    clear(content);
-    content.append(text('h2', 'Dashboard'));
-    content.append(cards([
-      ['Resource libraries', data.resource_libraries], ['Media libraries', data.media_libraries],
-      ['Files', data.files && data.files.total], ['Tasks', data.tasks && data.tasks.total],
-      ['Jobs', data.jobs && data.jobs.total], ['Pending conflicts', data.pending_confirmations],
-      ['Metadata reviews', data.pending_metadata_reviews],
-      ['Classification reviews', data.pending_classification_reviews],
-      ['Dead-letter notifications', data.dead_letter_notifications]
-    ]));
-    const failures = (data.recent_failures || []).map(item => [item.kind, item.status,
-      item.category, item.occurred_at]);
-    content.append(text('h3', 'Recent failures'), table(['Kind', 'Status', 'Category', 'Time'], failures));
   }
   async function renderSystem() {
     const [health, data, management, worker] = await Promise.all([
@@ -3881,8 +3865,7 @@ APP_JS = b"""(() => {
   }
   async function load() {
     try { message('Loading...');
-      if (view === 'dashboard') renderDashboard(await api('/api/v1/dashboard?recentLimit=10'));
-      else if (view === 'tasks') await renderObservability(view);
+      if (view === 'tasks') await renderObservability(view);
       else if (view === 'schedules') await renderSchedules();
       else if (view === 'automation') await renderAutomation();
       else if (view === 'notifications') await renderNotifications();

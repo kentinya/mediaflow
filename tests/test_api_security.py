@@ -279,7 +279,7 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(repository, None, principals=principals())
                 request(api, "GET", "/api/v1/tasks", token="wrong-secret")
-                request(api, "GET", "/api/v1/dashboard", token="viewer-token")
+                request(api, "GET", "/api/v1/auth/principal", token="viewer-token")
                 request(api, "GET", "/api/v1/path-token-secret", token="viewer-token")
                 values = repository.list_security_audit(limit=10)
                 self.assertTrue(any(item.outcome == "denied" for item in values))

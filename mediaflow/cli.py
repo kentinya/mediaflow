@@ -63,7 +63,6 @@ def main(
         "notification-worker",
         "execution-authorizations",
         "security-audit",
-        "dashboard",
         "metadata-reviews",
         "metadata-corrections",
         "classification-reviews",

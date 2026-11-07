@@ -56,8 +56,8 @@ def build_artifact(root: Path) -> None:
     (root / "favicon.svg").write_bytes(FAVICON_SVG)
 
 
-def api_dashboard_status_without_token() -> int:
-    """Status of the unauthenticated Dashboard request against a real
+def api_status_without_token() -> int:
+    """Status of an unauthenticated supported API read against a real
     repository, proving /api/v1 authentication stays intact beside V2."""
 
     with tempfile.TemporaryDirectory() as directory:
@@ -66,7 +66,7 @@ def api_dashboard_status_without_token() -> int:
                 "viewer", "unused-token", frozenset({ApiPermission.READ})
             )
             api = MediaFlowApi(repository, None, principals=(principal,))
-            status, _, _ = request(api, "/api/v1/dashboard")
+            status, _, _ = request(api, "/api/v1/auth/principal")
             return status
 
 
@@ -149,10 +149,10 @@ class V2UiStaticTests(unittest.TestCase):
             self.assertEqual(status, 404, path)
 
     def test_v2_prefix_never_bridges_into_api_or_static_siblings(self) -> None:
-        status, headers, _ = request(self.api, "/ui-v2/api/v1/dashboard")
+        status, headers, _ = request(self.api, "/ui-v2/api/v1/auth/principal")
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
-        self.assertEqual(api_dashboard_status_without_token(), 401)
+        self.assertEqual(api_status_without_token(), 401)
 
     def test_v1_ui_routes_remain_available_and_unchanged(self) -> None:
         expected = {
@@ -275,7 +275,7 @@ class V2UiStaticTests(unittest.TestCase):
         # the unauthenticated API request proves /api/v1 auth is intact.
         status, _, _ = request(self.api, "/ui-v2/dashboard")
         self.assertEqual(status, 200)
-        self.assertEqual(api_dashboard_status_without_token(), 401)
+        self.assertEqual(api_status_without_token(), 401)
 
 
 if __name__ == "__main__":

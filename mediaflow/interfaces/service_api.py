@@ -35,7 +35,6 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
-from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
@@ -351,7 +350,6 @@ class _ApiRuntimeBinding:
     system_status: object | None
     schedules: tuple
     metadata_policies: tuple
-    dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
     #: The MediaLibrary-owned twin of ``direct_files`` (Slice 38 RO-5/RO-7).  It
@@ -403,8 +401,6 @@ class MediaFlowApi:
         schedules=(),
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
-        dashboard_resource_library_count: int = 0,
-        dashboard_media_library_count: int = 0,
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
         maximum_active_jobs: int | None = None,
@@ -749,8 +745,6 @@ class MediaFlowApi:
             system_status=system_status,
             schedules=tuple(schedules),
             metadata_policies=tuple(metadata_policies),
-            resource_library_count=dashboard_resource_library_count,
-            media_library_count=dashboard_media_library_count,
         )
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
@@ -1609,7 +1603,6 @@ class MediaFlowApi:
             "classification-reviews",
             "configuration",
             "confirmations",
-            "dashboard",
             "explore",
             "files",
             "logs",
@@ -6931,15 +6924,6 @@ class MediaFlowApi:
                 200,
                 {"principal_id": principal.principal_id},
             )
-        if parts == ["api", "v1", "dashboard"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            return self._response(
-                start_response,
-                200,
-                self._value(
-                    binding.dashboard.snapshot(recent_limit=self._dashboard_limit(environ))
-                ),
-            )
         if parts[:3] == ["api", "v1", "explore"] and method == "GET":
             # Slice 51 Task 51.1: one read-only Explore boundary. A legitimate
             # READ is proven before any query parsing, Provider resolution,
@@ -9031,8 +9015,6 @@ class MediaFlowApi:
                 system_status=system_status,
                 schedules=runtime.automation_schedules,
                 metadata_policies=runtime.strategy.metadata_policies,
-                resource_library_count=sum(item.enabled for item in runtime.resource_libraries),
-                media_library_count=sum(item.enabled for item in runtime.media_libraries),
                 runtime_revision=runtime_revision,
                 runtime_configuration=runtime,
             )
@@ -9218,8 +9200,6 @@ class MediaFlowApi:
             system_status=refreshed_status,
             schedules=runtime.automation_schedules,
             metadata_policies=runtime.strategy.metadata_policies,
-            resource_library_count=sum(item.enabled for item in runtime.resource_libraries),
-            media_library_count=sum(item.enabled for item in runtime.media_libraries),
             runtime_revision=active,
             runtime_configuration=runtime,
         )
@@ -9241,8 +9221,6 @@ class MediaFlowApi:
         system_status,
         schedules: tuple,
         metadata_policies: tuple,
-        resource_library_count: int,
-        media_library_count: int,
         runtime_revision=None,
         runtime_configuration=None,
     ) -> _ApiRuntimeBinding:
@@ -9337,11 +9315,6 @@ class MediaFlowApi:
             system_status,
             tuple(schedules),
             tuple(metadata_policies),
-            DashboardService(
-                self._repository,
-                resource_library_count=resource_library_count,
-                media_library_count=media_library_count,
-            ),
             files_browser,
             direct_files,
             direct_media_files,
@@ -9419,7 +9392,6 @@ class MediaFlowApi:
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "storages"),
             ("api", "v1", "security-audit"),
-            ("api", "v1", "dashboard"),
             ("api", "v1", "system", "status"),
             ("api", "v1", "configuration", "packages"),
             ("api", "v1", "configuration", "packages", "export", "configuration"),
@@ -9805,20 +9777,6 @@ class MediaFlowApi:
         ):
             return f"/api/v1/confirmations/{{id}}/{parts[4]}"
         return "/api/v1/<unmatched>"
-
-    @staticmethod
-    def _dashboard_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        unknown = set(values).difference({"recentLimit"})
-        if unknown:
-            raise ValueError("dashboard query contains an unsupported field")
-        raw = values.get("recentLimit", ["10"])
-        if len(raw) != 1:
-            raise ValueError("dashboard recentLimit must be specified once")
-        try:
-            return int(raw[0])
-        except ValueError as error:
-            raise ValueError("dashboard recentLimit must be an integer") from error
 
     @staticmethod
     def _confirmation_query(

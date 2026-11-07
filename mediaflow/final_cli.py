@@ -34,7 +34,6 @@ from mediaflow.application.configuration_snapshot import (
     ManagedConfigurationService,
 )
 from mediaflow.application.conflict_resolution import ConfirmationService
-from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -318,8 +317,6 @@ def final_main(
     upgrade_check.add_argument("--max-backup-age-hours", type=float, default=24)
     upgrade_rehearse = upgrade_commands.add_parser("rehearse")
     upgrade_rehearse.add_argument("--backup", required=True)
-    dashboard = commands.add_parser("dashboard", help="read-only operational summary")
-    dashboard.add_argument("--recent-limit", type=int, default=10)
     metadata_reviews = commands.add_parser(
         "metadata-reviews", help="persistent metadata candidate review queue"
     )
@@ -608,17 +605,6 @@ def final_main(
                 f"Organize policies: {len(strategy.organize_policies)}\n"
                 f"Webhooks: {len(configuration.webhooks)}\n"
             )
-            return 0
-        if arguments.command == "dashboard":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                snapshot = DashboardService(
-                    repository,
-                    resource_library_count=sum(
-                        item.enabled for item in configuration.resource_libraries
-                    ),
-                    media_library_count=sum(item.enabled for item in configuration.media_libraries),
-                ).snapshot(recent_limit=arguments.recent_limit)
-                stdout.write(render_dashboard(snapshot))
             return 0
         if arguments.command == "logs":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -1974,34 +1960,6 @@ def render_security_audit(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_dashboard(value) -> str:
-    lines = [
-        "",
-        "DASHBOARD",
-        "",
-        f"As of: {value.as_of.isoformat()}",
-        f"Resource libraries: {value.resource_libraries}",
-        f"Media libraries: {value.media_libraries}",
-        f"Tasks: {value.tasks.total} (running={value.tasks.running}, failed={value.tasks.failed})",
-        f"Pending confirmations: {value.pending_confirmations}",
-        f"Pending metadata reviews: {value.pending_metadata_reviews}",
-        f"Pending classification reviews: {value.pending_classification_reviews}",
-        f"Dead-letter notifications: {value.dead_letter_notifications}",
-        "",
-        "RECENT FAILURES",
-        "",
-    ]
-    lines.extend(
-        f"{item.occurred_at.isoformat()} | {item.kind} | {item.identifier} | "
-        f"{item.status} | {item.category}"
-        for item in value.recent_failures
-    )
-    if not value.recent_failures:
-        lines.append("None")
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -3733,12 +3691,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             None,
             getattr(configuration, "automation_schedules", ()),
             principals=principals,
-            dashboard_resource_library_count=sum(
-                item.enabled for item in getattr(configuration, "resource_libraries", ())
-            ),
-            dashboard_media_library_count=sum(
-                item.enabled for item in getattr(configuration, "media_libraries", ())
-            ),
             remote_execution_enabled=getattr(configuration, "remote_execution_enabled", False),
             remote_execution_maximum_ttl_seconds=getattr(
                 configuration, "remote_execution_maximum_ttl_seconds", 900

@@ -1,193 +1,266 @@
+"""Retirement acceptance for the retired Dashboard API and CLI (Slice 51 RO-1).
+
+Task 51.2 removes the Dashboard route, command, service and aggregation. These
+tests keep the retirement honest through real entry points:
+
+- the production ``api serve`` composition over real local HTTP proves a legal
+  READ identity still reads a supported route, while the retired route (with
+  its original query) is an ordinary unknown route with no business effect;
+- the CLI entry rejects the retired command at parse stage and keeps a normal
+  bounded read working under the same temporary configuration.
+"""
+
 from __future__ import annotations
 
 import io
 import json
+import os
+import socket
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
-from datetime import UTC, datetime, timedelta
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.application.dashboard import DashboardService
-from mediaflow.domain.notification import (
-    NotificationDelivery,
-    NotificationDeliveryStatus,
-    NotificationEventType,
-)
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import (
-    ConfirmationStatus,
-    ConflictConfirmation,
-    PersistentTask,
-    PersistentTaskStatus,
-)
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.service_api import MediaFlowApi
 
-NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+READER_TOKEN = "retirement-probe-reader-token"
+HEALTH_TIMEOUT_SECONDS = 30.0
+
+_SERVE_SNIPPET = (
+    "import sys;\n"
+    "from mediaflow.final_cli import final_main;\n"
+    "sys.exit(final_main(sys.argv[1:], stdout=sys.stdout, stderr=sys.stderr))\n"
+)
 
 
-def request(api, *, token: str | None = "viewer-token", query: str = ""):
-    statuses = []
-    environ = {
-        "REQUEST_METHOD": "GET",
-        "PATH_INFO": "/api/v1/dashboard",
-        "QUERY_STRING": query,
-        "CONTENT_LENGTH": "0",
-        "REMOTE_ADDR": "127.0.0.1",
-        "wsgi.input": io.BytesIO(),
+def _write_configuration(root: Path, storages: tuple[Path, ...]) -> Path:
+    document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+    document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+    for storage, location in zip(document.get("storages", []), storages):
+        location.mkdir(parents=True, exist_ok=True)
+        storage["rootPath"] = str(location)
+    document["api"] = {
+        "principals": [
+            {
+                "id": "probe-reader",
+                "tokenEnv": "DASHBOARD_RETIREMENT_TOKEN",
+                "roles": ["viewer"],
+                "enabled": True,
+            }
+        ]
     }
-    if token:
-        environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
-    body = b"".join(api(environ, lambda value, headers: statuses.append(value)))
-    return int(statuses[0].split()[0]), json.loads(body)
+    path = root / "config.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
 
 
-class DashboardTests(unittest.TestCase):
-    def test_empty_database_does_not_create_file_index(self) -> None:
+def _free_port() -> int:
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        return int(holder.getsockname()[1])
+
+
+def _fetch(url: str, token: str | None = None) -> tuple[int, bytes]:
+    request = urllib.request.Request(url)
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+
+
+class DashboardApiRetirementTests(unittest.TestCase):
+    def test_retired_route_matches_an_unknown_route_after_a_supported_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                snapshot = DashboardService(
-                    repository, resource_library_count=0, media_library_count=0
-                ).snapshot()
-                self.assertEqual(snapshot.tasks.total, 0)
-            connection = sqlite3.connect(database)
-            try:
-                self.assertIsNone(
-                    connection.execute(
-                        "SELECT name FROM sqlite_master WHERE name='file_index'"
-                    ).fetchone()
+            root = Path(directory)
+            config = _write_configuration(root, (root / "source", root / "target"))
+            port = _free_port()
+            base = f"http://127.0.0.1:{port}"
+            environment_patch = patch.dict(os.environ, {"DASHBOARD_RETIREMENT_TOKEN": READER_TOKEN})
+            environment_patch.start()
+            self.addCleanup(environment_patch.stop)
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    _SERVE_SNIPPET,
+                    "--config",
+                    str(config),
+                    "api",
+                    "serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.addCleanup(self._stop, process)
+            deadline = time.monotonic() + HEALTH_TIMEOUT_SECONDS
+            while True:
+                try:
+                    status, _ = _fetch(f"{base}/health")
+                    if status == 200:
+                        break
+                except (urllib.error.URLError, OSError):
+                    pass
+                if process.poll() is not None:
+                    output = process.stdout.read() if process.stdout else ""
+                    self.fail(f"api serve exited before health: {output}")
+                if time.monotonic() > deadline:
+                    self.fail("api serve did not become healthy in time")
+                time.sleep(0.2)
+
+            # A supported read answers 200 for the legal READ identity.
+            status, body = _fetch(f"{base}/api/v1/auth/principal", READER_TOKEN)
+            self.assertEqual(status, 200, body)
+            self.assertEqual(json.loads(body), {"principal_id": "probe-reader"})
+
+            _, unknown_plain = _fetch(f"{base}/api/v1/not-a-supported-route", READER_TOKEN)
+            _, unknown_query = _fetch(
+                f"{base}/api/v1/not-a-supported-route?recentLimit=10", READER_TOKEN
+            )
+            status, retired = _fetch(f"{base}/api/v1/dashboard", READER_TOKEN)
+            self.assertEqual(status, 404, retired)
+            status, retired_query = _fetch(f"{base}/api/v1/dashboard?recentLimit=10", READER_TOKEN)
+            self.assertEqual(status, 404, retired_query)
+            self.assertEqual(json.loads(retired), json.loads(unknown_plain))
+            self.assertEqual(json.loads(retired), json.loads(unknown_query))
+            self.assertEqual(json.loads(retired_query), json.loads(unknown_query))
+            self.assertEqual(json.loads(retired_query).get("error", {}).get("code"), "not_found")
+            self.assertNotIn("recentLimit", retired_query.decode("utf-8"))
+
+            # No identity still follows the global unauthenticated rule.
+            status, unauthenticated = _fetch(f"{base}/api/v1/dashboard?recentLimit=10")
+            self.assertEqual(status, 401, unauthenticated)
+            error_code = json.loads(unauthenticated).get("error", {}).get("code")
+            self.assertEqual(error_code, "unauthorized")
+
+            # Public audit survives: the retired request is still recorded with
+            # the generic route classification, and no Business state appears.
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                audit = repository.list_security_audit(limit=50)
+                self.assertTrue(
+                    any(
+                        item.principal_id == "probe-reader" and item.http_status == 404
+                        for item in audit
+                    ),
+                    audit,
                 )
+                self.assertTrue(
+                    any(item.http_status == 401 for item in audit),
+                    audit,
+                )
+                self.assertEqual((), repository.list_tasks())
+                self.assertNotIn("recentLimit", repr(audit))
+            connection = sqlite3.connect(root / "runtime.sqlite3")
+            try:
+                rows = connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
             finally:
                 connection.close()
+            table_names = {row[0] for row in rows}
+            self.assertIn("tasks", table_names)
 
-    def test_aggregate_task_job_and_notification_counts_are_bounded(self) -> None:
+    @staticmethod
+    def _stop(process: subprocess.Popen) -> None:
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+
+
+class DashboardCliRetirementTests(unittest.TestCase):
+    def test_help_command_and_argument_are_rejected_at_parse_stage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                repository.create_task(self._task("task-failed", PersistentTaskStatus.FAILED))
-                repository.create_task(self._task("task-running", PersistentTaskStatus.RUNNING))
-                repository.create_confirmation(self._confirmation())
-                repository.create_delivery(self._delivery())
-                snapshot = DashboardService(
-                    repository, resource_library_count=2, media_library_count=3
-                ).snapshot(recent_limit=2)
+            root = Path(directory)
+            config = _write_configuration(root, (root / "source", root / "target"))
 
-            self.assertEqual((snapshot.resource_libraries, snapshot.media_libraries), (2, 3))
-            self.assertEqual(snapshot.tasks.running, 1)
-            self.assertEqual(snapshot.tasks.failed, 1)
-            self.assertEqual(snapshot.pending_confirmations, 1)
-            self.assertEqual(snapshot.dead_letter_notifications, 1)
-            self.assertEqual(len(snapshot.recent_failures), 2)
-            serialized = repr(snapshot)
-            self.assertNotIn("super-secret", serialized)
-            self.assertNotIn("/private/media", serialized)
-            self.assertNotIn("webhook-body", serialized)
-            self.assertEqual(
-                [item.identifier for item in snapshot.recent_failures],
-                ["delivery-dead", "task-failed"],
-            )
+            help_output, help_errors = io.StringIO(), io.StringIO()
+            try:
+                # argparse writes to the live process streams, so both are
+                # redirected to keep the captured help text assertable.
+                with patch("sys.stdout", help_output), patch("sys.stderr", help_errors):
+                    code = final_main(["--help"], stdout=help_output, stderr=help_errors)
+            except SystemExit as error:  # argparse --help exits after printing
+                code = error.code
+            self.assertEqual(code, 0)
+            rendered = help_output.getvalue() + help_errors.getvalue()
+            self.assertIn("tasks", rendered)
+            self.assertNotIn("dashboard", rendered.lower())
 
-    def test_cli_and_api_are_read_only_bounded_and_audited(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            configuration = json.loads(Path("config/strategy.example.json").read_text())
-            configuration["persistence"] = {"databasePath": str(database)}
-            config_path = Path(directory, "config.json")
-            config_path.write_text(json.dumps(configuration), encoding="utf-8")
-            output = io.StringIO()
+            rejected, missing = io.StringIO(), io.StringIO()
+            with patch("sys.stderr", rejected):
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        ["--config", str(config), "dashboard", "--recent-limit", "5"],
+                        stdout=missing,
+                        stderr=io.StringIO(),
+                    )
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("invalid choice: 'dashboard'", rejected.getvalue())
+
+            # The rejection is a parse-stage unknown command: a configuration
+            # that cannot even be read produces the very same failure, so a
+            # configuration or permission error is never the retirement proof.
+            broken = io.StringIO()
+            with patch("sys.stderr", broken):
+                with self.assertRaises(SystemExit) as raised_broken:
+                    final_main(
+                        [
+                            "--config",
+                            str(root / "missing.json"),
+                            "dashboard",
+                            "--recent-limit",
+                            "5",
+                        ],
+                        stdout=io.StringIO(),
+                        stderr=io.StringIO(),
+                    )
+            self.assertEqual(raised_broken.exception.code, 2)
+            self.assertEqual(rejected.getvalue(), broken.getvalue())
+
+            # The same temporary configuration still serves a normal bounded
+            # read: the retirement did not disturb supported CLI work.
+            listed = io.StringIO()
+            errors = io.StringIO()
+            # A normal bounded read never constructs a media Storage: the
+            # retirement proof cannot rest on configuration or permission
+            # failures.
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
-                side_effect=AssertionError("dashboard constructed Storage"),
+                side_effect=AssertionError("tasks list constructed a Storage"),
             ):
-                self.assertEqual(
-                    final_main(
-                        ["--config", str(config_path), "dashboard", "--recent-limit", "5"],
-                        stdout=output,
-                        stderr=io.StringIO(),
-                    ),
-                    0,
+                code = final_main(
+                    ["--config", str(config), "tasks", "list"],
+                    stdout=listed,
+                    stderr=errors,
                 )
-            self.assertIn("DASHBOARD", output.getvalue())
-            with SQLiteTaskRepository(database) as repository:
-                viewer = ResolvedApiPrincipal(
-                    "viewer", "viewer-token", frozenset({ApiPermission.READ})
-                )
-                auditor = ResolvedApiPrincipal(
-                    "auditor",
-                    "auditor-token",
-                    frozenset({ApiPermission.READ, ApiPermission.READ_SECURITY_AUDIT}),
-                )
-                admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=(viewer, auditor, admin),
-                    dashboard_resource_library_count=2,
-                    dashboard_media_library_count=3,
-                )
-                self.assertEqual(request(api, token=None)[0], 401)
-                status, document = request(api, query="recentLimit=5")
-                self.assertEqual(status, 200)
-                self.assertEqual(document["resource_libraries"], 2)
-                self.assertEqual(document["media_libraries"], 3)
-                self.assertEqual(request(api, token="auditor-token")[0], 200)
-                self.assertEqual(request(api, token="admin-token")[0], 200)
-                self.assertEqual(request(api, query="recentLimit=0")[0], 400)
-                self.assertEqual(request(api, query="secret=token-value")[0], 400)
-                audit = repository.list_security_audit(limit=20)
-                self.assertTrue(any(item.route == "/api/v1/dashboard" for item in audit))
-                self.assertNotIn("secret", repr(audit))
-                self.assertNotIn("token-value", repr(audit))
+            self.assertEqual(code, 0, errors.getvalue())
+            self.assertIn("TASKS", listed.getvalue())
+            self.assertIn("Total:", listed.getvalue())
 
-    @staticmethod
-    def _task(identifier: str, status: PersistentTaskStatus) -> PersistentTask:
-        return PersistentTask(
-            identifier,
-            "organize",
-            status,
-            False,
-            NOW,
-            NOW,
-            error="super-secret /private/media" if status is PersistentTaskStatus.FAILED else None,
-        )
 
-    @staticmethod
-    def _confirmation() -> ConflictConfirmation:
-        return ConflictConfirmation(
-            "confirmation",
-            "task-failed",
-            "item",
-            "plan",
-            "destination_exists",
-            "source",
-            "private/movie.mkv",
-            "target",
-            "Movies/movie.mkv",
-            "manual",
-            ConfirmationStatus.PENDING,
-            NOW,
-            NOW,
-        )
-
-    @staticmethod
-    def _delivery() -> NotificationDelivery:
-        occurred = NOW + timedelta(minutes=3)
-        return NotificationDelivery(
-            "delivery-dead",
-            "webhook",
-            "event",
-            NotificationEventType.JOB_FAILED,
-            "webhook-body super-secret",
-            NotificationDeliveryStatus.DEAD_LETTER,
-            1,
-            occurred,
-            occurred,
-            occurred,
-            failure_category="super-secret /private/media",
-        )
+if __name__ == "__main__":
+    unittest.main()
