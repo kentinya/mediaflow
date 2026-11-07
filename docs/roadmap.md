@@ -47,30 +47,19 @@ movie/TV browse → filter/search → detail → return journey, including genui
 recovery. Dashboard Web/API/CLI, dedicated backend/runtime wiring and reachable consumers have retired
 without compatibility; shared reads and durable history remain.
 
-A51-01 was corrected in the original Task51.1 and independently reaccepted. B's renewed Closure Packet
-is `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`; original failure/review/validation limits remain in
-Git and the Contract. [TASK.md](../TASK.md) has no active implementation Task; **A SELECTS THE NEXT
-LARGE SLICE** is a separate action. No new Slice/optional Task is selected here. All deferrals and prior
-accepted identities remain; Scan/Preview/FileIndex/Job/Pause retirement, execution safety and shared
-page-local transition behavior are unchanged. No push, release or deployment is claimed.
+[TASK.md](../TASK.md) has no active implementation Task; **A SELECTS THE NEXT LARGE SLICE** is a
+separate action. No next Slice or optional Task is selected here. Existing deferrals, prior accepted
+identities and Scan/Preview/FileIndex/Job/Pause retirement remain. Git synchronization is distinct
+from release/deployment.
 
 ## Accepted boundary references
 
-Latest acceptance is [Slice51's Contract/A review](../SLICE.md), with original Base
-`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
-[Progress](progress.md#closure-ledger) retains delivery, deferrals and evidence limits.
-
-Prior50 acceptance is [Slice50's Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review):
-original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation
-`6b0927328a7bf0873faffce9cb38007fd4607764`. Required outcomes, unchanged safety and all explicit deferrals are
-recorded in [Progress](progress.md#closure-ledger). Prior49 acceptance remains at its
-[immutable Contract](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md), original Base
-`02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` / implementation `9d6b78147d90b950ed2333f9747facc77bf0391a`.
-No older Slice is reopened; Scan/Preview/FileIndex/Job/Pause retirements remain intact.
-
-[Release](release.md) owns release-line facts; [Architecture](architecture.md) and
-[Product Experience](product-experience.md) own CURRENT behavior. This page records large-Slice
-priority/status, not Task history or repeated acceptance reports.
+Latest acceptance: [Slice51's fixed Contract/A review](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review).
+[Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
+Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
+retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release
+facts; [Architecture](architecture.md) and [Product Experience](product-experience.md) own CURRENT
+behavior. Roadmap records large-Slice priority/status rather than repeating Task history or evidence.
 
 ## Roadmap rules
 

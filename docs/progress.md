@@ -16,86 +16,31 @@ Slice50 and all older accepted identities, deferrals and evidence limits remain 
 
 ## Latest accepted closure — Slice51
 
-Delivered: TMDB Explore as the connected default homepage; bounded movie/TV browsing, real filters/
-sorts, separate explicit search, manual pagination, readable posters and exact detail/return; truthful
-loading/empty/failure and independent recovery; trusted public artwork with precise CSP and credentials
-kept server-side. Dashboard Web/API/CLI, dedicated backend/repository/runtime wiring and all reachable
-consumers retired without compatibility; supported shared reads and durable histories remain.
-`V2-EXPLORE-001–011` and affected requirements/journey/architecture/operator guidance are CURRENT.
+原始 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` 至实现
+`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`，于 2026-11-07 独立 A 终审 PASS / CLOSED。
+交付 TMDB 探索首页、电影／剧集有界浏览／筛选／搜索、准确详情与返回、真实空态和独立
+恢复；Dashboard Web／API／CLI 及专属实现／消费者完整退出，无兼容，共享读取与历史保留。
+`V2-EXPLORE-001–011` 及相关需求／旅程／架构／指引为 CURRENT，全部延期与执行安全保持。
 
-Renewed B packet: `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`; first A rejection:
-`58a74866:SLICE.md`. A51-01's genuine zero-page response is now normalized only for an honest empty
-result; malformed inputs still fail. A reviewed the full 99-file Slice range and correction, independently
-passed **159 Python / 142 Web / 11 real-Python browser tests**, including desktop/390px empty filters/
-searches and recovery. Current Web/lock/pyproject digests match B; current grid/empty-state screenshots
-and unchanged-asset stable detail screenshots were inspected. Local evidence:
-`.git/validation-evidence/30c99f1b/a51-final/`; local access is not promised remotely.
-
-B's renewed **159 Python / 67 Web / 11 native** plus quality/typecheck/build results, original51.2
-**309 Python / 10 native**, shared binding/history, V1/read/probe and isolated clean-source installation
-evidence remain in their immutable packets. Original A/B failures, Base comparisons, fixture/old-control
-limits, old build/lib wheel contamination and probe extraction failure, and B's system-Python missing
-httpx errors remain disclosed. The old wheel is not current-package proof after the adapter changed.
-No full-repository suites/current wheel/Docker release matrix, real TMDB, production deployment,
-old-task migration or cross-version validation is claimed; Contract deferrals and safety are unchanged.
-No implementation, push, release or deployment occurs in this closure checkpoint.
-
-## Prior accepted closure — Slice50
-
-Original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through accepted implementation
-`6b0927328a7bf0873faffce9cb38007fd4607764`; full [Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review).
-B final packet: `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`; original Task/fix reports remain reachable there.
-Delivered: centered readable Task details; Storage view/add/edit cards and More menu; both library
-pages without page-local trees, with four configuration cards and clear edit/remove presentation;
-nine main-page transitions, consistent library/directory loading and stable Automation create/edit.
-Existing exact publication, RBAC, references, pins/fences, independent results and non-replay remain.
-
-A reviewed the complete 62-file range, matched B's assets/lock/harness/wheel digests and independently
-passed **272 unit tests / 33 real-Python browser cases / 5 main-page browser cases**, plus two-library
-× desktop/390px slow-read/card/menu/cancel journeys and reduced-motion. Inspected current PNGs and
-trace middle frames. B final **2603 Python (7 skips) / 1390 Web / 260 E2E**, native/safety/packaging/
-source-external evidence and failure/skip disclosures remain in the immutable packet. A local
-artifacts: `.git/validation-evidence/60798c3e/A50-final/`; local evidence is not remotely promised.
-The incorrect direct-files harness run, obsolete optional helper, Python version refusal, warnings,
-B testing-time deviation and seven external-service/endurance skips remain disclosed. Docker was
-unavailable and its matrix is inapplicable to this Web/document-only scope with no backend/deployment/
-service-lifecycle changes. No production, migration, release or deployment validation is claimed.
-`V2-UX-005–013` and affected journey/architecture/page specifications are CURRENT; deferrals unchanged.
-
-## Prior accepted closure — Slice49
-
-Original Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` through accepted implementation
-`9d6b78147d90b950ed2333f9747facc77bf0391a`. [Contract/A review](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md#final-validation-closure-packet-and-a-final-review)
-records full RO-1–4 / AC-1–16 acceptance. B final packet:
-`edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`; Task49.1 packet:
-`7b7e9aaa24684ee59552ca95641843706dc7680d:TASK.md`.
-
-Delivered: correct confined whole-library/subdirectory sources, direct one-click list Run once with
-independent current-request feedback and precise readback; one Chinese creation/edit card with exact
-saved values, return/exit protection, optional default-off enabled creation and later enable/disable.
-Creation uses atomic checked publication and existing scoped intent/permissions; it starts no immediate
-Task. Unknown publication distinguishes the command's historical success from current saved state;
-immediate reopen keeps values and their exact publication fence together. Original pins/results,
-five-state flow, file independence, statistics and successful/uncertain non-replay remain.
-
-A reviewed all 42 files in the original range, independently ran **149 Python tests / 9 real-Python
-browser cases / original held-GET reopen probe 1 case**, all passed, inspected desktop/390px screenshots
-and verified B's artifact manifest. B full coverage, source-external wheel/container consumers and
-same-version reopen evidence are in the packet. The initial Python document-heading failure and
-8-pass correction, default trace-output collision and complete rerun, original unresolved-cause
-native read timeout and 47-pass rerun, ResourceWarnings, seven optional external-service/endurance
-skips and disclosed B test-time deviations remain visible. No new migration/production validation,
-release or deployment is claimed. `V2-AUTO-013–015` and relevant journeys/contracts are CURRENT;
-frozen V1 and previous Slice acceptance identities are unchanged.
+[固定 A 终审／关闭报告](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)保留完整范围、实际运行、复用与限制；
+B 最终包 `e26b399c:TASK.md`，首次 A 退回 `58a74866:SLICE.md`。A51-01 在原 Task51.1
+修正后独立复核通过；A 159 Python／142 Web／11 原生，B 更新后 159／67／11 全部通过。
+原测试／夹具／构建／探针失败与 Base 对照不改写为全仓通过；旧 wheel 不作当前包证明。
+未声称全发布矩阵、真实 TMDB／用户媒体、生产部署或跨版本验证。本地原始材料仅在
+`.git/validation-evidence/30c99f1b/a51-final/` 及 B 目录，不随 GitHub 同步承诺可访问。
 
 ## Prior acceptance references
 
-Original Base/accepted Head, delivered scope and deferrals remain in the ledger below; new
-amendments do not rewrite older acceptance. Detailed prior closure/validation pointers remain at
+Original Base/accepted Head, delivered scope and deferrals remain in the ledger below; the fixed
+reports retain all earlier failures, validation limits and role exceptions. New amendments do not
+rewrite older acceptance. Detailed prior closure/validation pointers remain at
 [the Slice49 closure checkpoint](https://github.com/kentinya/mediaflow/blob/7a020b125670e6d5c3ea0b25dc07d89a085b1f06/docs/progress.md).
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
+| 51 | `c0a02875e53f249f1ac7d22b9b667c6a453c87b9:SLICE.md` | `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` |
+| 50 | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787:SLICE.md` | `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md` |
+| 49 | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0:SLICE.md` | `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md` |
 | 48 | `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e:SLICE.md` | `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md` |
 | 47 | `ba84272721961c970f1eb85d616a0d129523ab92:SLICE.md` | `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md` |
 | 46 | `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md` | `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md` |

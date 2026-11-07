@@ -57,8 +57,9 @@ fully retired without compatibility; shared statistics and durable history remai
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` is accepted.
 [CURRENT requirements](docs/v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) define the delivered boundary.
 [TASK.md](TASK.md) records no active implementation Task; selecting the next large Slice is a
-separate A action. The original authorized A-for-B first-plan role exception remains disclosed in
-the Contract; Task acceptance and A Final Review were independent. No push or deployment is claimed.
+separate A action. The user-authorized B planning substitutions remain disclosed in
+the Contract; Task acceptance and A Final Review were independent. Development acceptance is
+distinct from a release or deployment.
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,

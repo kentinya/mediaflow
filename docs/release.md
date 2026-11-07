@@ -18,14 +18,19 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-Slice50 is PASS / CLOSED; [Progress](progress.md) retains its original Base, accepted implementation
-Head and validation limits, alongside earlier closures. The accepted presentation includes readable
-Task details, Storage/library cards and menus, both library pages without page-local trees, nine
-main-page transitions, consistent library loading and stable Automation create/edit. These Web-only
-changes add no backend, schema or deployment capability. Accepted49 Automation intent and accepted48
-flow/rate semantics remain: saved definitions run with confined sources, Task flow is independent
-of file results, and execution records read that same durable Task. Closure evidence is not a new
-container, external-service or production validation claim.
+[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review) is PASS / CLOSED. Its original Base is
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`, with accepted implementation
+`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`; [Progress](progress.md) retains prior closures,
+unchanged deferrals and evidence limits. Explore replaces the homepage with bounded movie/TV
+browse/filter/search/detail/return and independent read recovery. Dashboard Web/API/CLI and dedicated
+backend/consumers are removed without compatibility; shared reads and durable history remain.
+
+Slice51's read-only Provider/API/Web and retirement validation does not establish a new package,
+container, external-service or production release. Current adapter changes are not validated by the
+old wheel; full/current packaging and release gates must run for an actual release. Accepted Slice50
+presentation/loading/cards, Slice49 confined Automation intent and Slice48 independent Task flow/file
+outcomes remain. Exact tests, prior failures and evidence reuse are in the fixed A/B reports.
+
 This is development acceptance, not a V2 release. Current support is fresh initialization
 → submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
 migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are

@@ -4,8 +4,8 @@
 **PASS / CLOSED**。“浏览 → 筛选／搜索 → 查看详情 → 返回”和真实空态／失败恢复已接受，
 Dashboard Web／API／CLI 及专属后端／消费者完整退出，无兼容。原始 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，
 已审实现 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`；完整证据与限制见 Contract／Progress。
-[TASK.md](../TASK.md) 为无活动实施 Task，下一大 Slice 另由 A 选择。首个计划的 A 代 B
-角色例外保持披露，不等同独立验收。[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md)
+[TASK.md](../TASK.md) 为无活动实施 Task，下一大 Slice 另由 A 选择。首个计划与退回后修正计划的 B 代行
+例外保持披露，不等同独立验收。[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md)
 及更早接受身份／延期不变；关闭不等于推送、发布或部署。
 
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细

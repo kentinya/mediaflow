@@ -16,37 +16,22 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 
 ## Authority and accepted baseline
 
-用户先要求只调查首页的美观、可读性和内容定位，随后要求改为类似 MoviePilot 的探索页，
-明确“直接替换 Dashboard，不做跳转兼容”，最终授权按“浏览 → 筛选／搜索 → 查看详情 →
-返回”的完整探索体验规划 Slice。此前仅授权 A 的范围与文档规划，未开始产品实施。
-用户随后授权按范围复核结果收敛：取消详情独立深链／刷新重连恢复、无 Active 独立启动的
-必需承诺，不锁定认证同源图片代理／缓存；测试按实际影响分级，必要安全边界保持。
-用户进一步明确“Dashboard API／CLI 也删了，完全删除不做兼容”：本 Contract 将退出范围
-扩大到 Dashboard 的全部运行入口和专属实现，替代先前保留统计 API／CLI 的边界。
-用户于 2026-11-07 进一步明确“没问题就激活 Slice 并代替 B 规划第一个 Task”：
-同一代理先以 A 身份提交 ACTIVE Contract，再按用户明确授权代替 B 规划首个 Task；这是
-角色例外披露，不构成独立验收或 A Final Review。用户随后明确“激活 Task”，将已提交的
-Task51.1 草案转为正式活动实施 Task。Task51.1 后经独立 B 验收 PASS，完整结论与限制见
-`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`。
-用户随后明确“激活Task”，授权实施 Task51.2：Dashboard API／CLI、专属后端与消费者
-完整退出。Task51.2 已由 B 独立验收 PASS，并于 `ab3edf8d:TASK.md` 提交 Closure Packet。
-首次 A 终审于 `58a74866:SLICE.md` 因 A51-01（合法零页空结果误报失败）退回修正。
-原 Task51.1 的 ID／Base／Goal／Scope／High／T3 保持；B 指导修正后独立复核 PASS，
-更新后的完整 Closure Packet 在 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`。本轮 A 对原始
-Base 至 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` 的完整范围独立终审，确认 A51-01 已解决，
-RO-1–4／全部必需表面／AC-1–11 满足，决定 PASS / CLOSED。首个计划的 A 代 B 角色例外
-不延伸为自验收；原 B／A 失败、原候选与证据限制保持可追溯，不实施新功能、推送或部署。
-生命周期、Git、测试和关闭规则统一遵循 [Development Workflow](docs/development-workflow.md)。
+用户授权以“浏览 → 筛选／搜索 → 详情 → 返回”完整探索替换首页，并完全退出 Dashboard
+Web／API／CLI 和专属实现、无兼容。详情独立深链／刷新重连恢复、专用无 Active 启动不在
+必需交付范围；图片交付按实际依赖选择，T3 及触发 T4 风险时的重评边界不变。
 
-规划开始于 `main` / 上述 Base；治理检查 PASS，工作区和 Git 可写。预存的
-`mediaflow/.DS_Store` 修改以及未跟踪的 `.DS_Store`、本地日志、`15`、`output/` 调查产物等
-全部保留，不纳入 checkpoint；不读取或修改用户运行数据库、私有配置或生产媒体。
-Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交不重设 Base。
+原始 Base 固定为 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`，即规划前接受基线；
+规划／激活／修正与文档治理不重设 Base。Slice50、独立修正 `PATCH-20261107-1` 和更早接受
+身份／延期保持，原事实见 `214b69b1:SLICE.md`／`214b69b1:TASK.md`，不重开旧工作。
 
-[Slice50 原 Contract / A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review)
-保持 PASS / CLOSED，原 Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`、已审实现
-`6b0927328a7bf0873faffce9cb38007fd4607764` 和全部延期不变。后续独立修正
-`PATCH-20261107-1` 的 B PASS、已审范围与证据指针继续保留在 `TASK.md`。本 Slice 不重开旧工作。
+角色例外仅为用户授权的规划代行：A 代 B 规划首个 Task，以及 A51-01 退回后代 B 补齐修正
+计划（`3c8053b0:SLICE.md`、`df5816ae:TASK.md`、`aa35bacf:TASK.md`）。Task51.1／51.2
+及修正均另经 B 独立验收，A 最终独立审查原始完整范围；规划代行不构成自验收。
+详细授权／调查／失败修正和终审报告见[不可变关闭记录](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)；
+生命周期、Git、测试与关闭规则统一由 [Development Workflow](docs/development-workflow.md) 管理。
+
+没有活动实施 Task；下一大 Slice 另由 A 选择。预存本地／私有文件保持未纳入提交，不读取
+用户运行数据库、私有配置或媒体做例行治理；Git 同步按用户授权，不等同发布或部署。
 
 ## User goal and requirement mapping
 
@@ -71,29 +56,12 @@ Dashboard API／CLI；原 `V2-TASK-005/014` 等 Dashboard 消费者义务仅在�
 Task51.1／51.2 的原 B PASS、A 首次退回和修正证据保持可追溯；本次 A 终审为 PASS / CLOSED，
 需求／旅程／架构和操作指引在同一关闭 checkpoint 协调为 CURRENT，冻结历史身份不变。
 
-## Initial investigation and evidence limit
+## Planning references
 
-以下为 Slice 规划基线调查；当前阶段和已完成 Task 见本页末及 `TASK.md`。
-
-- 当前 `DashboardPage/View`、dashboard entity/query 和 Shell/Entry/Router 仍以旧统计页为
-  默认，引用 `/dashboard`。调查看到英文统计卡、技术时间和类别码、已退役状态与旧列表链接。
-  本地隔离 fake API 的统计跳转复现落到旧 Task 列表说明页；这不是本 Slice 修复验收。
-- `MetadataProvider` / `TMDBProvider` 已支持搜索、详情、图片引用、超时、重试和缓存；尚无
-  独立探索列表、面向浏览的分页／评分模型和作品详情 Web API，图片展示也需按实际方案接入。
-  服务端 TMDB 凭据来自部署环境；现有图片路径字段不能直接成为可信 URL，现行 CSP 默认
-  仅允许同源。这些事实要求接入可用链路，不构成必须新增认证图片代理的理由。
-- 后端仍有 `/api/v1/dashboard`、`mediaflow dashboard --recent-limit`、CLI 分派／渲染、
-  Dashboard domain/application 和 SQLite 专属聚合；API runtime binding 仍注入该服务及
-  库计数。旧 `operator_ui.py` 仍调用 Dashboard，部分原生／打包／安全测试也把它当认证
-  探针。全量退出需移除或改接这些消费者，不能只删 HTTP 分支后保留专属后端或悬空调用。
-- 对照 [MoviePilot V2 探索入口](https://github.com/jxxghp/MoviePilot-Frontend/blob/19cead06f72c859732afdeccea7a37c0a770a947/src/pages/discover.vue)、
-  [TMDB 筛选视图](https://github.com/jxxghp/MoviePilot-Frontend/blob/19cead06f72c859732afdeccea7a37c0a770a947/src/views/discover/TheMovieDbView.vue)
-  与海报列表／详情源码；探索与推荐是不同入口。本 Slice 不引入多榜单推荐页。
-- 接口依据为 TMDB 官方 [Movie Discover](https://developer.themoviedb.org/reference/discover-movie)、
-  [TV Discover](https://developer.themoviedb.org/reference/discover-tv)、
-  [Images](https://developer.themoviedb.org/docs/image-basics) 和
-  [Attribution](https://developer.themoviedb.org/docs/faq)。引用是交互／接口依据，不是媒体样本。
-  未部署或登录 MoviePilot 做验收；未调用用户凭据／真实 TMDB 验证本 Slice，不声称已实施。
+规划期现有入口调查、MoviePilot 交互源码、TMDB 官方接口依据及其证据限制保留于
+[关闭记录的原调查段落](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#initial-investigation-and-evidence-limit)。
+该调查描述实施前基线；当前生产边界见 [Architecture](docs/architecture.md#current--v2-explore-homepage-slice51-pass--closed)，
+不将旧 Dashboard／探针接线或“尚未实施”的调查措辞视为现行行为。
 
 ## RO-1 — Default entry and complete Dashboard retirement
 
@@ -243,21 +211,10 @@ Final Test Level **T3 — INTEGRATION**：按复用现有认证／配置和请�
 Dashboard 退出增加 CLI 分派、API 绑定／库计数注入、专属 repository 读取和旧消费者的
 直接受影响回归，不授权改变权限语义、schema、Task／Result 或核心执行路径来方便删除。
 
-激活后 B 规划连贯 Tasks，并负责验收和 Slice 最终验证：覆盖探索 Provider／API／Web 与
-直接受影响的认证／默认导航／共享弹卡回归，完成相关静态检查、生产 Web 构建，以及真实
-Python API＋本地假 TMDB／图片的桌面／390px 全旅程。按 AC 验证成功、无效输入、条件／
-请求竞态、失败恢复、权限／脱敏、图片来源和零媒体变更。全量 Python／Web／E2E 只在
-具体共享影响或 T4 重评需要时运行；安装包／Docker 门禁只按实际交付变更和工作流适用性
-安排，不新增全发布矩阵，也不为未改动的处理引擎单独增加验收工程。
-另按 AC-11 使用正常环境／合法身份及受支持接口对照，验证旧 API（含原查询参数／已注册
-入口）的未知路由 404、CLI help 注销及旧命令（含原参数）的解析层拒绝。通过代码／引用
-审查确认无专属服务残留，不以错误状态或字符串全清作为唯一证明；检查 API 构造／配置
-绑定、其余 CLI 命令／共享统计和既有持久记录不回归。公共鉴权、审计、日志／初始化允许，
-禁止的是旧请求额外触发的 Dashboard／外部 Provider／媒体／任务／配置业务效果。
-对改接的认证／打包／安全探针运行其直接受影响检查，不删除原证明或改成自动联系 TMDB。
-Developer 只运行当前 Task 新增／修改及直接受影响测试与静态检查，B 承担所需更广回归。
-使用临时根、fake／mock 和本地服务，不依赖真实 TMDB、用户凭据或用户媒体。本次规划
-修订只做治理、范围／链接和 `git diff --check`，不把未来功能／集成验收记为完成。
+验收覆盖探索 Provider／API／Web、直接受影响认证／导航／共享弹卡、真实 Python＋本地
+上游的桌面／390px 完整旅程，以及旧 API／CLI 退出与共享读取／历史保留。全仓和发布矩阵
+仅按工作流及实际交付影响适用；没有新增全发布承诺。具体实际执行、未运行门禁和复用
+限制见下方终审结论及固定报告。后续本范围若产生产品变化，仍按工作流重新评估风险和验收。
 
 ## Final validation, Closure Packet and A Final Review
 
@@ -272,64 +229,22 @@ Required Outcomes / Surfaces / AC-1–11: COMPLETE
 Next: A SELECTS THE NEXT LARGE SLICE
 ```
 
-**完整范围与决定。** 原始 Base..Implementation Head 共 99 个文件，包含探索 domain／
-application／Provider 与共享 transport/cache、READ API／身份／审计／CSP、React 条件／
-搜索／分页／海报／详情／返回、默认路由／Shell，Dashboard API／CLI／专属模型／服务／
-SQLite 聚合／runtime 注入／V1 消费者完整退出，以及直接受影响测试／harness／探针与文档。
-本轮结合原完整审查 `58a74866:SLICE.md`，重核完整 manifest／分层和删除接线、共享读取／
-历史保留证据及所有修正；没有新增 schema、媒体访问／执行权限或核心流水线变化。
-最终候选至本轮起点 `e26b399c` 只有 TASK 报告变化，执行输入不变。
+A 审查原始完整 99 文件范围，接受 RO-1–4、全部必需表面及 AC-1–11；无剩余阻塞。
+探索默认入口／有界浏览与搜索／详情和准确返回／独立读取恢复已交付；Dashboard 全垂直
+退出无兼容，共享读取与耐久历史保持。A51-01 的合法零页空结果在原 Task51.1 内修正，
+生产 adapter 仅对零结果且空数组归一化，畸形响应仍失败；已从现有页面入口通过整条链路。
+没有新 schema、媒体访问／执行权限或核心流水线变化。
 
-| 必需用户结果 | A 最终结论 |
+| 证据 | 已接受结果及限制 |
 |---|---|
-| RO-1／AC-1、11 | 探索为连接后默认入口；合法其他深链保持。Dashboard Web 普通未找到，旧 API 在正常配置／合法 READ 下通用 404，CLI help 注销且旧命令在解析层拒绝；专属实现／消费者退出，共享读取／历史保留。 |
-| RO-2／AC-2–4 | 电影／剧集的真实有界浏览、条件／三类排序、独立搜索、分页／末页／去重与请求归属保持；合法零页空结果已在生产 adapter→API→Web 通过。 |
-| RO-3／AC-5、6 | 统一海报、准确详情／类型＋ID／字段／署名、桌面／390px、关闭／Escape／后退／回焦保持；图片夹具只证明布局和读取链路。 |
-| RO-4／AC-7–9 | 真空态与失败区分，首次／分页／详情／图片独立恢复；本方身份与上游凭据分开，有界请求／缓存、固定图片源／精确 CSP、零媒体／工作／配置效果保持。 |
-| AC-10／全部表面 | 当前生产资产通过真实 Python／生产 TMDB adapter＋本地上游；旧消费者及共享读取证据成立。本 checkpoint 只协调 CURRENT／关闭事实，不追加产品变更。 |
+| A 独立验证 | 159 Python／142 Web／11 真实 Python 浏览器用例全部通过；含桌面／390px 空结果恢复、分页／详情／返回与零业务效果。产物摘要与 B 匹配；当前网格／空态和同产物稳定详情截图已检视。 |
+| B 更新后的最终包 | `e26b399c:TASK.md`：159 Python／67 Web／11 原生与适用静态／构建检查通过；原 Task51.2 的 309 Python、10 原生、共享绑定／历史、V1／探针及干净源码隔离安装证据保留。 |
+| 原失败／复用限制 | A 首次退回 `58a74866:SLICE.md` 和 B 原报告 `01f4e05d:TASK.md`／`ab3edf8d:TASK.md` 保留。旧断言／共享夹具／Base 对照、动画中间帧、缺依赖／构建 backend、旧 staging 污染包拒绝和探针抽取失败均未抹除或改写为全仓全绿。 |
+| 未验证范围 | 未声称全仓套件、当前 wheel smoke、Docker 发布矩阵、真实 TMDB／用户媒体、生产部署、旧任务迁移或跨版本验证通过。Python adapter 变更后不将旧 wheel 当当前新包证明；本地图片夹具不证明真实海报美术。 |
 
-**A51-01 修正与历史。** 首次 A 退回范围 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787..d91a9dd2fd5833a5977a319e90d0283b05625e9a`
-及原复现、148 Python／142 Web／10 原生用例的通过与局限，完整保留在
-`58a74866:SLICE.md` 和 `.git/validation-evidence/d91a9dd2/a51-final/`。
-产品修正 `f31c47f0` 仅在 TMDB 探索 adapter 将 `total_pages=0`、`total_results=0`、
-`results=[]` 归一化为内部一个空展示窗口；结果仍为零，无作品、无下一页。零页有结果／
-条目、负数／bool／错误类型仍失败。内部 Domain／API／Web 页约定不变，整理 Metadata
-路径不变；harness 不再预先把真实上游零页强制成 1。新原生用例从已有 `/ui-v2/` 连接／
-探索筛选／搜索入口检查生产 API 200 与归一化前上游 0 页，并在桌面／390px 验证清条件、
-改词、切电影／剧集、退出搜索恢复，无探索 JSON 拦截或新产品入口。
-
-**本轮 A 独立运行。** 稳定本机目录 `.git/validation-evidence/30c99f1b/a51-final/`
-含原始工作区、完整 patch／manifest、命令／cwd／退出码／日志、产物摘要和当前截图；
-仅本机可用，不承诺远程可访问。
-
-- `.venv/bin/python` 合并 discover：`test_explore*.py`、`test_metadata.py`、
-  `test_dashboard.py`、`test_api_security.py`、`test_api_credentials.py`、`test_v2_ui.py`、
-  `test_operator_ui.py`：**159 PASS，0 skip**。包含生产 HTTP／CLI 旧入口与对照读取。
-- `web/` 九个 Explore／Entry／Router／Auth／Shell／navigation 文件：**142 PASS**。
-- `web/` 真实 Python `playwright.python.explore.config.ts`／`explore.python.spec.ts`：
-  **11 PASS，0 skip**。覆盖当前空结果修正、浏览／搜索／分页／详情／返回与失败恢复，
-  受监控业务表计数不变、Storage 调用为零。精确命令见各 JSON，保留 jsdom scrollTo／
-  NO_COLOR 提示；没有把输出提示当成产品失败或删断言。
-- 已检视当前桌面网格／390px 空态截图；详情终态复核原 B 稳定的桌面／390px 截图。
-  全部生产 Web 资产、依赖锁和 pyproject 摘要与更新后 B 证据一致，Web 执行输入相对
-  原 `d91a9dd2` 未改。原生 spec 详情截图可能在动画中间帧，未将其作为终态布局证明。
-
-**B 证据复用与限制。** 本轮抽查原始日志／摘要／脚本与最终包。更新后 B 独立验收
-159 Python／67 Web／11 原生、静态检查／typecheck／build PASS；原 Task51.2 的 309 Python、
-10 原生、合法旧入口退出、配置切换／非空 Task/Result/pin 历史保留、V1／共享读取和改接
-探针／干净源码隔离安装证据保留，支持未变的退休垂直。空 review／notification 表不冒充
-非空历史证明，相关直接回归另有实际结果。本次 Python adapter 已变，旧 wheel 只属于旧
-产物，未声称验证当前新包；按本 Slice T3 边界未新增完整发布矩阵或新包交付。
-
-Task51.1 原 B 报告 `01f4e05d:TASK.md` 的 Node 定位／旧断言／共享夹具失败与 Base 对照／
-同义验证局限、原自动化／Unicode 控件限制，Task51.2 的缺 backend 构建失败、旧 build/lib
-污染包拒绝及探针抽取失败，以及更新后 B 首次误用系统 Python 的 7 项缺 httpx errors，
-均保留在原报告／原始日志，不改写成全仓全绿。旧 A 脚本 Retry 定位超时与 OpenAPI 直接
-读取 403 也保持原披露。没有重新跑全仓 Python／Web／E2E、当前 wheel smoke 或 Docker
-发布矩阵，不声称未运行门禁通过；没有真实 TMDB、私有配置／用户数据库／媒体、生产部署、
-迁移或跨版本验证。全部原 Contract 延期不变；这些已声明限制不是新增必需 Task。
-
-**关闭协调。** SLICE／TASK／Roadmap／Progress、稳定需求、完整旅程、实际 CURRENT 架构和
-README 在同一 checkpoint 对齐；不重写旧接受身份和原始 Base，不推送或部署。已复阅
-A／B／Developer 经验，仅为 A 增补一条外部空结果语义经验；不凑数或记录项目流水账。
-预存 `mediaflow/.DS_Store` 及所有未跟踪本地／私有文件保留，不纳入提交。
+完整已审范围、精确命令／cwd／结果、历史失败和证据复用理由见
+[不可变 A 终审／关闭记录](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)及其中 B packet。
+本机原始材料在 `.git/validation-evidence/30c99f1b/a51-final/` 和各 B 目录，仅本机可用，
+不承诺随 GitHub 同步。所有原 Contract 延期、以前接受身份和验证限制继续适用。
+本次仅整理现行文档与历史指针，未改变上述验收或实施产品；CURRENT 定义和操作指引保持，
+Git 同步不构成发布／部署。

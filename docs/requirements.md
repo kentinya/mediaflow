@@ -82,7 +82,7 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 [Slice51](../SLICE.md) 于 2026-11-07 经独立 A 终审 PASS / CLOSED；原 Base
 `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` 至实现 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`。
 探索首页及 Dashboard 全垂直退出为 CURRENT；[TASK.md](../TASK.md) 为无活动实施 Task，
-首个计划的角色例外和独立验收证据仍在 Contract／Git。冻结 V1 与旧接受事实保持。
+首个及修正计划的角色代行例外和独立验收证据仍在 Contract／Git。冻结 V1 与旧接受事实保持。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
 `V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
