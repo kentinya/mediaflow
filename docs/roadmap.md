@@ -45,7 +45,7 @@ The user authorized planning only on 2026-11-07: browse → filter/search → de
 replacing the V2 Dashboard Web homepage, with no old-path redirect or compatibility surface.
 Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET. No active
 implementation Task; explicit activation precedes B's first Task plan. No product implementation,
-push or deployment is authorized. TMDB-only discovery and authenticated artwork reads are TARGET,
+push or deployment is authorized. TMDB-only discovery and safe poster display are TARGET,
 not CURRENT delivery; legacy Dashboard statistics API/CLI retirement is outside this scope.
 
 Slice50 remains PASS / CLOSED with its original accepted identities. Current shared transitions
