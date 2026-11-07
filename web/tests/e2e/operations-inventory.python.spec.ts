@@ -1045,6 +1045,20 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
       "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
+  // The same long names and classification basis stay readable on a narrow
+  // screen without introducing page-level horizontal overflow.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    itemEvidence.getByText(
+      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+    ),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 1280, height: 900 });
   // A successful item has no failure reason, empty control block or standing
   // technical-failure tutorial; its terminal no-replay token stays technical.
   await expect(itemEvidence.getByText("需处理原因")).toHaveCount(0);
