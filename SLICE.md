@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: 214b69b1e64b24fc22068c2e1760cd1b0c6ac787
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: IMPLEMENTATION AUTHORIZED FOR ACTIVE TASK 51.1 ONLY
+Development Authorization: IMPLEMENTATION AUTHORIZED FOR ACTIVE TASK 51.2 ONLY
 Risk: Medium
 Final Test Level: T3
-Next Action: DEVELOPER IMPLEMENTS TASK 51.1; B ACCEPTANCE PENDING
+Next Action: DEVELOPER IMPLEMENTS TASK 51.2; B ACCEPTANCE PENDING
 ```
 
 ## Authority and accepted baseline
@@ -26,8 +26,12 @@ Next Action: DEVELOPER IMPLEMENTS TASK 51.1; B ACCEPTANCE PENDING
 用户于 2026-11-07 进一步明确“没问题就激活 Slice 并代替 B 规划第一个 Task”：
 同一代理先以 A 身份提交 ACTIVE Contract，再按用户明确授权代替 B 规划首个 Task；这是
 角色例外披露，不构成独立验收或 A Final Review。用户随后明确“激活 Task”，将已提交的
-Task51.1 草案转为正式活动实施 Task，实施授权仅限其既定范围。本次只完成激活，尚未
-开始 Developer 实施；不推送或部署，不扩大 Slice／Task 边界。
+Task51.1 草案转为正式活动实施 Task。Task51.1 后经独立 B 验收 PASS，完整结论与限制见
+`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`。
+用户本轮明确“激活Task”，授权实施已修订的 Task51.2：Dashboard API／CLI、专属后端与
+消费者完整退出。B 按该明确指令仅同步授权／阶段事实，Required Outcomes、边界和测试
+等级保持；这不是 A Final Review。本次只激活 Task51.2，尚未开始其 Developer 实施，
+不推送或部署，不扩大 Slice／Task 边界。
 生命周期、Git、测试和关闭规则统一遵循 [Development Workflow](docs/development-workflow.md)。
 
 规划开始于 `main` / 上述 Base；治理检查 PASS，工作区和 Git 可写。预存的
@@ -60,9 +64,11 @@ Base 固定为本 Slice 规划前的接受基线，后续规划／激活提交�
 Dashboard API／CLI；原 `V2-TASK-005/014` 等 Dashboard 消费者义务仅在这条退出垂直取消。
 `REQ-WEB-001/005/006`、`REQ-API-002/003`、`REQ-META-001–004/009/010`、`UX-001–010`、
 `REQ-SAFE-*`、`V2-UX-001–013` 及既有认证、处理流水线、任务／文件独立结果和非重放保持。
-所有 TARGET 均未交付，CURRENT Dashboard 事实在接受前保留。
+Task51.1 已获 B PASS；Slice 尚未整体接受，CURRENT／TARGET 的整体协调由 A 最终接受后完成。
 
-## Investigation and evidence limit
+## Initial investigation and evidence limit
+
+以下为 Slice 规划基线调查；当前阶段和已完成 Task 见本页末及 `TASK.md`。
 
 - 当前 `DashboardPage/View`、dashboard entity/query 和 Shell/Entry/Router 仍以旧统计页为
   默认，引用 `/dashboard`。调查看到英文统计卡、技术时间和类别码、已退役状态与旧列表链接。
@@ -250,7 +256,11 @@ Developer 只运行当前 Task 新增／修改及直接受影响测试与静态�
 
 ## Final validation, Closure Packet and A Final Review
 
-Implementation Head: NOT SET。没有产品实施、B Task 验收、Closure Packet 或 A Final Review；
-AC-1–11 均待验收，当前不是 PASS。A 已按用户授权激活本 Contract；TARGET 尚未实施。
-Task51.1 已由同一代理按已披露的角色例外完成规划，并按用户后续明确授权激活为正式
-活动实施 Task；当前 PLANNED，尚未开始 Developer 实施。Slice50 的接受身份与全部延期保持。
+Implementation Head: NOT SET（Slice 最终候选尚未提交）。Task51.1 已经独立 B 验收 PASS：
+已审范围 `3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`，
+产品实现 `de86eab84e8627c0f656e51cea66e17e8ef1baf2`；原始失败、复现、证据及限制见
+`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`，不声称全仓测试通过。
+RO-2／3／4 的 Task 范围已完成；RO-1 的 V2 首页已完成，Dashboard API／CLI／专属后端与
+旧消费者退出由已激活的 Task51.2（PLANNED，Medium／T3）交付。该 Task 尚未开始实施。
+全部结果仍需在最终候选重评；没有 Closure Packet 或 A Final Review，Slice51 保持 ACTIVE。
+Slice50 的接受身份与全部延期保持；本次激活不转正 CURRENT 文档或关闭 Slice。

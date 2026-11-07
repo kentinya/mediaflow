@@ -45,13 +45,16 @@ The user authorized activation and first-Task planning on 2026-11-07: browse →
 detail → return, directly replacing the V2 homepage and, under the user's subsequent explicit instruction, fully retiring
 Dashboard Web/API/CLI and dedicated models/services/queries/wiring/consumers without compatibility.
 Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET.
-[Task51.1](../TASK.md) is now the active implementation Task (PLANNED, High / T3), explicitly
-activated by the user after planning. Implementation is authorized only within that Task.
-The same agent substituted for B for the first plan under explicit user authorization; that role
-exception is not independent acceptance. This activation checkpoint contains no product
-implementation, push or deployment. TMDB-only
-discovery and safe poster display are TARGET, not CURRENT delivery. Shared statistics, task/result/review/notification/audit history remain;
-V1 changes are limited to disconnecting its Dashboard consumer. No data/schema cleanup is planned.
+Task51.1 has independent B PASS; its exact reviewed range, original failures and evidence limits
+remain at `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`.
+The user has now explicitly activated [Task51.2](../TASK.md) (PLANNED, Medium / T3) to retire the
+remaining Dashboard API/CLI, dedicated backend and consumers. Implementation is authorized only
+within its existing plan; ID/Base/goal/scope and test allocation remain unchanged. This checkpoint
+only activates the Task and synchronizes current pointers; it adds no product implementation,
+push, deployment or A Final Review. Slice-level acceptance and CURRENT reconciliation remain
+pending. Shared statistics and task/result/review/notification/audit history remain; V1 changes
+are limited to disconnecting its Dashboard consumer. No data/schema cleanup is planned.
+The original same-agent first-plan role exception remains disclosed in the Contract.
 
 Slice50 remains PASS / CLOSED with its original accepted identities. Current shared transitions
 stay limited to sidebar destination identities; tabs, details, library/path changes, cards and

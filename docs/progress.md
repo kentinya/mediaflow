@@ -8,18 +8,18 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice51](../SLICE.md) is **ACTIVE** under the user's explicit 2026-11-07 activation and
-first-Task planning authorization, followed by explicit Task51.1 activation:
-TMDB movie/TV browse → filter/search → detail → return replaces the homepage. The user additionally
-authorized complete Dashboard Web/API/CLI and dedicated backend/consumer retirement without
-compatibility; shared business data/history stays intact. Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`,
-Implementation Head NOT SET; [Task51.1](../TASK.md) is now the active implementation Task
-(PLANNED, High / T3). Its ID/Base/goal/scope and test allocation remain unchanged; implementation
-is authorized only within that Task. The user explicitly authorized the same agent to substitute
-for B for the first plan; that role exception is not independent acceptance. Current production
-code/behavior is unchanged; no51 outcome has been accepted.
+[Slice51](../SLICE.md) remains **ACTIVE**, Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`, final Implementation Head NOT SET.
+Task51.1 has independent B PASS for Explore and the V2 homepage replacement; exact review and
+failure/evidence limits remain at `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`.
+The user explicitly activated [Task51.2](../TASK.md) (PLANNED, Medium / T3) for the remaining
+Dashboard API/CLI, dedicated backend and consumer retirement without compatibility. Its existing
+ID/Base/goal/scope/test allocation remain unchanged; implementation is authorized only in that
+Task. This activation adds no product implementation or acceptance. Slice final validation,
+Closure Packet, A Final Review and CURRENT reconciliation remain pending. Shared business data
+and history stay intact; the original first-plan role exception remains in the Contract.
 Slice50 remains the latest accepted large Slice; the closure ledger and all earlier Base/Head,
-acceptance, deferrals and evidence limits remain unchanged. Planning is not release or deployment.
+acceptance, deferrals and evidence limits remain unchanged. Activation is not release or deployment.
 
 ## Latest accepted closure — Slice50
 

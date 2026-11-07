@@ -1,21 +1,20 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task51.2 — Dashboard API／CLI、专属后端与消费者完整退出
 
 Task51.1 — B PASS（2026-11-07）。完整已审范围
 `3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`，
 产品实现 `de86eab84e8627c0f656e51cea66e17e8ef1baf2`。
 完整 B 结论、原始失败、独立同义验证、基线复现、证据和测试时间限制见
 `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`；原计划／Developer 交接见
-`9efe8ccd480b257e12eee29b9b90075ee8f809f6:TASK.md`。这些限制未被本草案改写为全绿。
+`9efe8ccd480b257e12eee29b9b90075ee8f809f6:TASK.md`。这些限制未被本 Task 激活改写为全绿。
 Slice50 和 PATCH-20261107-1 接受身份保持，原指针继续见上述已提交 Task。
 
-以下是本轮 B 基于现有入口与代码编写的 **Task51.2 待激活草案**，不授权实施。
-已提交 Slice 的 Development Authorization 仅限 Task51.1；本轮只规划，未启动 Developer，
-未改合同、Roadmap、Progress 或接受账本。激活时须明确授予本 Task 实施授权并协调合同
-中的授权／Next Action 事实；不改变 Slice Base 或已接受 Task51.1 的身份。
+用户于 2026-11-07 明确“激活Task”，将 `ce2610ad92bf97df6611af79720332c3d417fd48`
+中的 Task51.2 草案激活为正式活动实施 Task。实施授权仅限已定范围；ID／Base／目标／
+开发指导／验收和测试分工保持，包含已收窄的探针、安装检查与已明确的内容断言。
+本次只完成激活和阶段事实同步，未开始 Developer 实施，不推送或部署。
 
-## Task51.2 — Dashboard API／CLI、专属后端与消费者完整退出（DRAFT）
-
-Authority: `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:SLICE.md` RO-1、AC-11；
+Authority: committed [SLICE.md](SLICE.md) RO-1、AC-11（原范围 checkpoint
+`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:SLICE.md`，本次仅更新实施授权与阶段事实）；
 [开发流程](docs/development-workflow.md) 和 [B 指南](docs/agent-experience/task-planner-reviewer.md)。
 需求：`V2-EXPLORE-001/010/011`、`REQ-WEB-002` 的 Slice51 amendment、
 `REQ-WEB-006`、`REQ-API-002/003`；完整旅程与 CURRENT/TARGET 边界见
@@ -31,7 +30,7 @@ Task Base: 01f4e05d5cc03822d2e9ced3dfa91a2838990f62
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — DRAFT ONLY
+Implementation Authorization: GRANTED BY USER — TASK 51.2 SCOPE ONLY
 ```
 
 ### Goal and observed gap
@@ -174,29 +173,26 @@ B 日志／截图保留于 `.git/validation-evidence/<candidate>/`；原失败�
 
 | Slice outcome | 当前结论 |
 |---|---|
-| RO-1 首页与完整退出 | Task51.1 完成 V2 首页；API／CLI／专属后端／V1 和探针是本草案的剩余交付 |
+| RO-1 首页与完整退出 | Task51.1 完成 V2 首页；API／CLI／专属后端／V1 和探针是本 Task 的剩余交付 |
 | RO-2 浏览／筛选／搜索／分页 | Task51.1 PASS，保留其证据和限制，最终候选需确认不回归 |
 | RO-3 海报／详情／返回 | Task51.1 PASS，同上 |
 | RO-4 状态／恢复／只读安全 | Task51.1 PASS，同上；本 Task 验证退出的业务效果边界 |
 
 预期这是最后一个实现单元，满足后停止规划并交 A；当前仍不满足全部结果，不能提交
-SLICE READY FOR A REVIEW。合同／Roadmap／Progress 尚有“Task51.1 未实施”的旧阶段描述，
-本草案明确实际状态，不以 B 规划改写 A 的合同或接受账本；激活／最终协调时更新事实。
+SLICE READY FOR A REVIEW。本次按明确激活指令同步合同授权和 Roadmap／Progress 的当前
+阶段指针；Slice51 保持 ACTIVE，A 最终接受与 CURRENT 文档整体协调仍未发生。
 
 ### Developer completion report / B review
 
 尚未实施，无新的候选可审，未作本 Task 的 PASS／FIX REQUIRED 决定。
-Developer 激活后交完整 checkpoint SHA、READY FOR B REVIEW、实际改动／受影响命令与
+Developer 完成实施后交完整 checkpoint SHA、READY FOR B REVIEW、实际改动／受影响命令与
 结果、失败／限制和剩余工作；B 独立审完整 Task Base..Head 后决定 PASS 或 FIX REQUIRED。
 
-### Planning checkpoint
+### Activation checkpoint
 
-本轮草案修订基线：`main` / `aae11506a265eefb2b3d33648b89756803e11408`；治理检查 PASS。
-按用户要求明确深链回归范围、V1 权限前提与共享响应／历史记录的内容断言；此前收窄的
-Rules 认证探针和 wheel 安装验证保持，Task Base、开发范围及其余必要验收保持。
+本轮激活基线：`main` / `ce2610ad92bf97df6611af79720332c3d417fd48`；激活前治理检查 PASS。
+Task Base 仍为 `01f4e05d5cc03822d2e9ced3dfa91a2838990f62`，Slice Base 不变。
+仅更新 Task、合同授权及当前阶段指针，不变更 Required Outcomes／Surfaces／边界或接受账本。
 预存 `mediaflow/.DS_Store` 修改、所有未跟踪 `.DS_Store`、日志、`.explore_adapter_block.py`、
-`15` 和 output 调查产物全部保留、不暂存。本轮仅修改 `TASK.md`，未改产品／仓库测试，
-未运行功能验收、未推送或部署。检查仅限文档／引用／治理；不把规划当成产品通过。
-
-本轮规划检查：`python3 scripts/check_governance.py`、`git diff --check` 均 PASS；
-仅有文档／引用检查，检查用时低于本轮总用时的 50%。
+`15` 和 output 调查产物全部保留、不暂存；未改产品／仓库测试，未运行功能验收。
+本轮只运行治理／文档差异检查，检查用时低于本轮总用时的 50%；不把激活当作产品通过。
