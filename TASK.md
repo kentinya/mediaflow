@@ -433,3 +433,61 @@ Developer 披露的完整 inventory 测试总数失败未经 Base 复现，本�
 
 **Next Action：Developer 在同一 Task 修正 B-01/B-02，运行新增/修改及直接受影响测试，
 交接新 checkpoint；B 继续审查完整原 Base..新候选并完成剩余适用验收。**
+
+### Developer Fix Report — 2026-11-07 — READY FOR B REVIEW
+
+本轮从 `2ffd4fb78658119d4c9575ca8a9de8fb6d9114ea` 开始；源码候选
+`0232364073401aebd126c2ed7f6e68d3ec31d85a`，其后的
+`96fcbbd0017c919e0753e95a019776a5102a71b8` 只补充 390px 真实 Worker 断言。Base 仍为
+`fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c`。未推送、未部署，不自评 PASS。
+
+**B-01 修正**
+
+- `RunDetailTabs` 不再把终态 `replay_not_offered` 当业务失败或“需处理原因”；成功文件默认只显示
+  结果、来源/目标、业务处理经过和独立文件结果。拒绝原因、原始阶段、重试安全性与服务下一步进入
+  “技术诊断”。
+- `TaskItemRecoveryPanel` 对 `technical_history` 只给一句实际状态：成功为“文件已整理完成，没有
+  待处理操作”，实际失败/取消/跳过/未知效果分别保留对应事实；删除常驻“技术失败条目”教程、
+  空只读控制清单和默认英文拒绝码。四类待处理、在途请求、未知核对、已受理恢复仍按原入口显示。
+- Result 状态改为大小写归一的中文业务名（真实 Worker 的 `SUCCESS` 显示“成功”）。
+
+**B-02 修正**
+
+- “处理经过”新增来自该条目持久 `plan/analysis` 的短业务说明：文件名识别与 RecognitionType、
+  作品匹配、命名目录/文件名、分类媒体库/相对路径及命中依据。真实 Manual Worker 默认可读到
+  One (2001)、`One (2001) [tmdbid-101]`、`japanese-animation` 与
+  “媒体类型 电影、类型 Animation、国家/地区 JP”。
+- 原始计划、策略 ID、分析状态、日志、审计和 key/value 继续保留在“技术诊断”；新增命名/分类
+  原始分析行。缺少计划的历史条目仍按原不可用说明呈现，不查询当前配置补算旧任务结论。
+- 文件证据仍按“处理结果→来源/目标→处理经过→需处理原因”组织，主文件与附件结果独立；导出、
+  四类决定→分析→摘要→明确继续、关闭回焦和未决核对未改。
+
+**实际验证（cwd `web/`，另有注明者除外）**
+
+- 仓库根 `python3 scripts/check_governance.py`: PASS；`git diff --check`: PASS。
+- `npm run typecheck`、`npm run lint`、`npm run format:check`: PASS。
+- `npm run build`: PASS（`index-D83iCNSb.js` / `index-C3MJm0DP.css`，保留大 chunk 提示）。
+- `npm run test -- run src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx`:
+  **2 files / 27 passed**。
+- `npm run test -- run src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx`:
+  **2 files / 32 passed**（含成功技术历史、失败技术历史、未知效果、四类恢复）。
+- `npm run test -- run src/features/operations/OperationsInventory.test.tsx`: **38 passed**。
+- `AppShell` 选中 4 passed；`AutomationRouter` 选中 4 passed。
+- `npx playwright test tests/e2e/page-transition.spec.ts`: **6 passed**。
+- fake `operations.spec.ts` + `task-center-layout.spec.ts` 选中 **12 条**：首轮 11 passed、
+  1 条因同时运行两个 Playwright 命令共享 `test-results` 目录产生 trace ENOENT；单独重跑该条
+  1 passed，产品断言最终 12/12 通过。`automation-presentation` 本 Task 场景 1 passed。
+- 真实 Python `operations-inventory.python.spec.ts` 选中 5 passed（详情、导出、未知总数、
+  Manual Worker、standalone pipeline）；真实 Manual Worker 在 390px 复核同一业务说明与
+  页面级无横向溢出，**1 passed**。真实旅程断言默认证据无“技术失败条目”、无“需处理原因”、
+  `SUCCESS` 显示“成功”，拒绝码只在展开技术诊断/业务标签后可见，重启后同一计划说明仍在。
+
+**已知限制 / 剩余风险**
+
+- 仅使用隔离 Python harness、fake API 和临时 Storage/SQLite；未使用用户数据库、配置、媒体或
+  真实外部 Provider/Storage。
+- fake runner 的 run item evidence 仍不带持久 `planEvidence`，因此新增业务说明主要由单元测试
+  和真实 Manual Worker 旅程覆盖；缺失计划路径由既有 standalone 用例覆盖。
+- 未知分类证据键仍按原值显示，不猜测语义；原始计划始终保留在诊断，便于 B 核对。
+- 按 T3 分工未运行完整 Python/Web/E2E、wheel、Docker 或全库套件；其余选定验收留给 B。
+- 本轮测试/构建执行累计约 2 分钟，低于本轮总时长 30%；主要时间用于阅读、定位与修改。
