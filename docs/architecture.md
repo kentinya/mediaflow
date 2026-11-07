@@ -39,8 +39,10 @@ pending states to ready content, including necessary page-local presentation cha
 not confined to Shell opacity or the two library pages. Avoid stacked fades, strong opacity flashes,
 transient loading-text/skeleton flashes, geometry changes and remounts for animation. Duration and
 easing are tuning choices, not fixed numeric requirements; validate complete intermediate frames
-and actual interaction under quick/cached/slow reads and reduced motion. Do not delay network reads
-or user interaction. Use stable feedback where reads actually remain pending, preserve errors and
+and actual interaction under quick/cached/slow reads and reduced motion. Do not delay requests for
+animation or serialize otherwise independent requests for it; preserve legitimate data dependencies,
+authentication ordering and bounded rate-limit backoff. User interaction must not wait for animation.
+Use stable feedback where reads actually remain pending, preserve errors and
 necessary requests, and do not require one universal skeleton or redesign other page business flows.
 The two library pages additionally retain separate library/directory pending states and same-query
 refresh content. Entering a page must not flash the directory-refresh message; moving that message
