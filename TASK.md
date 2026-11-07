@@ -1,127 +1,189 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Task51.1 — **B PASS（2026-11-07）**。
+Task51.1 — B PASS（2026-11-07）。完整已审范围
+`3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`，
+产品实现 `de86eab84e8627c0f656e51cea66e17e8ef1baf2`。
+完整 B 结论、原始失败、独立同义验证、基线复现、证据和测试时间限制见
+`01f4e05d5cc03822d2e9ced3dfa91a2838990f62:TASK.md`；原计划／Developer 交接见
+`9efe8ccd480b257e12eee29b9b90075ee8f809f6:TASK.md`。这些限制未被本草案改写为全绿。
+Slice50 和 PATCH-20261107-1 接受身份保持，原指针继续见上述已提交 Task。
 
-- 完整已审范围：`3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`。
-- 已审产品实现：`de86eab84e8627c0f656e51cea66e17e8ef1baf2`；Difficulty High／Test Level T3。
-- 原五项阻塞全部修正；当前没有活动实施 Task。Slice51 仍为 ACTIVE，剩余 Dashboard
-  API／CLI／专属后端及消费者退出尚未规划为新 Task，本轮不关闭 Slice。
-- 完整计划与 Developer 交接见 `9efe8ccd:TASK.md`，上一 B FIX REQUIRED／开发指导见
-  `66e768a6:TASK.md`；已接受的 PATCH-20261107-1 及 Slice50 身份保持，原指针见
-  `9efe8ccd:TASK.md` 的 Accepted baseline。本轮不变更 A 的合同和接受账本。
+以下是本轮 B 基于现有入口与代码编写的 **Task51.2 待激活草案**，不授权实施。
+已提交 Slice 的 Development Authorization 仅限 Task51.1；本轮只规划，未启动 Developer，
+未改合同、Roadmap、Progress 或接受账本。激活时须明确授予本 Task 实施授权并协调合同
+中的授权／Next Action 事实；不改变 Slice Base 或已接受 Task51.1 的身份。
 
-## B Review Result
+## Task51.2 — Dashboard API／CLI、专属后端与消费者完整退出（DRAFT）
+
+Authority: `01f4e05d5cc03822d2e9ced3dfa91a2838990f62:SLICE.md` RO-1、AC-11；
+[开发流程](docs/development-workflow.md) 和 [B 指南](docs/agent-experience/task-planner-reviewer.md)。
+需求：`V2-EXPLORE-001/010/011`、`REQ-WEB-002` 的 Slice51 amendment、
+`REQ-WEB-006`、`REQ-API-002/003`；完整旅程与 CURRENT/TARGET 边界见
+[Product Experience](docs/product-experience.md#target--v2-explore-homepage-slice51) 和
+[Architecture](docs/architecture.md#target--v2-explore-homepage-slice51)。
 
 ```text
-Reviewed: 3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6
-Implementation: de86eab84e8627c0f656e51cea66e17e8ef1baf2
-Decision: PASS
-Review date: 2026-11-07
-Task blockers: NONE
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: NEXT TASK — Dashboard API/CLI and dedicated backend retirement; no new Task planned in this review
+Task ID: 51.2
+Task Type: SLICE
+Parent Slice: 51
+Status: PLANNED
+Task Base: 01f4e05d5cc03822d2e9ced3dfa91a2838990f62
+Difficulty: Medium
+Test Level: T3
+Planner / Reviewer: B
+Implementation Authorization: NOT GRANTED — DRAFT ONLY
 ```
 
-B 独立审查完整 Base..Head，包含原首页切换、Provider/application/API/Web、共享请求与
-认证边界、所有修正、测试和交接文档。`de86eab8..9efe8ccd` 仅为 Developer 交接文档，
-其余执行输入一致；本轮 B 仍在最终候选上重新运行相关验收。T3 风险边界保持：只读元数据
-及可信公开图片，没有权限语义、Active、媒体执行、schema 或队列变化。
+### Goal and observed gap
 
-上一轮 FIX REQUIRED 和五项开发指导保留于 `66e768a6:TASK.md`；原失败没有改写为通过。
-本轮实际结果和限制如下，Developer 的测试声明不替代 B 证据。
+完成 RO-1 剩余退出链路。用户连接 V2 后继续浏览探索；用任务中心、自动化、通知及系统
+状态查看各自已有信息。旧 Dashboard API 按普通未知路由返回 404，旧 CLI 在解析层报未知
+命令；不存在跳转、别名、退役说明、空成功或新的替代统计入口。
 
-### Delivered journey and five corrections
+现有真实入口／调用链（规划基线）：
 
-| 用户完整操作 | B 复核结果 |
+| 入口 | 实际实现与待删除依赖 |
 |---|---|
-| 连接 → 默认探索；其他合法深链续转；打开旧 Dashboard Web 地址 | 默认进入探索；原深链和九个主页面切换保持；旧 Web 普通未找到，零旧 Dashboard Web 读取 |
-| 默认热门电影 → 更多筛选 → 最低评分人数 2000 → 应用 → 切三类排序 | 实际上游收到人数条件，低票／未评分作品不再返回；电影／剧集三类排序及显式 0、评分默认 100 有自动覆盖 |
-| 电影＋动作＋英语 → 搜索 → 搜索态切剧集并再提交 → 退出 | 恢复电影、原题材／语言、作品集合和滚动；另证多页浏览进入搜索再退出，40 个已加载作品保持 |
-| 切类型时目录失败、作品列表成功 → 重新读取筛选选项 | 就近显示目录失败，失败下拉明确禁用；恢复仅重读目录，成功列表、输入和有效身份保留 |
-| 海报 → 准确详情 → 阅读背景图／电影片长或剧集季集数 → 关闭／Escape／后退 | 类型＋ID 一致，已有背景图用固定 w780，季集数和缺项真实；桌面／390px 的滚动、回焦和返回保持 |
-| 浏览／详情 → 数据来源与署名 | 同源 TMDB 标识、必要声明及可聚焦官网回链可达；实际静态 CSP 下标识可加载 |
-| 快速切类型／关键词；关闭未返回的详情后打开另一作品；分页失败重读 | 旧响应不污染当前上下文；失败页保留前 20 个作品，只重读第二页得到 40 个作品；详情身份和回焦准确 |
-| 详情上游凭据失败 → 卡内重读；图片加载失败 → 继续阅读／返回 | 有效本方身份保持、成功列表保留；恢复只读该详情；坏海报／背景图不妨碍作品文字与操作 |
+| `GET /api/v1/dashboard?recentLimit=10` | `service_api.py` supported_roots、GET 分支、`_dashboard_limit`、专属审计路由分类；`_ApiRuntimeBinding.dashboard` 及所有构造调用的库计数参数 |
+| `mediaflow dashboard --recent-limit 5` | `cli.py` production_commands；`final_cli.py` parser、分派、`render_dashboard`、API 启动时专属计数注入 |
+| Dashboard 聚合 | `domain/dashboard.py`、`application/dashboard.py`、`SQLiteTaskRepository.load_dashboard_state`；`_status_counts`、`_count_where`、`_recent_operational_failures` 和 `RecentOperationalFailure` 当前仅供该链路使用 |
+| V1 `/ui/` → Connect | `operator_ui.py` Dashboard 按钮、初始 view、渲染函数和 load 分支仍调用旧 API |
+| 认证／启动／安全验收 | `test_api_credentials.py`、`test_api_security.py`、`test_v2_ui.py`、`test_file_index_retirement.py`、`rules_identity_browser_proof.py`、`docker_release_security_smoke_test.py` 仍借旧入口验证其他责任 |
+| review／整理／通知测试 | `test_metadata_review.py`、`test_classification_review.py`、`test_v2_manual_organize.py`、`test_v2_notification_operations.py` 仍直接消费 Dashboard；`test_dashboard.py` 是专属正向测试 |
 
-READ 在 Provider／缓存访问前检查，非法参数、Provider 超时／限流／临时错误／畸形数据、
-当前身份 401／403 和上游凭据失败的区分由受影响 Python／Web 测试和原生旅程共同验证。
-有界请求／响应与缓存、固定图片来源、凭据仅在内存／服务端、零媒体 Storage 调用以及
-零新增 Task／配置效果均已核对；原整理 Metadata 调用保持。390px 两列、无横向溢出；
-reduced-motion 实际无运行中的动画，键盘关闭和入口焦点通过。生产资产的桌面／窄屏
-截图已检视；图片为本地 fixture，未使用用户媒体或真实 TMDB 凭据。
+这是尚未实施的合同结果，不是重新否定 Task51.1。只读删除不改变权限语义、Active、schema、
+媒体执行或队列；如实施发现必须改变这些边界，先交 B 重评等级／A 决策。
 
-### Actual B runs
+### Implementation scope and developer guidance
 
-稳定本机证据目录：`.git/validation-evidence/9efe8ccd/b-review-20261107/`。
-各 `runs-*.json` 保留完整命令、cwd、退出码与耗时，逐项 `.log` 保留原始结果。
-这是本地证据，不声称远程可访问。
+1. **先沿现有入口核对引用，再删除整条专属链路。** 从表中 HTTP、CLI 和 V1 默认读取
+   向后核对调用者，删除 API 注册／处理／专属 query 校验／审计分类、CLI 注册／分派／
+   参数／渲染、domain/application 和 SQLite 专属聚合。三个 helper 删除前再次检查引用。
+   不保留改名服务、空对象或兜底返回，不为退役入口新增防御分支。
+2. **同步修改全部 runtime binding 构造路径。** 包括 API 初始构造、managed Active 重绑
+   和 `final_cli.py` 启动注入；`_ApiRuntimeBinding` 当前使用位置参数构造，删除字段时核对
+   后续 files/direct-files/transfers/settings 等字段仍对应正确值。保留共享初始化和原 pin，
+   不改其他模块来迁就删除，不清表／迁移／删除运行记录。
+3. **V1 只断接。** 移除 Dashboard 按钮／默认读取／渲染，复用现有 Configuration 视图作为
+   初始 view 与选中按钮，使 Connect 后仍可使用已有配置界面；保留 readiness 对 setup／
+   recovery 的原处理。不要调用另一统计接口冒充 Dashboard，不新增 V1 探索或重设计其他视图。
+4. **按原验证目的改接探针。** 身份／401／403／审计与静态资产旁的认证读取优先改接已有
+   `GET /api/v1/auth/principal`（READ、零 Provider、零媒体工作，已有独立权限测试）。
+   FileIndex 的“正常 CLI 打开临时库后没有 FileIndex 表”改用已有 `tasks list` 等正常
+   有界读取，并核对其实际参数；不要改成未知命令失败后检查未创建表。Review 原状态和
+   通知失败／精确 delivery 的证据改查各自已有列表／详情；如果某断言仅为旧 Dashboard
+   专属聚合则随产品删除，不能借机删掉决策持久化、权限、脱敏或零副作用断言。
+5. **补充退出验收并修订直接受影响说明。** 可将 `tests/test_dashboard.py` 改成退役测试，
+   删除旧正向 fixture。部署／发布操作说明使用探索、受支持的认证探针及各自状态页；
+   `v2_ui.py` 的受支持深链示例改成探索。旧 Web 路径的负向测试可以保留。CURRENT/TARGET
+   的整体转正留给 A 最终接受，历史文档／旧接受事实不改。用生产 Web 资产验证保留的首页。
 
-| 本轮实际命令／范围 | 结果 |
+### Acceptance criteria
+
+- [ ] 正常配置、合法 READ 身份下，先调用受支持接口得到 200，再请求现有旧 API 及
+  `?recentLimit=10`；均得到与普通未知路由相同的 404／`not_found`，没有兼容响应。
+  原查询不再进入 Dashboard 参数解释，公共认证／审计保留；无身份仍按现有全局规则。
+- [ ] 安装入口的顶层 help 不再注册 Dashboard；`mediaflow dashboard` 和带原
+  `--recent-limit 5` 的命令在解析阶段以未知命令拒绝。相同临时配置下 `tasks list` 成功；
+  不以配置错误、权限错误或仅非零退出作为注销证据。
+- [ ] 代码引用确认专属模型／服务／repository 查询／helper／注入和可达消费者全部删除；
+  旧请求无 Provider、媒体 Storage、任务准入、配置发布业务效果。公共初始化／审计不被
+  误判为业务变更；共享 CSS、历史文本和负向测试无需清掉 dashboard 字符串。
+- [ ] V1 打开 → Connect → 已有 Configuration 内容可读；Dashboard 按钮／请求消失。
+  配置读取失败仍显示原错误并能按现有 Connect／导航重读；断开仍清空身份。只验这条窄链路。
+- [ ] 正常启动与同版本 Active 绑定切换后，探索／任务／自动化／通知／系统状态已有读取
+  正常；临时 SQLite 中已有 Task／Result／review／notification／audit 记录保持可读。
+  不引入 schema 变更或改变任务状态、四类恢复、结果与非重放语义。
+- [ ] 所有改接探针仍证明原权限／脱敏／有界读取／零媒体效果责任；真实 Python＋生产
+  资产的探索“浏览 → 筛选／搜索 → 详情 → 返回”保持，其他合法深链继续可达。
+
+### Required tests
+
+遵循[测试等级与分工](docs/development-workflow.md#6-test-levels)。探测只使用以上已有入口和
+仓库已有夹具／本地假服务；不用用户数据库、媒体或真实 Provider。未来新增用例在交接时
+给出真实名称／命令，不把本计划记作执行结果。
+
+**Developer — 新增／修改和直接受影响测试：**
+
+根目录，执行以下现有模块（`test_dashboard.py` 在本 Task 中改写为退役验收）：
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test_dashboard.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_api_credentials.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_operator_ui.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_ui.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_file_index_retirement.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_metadata_review.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_classification_review.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_manual_organize.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_notification_operations.py'
+.venv/bin/python scripts/check_governance.py
+git diff --check
+```
+
+这些模块覆盖实际改接消费者，不把全仓套件交 Developer。对实际改动的存活 Python 文件
+执行 `.venv/bin/ruff check <files>` 和 `.venv/bin/ruff format --check <files>`（交接列出
+真实文件清单）。改动安全脚本时，从其已有 probe 函数在临时本地 HTTP 环境验证改接后的
+状态、权限和 canary 断言；复用现有夹具，避免为删除入口新建验收平台。
+不要求 Developer 运行全仓 Python／Web／E2E 或发布矩阵。
+
+**B — 完整 Base..Head 独立验收和 Slice 最终证据：**
+
+1. 完整审查 Task Base..候选，先复现 AC-11 的合法身份／正常配置对照、CLI 解析拒绝、
+   代码引用退出和 V1 窄链路；独立运行上面的受影响模块及
+   `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'`、
+   `test_operations_task_center.py`、`test_v2_automation_operations.py`、
+   `test_system_settings_management.py`（后三项使用相同 discover 命令分别指定文件）。
+   这些回归针对共享 binding 与保留统计，不要求未改动执行引擎的全量验收。
+2. `web/` 执行 `npm run typecheck`、`npm run build`，再执行
+   `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`；
+   检视桌面／390px 浏览到详情再返回。沿真实 Python 入口读取任务中心、自动化、通知和
+   系统状态，验证 binding 没有因位置参数删除而错配；复用已有测试入口／夹具。
+3. 根目录执行 `.venv/bin/python scripts/rules_identity_browser_proof.py`，验证改接后的
+   认证探针及原身份／深链目的；对安全脚本改动运行 Developer 段所述本地 probe 验证。
+   对 CLI／删除模块的分发影响，由 B 执行
+   `.venv/bin/python -m pip wheel . --no-deps -w <isolated-wheel-dir>`，再用精确 wheel 运行
+   `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>`；补查源目录外安装入口
+   help／未知命令／正常命令及已删除模块不再打包，不能用源码副本代替 wheel。
+   本 Task 不变更 Docker／服务生命周期，不要求完整 Docker 发布矩阵；改动的安全探针
+   本身必须有实际运行证据，不能因未跑 Docker 就声称该脚本整体通过。
+4. Slice 最终逐项重评 RO-1–4／AC-1–11；Task51.1 的证据只在源、测试、夹具、依赖和
+   资产匹配时复用，执行输入变化须补跑对应验收。覆盖完整最终候选后才提交 Closure Packet，
+   A 负责 CURRENT 文档协调和 Slice 关闭。遇真实 T4 影响先重评，不沿用 T3 减免安全门禁。
+
+每轮测试／构建／静态检查累计用时必须小于该轮总用时的 50%；先审查和关键复现再安排
+较长门禁，记录命令／实际耗时。时间不足时诚实报告待验收，不能裁剪必需覆盖或虚报 PASS。
+B 日志／截图保留于 `.git/validation-evidence/<candidate>/`；原失败和 skip 必须保留。
+
+### Non-goals and Slice reassessment
+
+不增加探索功能／Provider／新统计接口，不改队列、schema、权限、媒体流水线或部署，
+不修无关既有测试／业务，不机械改名共享样式，不重开已接受 Slice。
+
+| Slice outcome | 当前结论 |
 |---|---|
-| 根目录 `python3 scripts/check_governance.py`；完整范围与文档 `git diff --check` | PASS |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'` | 41 PASS |
-| 同命令 `test_metadata.py`／`test_api_security.py`／`test_v2_ui.py` | 36／13／13 PASS；Python 合计 103，无 skip |
-| 修改的 10 个 Python 文件 Ruff check／format；Web typecheck、修改文件 ESLint／Prettier；生产 build | 全部 PASS，实际文件清单在 `runs-core.json` |
-| 原 Developer focused Web 命令，覆盖探索 entity／页面／API、认证、入口、导航、共享弹卡 | 13 文件／180 PASS |
-| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`（cwd `web/`） | 10 PASS，无 skip，真实 Python＋生产 adapter＋本地上游 |
-| 本 Task 改接的 10 个 Node E2E 文件，含 deep-link、page-transition、两种库、自动化、通知、任务中心与存储 | 原命令 173 PASS／2 FAIL；两项断言原因与独立同义验证见下文 |
-| 共用 Python 入口的 6 个直接受影响用例（命令与 grep 见 `runs-shared-native.json`） | 首次 4 PASS／2 FAIL；其中运行数量用例在独占临时数据库单独运行后 PASS；旧自动化标题断言在 Base 同样失败 |
-| Unicode principal 的原生用例 | 连接探索、转任务中心和打开指定运行通过；随后寻找已退役批量恢复控件失败；Base 同位置复现 |
-| `node .git/validation-evidence/9efe8ccd/b-review-20261107/native-check.cjs` | 7 组原生检查全部 PASS，含失序响应、分页独立重读、详情错误／图片失败、390px／reduced-motion 和零业务效果 |
+| RO-1 首页与完整退出 | Task51.1 完成 V2 首页；API／CLI／专属后端／V1 和探针是本草案的剩余交付 |
+| RO-2 浏览／筛选／搜索／分页 | Task51.1 PASS，保留其证据和限制，最终候选需确认不回归 |
+| RO-3 海报／详情／返回 | Task51.1 PASS，同上 |
+| RO-4 状态／恢复／只读安全 | Task51.1 PASS，同上；本 Task 验证退出的业务效果边界 |
 
-上述命令无自动重试或隐藏 skip。没有运行全仓 Python／Web／E2E、安装包或 Docker 发布
-矩阵；本 Task 的 T3 只读集成范围不需要这些全量门禁。
+预期这是最后一个实现单元，满足后停止规划并交 A；当前仍不满足全部结果，不能提交
+SLICE READY FOR A REVIEW。合同／Roadmap／Progress 尚有“Task51.1 未实施”的旧阶段描述，
+本草案明确实际状态，不以 B 规划改写 A 的合同或接受账本；激活／最终协调时更新事实。
 
-### Regression diagnostics and evidence limits
+### Developer completion report / B review
 
-1. **403 测试定位不唯一。** 原 Node 用例在全页查同一句权限提示，现在目录失败区和
-   主内容权限区都正确显示该提示，Playwright 因匹配两个元素拒绝继续。B 在隔离的候选
-   副本中将定位限定到有“没有读取权限”标题的 alert，完整验证拒绝读取、保留身份、无
-   令牌泄露、明确断开并换合法身份重连的原旅程，PASS。没有改产品或仓库测试。
-2. **任务详情旧占位文字。** Node 用例期待“在任务中心查看该运行的详情”，当前详情已
-   直接呈现条目和记录；完整 Base 的相同用例也因该旧文字失败。隔离候选的 B 验证改查
-   真实“任务详情与操作记录”区域和主条目表，继续核对关闭、日期范围、浏览器后退，PASS。
-   两项隔离验证为 2 PASS，生产资产与原候选全部 5 个文件的 SHA-256 完全一致，锁文件
-   一致；仅两处验收定位／实际详情证据断言改变，精确差异在
-   `semantic-proof-test-diff.patch`，原 173／2 结果和 trace 留存。
-3. **共享 Python 测试环境。** 首次命令以 4 个 Worker 共用一份可变运行数据库，其他用例
-   创建运行时，“固定共 4 条”的断言失败。相同候选以 `--workers=1`、只运行该用例在
-   新建临时库上 PASS；Base 独立运行也 PASS。初次失败记录保留为共享夹具限制。
-4. **既有旧用例。** 直接受影响可读性用例在打开自动化编辑后仍查英文标题
-   `Edit Automation definition`；Unicode 用例仍查已退役的批量分析恢复选择控件。
-   B 在原 Task Base 的独立源码／资产／真实 Python 临时运行环境分别复现相同失败。
-   两条当前用例在修改过的默认入口上已成功续转，其后失败点位于未改动的既有业务。
-   不把这些既有测试限制计成探索交付失败，也不把未完成的旧用例声称为 PASS。
+尚未实施，无新的候选可审，未作本 Task 的 PASS／FIX REQUIRED 决定。
+Developer 激活后交完整 checkpoint SHA、READY FOR B REVIEW、实际改动／受影响命令与
+结果、失败／限制和剩余工作；B 独立审完整 Task Base..Head 后决定 PASS 或 FIX REQUIRED。
 
-B 已用相同产品资产的直接原生证据完成本 Task 必需的权限、详情返回和探索旅程验收；
-上述原测试维护项作为非阻塞限制保留。仓库测试文件未被删改，原失败均保留，不制造
-新的产品修正 Task。这里的 PASS 是 Task51.1 的业务与适用安全验收，原始回归命令没有
-全绿，不能据此声称全仓测试通过。
+### Planning checkpoint
 
-`artifact-identity.json` 固定候选／实现／Base、生产资产及依赖锁摘要；`task-range.patch`
-和文件清单固定完整审查范围。`native-check.json` 记录七组检查、图片请求来源、前后
-业务表计数和零 Storage 调用。`desktop-detail-recovered.png`、`mobile-grid.png`、
-`mobile-tv-detail.png` 等为 B 检视截图；原 10 条 spec 截图留在
-`explore-spec-screenshots/`。`original-node-failures/`、`original-python-failures/` 和
-`original-unicode-failure/` 保留失败现场；Base／隔离候选材料与日志在同一证据目录。
-测试／构建／静态检查以及基线对照均纳入 `time-allocation.json`；累计测试耗时低于
-本轮总耗时的 50%。
+本轮基线：`main` / `01f4e05d5cc03822d2e9ced3dfa91a2838990f62`；治理检查 PASS。
+预存 `mediaflow/.DS_Store` 修改、所有未跟踪 `.DS_Store`、日志、`.explore_adapter_block.py`、
+`15` 和 output 调查产物全部保留、不暂存。本轮仅修改 `TASK.md`，未改产品／仓库测试，
+未运行功能验收、未推送或部署。检查仅限文档／引用／治理；不把规划当成产品通过。
 
-### Slice outcome reassessment and stop
-
-| Slice 结果 | Task51.1 后状态 |
-|---|---|
-| RO-1：首页与 Dashboard 全退出 | V2 首页与旧 Web 退出完成；Dashboard API／CLI、专属后端、V1 消费者及对应探针仍在，属于后续剩余范围 |
-| RO-2：浏览／筛选／搜索／有界分页 | 本 Task 范围完成 |
-| RO-3：海报／准确详情／返回 | 本 Task 范围完成，新增背景图／季集数已证 |
-| RO-4：可见状态／独立恢复／只读安全 | 本 Task 范围完成，目录恢复和署名已证 |
-
-Task51.1 PASS 后停止本轮实施／复核，不规划额外完善项。下一连贯工作是 RO-1 剩余的
-Dashboard API／CLI／专属接线和旧消费者退出；本轮未创建或授权新 Task，未提交
-SLICE READY FOR A REVIEW。Slice51 保持 ACTIVE，A 的最终 CURRENT／TARGET 文档对齐
-和关闭尚未发生；Roadmap／Progress 的旧阶段指针需后续事实协调，既有接受身份保持。
-
-本轮开始于 `main`／`9efe8ccd`；预存 `mediaflow/.DS_Store` 修改和全部未跟踪日志、
-`.DS_Store`、`.explore_adapter_block.py`、`15` 及 output 调查产物均原样保留，未暂存。
-B 仅更新 `TASK.md` 和本机忽略证据；产品代码、仓库测试、Slice／Roadmap／Progress 未改，
-没有推送或部署。
+本轮规划检查：`python3 scripts/check_governance.py`、`git diff --check` 均 PASS；
+仅有文档／引用检查，检查用时低于本轮总用时的 50%。
