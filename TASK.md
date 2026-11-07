@@ -3,8 +3,8 @@
 Authority: 用户本次六项界面修正、已确认的第三项展示设计及 2026-11-07 的 Task 激活指令；
 独立修正路径遵循
 [workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)。
-本 Task 已从规划稿转为正式 **PLANNED**，限定 Developer 实施下述范围；本轮只完成激活，
-尚未开始实现，不自动转入其他角色、推送或部署。
+本 Task 已完成首次实现并经独立 B 复核，当前为 **FIX REQUIRED**；Developer 在同一 Task
+修正下列已证实的交付缺口，原六项范围、Base 与测试等级不变。未授权推送或部署。
 
 Slice50 是相关已接受基线，不是 Parent；其 **PASS / CLOSED**、原 Base/Head、审查及延期
 保留于 [SLICE.md](SLICE.md#final-validation-closure-packet-and-a-final-review)、
@@ -17,14 +17,14 @@ SLICE/Roadmap/Progress。B/Developer 分别读取相应 [角色经验](AGENTS.md
 Task ID: PATCH-20261107-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: USER AUTHORIZED — THIS TASK ONLY
-Next Action: B REVIEWS THIS TASK
+Next Action: DEVELOPER FIXES THIS TASK
 ```
 
 激活前分支 `main`，HEAD `ba12493cbcd81aa073e687a31263251e8669478c`，治理检查 PASS。
@@ -352,8 +352,84 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-cr
 - 内容 settle 只覆盖存储与两种库的代表性慢读取页面；其他主页面仍使用原有占位与共享 Shell
   过渡，未扩大为新的全局就绪机制。
 
-### B Review Result
+### B Review Result — 2026-11-07 — FIX REQUIRED
 
-未审查；本轮完成 Task 激活，状态 PLANNED。实施后按 workflow 对同一 Task 给 PASS 或 FIX REQUIRED，
-记录精确 Base..Head、实际验收结果与六项是否全部满足。独立修正 PASS 后恢复简洁的
-NO ACTIVE IMPLEMENTATION TASK 通知并保留固定审查指针；不改 Slice50/Roadmap/Progress。
+独立审查完整范围：`fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c..e8f5669d1e9086515fe77b41f08bfb1df16108f1`，
+共 27 个文件，源码候选 `a1b591db5b46f9e5f9bdf8cfa2ddfaef38c34b5e`；其后仅交接文档。
+分支 main；审查开始治理 PASS。预存 `mediaflow/.DS_Store` 修改及所有未跟踪日志、
+`.DS_Store`、`15`、`output/` 等保留，未读取私有运行配置/数据库/媒体。本轮只修改 TASK.md。
+Slice50 仍 PASS / CLOSED，独立 Task 不重开或改写其接受记录。
+
+**交付核对：** 运行控制说明区和自链接已删除，流程→进度→文件结果的层级、自动化页头刷新
+删除、存储/两种库正文接入已有实现与通过证据。文件证据的正常成功正文及业务处理解释
+仍不满足 AC-3/4，故六项尚未整体完成。AC-5/7/8 的其余指定验收留待修正候选完成；
+以下是范围内的必需结果，不增加产品能力、后端修改或新的恢复流程。
+
+#### 阻塞项及 Developer 开发指导
+
+**B-01 / P1 — 成功文件的证据同时把它说成技术失败，正文仍有内部字段和常驻说明。**
+
+完整复现：使用现有 `playwright.python.config.ts` 对应的隔离 Python harness，沿现有
+`operations-inventory.python.spec.ts` 的 `run-manual-organize` 场景产生真实 Worker 整理结果；
+从任务中心刷新→点击 `One.2001.mkv` 的任务名称→查看证据。
+正文先显示“文件已整理 / 成功 / 已验证完成”，随后却显示：
+`第 1 次执行：SUCCESS`、`未继续原因：replay_not_offered: item has a terminal outcome`，
+再平铺 `completed / verified_complete / unsafe` 和“这是一个技术失败条目……”整段说明。
+用户无法判断成功文件是否还需要修复。后端已正确记录成功；问题在证据的呈现组合。
+
+开发指导：
+
+1. 在 `RunDetailTabs.tsx` 的证据正文和 `TaskItemRecoveryPanel.tsx` 的呈现边界共同处理。
+   根据现有真实结果区分成功、实际失败、未知效果和四类待处理，不把“终态不提供重放”当成
+   业务失败/需处理原因。正常成功正文只保留必要结果和事实；只读 checkpoint、拒绝码及
+   安全机制说明进入诊断，不默认显示修复教程。已有待处理、在途和未知命令核对保持可见。
+2. 对真实接口返回的 Result 状态（本例为大写 `SUCCESS`）使用正确中文业务名称；正文中的
+   已知操作使用业务名称，原 token 保留在诊断。无需增加泛化转换框架或改后端枚举。
+   附件仍按各自结果呈现，失败/未执行/未知不能合并为成功。
+3. 在真实 Worker 成功旅程补断言：默认文件证据没有错误的“技术失败”定性、英文拒绝码及
+   常驻安全教程；实际失败/未知仍保留对应事实。若改变恢复面板的呈现，选取已有四类
+   决定→分析→摘要→明确继续及未决核对用例，证明动作没有被折叠隐藏或重新提交。
+
+**B-02 / P1 — “处理经过”仍缺少可读的识别、元数据、命名、分类解释。**
+
+同一真实入口中，目标为 `Movies/Movies/Anime/One (2001) [tmdbid-101]/One (2001).mkv`，
+“处理经过”只有创建目录、移动及源目录清理状态。用户看不出匹配到什么作品、如何命名、
+为什么归入 Anime。展开技术诊断后仍主要是原有英文状态、策略 ID 和 key/value。
+实际响应已经包含 `planEvidence.plan.analysis` 的 metadata/naming/classification：作品 One
+(2001)、命名目录/文件名、分类规则 japanese-animation 及电影/动画/日本匹配证据。
+这不是缺少 API 数据，也不能仅把原平铺内容整体折叠就算完成本 Task 第 3 步。
+
+开发指导：
+
+1. 从该条目已捕获的 plan/analysis/evidence 提取短业务说明，放进“处理经过”：识别/作品匹配、
+   命名结果、分类到目标库/相对路径的依据，以及实际存储步骤。按实际可用证据显示，缺失
+   如实说明；不查询当前配置/Provider 来补算旧任务，也不编造命中理由。
+2. 复用现有类型和数据，保留 RecognitionType C、Naming A、Classification A 的独立身份；
+   原始计划、日志、审计及 ID 继续在诊断可查。不要增加后端能力或新的状态/恢复入口。
+3. 用现有真实 Manual Worker 场景核对：用户从任务列表打开文件证据，不展开原始诊断也能
+   读懂作品、名称及 Anime 归类依据；缺少计划的历史条目仍准确。桌面及 390px 检查长路径，
+   并保持附件独立结果、导出、关闭回焦和四类处理可用。
+
+#### B 本轮实际验证与限制
+
+生产 build PASS（保留大 chunk 提示），资产 `index-CCbQLlCe.js` / `index-C3MJm0DP.css`。以下 cwd 为 web/：
+
+- `npm run test -- run src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx`：
+  **2 files / 26 PASS**，含取消反馈、未知核对和混合结果。
+- `npx playwright test tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts tests/e2e/page-transition.spec.ts tests/e2e/automation-presentation.spec.ts --grep 'PATCH-20261107-1|one item.s evidence|all nine sidebar' --output=../.git/validation-evidence/e8f5669/B-review/fake-results --trace=on`：
+  **7 PASS**，涵盖九页、存储慢读、混合/未知结果、390px 和刷新删除。
+- `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'the selected run detail reads progress|a real Manual Organize Worker run|a real standalone pipeline run' --output=../.git/validation-evidence/e8f5669/B-review/python-results --trace=on`：
+  **3 PASS**，真实详情、计划、导出与重启读回；通过用例未断言本轮发现的可读性缺口。
+- 独立原生交互复现上述真实 Manual Worker 旅程，检查响应、默认/展开正文并查看桌面 PNG，
+  确认 B-01/B-02。没有构造新的产品入口或使用用户运行数据。
+
+本地证据 `.git/validation-evidence/e8f5669/B-review/`：build/unit/fake/python 日志、
+各浏览器 trace/截图、`native-evidence-default.png`、`native-evidence.json`（默认/展开正文与
+真实 API 响应）。本地产物不宣称远程可取。测试及浏览器复现执行累计不足 1 分钟，
+审查/阅读/分析/写回耗时超过该值，测试占本轮总时间低于 50%。未执行的其余静态门禁、
+选定集成/兼容验收不宣称通过；已有明确阻塞，按 workflow §6 在昂贵门禁前返回修正。
+Developer 披露的完整 inventory 测试总数失败未经 Base 复现，本轮既不认定为既有问题，
+也不据此新增阻塞。全量 Python/Web/E2E、wheel/Docker 未运行，当前 T3 无新增适用理由。
+
+**Next Action：Developer 在同一 Task 修正 B-01/B-02，运行新增/修改及直接受影响测试，
+交接新 checkpoint；B 继续审查完整原 Base..新候选并完成剩余适用验收。**
