@@ -36,8 +36,11 @@ accessible dismissal; detail content must reach its end at desktop, 390px and sh
 **All main-page transitions and content handoff:** Router/AuthBoundary/Query retain lifecycle and
 authority ownership. Cover all nine existing sidebar destinations from transition through actual
 pending states to ready content, including necessary page-local presentation changes; the scope is
-not confined to Shell opacity or the two library pages. Avoid stacked fades, strong opacity flashes,
-transient loading-text/skeleton flashes, geometry changes and remounts for animation. Duration and
+not confined to Shell opacity or the two library pages. Eliminate abrupt whole-page flashes,
+distracting loading-text/skeleton flicker, unintended layout jumps and brightness changes caused by
+stacked fades. Normal differences in destination layout/content height, stable placeholders and
+their smooth replacement are valid; neither any geometry change nor the mere presence of a placeholder
+is a failure criterion. Do not remount business content for animation. Duration and
 easing are tuning choices, not fixed numeric requirements; validate complete intermediate frames
 and actual interaction under quick/cached/slow reads and reduced motion. Do not delay requests for
 animation or serialize otherwise independent requests for it; preserve legitimate data dependencies,
@@ -45,9 +48,10 @@ authentication ordering and bounded rate-limit backoff. User interaction must no
 Use stable feedback where reads actually remain pending, preserve errors and
 necessary requests, and do not require one universal skeleton or redesign other page business flows.
 The two library pages additionally retain separate library/directory pending states and same-query
-refresh content. Entering a page must not flash the directory-refresh message; moving that message
-to a fixed location alone is insufficient. No temporary inserted refresh row, hidden failure,
-stale cross-path content or bypassed authority read.
+refresh content. Entering a page must not abruptly flash the directory-refresh message, and temporary
+refresh-row insertion/removal must not cause distracting flicker or unintended list jumps. Stable
+loading feedback and smooth content replacement remain valid; moving an abruptly flashing message
+to a fixed location alone is insufficient. Preserve failures, correct path identity and authority reads.
 
 **Automation Open retirement:** remove the old definition/editor Web pages, Router registrations,
 destination metadata, list/name entries and exclusive client dependencies; fix occurrence/history
