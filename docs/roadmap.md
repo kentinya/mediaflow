@@ -36,32 +36,31 @@ only in [the development workflow](development-workflow.md).
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
-| 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | ACTIVE | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
+| 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
 
 ## Current boundary
 
-[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — remains open;
-**A Final Review: FIX REQUIRED (2026-11-07)**. Roadmap status stays ACTIVE during correction.
-Immutable Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; reviewed Implementation Head
-`d91a9dd2fd5833a5977a319e90d0283b05625e9a`. B's original two Task PASS decisions and Closure Packet
-remain at `01f4e05d:TASK.md` / `ab3edf8d:TASK.md`; A reviewed the entire Slice range independently.
+[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — **PASS / CLOSED**
+after independent A Final Review on 2026-11-07. Original Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`;
+accepted Implementation Head `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`. Explore provides the complete bounded
+movie/TV browse → filter/search → detail → return journey, including genuine empty reads and independent
+recovery. Dashboard Web/API/CLI, dedicated backend/runtime wiring and reachable consumers have retired
+without compatibility; shared reads and durable history remain.
 
-A51-01 is one P1 in the required Explore journey: a successful zero-result upstream page with
-`total_pages=0` is rejected as malformed, so valid empty filters/searches show a read failure.
-A reproduced through existing browser entries and the production API/adapter over a local upstream;
-no real TMDB, private runtime or user media was used. The original harness forced empty pages to 1.
-B continues [Task51.1](../TASK.md) in its original ID/Base/goal/scope/High/T3, gives correction guidance,
-independently accepts the corrected candidate and renews the Slice Closure Packet. Task51.2's complete
-Dashboard retirement and other verified facts remain; no new capability or optional Task is selected.
-
-Slice51 is not accepted or closed; CURRENT reconciliation remains pending. The original first-plan
-role exception, all deferrals, shared business history and safety boundaries remain. Slice50 and all
-older accepted identities stay unchanged. Shared transitions remain tied to sidebar destination
-identities; same-page tabs, details, paths and refreshes retain local behavior. No push or deployment.
+A51-01 was corrected in the original Task51.1 and independently reaccepted. B's renewed Closure Packet
+is `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`; original failure/review/validation limits remain in
+Git and the Contract. [TASK.md](../TASK.md) has no active implementation Task; **A SELECTS THE NEXT
+LARGE SLICE** is a separate action. No new Slice/optional Task is selected here. All deferrals and prior
+accepted identities remain; Scan/Preview/FileIndex/Job/Pause retirement, execution safety and shared
+page-local transition behavior are unchanged. No push, release or deployment is claimed.
 
 ## Accepted boundary references
 
-Latest acceptance is [Slice50's Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review):
+Latest acceptance is [Slice51's Contract/A review](../SLICE.md), with original Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
+[Progress](progress.md#closure-ledger) retains delivery, deferrals and evidence limits.
+
+Prior50 acceptance is [Slice50's Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review):
 original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation
 `6b0927328a7bf0873faffce9cb38007fd4607764`. Required outcomes, unchanged safety and all explicit deferrals are
 recorded in [Progress](progress.md#closure-ledger). Prior49 acceptance remains at its

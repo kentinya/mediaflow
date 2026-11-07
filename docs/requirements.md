@@ -29,6 +29,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 
 | Authorized amendment | Superseded V1 meaning / retained boundary |
 |---|---|
+| 2026-11-07, `V2-EXPLORE-001–011` — CURRENT / Slice51 PASS / CLOSED | Explore replaces the V2 homepage with bounded movie/TV browse, filter/search and exact detail/return. Explicit Explore reads may contact the Provider for metadata/artwork. Dashboard Web/API/CLI, dedicated implementation and consumers retire without compatibility; shared reads/history and all media-execution safety remain. Frozen V1 and earlier acceptance identities retain their historical meaning. |
 | 2026-11-05, `V2-UX-005–013` — CURRENT / Slice50 PASS / CLOSED | User-authorized planning for the original eight UX requests: Task detail cards/readability; Storage view/add/edit cards and More menu; both library pages' directory-tree removal, library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages with consistent Files/MediaLibrary loading animation. The user clarified that page transitions mean only those main pages, with in-page navigation, library/path loading and selected card transitions handled separately. The user subsequently added Automation create/edit card jitter correction as V2-UX-013: preserve background scroll/scrollbar space and stable loading-to-form layout for both entries. The original eight mappings remain unchanged. Replace the selected V2 side-detail/drawer/tree presentation constraints, using existing Automation cards as the visual baseline; preserve all fields, existing journeys, checked Active, backend permissions, five-state flow/independent file results, four-type recovery and non-replay. Independent A Final Review on 2026-11-07 accepted original Base 6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0 through implementation 6b0927328a7bf0873faffce9cb38007fd4607764. All eight outcomes and the added stability requirement are CURRENT; frozen V1 and earlier acceptance facts remain unchanged. Stable scope/acceptance is in V2 Requirements and Slice50. |
 | 2026-11-04, `V2-AUTO-013–015` — CURRENT / Slice49 PASS / CLOSED | User-activated scope for correct confined Automation sources, direct one-click Run once in the list and shared Chinese create/edit cards. Creation offers a default-off explicit enable choice and preserves later enable/disable through editing; remove edit Run once and use the list. One form submission may use atomic publication or safe composition of existing checked commands, with truthful partial/unknown feedback and exact reconciliation. This adjusts the V2 disabled-only create journey of V2-AUTO-002/010 and §98.4; copy stays disabled. Current permissions, scoped scheduled intent, pins, audit, unknown-request reconciliation, five-state Task/file separation and non-replay remain. Independent A Final Review accepted original Base 02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e through implementation 9d6b78147d90b950ed2333f9747facc77bf0391a on 2026-11-05. The implementation uses one atomic checked creation publication; stable acceptance is in V2 Requirements and the Slice49 Contract. Frozen V1 and accepted Slices remain historical facts. |
 | 2026-11-03, `V2-TASK-012–014`, `V2-AUTO-012` — CURRENT / Slice48 PASS / CLOSED | Separate five-state Task flow from file outcomes; only Task-level flow failure yields failed. Normal closure and ended file-processing technical failures count as completed even with unknown effects or no formal file Result; actual file results are not completion gates. Preserve known failures/steps, missing-result truth, genuine unfinished work/human waiting, safe cancellation, ownership fences and uncertain non-replay. Task closure itself must be durably saved. Ordinary Copy/Move/Delete Tasks adopt the same rule while operation results remain independent on the original library page. Automation success rate is completed/(completed+failed) over due AND definition Run once Tasks, excluding cancelled/pending/running Tasks, Files/CLI manual organizing and ordinary file work; no completed/failed Tasks yields no percentage. Cancelled records/admitted/ended counts remain independent of the rate denominator; file results/Result presence never gate it. Execution records use the same current Task flow state as Task Center; original times/attempts/effects remain factual. This accepted amendment changes REQ-TASK-002/003's V2 aggregate realization, V2-OPS-016, V2-AUTO-005's rate and V2-AUTO-006's result/filter meaning. Independent A Final Review accepted the original Slice Base through a80015e2f7d46e3ad1b8f7b14c453d1030e62104 on 2026-11-04; frozen V1 remains historical. |
@@ -78,8 +79,10 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
 原八项与自动化新建/编辑稳定性补充 `V2-UX-005–013` 为 [CURRENT 定义](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)，
 替换所选任务侧详情、存储/库抽屉和两页目录树，保留原业务/权限/安全及历史接受事实。
-[Slice51](../SLICE.md) 保持 ACTIVE；[Task51.1](../TASK.md) 已按用户明确授权激活为正式
-活动实施 Task（PLANNED，High／T3），授权仅限其既定范围，尚未实施或验收。
+[Slice51](../SLICE.md) 于 2026-11-07 经独立 A 终审 PASS / CLOSED；原 Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` 至实现 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`。
+探索首页及 Dashboard 全垂直退出为 CURRENT；[TASK.md](../TASK.md) 为无活动实施 Task，
+首个计划的角色例外和独立验收证据仍在 Contract／Git。冻结 V1 与旧接受事实保持。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
 `V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
@@ -94,23 +97,23 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 现行验收定义见 [V2 Requirements](v2-requirements.md)，完整旅程见
 [Recognition and rules](product-experience.md#recognition-and-rules)。
 
-## Planned V2 homepage amendment — Slice51
+## Accepted V2 homepage amendment — Slice51
 
 用户于 2026-11-07 授权按“浏览 → 筛选／搜索 → 查看详情 → 返回”规划
 [Slice51](../SLICE.md)，并明确直接替换 Dashboard、不做跳转兼容。
-`V2-EXPLORE-001–011` 为 [TARGET / ACTIVE](v2-requirements.md#target--v2-explore-homepage-slice51)，
-Slice 与首个 Task51.1 均已授权激活，尚未实施或交付。用户另明确要求 Dashboard API／CLI
-也完全删除、不做兼容。接受后
+`V2-EXPLORE-001–011` 为 [CURRENT / PASS / CLOSED](v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed)，
+完整浏览／搜索／详情／返回与失败恢复已接受。用户另明确要求 Dashboard API／CLI
+也完全删除、不做兼容。当前
 `REQ-WEB-002` 的 V2 首页由探索替换，运行中的 Dashboard Web、API／CLI 及专属模型／
 服务／查询／接线完整退出；旧入口走普通不存在／命令错误，无重定向、别名、410／退役说明
 或空成功兼容。`V2-TASK-005/014` 等 Dashboard 消费者义务仅在该退出垂直取消，其他状态／
 统计／历史和安全要求保持。现存 V1 Dashboard 调用只作必要断接，不要求 V1 探索／重设计。
-冻结 V1 定义和历史接受含义保留，不因此在运行时保留旧 Dashboard，也不声称已实施。
+冻结 V1 定义和历史接受含义保留；当前 V2 不保留运行中的旧 Dashboard。
 
 探索显式请求可通过 Provider 抽象读取有界外部元数据／图片；这不是系统／配置状态页面，
 `REQ-WEB-006` 的无外部媒体服务读取规则在其原状态表面继续适用。探索本身零媒体 Storage
 访问／变更、零工作准入／执行权限／配置发布，保留 `REQ-META-*`、认证／脱敏及全部安全
-不变量。完整目标旅程与架构分别见 Product Experience／Architecture 的 Slice51 TARGET。
+不变量。完整现行旅程与架构分别见 Product Experience／Architecture 的 Slice51 CURRENT。
 
 
 ## Traceability and derivation rules
@@ -408,7 +411,7 @@ the release contract, not a new media-processing engine.
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|
 | REQ-WEB-001 | REQUIRED | Web UI is the primary V1 management surface for setup, configuration, daily work, review, recovery and explicit execution. | §最终管理界面; §第一阶段 MVP / UI | Required journeys are discoverable and complete without CLI-only knowledge. |
-| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard; Slice51 TARGET amendment above | Counts link to the underlying actionable scope and do not expose secrets. Slice51 plans Explore as the V2 homepage and complete Dashboard Web/API/CLI retirement without compatibility; this is not delivered and preserves frozen historical meaning rather than requiring a live legacy implementation. |
+| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard; Slice51 accepted amendment above | Counts link to the underlying actionable scope and do not expose secrets. Accepted Slice51 replaces the V2 homepage with Explore and completely retires Dashboard Web/API/CLI without compatibility; the original V1 definition retains its frozen historical meaning. |
 | REQ-WEB-003 | REQUIRED | Files provide bounded live library-scoped entries and applicable actions; processing explanations/results remain on supported Task/Result surfaces. The current V2 amendment retires FileIndex catalog/detail and display feedback. | §文件列表; §搜索与筛选; §媒体详情; V2-FILES-005/006 | CLI and both library pages share live Storage reads without recording a file catalog. Users inspect processing outcomes through native task journeys; live membership never depends on recognition, metadata or historical results. |
 | REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and zero-mutation analysis through organizing/Rules/configuration checks; V2-OPS-013 removes standalone Preview management. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界; V2-OPS-013 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
@@ -3766,8 +3769,8 @@ Missing
 
 ### **Dashboard**
 
-下列保留冻结 V1 与当前已交付 Dashboard 定义；V2 首页的待实施替换见
-[Slice51 TARGET](#planned-v2-homepage-amendment--slice51)，不是已交付事实。
+下列仅保留冻结 V1 的历史 Dashboard 定义；当前 V2 首页与全部退出边界见
+[已接受 Slice51 修订](#accepted-v2-homepage-amendment--slice51)，不再要求运行中的旧 Dashboard。
 
 首页展示：
 

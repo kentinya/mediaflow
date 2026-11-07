@@ -13,7 +13,8 @@ Detailed superseded delivery notes are retained at
 
 ## Current journey boundary
 
-Current journeys incorporate accepted Slice50 presentation/loading/stability amendments `V2-UX-005–013`,
+Current journeys incorporate accepted Slice51 Explore/Dashboard retirement `V2-EXPLORE-001–011`,
+Slice50 presentation/loading/stability amendments `V2-UX-005–013`,
 Slice49 Automation amendments `V2-AUTO-013–015`, Slice48 flow/rate amendments `V2-TASK-012–014` /
 `V2-AUTO-012`, Slice47 Task-only scheduling/settings/history `V2-TASK-001–011`, and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` and `V2-AUTO-010/011`. Historical43/45/46 acceptance facts and original deferrals
@@ -21,12 +22,12 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — V2 Explore homepage (Slice51)
+## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
-[Slice51](../SLICE.md) 已授权激活为 ACTIVE 并规划首个 Task；
-`V2-EXPLORE-001–011` 仍是 TARGET，尚未实施／交付。
-以下旅程在接受后替换 V2 Dashboard 首页；当前根入口和无 Provider Dashboard 读取规则仍是
-CURRENT。MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅色 Shell／弹卡。
+[Slice51](../SLICE.md) 于 2026-11-07 经独立 A 终审 **PASS / CLOSED**；
+`V2-EXPLORE-001–011` 和下列完整旅程为 CURRENT。探索替换原 Dashboard 首页，Dashboard
+Web／API／CLI 和专属实现全部退出，无兼容；旧 Slice 接受身份和全部延期保持。
+MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅色 Shell／弹卡。
 
 - **目标／入口：** 用户进入“探索”浏览电影／剧集或找指定作品。侧栏和默认认证后目的地
   为 `/ui-v2/explore`，其他合法深链仍回原目标。旧 Dashboard Web 页面与入口移除，旧路径
@@ -75,7 +76,7 @@ Dashboard API／CLI 也按用户明确要求完全退出：正常配置／合法
 不再要求使用旧接口或命令。任务中心／自动化／通知／系统状态仍提供各自已有信息，
 耐久任务／结果／审计历史保留，不因删除面板清除记录或新增替代统计平台。
 新数据源、推荐榜单、个人清单、演员／相似作品和完整季集浏览不在本 Slice。后端与图片边界见
-[Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51)。
+[Architecture CURRENT](architecture.md#current--v2-explore-homepage-slice51-pass--closed)。
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
@@ -317,7 +318,7 @@ aggregate, recovery-display, metric and execution-record meanings; original acce
   remain factual when legal continuation changes the current Task status. Records stay compact and
   read-only with no new execution/recovery control. All-failed is not empty/no-work or successful
   media organization. This CURRENT amendment changes the result/filter meaning of `V2-AUTO-006`.
-- **Other surfaces:** Files local ordinary-operation status, Task Center, Dashboard, API/CLI,
+- **Other surfaces:** Files local ordinary-operation status, Task Center, API/CLI,
   export/logs and existing Task-status notifications distinguish flow state from per-file effects,
   without adding a page or control. Ordinary Copy/Move/Delete already have Tasks and use the same
   technical-failure completion rule on their originating library page. The operation still shows
@@ -413,7 +414,7 @@ through one Task identity; historical Job-based acceptance remains in Git.
 - **Existing surfaces:** Task Center retains eight organizing views and the four-type Attention
   union; Files retains initial confirmation and exact task/preparation readback. Both library
   kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
-  records/metrics; System Settings owns the three runtime fields. Dashboard, scoped logs/export, API/CLI and health retain
+  records/metrics; System Settings owns the three runtime fields. Scoped logs/export, API/CLI and health retain
   their capabilities through Tasks. No Job management page/API/CLI command remains. Capacity is
   bounded queued/claimed executable work, not new parallelism; immutable old configurations and
   explicit runtime overrides retain their meaning.
@@ -620,7 +621,7 @@ keeps prior Active and correctable input.
 
 ## Real Storage Files
 
-- **Goal/entry:** browse physical sources at `文件` (`/ui-v2/resourcelib/files`), Dashboard or a
+- **Goal/entry:** browse physical sources at `文件` (`/ui-v2/resourcelib/files`) or a
   ResourceLibrary link; MediaLibrary has the separate destination journey below.
 - **State:** enabled ResourceLibrary cards, exact relative root/breadcrumb, bounded deterministic live
   entries/list/grid, paging, selection and meaningful capability/error state. No FileIndex membership,
@@ -795,7 +796,7 @@ never become all-success just because the business problems cleared. Provider tr
 not Metadata decisions, and other terminal failures have no separate failure statistics or generic
 center recovery guidance/actions. Administrative API/CLI recovery remains outside this V2 UX.
 
-- **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task
+- **Goal/entry:** find one admitted run from Task Center, Files, Automation or a Task
   deep link, then understand and safely resolve its actual files. Default list has no open detail.
 - **State:** All eight views expose only creation-date range selection and clear; clearing restores
   the current view's complete authorized population. This applies to the page-level task list;
@@ -987,13 +988,12 @@ Old-task/Job conversion and cross-version upgrade/rollback remain outside curren
 ## V2 Operator Web migration
 
 The shared responsive light shell provides persistent navigation, identity/connection controls,
-safe deep links and bounded return context. Root opens Overview/Dashboard. Memory-only token auth
+safe deep links and bounded return context. After connection, root opens Explore. Memory-only token auth
 continues supported routes; reconnect never replays work. A 401 clears rejected authority/query state;
 a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
-Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. The
-[Slice51 TARGET](#target--v2-explore-homepage-slice51) separately plans the future V2 homepage
-replacement and explicit external metadata/artwork reads; it is not CURRENT. No independent Node
+Refresh/list/navigation create no work or media mutation. Explicit Explore reads may contact the
+Provider for bounded metadata/artwork; other status/list/navigation reads remain Provider-free. No independent Node
 production service, replacement identity model or implicit V1 cutover is introduced.
 
 ### Task Center integration

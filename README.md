@@ -50,15 +50,16 @@ completion neither proves file success nor grants replay.
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
-[Task51.1](TASK.md) is the active implementation Task (PLANNED, High / T3) under
-the user's explicit activation authorization. [Slice51](SLICE.md) remains ACTIVE: a TMDB Explore homepage
-with browse → filter/search → detail → return will directly replace the homepage. Dashboard Web/API/CLI and dedicated backend/consumers will
-fully retire under the user's explicit instruction, without redirects, aliases or compatibility;
-shared business statistics and durable data/history remain intact.
-It is TARGET, not delivered. The A activation checkpoint precedes the first Task plan; the user
-explicitly authorized the same agent to substitute for B for planning, not independent acceptance.
-Implementation is authorized only within Task51.1; this activation checkpoint contains no product
-implementation, push or deployment.
+[Slice51](SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07:
+TMDB Explore is the default homepage, with browse → filter/search → detail → return, truthful empty
+states and independent read recovery. Dashboard Web/API/CLI, dedicated backend and consumers have
+fully retired without compatibility; shared statistics and durable history remain. Original Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` is accepted.
+[CURRENT requirements](docs/v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) define the delivered boundary.
+[TASK.md](TASK.md) records no active implementation Task; selecting the next large Slice is a
+separate A action. The original authorized A-for-B first-plan role exception remains disclosed in
+the Contract; Task acceptance and A Final Review were independent. No push or deployment is claimed.
+
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,
 consistent library loading and stable Automation create/edit. [CURRENT requirements](docs/v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)

@@ -2,119 +2,86 @@
 
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
-owns scope. Accepted CURRENT contracts include Slice50 presentation/loading/stability, Slice49
+owns scope. Accepted CURRENT contracts include Slice51 Explore/Dashboard retirement,
+Slice50 presentation/loading/stability, Slice49
 Automation forms/direct Run once, Slice48 independent Task flow/file outcomes, Slice47 Task-owned
 scheduling/settings, and the retained Automation/Task Center/live-list foundations and retirements.
 The sections below state the current component contracts; original acceptance identities, evidence
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — V2 Explore homepage (Slice51)
+## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
-[Slice51](../SLICE.md) 已授权激活为 ACTIVE 并规划首个 Task；
-`V2-EXPLORE-001–011` 尚未实现。CURRENT Dashboard、
-无 Provider 状态读取及现有 API／CLI 仍是当前代码事实；接受后以本节替换首页、完整退出
-Dashboard Web／API／CLI 专属运行契约，并加入明确探索外部读取。其他安全边界保持，
-没有新媒体处理流水线、Storage provider、执行 authority 或 schema。
+[Slice51](../SLICE.md) passed independent A Final Review on 2026-11-07, original Base
+`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
+`V2-EXPLORE-001–011` are CURRENT. Dashboard Web/API/CLI and their dedicated implementation and
+consumers are retired without compatibility. No media pipeline, execution authority or schema changed.
 
-**分层与数据：** React → 同源 Python 探索 API → 探索 application service → Provider
-抽象的浏览能力 → TMDB adapter／HTTP transport。扩展现有 Provider 或组合独立浏览端口，
-按实际依赖选择最小方案；业务、API 和前端使用内部查询／有界列表／详情／图片引用模型，
-不直接依赖 TMDB DTO。列表的作品身份为 Provider＋movie/tv＋Provider ID，评分／人数与
-文件匹配 score／confidence 分离。探索词是在线关键词，不送文件 Parser，不运行 Recognition
-或强造 ParseResult／MediaIdentity 的匹配证据。扩展浏览模型不得改变历史工作／pin 的含义。
+**Read boundary:** React → same-origin Python READ API → `ExploreService` → provider-neutral
+`ExploreProvider` port → production `TMDBProvider`/`TMDBClient` transport. The optional browsing port
+is separate from organizing's `MetadataProvider`; domain/application/API/Web use internal query,
+bounded page, options and detail models rather than TMDB DTOs. Work identity is provider + movie/tv +
+provider ID. TMDB rating/vote count is independent of matching confidence; no parser/recognition or
+local-ownership assertion is involved.
 
-**部署与依赖：** 首期只有当前部署支持的 TMDB，不增加源切换／自动 fallback，复用部署
-环境凭据、Provider bootstrap、HTTP 客户端和受限请求控制，按现有配置／就绪条件接入。
-不专门建设或验收无业务 Active／无库独立运行模式；若复用既有机制自然可用，无需人为
-禁止或增加反向失败测试，也不因此扩大启动／配置绑定链路的改造或支持承诺。
-查询默认以中文呈现，中文缺失保留真实原文。浏览默认值不发布或覆盖整理 MetadataPolicy／
-Provider 配置，不读取私有配置做测试，不新建凭据管理页。
-缺凭据安全失败并提供环境注入／服务重启／重读指导，不输出值或要求浏览器保存密钥。
+**Deployment/API:** reuse deployment-owned TMDB credentials and the lazy provider bootstrap. Only
+an explicit Explore read resolves the provider. API surfaces are `GET /api/v1/explore/browse`,
+`/search`, `/options` and `/{movie|tv}/{id}`; every read authenticates and requires READ before
+provider/cache access. Missing deployment configuration identifies environment injection/restart/reload
+recovery without exposing values. No dedicated no-Active/no-library startup mode was added.
+Queries use Chinese-first provider text with honest original/missing fallback. Browse/search are
+separate: filters map to real genre/original-language/first-release-year/rating/vote-count parameters,
+and search sends only supported type/keyword/page values. Rating sort defaults to a visible 100-vote
+floor. Unknown/duplicate/invalid parameters fail before provider work; pages are 1–500, up to 20 works,
+keywords 1–200 Unicode code points. Safe errors separate API identity from provider credentials,
+missing work, rate limit, timeout, unavailability and malformed responses. Upstream 401/403 carry
+provider-specific codes, so a valid MediaFlow identity is retained.
 
-**API／查询：** 新增同源、复用当前后端 READ 权限控制的探索列表、关键词搜索与作品详情
-表面；不预设必须新增图片 API。精确 path／字段由 B Task 定义并在实施时形成单一契约。
-区分 browse/search 查询，按类型翻译题材、首次上映／首播年份、原始语言、评分／人数和排序；搜索不传递
-Provider 不支持的探索参数。后端验证所有字段和界限，不做一页结果上的全量假过滤。
-Provider 返回归一化后再暴露，非法身份／参数、缺失、限流、网络及畸形数据有稳定安全类别。
-错误验证按实际读取链路选择：元数据 API 的当前身份 401／403 与 Provider 上游配置／凭据
-错误分别归一化，不能因上游凭据失效清掉有效 MediaFlow 身份。公开图片验证缺图、网络／
-CSP 加载失败；只有所选图片链路确需认证时才验证其身份错误，不建错误类别全组合矩阵。
+**Bounds/cache:** reuse existing concurrency, timeouts, finite retry/backoff and 429 handling.
+Explore opts into a streamed 2 MiB metadata-response bound; organizing keeps its original transport
+behavior. Explore has a separate 256-entry capacity-bound TTL cache (list/search 300s, detail/options
+3600s), keyed by source instance/locale/operation/type/query/page and applied values. It never bypasses
+API authentication. Client reads have a five-minute idle TTL and a bounded 16-context LRU, with exact
+query identities, independent detail reads, no automatic next-page fetch and no automatic retry.
+Condition/type/keyword changes cannot relabel old responses. Pagination deduplicates by full work
+identity and retains successful pages after failure. A successful upstream zero-page response is
+normalized only when both total results and items are empty: internally one displayable empty window,
+zero results, no fabricated work or next page. Inconsistent/negative/wrong-type totals still fail.
 
-**请求／缓存：** 复用 timeout、有限 retry/backoff、429 处理和可用 proxy 配置；有界并发、
-单次页／响应大小，复用的缓存具有 TTL／容量边界，避免无限 Provider 扇出或耗尽整理请求。
-前端仅显式提交搜索／翻页，不无界预取。缓存 key 包含 Provider、操作、类型、语言／适用
-地区、实际查询／页及适用配置／权限上下文；变更配置不可复用不匹配来源或 locale 的缓存。
-后端每次仍先鉴权，不因命中缓存绕过权限。客户端带请求身份／代际，丢弃过时响应；同页
-追加去重，结果重置和搜索退出各有明确上下文，详情与列表错误独立。不要求新建全局缓存
-或图片缓存设施；缓存相关验证按实际复用／修改范围安排。
+**Images:** safe provider paths are single bounded segments, never arbitrary URLs, traversal,
+query/fragment or encoded separators. Web derives fixed `https://image.tmdb.org/t/p/` URLs with
+allowlisted sizes. Only V2 `img-src` adds that exact HTTPS host to `'self'`; other CSP directives and
+V1 security headers remain. Public images receive no API/Provider token. There is no server image
+proxy, image cache or object URL lifecycle. Missing/broken images render placeholders and preserve
+text/detail access. TMDB source and attribution are visible.
 
-**图片交付／安全：** 必需结果是可信来源的海报可显示、缺图可恢复、CSP 精确限制以及
-凭据不泄露。B 按现有能力选择最小方案，不预设认证同源接口、代理或缓存设施。Provider
-公开海报可以使用经过验证的固定可信 HTTPS 图片来源与合法路径／尺寸直接加载；若采用
-此方案，只对 img-src 精确允许必要图片来源，不扩大其他 CSP，也不把 Provider token
-发给浏览器。不接收用户指定任意 URL、主机或代理地址，不混入本地／私有媒体信息。
+**Routes/presentation:** `/ui-v2/explore` is the default connected homepage and sidebar identity;
+other supported intended routes keep their authentication continuation. A Chinese filter/search
+page renders a 2:3 grid (two columns at 390px), bounded manual paging and an exact-work centered
+`ModalCard`. Close/Escape/browser Back preserve list conditions/pages/scroll/invoker focus and do
+not replay a Shell transition. The bounded `detail` parameter supports in-page navigation; independent
+detail deep links and refresh/re-authentication session restoration are not promised. Loading,
+empty, first-page/pagination/detail/image failure and recovery stay separate. 401/disconnect clears
+authority-related query state; 403 does not masquerade as empty data.
 
-若实际需要新增服务端图片代理，按现有权限鉴权，并约束来源／路径／尺寸、重定向去向、
-响应类型、字节数和时间，拒绝私网／本机访问、路径穿越和凭据注入；同时按其真实安全风险
-重新评定测试等级。普通 img 不能自动携带 Bearer，不得因此将受保护接口改公开或把 token
-放 URL／cookie／持久存储。若采用 fetch＋对象 URL，只增加必要的图片 blob CSP 并及时
-释放。若采用缓存，则限制容量／TTL／来源和权限范围；不写用户媒体或业务文件索引。
-无论图片方案如何，元数据 API 的认证／脱敏不变；断开／身份变化／401 清理身份相关读取
-状态，不回显上一身份的数据。仅验证所采用方案，不为其他可选技术路径追加验收工程。
+**Dashboard retirement:** route/command registration, dedicated parameters/help/rendering,
+`domain/dashboard.py`, `application/dashboard.py`, SQLite aggregation/helpers and runtime service/
+library-count injection are removed. Old Web addresses use ordinary not-found; authenticated old
+API requests use generic 404, and CLI rejects the old command at parsing. No redirect, alias, 410,
+retirement page, empty-success response or renamed aggregation remains. Shared CountGrid/CSS,
+Task Center/Automation/notifications/system reads and durable records are retained. V1 only loses
+the Dashboard view/default request; no V1 Explore or broader repair was introduced. Shared startup,
+identity/static/packaging/security probes now use supported Provider-free reads and preserve their
+original purpose. Public authentication/audit/initialization remain; old requests perform no extra
+Dashboard/Provider/media/task/configuration work. No schema/data/history cleanup was added.
 
-**路由／Shell：** `/ui-v2/explore` 是新默认认证后入口；其他安全 intended-route 仍优先。
-替换导航模型／页头／页面身份／默认返回，移除 `/dashboard` 的路由／专属组件、query、
-model、客户端调用和仅旧页使用的 fixture／样式／测试。旧 URL 普通 not-found，无 redirect、
-别名、退役页或参数兼容。保留共享 CountGrid／RefreshControl／CSS 的有效使用者；不机械
-改名其他页仍使用的共享类或抹去历史记录。Dashboard 全垂直退役见下段，不保留旧消费端。
-
-**Dashboard 后端／CLI 退出：** 用户明确扩大删除范围。移除 `/api/v1/dashboard` 的注册／
-GET handler、专属 query 校验和审计路由分类，移除 `mediaflow dashboard` 注册／分派／
-`--recent-limit`／help／渲染。请求走通用未知路由和既有全局认证规则；CLI 走通用未知
-命令／参数错误，无新 alias、410、说明页、空成功或其他兼容分支，不保留 Dashboard 专用
-参数解释／校验或专属服务。通用参数处理、鉴权／审计／日志及既有公共初始化仍可运行，
-禁止的是旧请求额外执行 Dashboard 逻辑、联系 Provider、操作媒体或准入任务／修改配置；
-不把正常启动时的公共初始化算成旧请求的业务效果。历史审计 route 仍是原始事实，不重写。
-
-移除 `domain/dashboard.py`、`application/dashboard.py`、SQLite Dashboard 专属聚合和
-只被它们使用的 helper，以及 `_ApiRuntimeBinding.dashboard`、DashboardService 构造／
-库计数注入／导入等专属接线；以实际引用证明删除范围。Task Center／Automation／通知／
-系统状态的共享计数、repository 查询、模型与正常配置绑定继续工作。没有 Dashboard 专属
-数据迁移义务，不删除原 Task／Result／review／notification／审计记录或任何业务表。
-
-移除所有可达旧消费者：V2、CLI、现存 `operator_ui.py` 的 Dashboard view／默认读取，
-以及只为 Dashboard 服务的测试／fixture／文档入口。V1 仅作必要耦合断接，不新增探索／
-默认产品旅程或恢复其他 V1 功能。将共用认证／启动／生产资产／安装包／安全探针改为
-受支持且零工作／零 Provider 的读接口，保持原权限／副作用证明，不能删除测试目的或
-改用可能调用 TMDB 的探索来充当健康探针。历史接受文档与 Git 中的旧事实保留。
-
-**详情／返回：** 复用当前 ModalCard 的滚动锁定、焦点和局部导航，按精确 Provider/type/ID
-在当前页面读取详情。关闭卡片／Escape／后退恢复探索／搜索、已加载页、滚动与焦点。
-不专门建设或验收独立详情入口、刷新／重认证恢复详情或跨刷新完整浏览会话；按现有机制
-正常进入探索即可。自然恢复详情不作失败处理，不强制保留或丢弃，其他既有页面的合法
-深链续转保持。详情不重播整页过渡，不创建命令会话。
-
-**副作用边界：** 只有明确探索列表／搜索／详情／图片请求可使用外部 Provider；常规 Shell
-导航、状态检查、Files／MediaLibrary 读取不因此联系 TMDB。探索不访问媒体 Storage、不
-创建 Task／Result、grant、Draft 或 Active，不调用解析／识别／规划／OrganizerExecutor，
-不改变队列／Worker／通知／历史，不生成已入库或可播放断言。原 C→A 身份不变、pins、
-五态 Task／独立文件结果、RBAC／脱敏及成功／未知效果非重放保持。
-
-以 T3 集成验证为当前基线：生产 Web 构建通过真实 Python application/API 和本地假
-Provider／图片响应证明核心旅程，覆盖直接受影响模块和认证／导航／弹卡回归、实际 CSP／
-图片来源、脱敏、失败／请求竞态及桌面／390px 返回；不增加详情深链／无 Active 启动矩阵。
-若实际网络访问、权限／凭据隔离、Active、schema、核心执行／并发安全等影响达到工作流
-T4 风险，B 必须实施前升级并执行其门禁；不能仅凭图片代理模块有无自动升降级，边界
-变化须 A checkpoint。全量回归／安装包／Docker 门禁按工作流和具体共享／交付影响安排，
-不因本探索页默认增加全发布矩阵。
-API／CLI 退出在合法 READ 身份、正常配置且受支持对照接口可读的环境中验证旧 API 的
-通用未知路由 404，以及 CLI 顶层 help 注销和解析层未知命令；不能以权限／配置失败或
-泛化的非 200／非零退出代替。结合代码／引用审查证明专属模型／服务／查询／接线及
-消费者清除，不要求共享 CSS、历史和负向测试的 dashboard 字符串消失。API 构造／配置
-绑定、其他命令／共享统计及持久历史仍正常，改接探针保持原测试目的；不禁止公共处理
-或因退出能力改变认证／schema。最终适用等级按实际影响及工作流判定。
-不依赖用户运行库、生产媒体、真实 TMDB 或安装运行 MoviePilot。
+**Effects/evidence:** Explore does not access media Storage, create Tasks/Results/grants/Drafts/Active,
+start services or invoke processing/notifications. RBAC/redaction, confinement, immutable pins,
+five-state flow/independent file results, C→A identity and completed/uncertain non-replay remain.
+T3 validation uses production Web/Python/adapter over a local upstream and local fixture images,
+covering desktop/390px reads, recovery, authority, exact return and zero business effects. Full release
+matrix, real TMDB, production deployment, old-task migration and cross-version upgrade are not claimed;
+exact runs, reuse, prior failures and limitations live in the Contract and B Closure Packet.
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
@@ -363,7 +330,7 @@ required. This amends `V2-AUTO-006` result/filter semantics while retaining scop
 
 **Consumers/persistence:** audit Task settlement producers, Task/run API/CLI/Web models/filters,
 Task Center views/counts/progress, Files local ordinary status, Automation metrics/readback and existing
-Dashboard/export/log/notification Task-status consumers. Unavailable reads do not invent a sixth
+export/log/notification Task-status consumers. Unavailable reads do not invent a sixth
 state or coerce corrupted facts into pending/completed/failed. Fresh/new work and same-version
 reopen/restart must preserve five-state flow, independent results and fences. Old-task/status
 conversion, bulk relabelling, cross-version upgrade/rollback and data clearing are not selected.
@@ -485,7 +452,7 @@ the affected step and unaffected siblings' existing permitted actions without pr
 automatic continuation at every crash point or adding technical/attachment-only recovery paths.
 
 Queries use Task identity across authoritative organizing lists/counts/cursors, local Files readback,
-Automation inventory/records/metrics, Dashboard, bounded scoped logs/audit and JSON exports.
+Automation inventory/records/metrics, bounded scoped logs/audit and JSON exports.
 Task Center's eight views/four-type union and technical-history restriction remain. Original
 Automation execution outcome/time/effects are retained independently of current handling, including
 no-work/pre-start failures and attachment evidence. A recovery never creates another original
@@ -1591,12 +1558,12 @@ Save, and `maximumActiveJobs` counts queued/claimed organizing Tasks rather than
 
 The API is a versioned WSGI application over shared application/repository services. It provides
 authenticated configuration, files, tasks, reviews, manual organize, recovery, automation,
-schedules, notifications, logs, dashboard, security audit and system status routes. RBAC is applied
+schedules, notifications, logs, Explore, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
-Python application. The [Slice51 TARGET](#target--v2-explore-homepage-slice51) is ACTIVE but not implemented;
-V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
+Python application. The [accepted Explore contract](#current--v2-explore-homepage-slice51-pass--closed) defines the homepage and
+Dashboard retirement. V2 exposes Explore, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
 decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task

@@ -8,24 +8,39 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice51](../SLICE.md) is **FIX REQUIRED after independent A Final Review (2026-11-07)**.
-Original Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` and reviewed Implementation Head
-`d91a9dd2fd5833a5977a319e90d0283b05625e9a` remain fixed. A51-01 (P1) prevents acceptance:
-valid zero-result upstream pages are treated as malformed; the normal Explore filter/search journey
-shows a read error instead of its required empty state. Existing UI → Python API → production adapter
-with a contract-correct local upstream reproduces it. Independent A checks also passed 148 Python,
-142 Web and 10 real-Python browser cases; those passing fixtures do not cover the zero-page response.
-Actual evidence, limits and correction boundary are in the Contract's A Final Review.
+[Slice51](../SLICE.md) is **PASS / CLOSED** after independent A Final Review on 2026-11-07.
+Original Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through accepted implementation
+`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK;
+next action is **A SELECTS THE NEXT LARGE SLICE**, separately. No new capability/Task is selected here.
+Slice50 and all older accepted identities, deferrals and evidence limits remain unchanged.
 
-B's original Task51.1 PASS/report (`01f4e05d:TASK.md`) and Task51.2 PASS/Closure Packet
-(`ab3edf8d:TASK.md`) remain immutable history; final readiness is returned by A51-01.
-[Task51.1](../TASK.md) is restored as FIX REQUIRED with its original ID/Base/goal/scope/High/T3;
-B owns correction guidance, independent acceptance and renewed Closure Packet. Task51.2 retirement
-and other proven facts are preserved. There is no new large Slice, closure ledger entry or CURRENT
-promotion. Slice50 remains the latest accepted large Slice, with all previous identities, deferrals
-and evidence limits unchanged. No implementation, push, release or deployment occurs in this review.
+## Latest accepted closure — Slice51
 
-## Latest accepted closure — Slice50
+Delivered: TMDB Explore as the connected default homepage; bounded movie/TV browsing, real filters/
+sorts, separate explicit search, manual pagination, readable posters and exact detail/return; truthful
+loading/empty/failure and independent recovery; trusted public artwork with precise CSP and credentials
+kept server-side. Dashboard Web/API/CLI, dedicated backend/repository/runtime wiring and all reachable
+consumers retired without compatibility; supported shared reads and durable histories remain.
+`V2-EXPLORE-001–011` and affected requirements/journey/architecture/operator guidance are CURRENT.
+
+Renewed B packet: `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md`; first A rejection:
+`58a74866:SLICE.md`. A51-01's genuine zero-page response is now normalized only for an honest empty
+result; malformed inputs still fail. A reviewed the full 99-file Slice range and correction, independently
+passed **159 Python / 142 Web / 11 real-Python browser tests**, including desktop/390px empty filters/
+searches and recovery. Current Web/lock/pyproject digests match B; current grid/empty-state screenshots
+and unchanged-asset stable detail screenshots were inspected. Local evidence:
+`.git/validation-evidence/30c99f1b/a51-final/`; local access is not promised remotely.
+
+B's renewed **159 Python / 67 Web / 11 native** plus quality/typecheck/build results, original51.2
+**309 Python / 10 native**, shared binding/history, V1/read/probe and isolated clean-source installation
+evidence remain in their immutable packets. Original A/B failures, Base comparisons, fixture/old-control
+limits, old build/lib wheel contamination and probe extraction failure, and B's system-Python missing
+httpx errors remain disclosed. The old wheel is not current-package proof after the adapter changed.
+No full-repository suites/current wheel/Docker release matrix, real TMDB, production deployment,
+old-task migration or cross-version validation is claimed; Contract deferrals and safety are unchanged.
+No implementation, push, release or deployment occurs in this closure checkpoint.
+
+## Prior accepted closure — Slice50
 
 Original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through accepted implementation
 `6b0927328a7bf0873faffce9cb38007fd4607764`; full [Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review).
@@ -101,6 +116,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 51 — V2 Explore Homepage Replacing Dashboard | PASS / CLOSED | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` | `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` | A Final Review PASS / CLOSED — 2026-11-07 | Default Explore; bounded movie/TV browse/filter/search/paging; exact poster detail/return; genuine zero-result recovery; trusted artwork/precise CSP; Dashboard Web/API/CLI and dedicated implementation/consumers fully retired, shared histories preserved | New sources, recommendations/subscriptions/download/play, standalone detail links and refresh/re-auth session restoration, dedicated no-Active startup, other-page redesign, new schema/permissions/engine, V1 expansion, production/full release matrix; original validation limits retained |
 | 50 — V2 Dialog, Readability and Navigation Experience | PASS / CLOSED | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` | `6b0927328a7bf0873faffce9cb38007fd4607764` | A Final Review PASS / CLOSED — 2026-11-07 | Original eight UX changes plus Automation create/edit stability; centered Task/Storage/library cards and readable actions; both page-local trees removed; nine main-page transitions and consistent library loading; exact publication, recovery and non-replay preserved | New backend/schema/engine/permissions/commands, other pages’ business redesign, themes/settings, automatic uncertain replay/rollback, V1 and production deployment; B failure/skip/validation limits retained |
 | 49 — Automation Task Creation, Editing and Direct Run Once | PASS / CLOSED | `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` | `9d6b78147d90b950ed2333f9747facc77bf0391a` | A Final Review PASS / CLOSED — 2026-11-05 | Confined sources and direct list Run once; exact request feedback/reconciliation; shared Chinese create/edit card and saved-value/fence pairing; optional default-off enabled atomic creation and later enable/disable with existing authority; truthful historical/current publication readback | New providers/commands, broad detail/records/Task Center redesign, new schema/queue/engine, bulk/cross-Task recovery, automatic retry/uncertain replay/rollback, old failed-Task repair/migration, cross-version upgrade/rollback, V1, external-service acceptance and production deployment; 7 optional skips and recorded gate/time limits retained |
 | 48 — Task Flow Status and Automation Success Rate | PASS / CLOSED | `ba84272721961c970f1eb85d616a0d129523ab92` | `a80015e2f7d46e3ad1b8f7b14c453d1030e62104` | A Final Review PASS / CLOSED — 2026-11-04 | Five-state durable Task flow independent of file outcomes; technical closure with absent Results/unknown effects; consistent Task Center/Files/API/CLI/other readback and processed progress; preserved four-type waiting/recovery/cancellation/fences/non-replay; due + definition Run once completed/(completed+failed) rate and current-flow execution records, original times/attempts/file effects retained; A48-01 corrected | New Providers/Storage commands, queue/parallelism/settings/supervision redesign, unbounded discovery/MediaLibrary organizing, new recovery types/cross-Task bulk/attachment retry, automatic uncertain replay/universal rollback, old-task/status migration, bulk relabelling, cross-version upgrade/rollback, mixed-version writers and V1; 7 existing optional external-service/endurance skips remain disclosed |
