@@ -17,14 +17,14 @@ SLICE/Roadmap/Progress。B/Developer 分别读取相应 [角色经验](AGENTS.md
 Task ID: PATCH-20261107-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B
 Working Branch: main
 Development Authorization: USER AUTHORIZED — THIS TASK ONLY
-Next Action: DEVELOPER IMPLEMENTS THIS TASK
+Next Action: B REVIEWS THIS TASK
 ```
 
 激活前分支 `main`，HEAD `ba12493cbcd81aa073e687a31263251e8669478c`，治理检查 PASS。
@@ -295,8 +295,62 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-cr
 
 ### Developer Completion Report
 
-未实施。由 Developer 按已激活范围实现并填：完整 checkpoint SHA、READY FOR B REVIEW、实际变化、
-受影响测试结果/已知失败和剩余风险；完整 B 验收待独立审查，不自评 PASS。
+**READY FOR B REVIEW。** 本轮源码实现 checkpoint 为
+`a1b591db5b46f9e5f9bdf8cfa2ddfaef38c34b5e`（Base `fcfc1d2070932e0aaf354d8cc3c3b83f4b67574c`）；
+本段文档更新随后单独 checkpoint，源码/测试身份以该实现提交为准。未推送、未部署，不自评 PASS。
+
+**实际变化（六项）**
+
+1. `RunLifecycleControls` 改为任务操作区内的紧凑动作：终态且无可用动作时不渲染空块、权限码或
+   不可用控制清单；取消仍按后端 advertised availability 出现，请求中/受理/拒绝/未知均为短中文，
+   未知先核对且关闭重开仍保留核对上下文。动作放入 `任务详情/操作记录/导出` 同一操作行。
+2. 移除详情中的“更详细证据”自链接；文件证据仍保留执行结果、计划解释、日志、审计及任务级导出。
+3. 任务详情按“流程状态→处理进度→文件结果”重排；删除 `口径`、`成功含义`、“处理进度，非成功率”、
+   “附件步骤单独计数”等常驻说明。file results 使用成功/部分成功/失败独立值，并在有真实记录时
+   就地显示“目标文件结果尚未确认”“文件处理已结束，结果未记录”。附件步骤总数等不再作为默认
+   常驻统计出现。
+4. 文件证据正文按“处理结果→来源/目标→处理经过→需处理原因”组织，使用文件名标题、中文失败/
+   阻塞/步骤业务名称；主文件与每个附件结果独立显示；计划、日志、审计、原始 ID、固定配置和
+   捕获的 key/value 收进默认可展开的“技术诊断”。四类恢复面板与导出入口保留。
+5. 共享 Shell 仍只应用主页面身份过渡；存储页与两种库页增加内容形状加载占位，真实正文接入时
+   只播放一次局部 settle，不重挂路由、不重播整页动画。内容 settle 仅用 opacity，避免固定定位
+   弹层被 transform 约束；reduced-motion 下静态呈现。
+6. 删除自动化工作区页头常驻刷新入口；打开新建卡片前后均无该按钮的文案/禁用/宽度变化。列表
+   读取、权限读取、错误横幅局部刷新、保存后读回和未决命令核对未删除。
+
+**受影响验证（实际执行，cwd `web/`）**
+
+- `python3 scripts/check_governance.py`（仓库根）: PASS；`git diff --check`: PASS。
+- `npm run typecheck`、`npm run lint`、`npm run format:check`: PASS。
+- `npm run test -- run`: 94 files / 1398 tests passed（含本 Task 的 `PATCH-20261107-1` 单元场景）。
+- `npm run build`: PASS（生产资产 `index-Ka6fboag.js` / `index-C3MJm0DP.css`）。
+- `npx playwright test tests/e2e/page-transition.spec.ts`: 6 passed（九页切换、慢读取正文接入、
+  快速往返/前后退/reduced-motion、弹卡不重播）。
+- Operations fake 选中 10 条: 10 passed（终态无控制、混合结果、附件失败、未记录结果、未知效果、
+  自链接删除、导出）。
+- `task-center-layout` 选中 2 条: 2 passed（含 390px 文件证据可读、无横向溢出）。
+- `automation-presentation` 全文件: 3 passed（含页头刷新删除与新建读取）。
+- 真实 Python harness 选中用例: operations-inventory 5 passed（详情进度/混合文件结果/未知总数/
+  Manual Worker/standalone pipeline/导出）；task-flow 3 passed（混合文件 population、保存失败、
+  已确认取消）；automation-create-dialog 2 passed；automation-lifecycle 受影响 2 passed。
+- 已更新因布局变化失效的既有断言，保留业务/安全事实与零提交断言；未删除安全约束。
+
+**已知失败/限制（不冒充通过）**
+
+- 单独运行完整 `tests/e2e/operations-inventory.python.spec.ts` 时，
+  “new task selection reconciles...” 在既有运行总数期望（`SEEDED_RUN_TOTAL + 1`）处失败；失败
+  早于本 Task 任一 UI 断言，本次未改后端、运行总数或该流程，未能在 Base 构建上复跑，故作为
+  既有测试顺序/总量期望风险披露，不计为本 Task 修复或通过。其余 41 条真实 Python 用例通过。
+- Node fake 未实现 Task 级 recovery 读取，390px 文件证据截图中的恢复面板显示既有
+  “Record not found”占位；真实 Python harness 的同一入口可加载，未将其当作产品结果或新增门禁。
+- 本轮未运行完整 Python 单元/ruff/全量 E2E 或打包矩阵（T3，按 Task 分工留给 B 的选定验收）。
+
+**剩余风险**
+
+- 取消按钮从独立区块移入 tab 操作行后，桌面/窄屏的触达与焦点顺序依赖既有按钮样式；已由
+  单元和选中浏览器用例覆盖存在性/禁用/核对，仍建议 B 在真实取消入口复核窄屏与键盘。
+- 内容 settle 只覆盖存储与两种库的代表性慢读取页面；其他主页面仍使用原有占位与共享 Shell
+  过渡，未扩大为新的全局就绪机制。
 
 ### B Review Result
 
