@@ -22,6 +22,12 @@ from mediaflow.domain.explore import (
 from mediaflow.domain.metadata import MediaType, MetadataError, MetadataErrorCode
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.tmdb import (
+    HttpxTransport,
+    TMDBClient,
+    TMDBConfig,
+    TMDBProvider,
+)
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 VIEWER_PRINCIPAL = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
@@ -450,6 +456,206 @@ class ExploreApiTests(unittest.TestCase):
         ):
             request(api, path)
         self.assertEqual(spy_repository.violations, [])
+
+
+ZERO_PAGE = {
+    "page": 1,
+    "total_pages": 0,
+    "total_results": 0,
+    "results": [],
+}
+PRODUCTION_GENRES = {
+    "movie": {"genres": [{"id": 28, "name": "动作"}, {"id": 18, "name": "剧情"}]},
+    "tv": {"genres": [{"id": 18, "name": "剧情"}, {"id": 10765, "name": "科幻与奇幻"}]},
+}
+PRODUCTION_LANGUAGES = [
+    {"iso_639_1": "ko", "english_name": "Korean", "name": "한국어"},
+    {"iso_639_1": "en", "english_name": "English", "name": "English"},
+]
+
+
+class ProductionAdapterExploreApiTests(unittest.TestCase):
+    """The real TMDB adapter/API boundary, not an internal page double."""
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.repository = SQLiteTaskRepository(
+            Path(self._temporary.name) / "production-explore.sqlite3"
+        )
+        self.addCleanup(self.repository.close)
+        self.calls: list[tuple[str, dict[str, str]]] = []
+        self.page_payload = dict(ZERO_PAGE)
+
+    def _handler(self, request):
+        import httpx
+
+        path = request.url.path
+        if path.startswith("/3/"):
+            path = path[3:]
+        params = dict(request.url.params)
+        self.calls.append((path, params))
+        if path in {"discover/movie", "discover/tv", "search/movie", "search/tv"}:
+            return httpx.Response(200, json=self.page_payload)
+        if path in {"genre/movie/list", "genre/tv/list"}:
+            return httpx.Response(200, json=PRODUCTION_GENRES[path.split("/")[1]])
+        if path == "configuration/languages":
+            return httpx.Response(200, json=PRODUCTION_LANGUAGES)
+        return httpx.Response(404, json={"status_code": 34, "status_message": "not found"})
+
+    def _api(self) -> MediaFlowApi:
+        import httpx
+
+        client = httpx.Client(transport=httpx.MockTransport(self._handler))
+        self.addCleanup(client.close)
+        config = TMDBConfig("production-adapter-token")
+        provider = TMDBProvider(TMDBClient(config, transport=HttpxTransport(config, client=client)))
+        return MediaFlowApi(
+            self.repository,
+            None,
+            principals=PRINCIPALS,
+            metadata_provider_registry_factory=(
+                lambda _provider_ids: MetadataProviderRegistry((provider,))
+            ),
+        )
+
+    def _list_calls(self, route: str) -> list[dict[str, str]]:
+        return [params for path, params in self.calls if path == route]
+
+    def test_zero_page_answers_cross_the_production_adapter_and_api(self) -> None:
+        api = self._api()
+        cases = (
+            (
+                "/api/v1/explore/browse?mediaType=movie&sort=rating&minVotes=250"
+                "&genreId=28&originalLanguage=ko&year=2024&minRating=7.5&page=1",
+                "discover/movie",
+                {
+                    "mediaType": "movie",
+                    "page": 1,
+                    "sort": "rating",
+                    "genreId": 28,
+                    "originalLanguage": "ko",
+                    "year": 2024,
+                    "minRating": 7.5,
+                    "minVotes": 250,
+                },
+                {
+                    "page": "1",
+                    "sort_by": "vote_average.desc",
+                    "with_genres": "28",
+                    "with_original_language": "ko",
+                    "primary_release_year": "2024",
+                    "vote_average.gte": "7.5",
+                    "vote_count.gte": "250",
+                },
+            ),
+            (
+                "/api/v1/explore/browse?mediaType=tv&sort=date&genreId=18"
+                "&originalLanguage=ko&year=2024&page=1",
+                "discover/tv",
+                {
+                    "mediaType": "tv",
+                    "page": 1,
+                    "sort": "date",
+                    "genreId": 18,
+                    "originalLanguage": "ko",
+                    "year": 2024,
+                },
+                {
+                    "page": "1",
+                    "sort_by": "first_air_date.desc",
+                    "with_genres": "18",
+                    "with_original_language": "ko",
+                    "first_air_date_year": "2024",
+                },
+            ),
+            (
+                "/api/v1/explore/search?mediaType=movie&query=no%20such%20work&page=1",
+                "search/movie",
+                {"mediaType": "movie", "page": 1, "query": "no such work"},
+                {"page": "1", "query": "no such work"},
+            ),
+            (
+                "/api/v1/explore/search?mediaType=tv&query=no%20such%20work&page=1",
+                "search/tv",
+                {"mediaType": "tv", "page": 1, "query": "no such work"},
+                {"page": "1", "query": "no such work"},
+            ),
+        )
+        for path, route, applied, expected_params in cases:
+            with self.subTest(path=path):
+                status, _, body = request(api, path)
+                self.assertEqual(status, 200, body)
+                self.assertNotIn("error", body)
+                self.assertEqual(body["provider"], "tmdb")
+                self.assertEqual(body["mediaType"], applied["mediaType"])
+                self.assertEqual(body["page"], 1)
+                self.assertEqual(body["totalPages"], 1)
+                self.assertEqual(body["totalResults"], 0)
+                self.assertEqual(body["items"], [])
+                self.assertFalse(body["hasMore"])
+                self.assertEqual(body["applied"], applied)
+                calls_before = len(self._list_calls(route))
+                self.assertGreaterEqual(calls_before, 1)
+                sent = self._list_calls(route)[-1]
+                for name, value in expected_params.items():
+                    self.assertEqual(sent[name], value)
+                # A repeated identical read is the same bounded cache entry:
+                # the API document is stable and no new upstream list read runs.
+                status, _, repeated = request(api, path)
+                self.assertEqual(status, 200)
+                self.assertEqual(repeated, body)
+                self.assertEqual(len(self._list_calls(route)), calls_before)
+
+    def test_malformed_upstream_totals_remain_502_through_the_production_adapter(self) -> None:
+        invalid_totals = (
+            {"page": 1, "total_pages": -1, "total_results": 0, "results": []},
+            {"page": 1, "total_pages": True, "total_results": 0, "results": []},
+            {"page": 1, "total_pages": 0, "total_results": 1, "results": []},
+            {
+                "page": 1,
+                "total_pages": 0,
+                "total_results": 0,
+                "results": [
+                    {
+                        "id": 1,
+                        "title": "Leaked",
+                        "original_title": "Leaked",
+                        "release_date": "2020-01-01",
+                    }
+                ],
+            },
+        )
+        for payload in invalid_totals:
+            with self.subTest(payload=payload):
+                self.page_payload = payload
+                self.calls.clear()
+                api = self._api()
+                status, _, body = request(api, "/api/v1/explore/browse?mediaType=movie")
+                self.assertEqual(status, 502, body)
+                self.assertEqual(body["error"]["code"], "provider_malformed")
+                self.assertEqual(
+                    self._list_calls("discover/movie"),
+                    [
+                        {
+                            "language": "zh-CN",
+                            "page": "1",
+                            "include_adult": "false",
+                            "sort_by": "popularity.desc",
+                        }
+                    ],
+                )
+
+    def test_invalid_request_page_never_reaches_the_production_provider(self) -> None:
+        api = self._api()
+        for page in ("0", "501"):
+            with self.subTest(page=page):
+                status, _, body = request(
+                    api, f"/api/v1/explore/browse?mediaType=movie&page={page}"
+                )
+                self.assertEqual(status, 400, body)
+                self.assertEqual(body["error"]["code"], "invalid_request")
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":

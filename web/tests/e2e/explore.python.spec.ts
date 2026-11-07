@@ -39,6 +39,13 @@ interface HarnessStats {
   readonly upstreamRoutes: Record<string, number>;
   /** Every `vote_count.gte` floor the adapter really sent, as `route:value`. */
   readonly voteFloors: string[];
+  /** Every list answer the fake upstream sent, before adapter normalization. */
+  readonly upstreamListPages: {
+    readonly route: string;
+    readonly page: number;
+    readonly totalPages: number;
+    readonly totalResults: number;
+  }[];
   readonly effects: Record<string, number>;
   readonly storageCalls: string[];
 }
@@ -523,6 +530,197 @@ test("search with its own type exits back to the exact browse anchor", async ({
     .poll(() => page.evaluate(() => window.scrollY))
     .toBe(anchorScroll);
   await expect.poll(() => browseReads.length).toBe(anchorReads);
+});
+
+test("zero-page: empty filters and searches recover in place at desktop and 390px", async ({
+  page,
+}) => {
+  const apiResponses: {
+    url: string;
+    status: number;
+    body: Record<string, unknown>;
+  }[] = [];
+  page.on("response", async (response) => {
+    const url = response.url();
+    if (
+      !url.includes("/api/v1/explore/") ||
+      response.request().method() !== "GET"
+    ) {
+      return;
+    }
+    try {
+      apiResponses.push({
+        url,
+        status: response.status(),
+        body: (await response.json()) as Record<string, unknown>,
+      });
+    } catch {
+      // A non-JSON response would already fail the UI assertions below.
+    }
+  });
+
+  await connect(page);
+  const before = await stats(page);
+  const listPagesBefore = before.upstreamListPages.length;
+  await expect(page.getByText(/已应用:电影 · 热度优先/)).toBeVisible();
+
+  // A legal filter with no upstream match: the source reports zero total
+  // pages, the production adapter exposes one empty display window and the
+  // page shows its real empty state instead of a read failure.
+  await page.getByLabel("原始语言").selectOption("fr");
+  await expect(page.getByText("没有符合条件的作品")).toBeVisible();
+  await expect(page.getByText("探索读取失败")).toHaveCount(0);
+  await expect(
+    page.getByRole("status").getByRole("button", { name: "清除条件" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "加载更多" })).toHaveCount(0);
+  await page
+    .locator(".mf-explore-filters")
+    .getByRole("button", { name: "清除条件" })
+    .click();
+  await expect(
+    page.getByText(/已应用:电影 · 热度优先 · 全部题材/),
+  ).toBeVisible();
+  await expect(page.locator(".mf-explore-card").first()).toBeVisible();
+
+  // No keyword matches either type: both are successful, honest empty
+  // searches with their own type and keyword, never the failure banner.
+  await page.getByLabel("作品名搜索").fill("不存在的银河");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(page.getByText(/搜索模式/)).toBeVisible();
+  await expect(
+    page.getByText(/已应用:电影 · 搜索「不存在的银河」/),
+  ).toBeVisible();
+  await expect(page.getByText(/数据源没有匹配该作品名/)).toBeVisible();
+  await expect(page.getByText("探索读取失败")).toHaveCount(0);
+  await page.getByRole("button", { name: "剧集" }).click();
+  await expect(
+    page.getByText(/已应用:剧集 · 搜索「不存在的银河」/),
+  ).toBeVisible();
+  await expect(page.getByText(/数据源没有匹配该作品名/)).toBeVisible();
+  await expect(page.getByText("探索读取失败")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "加载更多" })).toHaveCount(0);
+
+  // The same bounded empty journey stays readable at 390px.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("没有符合条件的作品")).toBeVisible();
+  const emptyLayout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }));
+  expect(emptyLayout.scrollWidth).toBeLessThanOrEqual(emptyLayout.innerWidth);
+  await page.screenshot({
+    path: `${EVIDENCE}/zero-page-mobile-390.png`,
+    fullPage: false,
+  });
+
+  // A changed keyword is a new, real search: TV works come back.
+  await page.getByLabel("作品名搜索").fill("北岸");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(page.getByText(/已应用:剧集 · 搜索「北岸」/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /北岸列车/ }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("没有符合条件的作品")).toHaveCount(0);
+
+  // Exiting search restores the exact browse context and works it had before.
+  await page.getByRole("button", { name: "退出搜索" }).click();
+  await expect(
+    page.getByText(/已应用:电影 · 热度优先 · 全部题材/),
+  ).toBeVisible();
+  await expect(page.locator(".mf-explore-card").first()).toBeVisible();
+
+  // The browser saw the real API 200 with the internal empty window fields;
+  // the harness records the upstream zero-page answer before normalization.
+  const emptyBrowse = apiResponses.filter((entry) => {
+    const params = new URL(entry.url).searchParams;
+    return (
+      entry.url.includes("/api/v1/explore/browse") &&
+      params.get("originalLanguage") === "fr"
+    );
+  });
+  await expect.poll(() => emptyBrowse.length).toBeGreaterThan(0);
+  for (const entry of emptyBrowse) {
+    expect(entry.status).toBe(200);
+    expect(entry.body).toMatchObject({
+      page: 1,
+      totalPages: 1,
+      totalResults: 0,
+      items: [],
+      hasMore: false,
+      applied: {
+        mediaType: "movie",
+        page: 1,
+        sort: "popular",
+        originalLanguage: "fr",
+      },
+    });
+    expect(entry.body.error).toBeUndefined();
+  }
+
+  const zeroSearches = apiResponses.filter((entry) => {
+    const params = new URL(entry.url).searchParams;
+    return (
+      entry.url.includes("/api/v1/explore/search") &&
+      params.get("query") === "不存在的银河"
+    );
+  });
+  await expect.poll(() => zeroSearches.length).toBe(2);
+  expect(
+    new Set(
+      zeroSearches.map((entry) =>
+        new URL(entry.url).searchParams.get("mediaType"),
+      ),
+    ),
+  ).toEqual(new Set(["movie", "tv"]));
+  for (const entry of zeroSearches) {
+    expect(entry.status).toBe(200);
+    expect(entry.body).toMatchObject({
+      page: 1,
+      totalPages: 1,
+      totalResults: 0,
+      items: [],
+      hasMore: false,
+      applied: {
+        page: 1,
+        query: "不存在的银河",
+      },
+    });
+    expect(entry.body.error).toBeUndefined();
+  }
+
+  const after = await stats(page);
+  const newListPages = after.upstreamListPages.slice(listPagesBefore);
+  expect(newListPages).toContainEqual(
+    expect.objectContaining({
+      route: "discover/movie",
+      totalPages: 0,
+      totalResults: 0,
+    }),
+  );
+  expect(newListPages).toContainEqual(
+    expect.objectContaining({
+      route: "search/movie",
+      totalPages: 0,
+      totalResults: 0,
+    }),
+  );
+  expect(newListPages).toContainEqual(
+    expect.objectContaining({
+      route: "search/tv",
+      totalPages: 0,
+      totalResults: 0,
+    }),
+  );
+  expect(
+    newListPages.some(
+      (entry) => entry.route === "search/tv" && entry.totalResults > 0,
+    ),
+  ).toBe(true);
+
+  // The whole empty journey had no Storage call and no durable business effect.
+  expect(after.storageCalls).toEqual([]);
+  expect(after.effects).toEqual(before.effects);
 });
 
 test("a failed filter catalog shows its recovery entry beside the working list", async ({

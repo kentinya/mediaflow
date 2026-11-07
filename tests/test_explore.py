@@ -528,6 +528,94 @@ class TMDBExploreAdapterTests(unittest.TestCase):
         self.assertIsNone(show.runtime)
         self.assertEqual(show.external_url, "https://www.themoviedb.org/tv/603")
 
+    def test_zero_page_upstream_is_an_honest_empty_window(self) -> None:
+        """A successful TMDB answer with no pages becomes the existing
+        internal empty window. The requested type and page are preserved, and
+        every public provider entry (browse/search, movie/tv) uses the same
+        boundary."""
+
+        routes = {
+            "discover/movie": {
+                "page": 1,
+                "total_pages": 0,
+                "total_results": 0,
+                "results": [],
+            },
+            "discover/tv": {
+                "page": 1,
+                "total_pages": 0,
+                "total_results": 0,
+                "results": [],
+            },
+            "search/movie": {
+                "page": 1,
+                "total_pages": 0,
+                "total_results": 0,
+                "results": [],
+            },
+            "search/tv": {
+                "page": 1,
+                "total_pages": 0,
+                "total_results": 0,
+                "results": [],
+            },
+        }
+        provider, transport = make_provider(routes)
+        for media_type in (MediaType.MOVIE, MediaType.TV):
+            with self.subTest(media_type=media_type, operation="browse"):
+                page = provider.browse(ExploreBrowseQuery(media_type, ExploreSort.RATING, page=1))
+                self.assertEqual(page.media_type, media_type)
+                self.assertEqual(page.page, 1)
+                self.assertEqual(page.total_pages, 1)
+                self.assertEqual(page.total_results, 0)
+                self.assertEqual(page.items, ())
+                self.assertFalse(page.has_more)
+                self.assertEqual(transport.calls[-1]["path"], f"discover/{media_type.value}")
+                self.assertEqual(transport.calls[-1]["params"]["page"], 1)
+            with self.subTest(media_type=media_type, operation="search"):
+                page = provider.search(ExploreSearchQuery(media_type, "no such work"))
+                self.assertEqual(page.media_type, media_type)
+                self.assertEqual(page.page, 1)
+                self.assertEqual(page.total_pages, 1)
+                self.assertEqual(page.total_results, 0)
+                self.assertEqual(page.items, ())
+                self.assertFalse(page.has_more)
+                self.assertEqual(page.keyword, "no such work")
+                self.assertEqual(transport.calls[-1]["path"], f"search/{media_type.value}")
+                self.assertEqual(transport.calls[-1]["params"]["page"], 1)
+
+    def test_zero_page_is_not_a_general_malformed_tolerance(self) -> None:
+        """Only an empty zero-page answer is normalized; inconsistent totals,
+        negative values, bools and wrong types stay real failures."""
+
+        invalid_pages = (
+            ("negative pages", {"total_pages": -1, "total_results": 0}),
+            ("boolean pages", {"total_pages": True, "total_results": 0}),
+            ("boolean results", {"total_pages": 1, "total_results": False}),
+            ("string pages", {"total_pages": "0", "total_results": 0}),
+            (
+                "zero pages with a positive total",
+                {"total_pages": 0, "total_results": 1},
+            ),
+            (
+                "zero pages with an item",
+                {
+                    "total_pages": 0,
+                    "total_results": 0,
+                    "results": [movie_item(1, "Leaked")],
+                },
+            ),
+            ("negative results", {"total_pages": 1, "total_results": -1}),
+        )
+        for name, fields in invalid_pages:
+            with self.subTest(name=name):
+                payload = {"page": 1, "results": [], **fields}
+                provider, transport = make_provider({"discover/movie": payload})
+                with self.assertRaises(MetadataError) as caught:
+                    provider.browse(ExploreBrowseQuery(MediaType.MOVIE))
+                self.assertEqual(caught.exception.code, MetadataErrorCode.MALFORMED_RESPONSE)
+                self.assertEqual(len(transport.calls), 1)
+
     def test_real_empty_page_and_missing_detail(self) -> None:
         routes = {
             "discover/movie": {"page": 1, "total_pages": 1, "total_results": 0, "results": []},

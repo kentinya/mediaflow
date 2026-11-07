@@ -809,7 +809,13 @@ def _explore_page(
     min_votes: int | None = None,
 ) -> ExplorePage:
     """One bounded provider page; a malformed/over-size page fails safely
-    instead of degrading into a believable empty result."""
+    instead of degrading into a believable empty result.
+
+    TMDB answers a successful query with no matches using ``total_pages=0``
+    and ``total_results=0``. That is one honest empty read, so it is
+    normalized here to the internal one-page empty window that the domain,
+    API and UI already represent. Only an empty zero-page answer is accepted;
+    zero pages with a positive total or with items remain malformed."""
 
     if not isinstance(payload, dict):
         raise _malformed("TMDB page is malformed")
@@ -821,12 +827,18 @@ def _explore_page(
     if (
         not isinstance(total_pages, int)
         or isinstance(total_pages, bool)
-        or total_pages < 1
+        or total_pages < 0
         or not isinstance(total_results, int)
         or isinstance(total_results, bool)
         or total_results < 0
     ):
         raise _malformed("TMDB page totals are malformed")
+    if total_pages == 0:
+        if total_results != 0 or results:
+            raise _malformed("TMDB page totals are malformed")
+        # The source has no page to browse; internally the empty result stays
+        # one displayable page with no fabricated total or pagination.
+        total_pages = 1
     items = tuple(_explore_item(raw, media_type, provider) for raw in results[:EXPLORE_MAX_ITEMS])
     return ExplorePage(
         provider,

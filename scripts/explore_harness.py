@@ -124,7 +124,7 @@ PAGE_SIZE = 20
 _lock = threading.Lock()
 _failure_mode = "none"
 _search_failures_used = 0
-_stats = {"tmdb_requests": 0, "routes": {}, "vote_floors": []}
+_stats = {"tmdb_requests": 0, "routes": {}, "vote_floors": [], "list_pages": []}
 
 
 def _works(media_type: str) -> list[dict[str, object]]:
@@ -221,7 +221,10 @@ def _list_payload(media_type: str, params: dict[str, list[str]]) -> dict[str, ob
         works.sort(key=lambda work: str(work["release_date"]), reverse=True)
 
     total = len(works)
-    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    # The fake upstream keeps the real provider shape: a query with no
+    # matches reports zero total pages. Only the production adapter
+    # normalizes that to its internal one-page empty window.
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
     start = (page - 1) * PAGE_SIZE
     return {
         "page": page,
@@ -300,10 +303,18 @@ def fake_tmdb_transport(request: httpx.Request) -> httpx.Response:
         # Evidence: the adapter really sent this floor on this discover route.
         with _lock:
             _stats["vote_floors"].append(f"{path}:{floors[0]}")
-    if path.startswith("discover/"):
-        return httpx.Response(200, json=_list_payload(path.split("/")[1], params))
-    if path.startswith("search/"):
-        return httpx.Response(200, json=_list_payload(path.split("/")[1], params))
+    if path.startswith(("discover/", "search/")):
+        payload = _list_payload(path.split("/")[1], params)
+        with _lock:
+            _stats["list_pages"].append(
+                {
+                    "route": path,
+                    "page": payload["page"],
+                    "totalPages": payload["total_pages"],
+                    "totalResults": payload["total_results"],
+                }
+            )
+        return httpx.Response(200, json=payload)
     if path.startswith("genre/") and path.endswith("/list"):
         return httpx.Response(200, json={"genres": GENRES[path.split("/")[1]]})
     if path == "configuration/languages":
@@ -395,6 +406,7 @@ def application(environ, start_response):  # noqa: ANN001, ANN201
                     "tmdbRequests": _stats["tmdb_requests"],
                     "upstreamRoutes": dict(_stats["routes"]),
                     "voteFloors": list(_stats["vote_floors"]),
+                    "upstreamListPages": list(_stats["list_pages"]),
                 }
             database = STATE["database"]
             if isinstance(database, Path):
