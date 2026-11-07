@@ -25,12 +25,12 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## TARGET — V2 Explore homepage (Slice51 PLANNED)
+## TARGET — V2 Explore homepage (Slice51)
 
 用户于 2026-11-07 授权规划 [Slice51](../SLICE.md)：直接替换 Dashboard，不做跳转兼容，
-完成“浏览 → 筛选／搜索 → 查看详情 → 返回”。本节是已选择的 TARGET 范围，**尚未激活、
-实施或验收**。现有 Dashboard 仍是 CURRENT，接受后本节才可转为 CURRENT；冻结 V1 含义与
-旧 Slice 身份保留。替换 V2 的 `REQ-WEB-002` 首页职责，并为明确探索请求增加外部只读
+完成“浏览 → 筛选／搜索 → 查看详情 → 返回”。用户随后授权激活与首个 Task 规划，
+Slice 为 **ACTIVE**；本节仍为 TARGET，**尚未实施或验收**。现有 Dashboard 仍是 CURRENT，
+接受后本节才可转为 CURRENT；冻结 V1 含义与旧 Slice 身份保留。替换 V2 的 `REQ-WEB-002` 首页职责，并为明确探索请求增加外部只读
 元数据／图片读取；原其他页面无 Provider 副作用及全部媒体执行安全保持。
 用户随后明确要求 Dashboard API／CLI 也完全删除、不做兼容，新增 `V2-EXPLORE-011`。
 它取消本开发线 Dashboard 专属 API／CLI 及 `V2-TASK-005/014` 等的 Dashboard 消费者义务，
@@ -50,8 +50,8 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 | V2-EXPLORE-010 | 探索与媒体执行、拥有状态保持独立。 | 列表／搜索／详情／图片不读写媒体 Storage、不建 Task、不发布配置或授予执行权；不声称已入库／已订阅，不触发扫描／识别／整理／下载／播放／通知。其他任务、文件、自动化、设置及非重放语义保持；必要 TMDB 署名可见。 |
 | V2-EXPLORE-011 | Dashboard API／CLI 和专属实现完全退出，无兼容。 | 删除 `/api/v1/dashboard`、`mediaflow dashboard` 的注册／分派／参数／help／渲染、专属模型／服务／repository 聚合及 runtime 注入。正常配置和合法身份下以通用未知路由 404、CLI help 注销／解析层未知命令和代码引用清理共同证明退出，不以非 200／非零退出或全仓字符串消失代替。无别名、410／说明页、空成功、替代接口或兼容；旧请求不额外触发 Provider／媒体／任务／配置业务，公共解析／鉴权／审计／日志／初始化允许。清理全部旧消费者，包括 V1 窄耦合和探针；共享统计／组件与持久历史保留，不清库或新增迁移。 |
 
-完整旅程见 [Product Experience TARGET](product-experience.md#target--v2-explore-homepage-slice51-planned)，
-技术契约见 [Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
+完整旅程见 [Product Experience TARGET](product-experience.md#target--v2-explore-homepage-slice51)，
+技术契约见 [Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51)。
 新源、推荐榜单、订阅／收藏、资源站搜索／下载／播放、演员／相似作品、完整季集浏览及
 本地拥有状态都不在首期。Dashboard API／CLI 及专属后端退出已经用户明确授权，不再保留；
 V1 只清理 Dashboard 消费者，不新增 V1 探索或其他 V1 修复／重设计。

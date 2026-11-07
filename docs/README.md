@@ -1,9 +1,10 @@
 # 文档导航与职责
 
-[Slice51](../SLICE.md) — V2 探索首页替换 Dashboard — 为 **PLANNED**，2026-11-07 仅授权
-规划“浏览 → 筛选／搜索 → 查看详情 → 返回”，并按用户后续明确要求完整退出 Dashboard
-Web／API／CLI 及专属后端／消费者，不做任何兼容。尚未激活或实施，
-[TASK.md](../TASK.md) 无活动实施 Task；先明确授权激活，再由 B 规划首个 Task。
+[Slice51](../SLICE.md) — V2 探索首页替换 Dashboard — 已按用户 2026-11-07 明确授权
+激活为 **ACTIVE**：“浏览 → 筛选／搜索 → 查看详情 → 返回”，完整退出 Dashboard
+Web／API／CLI 及专属后端／消费者，不做任何兼容。尚未实施；A 激活 checkpoint 后，
+同一代理按用户授权代替 B 规划首个 Task，角色例外不构成独立验收。
+[TASK.md](../TASK.md) 保持无活动实施 Task；本次只激活和规划，不自动开始开发。
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md)
 保持 PASS / CLOSED，Slice49 及更早接受身份保留。规划／关闭不等于推送、发布或部署。
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
@@ -24,7 +25,7 @@ Web／API／CLI 及专属后端／消费者，不做任何兼容。尚未激活�
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
 | 发布与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；当前支持 fresh 新工作及同版本恢复，旧任务迁移/跨版本升级和 V1 不在支持范围；开发关闭和 Git 推送不等于发布 |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；图片是视觉参考，不是运行数据或权限 |
-| 探索首页（TARGET / PLANNED） | [Slice51 Contract](../SLICE.md) / [稳定要求](v2-requirements.md#target--v2-explore-homepage-slice51-planned) / [完整旅程](product-experience.md#target--v2-explore-homepage-slice51-planned) / [架构](architecture.md#target--v2-explore-homepage-slice51-planned)；TMDB 电影／剧集、筛选／搜索、详情和准确返回，Dashboard Web／API／CLI 及专属实现全退出，无兼容；尚未实施 |
+| 探索首页（TARGET / ACTIVE） | [Slice51 Contract](../SLICE.md) / [稳定要求](v2-requirements.md#target--v2-explore-homepage-slice51) / [完整旅程](product-experience.md#target--v2-explore-homepage-slice51) / [架构](architecture.md#target--v2-explore-homepage-slice51)；TMDB 电影／剧集、筛选／搜索、详情和准确返回，Dashboard Web／API／CLI 及专属实现全退出，无兼容；尚未实施 |
 | 弹卡、可读性与主页面切换（CURRENT） | [Slice50 Contract](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / [原八项与自动化弹卡稳定性补充](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed) / [完整现行旅程](product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)；目录树/抽屉替换、V2 侧栏主页面切换与自动化新建/编辑抖动修复均已接受，保留既有业务与接受事实 |
 | Task 流程、文件结果与自动化成功率 | [Slice48 已接受旅程](product-experience.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed)；Task 五态与文件结果独立，completed 不代表文件全部成功；定时/定义运行一次按 completed/(completed+failed) 统计，取消和未结束不入分母，手动整理/普通操作不参与 |
 | 自动化创建、编辑与运行一次 | [Slice49 现行旅程](product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed) / [稳定要求](v2-requirements.md#automation-forms-and-direct-run-once--current-slice49-pass--closed)；列表直接运行或复制已保存定义，复制紧邻编辑并生成停用副本；创建/编辑共用中文卡片和紧凑启用开关，启停随创建/保存生效；未知结果核对原请求/发布，不重发 |

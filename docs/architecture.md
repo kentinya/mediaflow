@@ -9,9 +9,10 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — V2 Explore homepage (Slice51 PLANNED)
+## TARGET — V2 Explore homepage (Slice51)
 
-[Slice51](../SLICE.md) 仅规划 `V2-EXPLORE-001–011`，未激活或实现。CURRENT Dashboard、
+[Slice51](../SLICE.md) 已授权激活为 ACTIVE 并规划首个 Task；
+`V2-EXPLORE-001–011` 尚未实现。CURRENT Dashboard、
 无 Provider 状态读取及现有 API／CLI 仍是当前代码事实；接受后以本节替换首页、完整退出
 Dashboard Web／API／CLI 专属运行契约，并加入明确探索外部读取。其他安全边界保持，
 没有新媒体处理流水线、Storage provider、执行 authority 或 schema。
@@ -1594,7 +1595,7 @@ schedules, notifications, logs, dashboard, security audit and system status rout
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
-Python application. The [Slice51 TARGET](#target--v2-explore-homepage-slice51-planned) is planning-only;
+Python application. The [Slice51 TARGET](#target--v2-explore-homepage-slice51) is ACTIVE but not implemented;
 V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked

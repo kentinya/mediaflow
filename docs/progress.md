@@ -8,12 +8,15 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice51](../SLICE.md) is **PLANNED** under the user's 2026-11-07 planning-only authorization:
+[Slice51](../SLICE.md) is **ACTIVE** under the user's explicit 2026-11-07 activation and
+first-Task planning authorization:
 TMDB movie/TV browse → filter/search → detail → return replaces the homepage. The user additionally
 authorized complete Dashboard Web/API/CLI and dedicated backend/consumer retirement without
 compatibility; shared business data/history stays intact. Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`,
 Implementation Head NOT SET; no active implementation Task or accepted51 outcome. Activation and
-B Task planning remain separate next steps. Current production code/behavior is unchanged.
+its A checkpoint precede B Task planning. The user explicitly authorized the same agent to substitute
+for B for this first plan; that role exception is not independent acceptance. Current production
+code/behavior is unchanged; implementation is not authorized by this request.
 Slice50 remains the latest accepted large Slice; the closure ledger and all earlier Base/Head,
 acceptance, deferrals and evidence limits remain unchanged. Planning is not release or deployment.
 

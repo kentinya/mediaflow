@@ -21,9 +21,10 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — V2 Explore homepage (Slice51 PLANNED)
+## TARGET — V2 Explore homepage (Slice51)
 
-[Slice51](../SLICE.md) 仅授权规划，`V2-EXPLORE-001–011` 是 TARGET，尚未激活／交付。
+[Slice51](../SLICE.md) 已授权激活为 ACTIVE 并规划首个 Task；
+`V2-EXPLORE-001–011` 仍是 TARGET，尚未实施／交付。
 以下旅程在接受后替换 V2 Dashboard 首页；当前根入口和无 Provider Dashboard 读取规则仍是
 CURRENT。MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅色 Shell／弹卡。
 
@@ -74,7 +75,7 @@ Dashboard API／CLI 也按用户明确要求完全退出：正常配置／合法
 不再要求使用旧接口或命令。任务中心／自动化／通知／系统状态仍提供各自已有信息，
 耐久任务／结果／审计历史保留，不因删除面板清除记录或新增替代统计平台。
 新数据源、推荐榜单、个人清单、演员／相似作品和完整季集浏览不在本 Slice。后端与图片边界见
-[Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
+[Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51)。
 
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
@@ -991,7 +992,7 @@ continues supported routes; reconnect never replays work. A 401 clears rejected 
 a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
 Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. The
-[Slice51 TARGET](#target--v2-explore-homepage-slice51-planned) separately plans the future V2 homepage
+[Slice51 TARGET](#target--v2-explore-homepage-slice51) separately plans the future V2 homepage
 replacement and explicit external metadata/artwork reads; it is not CURRENT. No independent Node
 production service, replacement identity model or implicit V1 cutover is introduced.
 

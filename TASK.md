@@ -9,9 +9,10 @@
   首次共享测试数据冲突与独立运行通过结果、未运行门禁和本地证据限制。
 - Slice50 保持 PASS / CLOSED，原 Base/已接受 Head、Roadmap 关闭项和 Progress 接受账本不变。
 
-无活动实施 Task。[Slice51](SLICE.md) — V2 探索首页替换 Dashboard — 为 **PLANNED**，仅授权
-A 规划文档，Implementation Head NOT SET；尚未激活，不从该规划自动开始 B 的 Task 规划或
-Developer 实施。下一步先明确授权激活 Slice，再由 B 规划首个 Task。最近独立修正的 B PASS
-及上列精确范围／证据指针保持；Slice50 仍为 PASS / CLOSED。
+无活动实施 Task。[Slice51](SLICE.md) — V2 探索首页替换 Dashboard — 已按用户 2026-11-07
+明确授权激活为 **ACTIVE**，Implementation Head NOT SET。A 提交激活 checkpoint 后，
+同一代理按用户明确授权代替 B 规划首个 Task；该角色例外不构成独立验收。授权限于激活与
+规划，不自动开始 Developer 实施、推送或部署。最近独立修正的 B PASS 及上列精确范围／
+证据指针保持；Slice50 仍为 PASS / CLOSED。
 
 当前使用说明、完整 CURRENT／TARGET 旅程与架构见 [文档导航](docs/README.md)。
