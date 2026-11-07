@@ -65,8 +65,9 @@ Implementation Authorization: NOT GRANTED — DRAFT ONLY
    后续 files/direct-files/transfers/settings 等字段仍对应正确值。保留共享初始化和原 pin，
    不改其他模块来迁就删除，不清表／迁移／删除运行记录。
 3. **V1 只断接。** 移除 Dashboard 按钮／默认读取／渲染，复用现有 Configuration 视图作为
-   初始 view 与选中按钮，使 Connect 后仍可使用已有配置界面；保留 readiness 对 setup／
-   recovery 的原处理。不要调用另一统计接口冒充 Dashboard，不新增 V1 探索或重设计其他视图。
+   初始 view 与选中按钮。使用具备对应权限的身份、配置服务正常时，Connect 后能读取
+   已有配置内容；无权限时保留原权限反馈。保留 readiness 对 setup／recovery 的原处理。
+   不要调用另一统计接口冒充 Dashboard，不新增 V1 探索或重设计其他视图。
 4. **按原验证目的改接探针。** 身份／401／403／审计与静态资产旁的认证读取优先改接已有
    `GET /api/v1/auth/principal`（READ、零 Provider、零媒体工作，已有独立权限测试）。
    FileIndex 的“正常 CLI 打开临时库后没有 FileIndex 表”改用已有 `tasks list` 等正常
@@ -89,13 +90,18 @@ Implementation Authorization: NOT GRANTED — DRAFT ONLY
 - [ ] 代码引用确认专属模型／服务／repository 查询／helper／注入和可达消费者全部删除；
   旧请求无 Provider、媒体 Storage、任务准入、配置发布业务效果。公共初始化／审计不被
   误判为业务变更；共享 CSS、历史文本和负向测试无需清掉 dashboard 字符串。
-- [ ] V1 打开 → Connect → 已有 Configuration 内容可读；Dashboard 按钮／请求消失。
-  配置读取失败仍显示原错误并能按现有 Connect／导航重读；断开仍清空身份。只验这条窄链路。
+- [ ] 配置服务正常、身份具备对应权限时，V1 打开 → Connect → 已有 Configuration 内容
+  可读；Dashboard 按钮／请求消失。无权限时保留原权限反馈；配置读取失败仍显示原错误
+  并能按现有 Connect／导航重读，断开仍清空身份。只验这条窄链路。
 - [ ] 正常启动与同版本 Active 绑定切换后，探索／任务／自动化／通知／系统状态已有读取
-  正常；临时 SQLite 中已有 Task／Result／review／notification／audit 记录保持可读。
+  的代表性响应内容与夹具预期一致，不能仅断言 HTTP 200。当前配置相关读取使用实际
+  Active 绑定；已准入任务和历史结果保留原固定上下文，不随新 Active 改写。
+  临时 SQLite 中保留的历史 Task／Result／review／notification／audit 记录，核对原 ID、
+  关联及状态／结果等关键值保持；允许正常新增读取审计，不要求全表行数／字节不变。
   不引入 schema 变更或改变任务状态、四类恢复、结果与非重放语义。
 - [ ] 所有改接探针仍证明原权限／脱敏／有界读取／零媒体效果责任；真实 Python＋生产
-  资产的探索“浏览 → 筛选／搜索 → 详情 → 返回”保持，其他合法深链继续可达。
+  资产的探索“浏览 → 筛选／搜索 → 详情 → 返回”保持。深链回归限于本次影响的认证
+  续转、默认入口和改接探针涉及的既有深链，按实际影响选代表用例。
 
 ### Required tests
 
@@ -139,7 +145,9 @@ git diff --check
 2. `web/` 执行 `npm run typecheck`、`npm run build`，再执行
    `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`；
    检视桌面／390px 浏览到详情再返回。沿真实 Python 入口读取任务中心、自动化、通知和
-   系统状态，验证 binding 没有因位置参数删除而错配；复用已有测试入口／夹具。
+   系统状态，核对代表性响应内容及其配置绑定，并按验收条件核对保留历史记录的关键值，
+   验证 binding 没有因位置参数删除而错配；复用已有测试入口／夹具。深链回归范围按上述
+   验收条件选择，不扩展为所有页面的深链矩阵。
 3. 对 `rules_identity_browser_proof.py`，仅在已有真实 Python 临时服务上验证改接的
    认证请求：合法 READ 返回 200、无身份返回 401，且无 Provider／媒体工作；保留原
    断言目的。本次不要求运行该脚本的完整 Rules 身份／编辑／发布／深链旅程。
@@ -183,8 +191,9 @@ Developer 激活后交完整 checkpoint SHA、READY FOR B REVIEW、实际改动�
 
 ### Planning checkpoint
 
-本轮草案修订基线：`main` / `13fa0d2fc4fffa46d055f8e88a64b7f796e9e713`；治理检查 PASS。
-按用户要求收窄 Rules 认证探针和 wheel 安装验证，Task Base、开发范围及其余必要验收保持。
+本轮草案修订基线：`main` / `aae11506a265eefb2b3d33648b89756803e11408`；治理检查 PASS。
+按用户要求明确深链回归范围、V1 权限前提与共享响应／历史记录的内容断言；此前收窄的
+Rules 认证探针和 wheel 安装验证保持，Task Base、开发范围及其余必要验收保持。
 预存 `mediaflow/.DS_Store` 修改、所有未跟踪 `.DS_Store`、日志、`.explore_adapter_block.py`、
 `15` 和 output 调查产物全部保留、不暂存。本轮仅修改 `TASK.md`，未改产品／仓库测试，
 未运行功能验收、未推送或部署。检查仅限文档／引用／治理；不把规划当成产品通过。
