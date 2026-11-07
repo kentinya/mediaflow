@@ -50,8 +50,11 @@ completion neither proves file success nor grants replay.
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
-[TASK.md](TASK.md) has no active implementation Task; A selects the next large Slice separately.
-[Slice50](SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
+[TASK.md](TASK.md) has no active implementation Task. [Slice51](SLICE.md) is PLANNED under
+planning-only authorization: a TMDB Explore homepage with browse → filter/search → detail → return
+will directly replace the V2 Dashboard Web page, without old-path redirects or compatibility.
+It is TARGET, not delivered; activation and B Task planning remain separate next steps.
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,
 consistent library loading and stable Automation create/edit. [CURRENT requirements](docs/v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)
 preserve existing business/safety boundaries. [Progress](docs/progress.md) keeps original Base/Head,

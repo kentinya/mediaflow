@@ -74,11 +74,11 @@ AC-1–18 见 [Slice46 Contract](https://github.com/kentinya/mediaflow/blob/5144
 CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md`。
 下方冻结 V1 与既有接受事实不改写。
 
-[Slice50](../SLICE.md) 已于 2026-11-07 通过独立 A Final Review **PASS / CLOSED**：原 Base
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) 已于 2026-11-07 通过独立 A Final Review **PASS / CLOSED**：原 Base
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
 原八项与自动化新建/编辑稳定性补充 `V2-UX-005–013` 为 [CURRENT 定义](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)，
 替换所选任务侧详情、存储/库抽屉和两页目录树，保留原业务/权限/安全及历史接受事实。
-[TASK.md](../TASK.md) 无活动实施 Task；下一大 Slice 另行选择。
+[TASK.md](../TASK.md) 无活动实施 Task；新 [Slice51](../SLICE.md) 为 PLANNED，仅授权规划。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
 `V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
@@ -92,6 +92,21 @@ CURRENT；完整 B Closure Packet 保留于 `edef2b9dfb3726f8aca6b4d7c4a7ae233f9
 配置序号/设置工具行；Settings 诊断、异常恢复及精确 Active/权限/发布语义保持。
 现行验收定义见 [V2 Requirements](v2-requirements.md)，完整旅程见
 [Recognition and rules](product-experience.md#recognition-and-rules)。
+
+## Planned V2 homepage amendment — Slice51
+
+用户于 2026-11-07 授权按“浏览 → 筛选／搜索 → 查看详情 → 返回”规划
+[Slice51](../SLICE.md)，并明确直接替换 Dashboard、不做跳转兼容。
+`V2-EXPLORE-001–010` 为 [TARGET / PLANNED](v2-requirements.md#target--v2-explore-homepage-slice51-planned)，
+未激活或交付。接受后仅替换 `REQ-WEB-002` 在 V2 的首页 Dashboard 展示职责：探索为默认
+首页，旧 Dashboard Web／路径直接退出，无重定向、别名或退役说明；独立 Dashboard
+统计 API／CLI 不在删除范围。冻结 V1 及历史接受含义保留，不以本规划声称 CURRENT 已替换。
+
+探索显式请求可通过 Provider 抽象读取有界外部元数据／图片；这不是系统／配置状态页面，
+`REQ-WEB-006` 的无外部媒体服务读取规则在其原状态表面继续适用。探索本身零媒体 Storage
+访问／变更、零工作准入／执行权限／配置发布，保留 `REQ-META-*`、认证／脱敏及全部安全
+不变量。完整目标旅程与架构分别见 Product Experience／Architecture 的 Slice51 TARGET。
+
 
 ## Traceability and derivation rules
 
@@ -388,7 +403,7 @@ the release contract, not a new media-processing engine.
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|
 | REQ-WEB-001 | REQUIRED | Web UI is the primary V1 management surface for setup, configuration, daily work, review, recovery and explicit execution. | §最终管理界面; §第一阶段 MVP / UI | Required journeys are discoverable and complete without CLI-only knowledge. |
-| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard | Counts link to the underlying actionable scope and do not expose secrets. |
+| REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard; Slice51 TARGET amendment above | Counts link to the underlying actionable scope and do not expose secrets. The planned V2 Web replacement is not yet delivered and does not rewrite frozen V1 or retire the standalone statistics API/CLI. |
 | REQ-WEB-003 | REQUIRED | Files provide bounded live library-scoped entries and applicable actions; processing explanations/results remain on supported Task/Result surfaces. The current V2 amendment retires FileIndex catalog/detail and display feedback. | §文件列表; §搜索与筛选; §媒体详情; V2-FILES-005/006 | CLI and both library pages share live Storage reads without recording a file catalog. Users inspect processing outcomes through native task journeys; live membership never depends on recognition, metadata or historical results. |
 | REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and zero-mutation analysis through organizing/Rules/configuration checks; V2-OPS-013 removes standalone Preview management. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界; V2-OPS-013 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
@@ -3745,6 +3760,9 @@ Missing
 ```
 
 ### **Dashboard**
+
+下列保留冻结 V1 与当前已交付 Dashboard 定义；V2 首页的待实施替换见
+[Slice51 TARGET](#planned-v2-homepage-amendment--slice51)，不是已交付事实。
 
 首页展示：
 

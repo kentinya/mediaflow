@@ -21,9 +21,52 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
+## TARGET — V2 Explore homepage (Slice51 PLANNED)
+
+[Slice51](../SLICE.md) 仅授权规划，`V2-EXPLORE-001–010` 是 TARGET，尚未激活／交付。
+以下旅程在接受后替换 V2 Dashboard 首页；当前根入口和无 Provider Dashboard 读取规则仍是
+CURRENT。MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅色 Shell／弹卡。
+
+- **目标／入口：** 用户进入“探索”浏览电影／剧集或找指定作品。侧栏和默认认证后目的地
+  为 `/ui-v2/explore`，其他合法深链仍回原目标。旧 Dashboard Web 页面与入口移除，旧路径
+  使用普通未找到；无跳转、旧页面／别名／说明页兼容。用户无库、业务 Active 或历史任务
+  时也可使用已部署的 TMDB；缺凭据解释服务端配置及实际恢复步骤，不要求先建整理规则。
+- **可见状态／浏览：** 默认热门电影，明确切换剧集。页面只有“探索”标题、作品名称搜索、
+  紧凑筛选／更多筛选与海报网格；常用题材、原始语言直接可见，年份、最低评分、最低评分
+  人数在扩展条件内。热度／评分／上映或首播日期排序用准确名称；评分优先有可见合理人数
+  阈值。筛选作用于整个后端结果集，切换电影／剧集校正不适用题材。默认中文，原文／空项
+  诚实回退，原始语言不当作国家，数据源日期不当作本地上映日期或最新一集播出时间。
+- **搜索动作：** 输入作品名并显式提交，进入明确的搜索结果态。保留电影／剧集选择，
+  只显示该搜索实际应用的条件；探索独有的排序、题材、语言和评分不能假装适用于搜索。
+  清空／退出搜索回到原探索条件与上下文。空关键词或其他无效输入有可纠正反馈，禁止
+  将搜索词解析为本地文件或自动作作品确认。
+- **列表／分页：** 2:3 海报、片名、年份常显，评分明确是 TMDB 评分，无评分不显示假 0；
+  长名称可完整获取。桌面自适应列数、390px 两列。点击“加载更多”追加下一有界页，按
+  Provider＋作品类型＋ID 去重，说明已到末页；改变条件从新结果集首页开始。旧请求不能
+  覆盖新条件，过期条件的数据不冒充新结果；不自动无界翻页，不把当前页数当全部数量。
+- **详情动作：** 点击卡片在列表背景上打开稳定居中详情卡，窄屏适配可用高度，名称和
+  关闭入口清楚。先看图片、中文名／原名、年份、TMDB 评分／人数、题材、简介及该类型
+  可用基本信息，再通过准确外链看 TMDB 原页。详情用确切作品身份，不按名称猜匹配。
+  无图片／简介等字段显示真实缺项，图片失败不阻止阅读或关闭。
+- **成功／返回：** 关闭、Escape 和浏览器后退恢复原筛选／搜索、已加载页、滚动位置和
+  卡片焦点。详情深链、刷新和认证续转保持同一作品；独立打开时可回探索默认列表。
+  同页筛选、搜索、分页、详情开关不重播整页切换；背景滚动和宽度稳定，尊重 reduced-motion。
+- **失败／恢复：** 首次用等比例骨架，快速响应／有效缓存不强制动画。未返回、真实空态、
+  缺失详情、401、403、未配置／凭据失效、网络超时、限流和畸形响应分别可辨。首次失败
+  重读当前条件，空结果清除条件；分页失败保留成功页，只重试该页；详情失败在卡内重读
+  并可退回原列表。429 提示有限等待／重读，不无限请求。缺凭据指向部署配置／重启后重读，
+  不误导为可在探索页填密钥；403 不当空态，401／断开清理身份相关读取缓存和图片对象。
+- **状态与效果：** 明确探索请求读取外部元数据／图片；显示来源与必要 TMDB 署名。凭据
+  始终留在服务端。页面不显示缺乏可靠依据的“已入库／已订阅”，不扫描或改动媒体，不
+  创建执行任务／权限，不提供订阅、下载或播放。任务中心／文件／自动化／通知保留原职责。
+
+本次仅退出 V2 Dashboard Web，独立统计 API／CLI 不退役；新数据源、推荐榜单、个人清单、
+演员／相似作品和完整季集浏览不在本 Slice。后端与图片边界见
+[Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
+
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
-[Slice50](../SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
 原八项 `V2-UX-005–012` 和自动化新建/编辑补充 `V2-UX-013` 全部接受，以下完整旅程为 CURRENT。
 它们替换原任务侧详情、所选存储/库抽屉与两页目录树；旧图片/历史接受事实保留，更早 CURRENT
@@ -935,7 +978,9 @@ safe deep links and bounded return context. Root opens Overview/Dashboard. Memor
 continues supported routes; reconnect never replays work. A 401 clears rejected authority/query state;
 a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
-Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. No independent Node
+Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. The
+[Slice51 TARGET](#target--v2-explore-homepage-slice51-planned) separately plans the future V2 homepage
+replacement and explicit external metadata/artwork reads; it is not CURRENT. No independent Node
 production service, replacement identity model or implicit V1 cutover is introduced.
 
 ### Task Center integration

@@ -13,7 +13,7 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 
 ## CURRENT — Slice50 弹卡、去目录树与加载体验（PASS / CLOSED）
 
-[Slice50](../SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
 已删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、
 面包屑、上一级/根目录、文件夹、搜索、视图、选择、刷新与分页，不新增替代树。
 

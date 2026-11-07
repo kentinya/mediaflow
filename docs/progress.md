@@ -8,15 +8,18 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice50](../SLICE.md) is **PASS / CLOSED** after independent A Final Review on 2026-11-07.
-All original eight UX changes and Automation create/edit stability are accepted; no active
-implementation Task. **A SELECTS THE NEXT LARGE SLICE** separately. Closure is not a release,
-push or deployment; earlier Slice acceptance identities remain unchanged.
+[Slice51](../SLICE.md) is **PLANNED** under the user's 2026-11-07 planning-only authorization:
+TMDB movie/TV browse → filter/search → detail → return replaces the V2 Dashboard Web homepage,
+with no old-path redirect or compatibility. Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`,
+Implementation Head NOT SET; no active implementation Task or accepted51 outcome. Activation and
+B Task planning remain separate next steps. Current production code/behavior is unchanged.
+Slice50 remains the latest accepted large Slice; the closure ledger and all earlier Base/Head,
+acceptance, deferrals and evidence limits remain unchanged. Planning is not release or deployment.
 
 ## Latest accepted closure — Slice50
 
 Original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through accepted implementation
-`6b0927328a7bf0873faffce9cb38007fd4607764`; full [Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review).
+`6b0927328a7bf0873faffce9cb38007fd4607764`; full [Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review).
 B final packet: `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`; original Task/fix reports remain reachable there.
 Delivered: centered readable Task details; Storage view/add/edit cards and More menu; both library
 pages without page-local trees, with four configuration cards and clear edit/remove presentation;

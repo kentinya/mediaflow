@@ -36,19 +36,25 @@ only in [the development workflow](development-workflow.md).
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
+| 51 — V2 Explore Homepage Replacing Dashboard | Replace the V2 Dashboard Web homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; remove the old Web route directly without redirect, alias or compatibility surface | PLANNED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 Slice-planning authorization only |
 
 ## Current boundary
 
-[Slice50](../SLICE.md) — **V2 Dialog, Readability and Navigation Experience** — is **PASS / CLOSED**
-after independent A Final Review on 2026-11-07. All original eight requests and the added Automation
-create/edit stability requirement are delivered. No active implementation Task; A selects the next
-large Slice separately. No implementation, push or deployment is authorized by closure.
-Main-page transitions remain limited to existing sidebar destination identities; tabs, details,
-library/path changes, cards and refreshes retain their own navigation/loading/local-motion behavior.
+[Slice51](../SLICE.md) — **V2 Explore Homepage Replacing Dashboard** — is **PLANNED**.
+The user authorized planning only on 2026-11-07: browse → filter/search → detail → return, directly
+replacing the V2 Dashboard Web homepage, with no old-path redirect or compatibility surface.
+Base is `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; Implementation Head is NOT SET. No active
+implementation Task; explicit activation precedes B's first Task plan. No product implementation,
+push or deployment is authorized. TMDB-only discovery and authenticated artwork reads are TARGET,
+not CURRENT delivery; legacy Dashboard statistics API/CLI retirement is outside this scope.
+
+Slice50 remains PASS / CLOSED with its original accepted identities. Current shared transitions
+stay limited to sidebar destination identities; tabs, details, library/path changes, cards and
+refreshes retain their own navigation/loading/local-motion behavior.
 
 ## Accepted boundary references
 
-Latest acceptance is [Slice50's Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review):
+Latest acceptance is [Slice50's Contract/A review](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md#final-validation-closure-packet-and-a-final-review):
 original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation
 `6b0927328a7bf0873faffce9cb38007fd4607764`. Required outcomes, unchanged safety and all explicit deferrals are
 recorded in [Progress](progress.md#closure-ledger). Prior49 acceptance remains at its

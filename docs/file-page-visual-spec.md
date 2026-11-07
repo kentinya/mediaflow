@@ -13,7 +13,7 @@ Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
 ## CURRENT — Slice50 弹卡、去目录树与加载体验（PASS / CLOSED）
 
-[Slice50](../SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
 本节现行呈现替换原 Directory Pane 和 Add/Edit drawer 约束；
 其他浏览、命令、真实状态及安全规则保留。旧参考图片不可改写，也不要求未来同时保留与
 新目标冲突的树/抽屉布局。

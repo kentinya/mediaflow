@@ -9,9 +9,73 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — V2 Explore homepage (Slice51 PLANNED)
+
+[Slice51](../SLICE.md) 仅规划 `V2-EXPLORE-001–010`，未激活或实现。CURRENT Dashboard、
+无 Provider 状态读取、现有 API／CLI 和安全边界继续如后文；接受后以本节精确替换所选 V2
+首页职责和外部读取入口。没有新媒体处理流水线、Storage provider、执行 authority 或 schema。
+
+**分层与数据：** React → 同源 Python 探索 API → 探索 application service → Provider
+抽象的浏览能力 → TMDB adapter／HTTP transport。扩展现有 Provider 或组合独立浏览端口，
+按实际依赖选择最小方案；业务、API 和前端使用内部查询／有界列表／详情／图片引用模型，
+不直接依赖 TMDB DTO。列表的作品身份为 Provider＋movie/tv＋Provider ID，评分／人数与
+文件匹配 score／confidence 分离。探索词是在线关键词，不送文件 Parser，不运行 Recognition
+或强造 ParseResult／MediaIdentity 的匹配证据。扩展浏览模型不得改变历史工作／pin 的含义。
+
+**部署与依赖：** 首期只有当前部署支持的 TMDB，不增加源切换／自动 fallback，复用部署
+环境凭据、Provider bootstrap、HTTP 客户端和受限请求控制。探索不需要业务 Active、库或
+RecognitionType／MetadataPolicy；其查询默认以中文呈现，中文缺失保留真实原文。浏览默认值
+不发布或覆盖整理 MetadataPolicy／Provider 配置，不读取私有配置做测试，不新建凭据管理页。
+缺凭据安全失败并提供环境注入／服务重启／重读指导，不输出值或要求浏览器保存密钥。
+
+**API／查询：** 新增同源、受当前后端 READ 权限控制的探索列表、关键词搜索、作品详情
+与图片读取表面；精确 path／字段由 B Task 定义并在实施时形成单一契约。区分 browse/search
+查询，按类型翻译题材、首次上映／首播年份、原始语言、评分／人数和排序；搜索不传递
+Provider 不支持的探索参数。后端验证所有字段和界限，不做一页结果上的全量假过滤。
+Provider 返回归一化后再暴露，非法身份／参数、缺失、限流、网络及畸形数据有稳定安全类别。
+
+**请求／缓存：** 复用 timeout、有限 retry/backoff、429 处理和可用 proxy 配置；有界并发、
+单次页／响应大小、TTL 与缓存容量，避免把探索访问变成无限 Provider 扇出或耗尽整理请求。
+前端仅显式提交搜索／翻页，不无界预取。缓存 key 包含 Provider、操作、类型、语言／适用
+地区、实际查询／页及适用配置／权限上下文；变更配置不可复用不匹配来源或 locale 的缓存。
+后端每次仍先鉴权，不因命中缓存绕过权限。客户端带请求身份／代际，丢弃过时响应；同页
+追加去重，结果重置和搜索退出各有明确上下文，详情与列表错误独立。
+
+**图片交付／安全：** 浏览器只读受认证的同源图片接口；不由前端拼任意外网 URL，不将
+现有同源 CSP 广泛放开。服务器从已归一化 Provider 图片引用构造固定允许来源及受支持
+尺寸，验证路径／重定向目标、类型、字节数、超时和响应；禁止任意代理、用户自选主机、
+私网／本机访问、路径穿越和外部凭据注入。图片缓存有容量／TTL／来源和权限边界，仅是
+可丢弃外部图片缓存，不是本地媒体文件操作／FileIndex，不写用户媒体或业务目录记录。
+
+现有认证使用内存 Bearer，普通 img 请求不会自动带 Authorization；实现必须解决实际
+认证交付，不能改为公开接口、URL token、cookie 或持久凭据。可采用带 Authorization 的
+fetch 加内存对象 URL；此时仅给 img-src 增加必要的同源／blob 范围，其他 CSP 不放宽。
+释放不再使用的对象 URL；断开／身份变化／401 清理客户端数据和图片引用，不回显上一身份。
+401／403 在列表、详情和图片保持同一真实权限语义，缓存与鉴权次序有自动化证明。
+
+**路由／Shell：** `/ui-v2/explore` 是新默认认证后入口；其他安全 intended-route 仍优先。
+替换导航模型／页头／页面身份／默认返回，移除 `/dashboard` 的路由／专属组件、query、
+model、客户端调用和仅旧页使用的 fixture／样式／测试。旧 URL 普通 not-found，无 redirect、
+别名、退役页或参数兼容。保留共享 CountGrid／RefreshControl／CSS 的有效使用者；现有独立
+Dashboard API／CLI／后台服务及 V1 不纳入删除。没有 V2 旧页作为兼容消费端残留。
+
+**详情／返回：** 复用当前 ModalCard 的滚动锁定、焦点、深链和局部导航；详情保存精确
+Provider/type/ID，关闭卡片和后退恢复探索／搜索、已加载页、滚动与焦点。直接深链在正常
+认证后重读该作品，缺列表历史时返回探索默认。详情读取不重播整页过渡，不创建命令会话。
+
+**副作用边界：** 只有明确探索列表／搜索／详情／图片请求可使用外部 Provider；常规 Shell
+导航、状态检查、Files／MediaLibrary 读取不因此联系 TMDB。探索不访问媒体 Storage、不
+创建 Task／Result、grant、Draft 或 Active，不调用解析／识别／规划／OrganizerExecutor，
+不改变队列／Worker／通知／历史，不生成已入库或可播放断言。原 C→A 身份不变、pins、
+五态 Task／独立文件结果、RBAC／脱敏及成功／未知效果非重放保持。
+
+生产构建需用真实 Python application/API 和本地假 Provider／图片 transport 证明完整旅程，
+并检查实际 CSP、认证、网络限制／缓存边界、图片失败、类型／请求竞态及桌面／390px
+详情返回；不依赖用户运行库、生产媒体、真实 TMDB 或安装运行 MoviePilot。
+
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
-[Slice50](../SLICE.md) passed independent A Final Review **PASS / CLOSED** on 2026-11-07,
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) passed independent A Final Review **PASS / CLOSED** on 2026-11-07,
 original Base `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` through implementation `6b0927328a7bf0873faffce9cb38007fd4607764`.
 All original eight `V2-UX-005–012` and added Automation stability `V2-UX-013` contracts below are
 CURRENT. Changes are confined to Web presentation, its state/read compatibility and documentation;
@@ -1488,7 +1552,8 @@ schedules, notifications, logs, dashboard, security audit and system status rout
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
-Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
+Python application. The [Slice51 TARGET](#target--v2-explore-homepage-slice51-planned) is planning-only;
+V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
 decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task

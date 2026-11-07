@@ -25,10 +25,36 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
+## TARGET — V2 Explore homepage (Slice51 PLANNED)
+
+用户于 2026-11-07 授权规划 [Slice51](../SLICE.md)：直接替换 Dashboard，不做跳转兼容，
+完成“浏览 → 筛选／搜索 → 查看详情 → 返回”。本节是已选择的 TARGET 范围，**尚未激活、
+实施或验收**。现有 Dashboard 仍是 CURRENT，接受后本节才可转为 CURRENT；冻结 V1 含义与
+旧 Slice 身份保留。仅替换 V2 的 `REQ-WEB-002` 首页职责，并为明确探索请求增加外部只读
+元数据／图片读取；原其他页面无 Provider 副作用及全部媒体执行安全保持。
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-EXPLORE-001 | 探索成为 V2 默认首页，旧 Dashboard Web 直接退出。 | 侧栏“探索”、默认认证续转和页头一致使用 `/ui-v2/explore`，其他合法深链保持。旧 `/dashboard` 普通未找到，无旧页、重定向、别名、退役说明或兼容解析。移除旧页专属前端依赖／请求，保留仍被其他页使用的共享组件；独立统计 API／CLI 不在删除范围。 |
+| V2-EXPLORE-002 | 提供 TMDB 电影／剧集的真实有界探索。 | 默认热门电影，两类型身份／查询分离；中文展示并诚实回退，标明来源。浏览不要求库、业务 Active、RecognitionType、MetadataPolicy 或历史任务；部署 TMDB 不可用时明确原因和恢复。 |
+| V2-EXPLORE-003 | 有准确的筛选和排序语义。 | 常用题材／原始语言，更多条件含首次上映／首播年份、最低评分和最低评分人数；题材与作品类型匹配，语言不冒充产地。热度、评分、上映／首播日期排序真实作用于后端查询，最高评分排序具有可见的合理评分人数阈值；非法参数安全拒绝。 |
+| V2-EXPLORE-004 | 搜索、分页及结果归属完整。 | 显式提交名称进入独立搜索态，展示真实支持条件；不携带不受支持的探索过滤／排序或用单页假装全量筛选。退出恢复原探索。“加载更多”有界、去重／末页明确，失败保留成功页；条件变化重置页，旧响应不能污染新类型／查询。 |
+| V2-EXPLORE-005 | 海报网格可读、美观并可访问。 | 统一 2:3 海报，片名／年份始终可读，TMDB 评分与识别置信度分离，无评分不伪造 0。缺图占位，中文缺失诚实回退，长标题可完整获取；桌面自适应、390px 两列、键盘／reduced-motion 可用，首屏直接呈现内容。 |
+| V2-EXPLORE-006 | 作品详情与返回形成完整旅程。 | 同一 Provider＋作品类型＋ID 打开协调稳定的居中详情卡，含可用图片、名称／原名、年份、评分／人数、类型、简介、基本信息及准确 TMDB 外链。关闭／Escape／后退恢复条件、已加载内容、滚动和焦点；深链／刷新／认证续转保持准确作品，独立入口返回探索。 |
+| V2-EXPLORE-007 | 首次、分页、详情和图片的失败可独立恢复。 | 加载、真实空／缺失、401、403、无配置／凭据失效、超时、429、5xx 和畸形响应可辨；重试仅重读失败范围，列表／条件保留，错误不变空态。图片失败不阻塞正文，凭据问题指向部署恢复，无密钥输入／复制要求，无无限自动重试。 |
+| V2-EXPLORE-008 | 外部元数据读取保持 Provider 分层和有界资源。 | 业务使用 Provider 抽象及内部浏览模型，复用部署凭据、HTTP 请求控制和缓存；不依赖 TMDB DTO，不把搜索词交 Parser，不改变整理策略／匹配分数。仅明确探索请求可调用 Provider；缓存／并发／分页／时间均有界，不新增账户、隐式 fallback 或持久媒体索引。 |
+| V2-EXPLORE-009 | 图片以认证、受限的同源链路交付。 | 不接受任意 URL、私网／本机目标或路径穿越；约束 Provider 图片源、路径、尺寸、重定向、响应类型、大小和时间，缓存有容量／TTL／权限边界。遵守 Bearer／CSP，不公开绕权、不把凭据放 URL／cookie／持久存储；必要对象 URL 及时释放并清理跨身份数据。 |
+| V2-EXPLORE-010 | 探索与媒体执行、拥有状态保持独立。 | 列表／搜索／详情／图片不读写媒体 Storage、不建 Task、不发布配置或授予执行权；不声称已入库／已订阅，不触发扫描／识别／整理／下载／播放／通知。其他任务、文件、自动化、设置及非重放语义保持；必要 TMDB 署名可见。 |
+
+完整旅程见 [Product Experience TARGET](product-experience.md#target--v2-explore-homepage-slice51-planned)，
+技术契约见 [Architecture TARGET](architecture.md#target--v2-explore-homepage-slice51-planned)。
+新源、推荐榜单、订阅／收藏、资源站搜索／下载／播放、演员／相似作品、完整季集浏览及
+本地拥有状态都不在首期；旧 Dashboard API／CLI 的退役也不从 Web 替换推导。
+
 ## CURRENT — V2 dialog, readability and navigation experience (Slice50 PASS / CLOSED)
 
 用户原八项 `V2-UX-005–012` 与后续自动化新建/编辑稳定性补充 `V2-UX-013` 均已交付。
-[Slice50](../SLICE.md) 于 2026-11-07 通过独立 A Final Review **PASS / CLOSED**：原 Base
+[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) 于 2026-11-07 通过独立 A Final Review **PASS / CLOSED**：原 Base
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`；
 B 最终包 `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md`。下表全部为 CURRENT；现有自动化卡片是共同视觉/
 交互基准，各领域保留自己的模型与命令。旧参考图和旧 Slice 原始验收保持历史事实。
