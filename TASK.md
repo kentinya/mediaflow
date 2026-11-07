@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md), activated by A at
 Task ID: 51.1
 Task Type: SLICE
 Parent Slice: 51
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3c8053b06c218e76084ec1c06cf57f03259da84c
 Difficulty: High
 Test Level: T3
@@ -19,8 +19,9 @@ Implementation Authorization: AUTHORIZED — TASK 51.1 ONLY; USER ACTIVATION 202
 
 用户于 2026-11-07 明确“激活 Task”，将已提交的 Task51.1 草案转为正式活动实施 Task。
 目标、范围、Task ID／Base、High／T3 及测试分工保持，实施授权仅限本 Task。
-当前实现候选为 `f8015b97a0b82db0b3cce1aea33088ff6c8d366e`；B 已独立审查并给出
-FIX REQUIRED。修正留在 Task51.1，Task Base／目标／范围／High／T3 不变。
+上一实现候选为 `f8015b97a0b82db0b3cce1aea33088ff6c8d366e`,B 已独立审查并给出
+FIX REQUIRED。Developer 修正后的实现候选为 `de86eab8`;修正留在 Task51.1,
+Task Base/目标/范围/High/T3 不变,待 B 对 Base..新候选重新完整审查。
 同一代理代替 B 规划的既有用户授权及角色例外继续披露，不构成 B 验收或 A Final Review。
 
 ## Accepted baseline
@@ -228,12 +229,106 @@ Active 启动／初始化、图片代理／缓存平台、新设置／权限、s
 
 ## Developer Completion Report
 
-已有实现 checkpoint：`f8015b97a0b82db0b3cce1aea33088ff6c8d366e`，提交了探索
-domain/application/API/TMDB adapter、React 完整页面骨架、默认首页切换和测试。
-该提交未更新本段和 Task 状态；提交说明中的测试声明不替代 Developer 的实际命令／结果
-交接。以下验收结果均为 B 本轮独立执行，不代写 Developer 已完成的证明。
-Developer 修正后将本 Task 转为 READY FOR B REVIEW，并提交新的不可变 checkpoint、
-新增／改动及直接受影响测试结果、剩余风险；不重设 Base，不自行实现下一 Task。
+```text
+Correction checkpoint: de86eab8 (fix(explore): Task 51.1 修正五项 B 审查缺陷)
+Task Base unchanged: 3c8053b06c218e76084ec1c06cf57f03259da84c
+Scope: B blockers 1–5 only; Non-goals and Dashboard exit work untouched
+Status after this report: READY FOR B REVIEW (Developer 不自签 PASS)
+```
+
+### 本轮修正(源码身份)
+
+1. **最低评分人数(P1)** `mediaflow/infrastructure/tmdb.py`:`browse` 改为
+   `effective_min_votes` 非空即下发 `vote_count.gte`;评分排序默认 100 不变,
+   显式人数(含 0)在任意排序下始终生效,默认热门/日期无人数条件。
+2. **搜索退出恢复锚点(P1)** `web/src/features/explore/ExplorePage.tsx`:
+   分离浏览 `mediaType` 与搜索态 `searchMediaType`;搜索态切类型只改搜索上下文,
+   仅在浏览→搜索转换时保存浏览锚点(条件/已加载页/滚动),后续搜索提交不覆盖。
+3. **筛选目录失败可见与恢复(P1)** 同文件:options 查询补 pending 状态、
+   `role=alert` 就近错误(含后端 message/nextAction)与“重新读取筛选选项”
+   (仅 refetch 当前类型目录);失败时下拉禁用并显示“筛选选项读取失败”占位,
+   不伪装空目录;options 接入 `useAuthorizedReadAuthorityRecovery`,上游凭据失败
+   保持本方身份,成功列表与用户输入保留。
+4. **详情内容(P1)** `mediaflow/domain/explore.py` / `infrastructure/tmdb.py` /
+   `application/explore.py` / `web/src/entities/explore/explore.ts` /
+   `ExploreDetailCard.tsx`:新增可空 `number_of_episodes` 贯穿 domain→adapter→
+   API(`numberOfEpisodes`)→Web,TV 详情显示“集数”(缺项据实显示为“缺项”),电影无该行;
+   详情卡新增固定 w780 背景图(非法引用/加载失败回落为无图文字态,返回/键盘不变)。
+5. **TMDB 署名(P1)** 新增 `web/src/features/explore/ExploreAttribution.tsx` 与
+   `web/public/tmdb-logo.svg`:官方 approved blue_short 标识(同源 `/ui-v2/` 分发,
+   img-src CSP 不变)+ 精确声明 “This product uses the TMDB API but is not endorsed
+   or certified by TMDB.” + 官网回链(键盘可达),页面底部与详情卡就近各一份,
+   不占首屏。标识字节仅将内部 `<style>` 类填充改写为等价 `fill` presentation
+   attribute(静态层 `style-src 'self'` 会阻断 SVG 内联 style),图形本身未改。
+
+测试基础设施(仅测试):`scripts/explore_harness.py` 增加 `genre_503` 失败族、
+`number_of_episodes` 假数据与 `stats.voteFloors`(记录 adapter 实际发出的
+`vote_count.gte`);未新增测试管理接口或框架。
+
+### 本轮实际执行命令与结果
+
+仓库根(bash cwd=/Users/songzhidong/mediaflow):
+
+| 命令 | 结果 |
+|---|---|
+| `python3 scripts/check_governance.py` | PASS |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'` | 41 tests OK |
+| `... -p 'test_metadata.py'` | 36 tests OK |
+| `... -p 'test_api_security.py'` | 13 tests OK |
+| `... -p 'test_v2_ui.py'` | 13 tests OK |
+| `ruff format --check` + `ruff check`(TASK 清单内 10 个 Python 文件,含改动的 `scripts/explore_harness.py`) | 全过 |
+| `git diff --check` | 干净 |
+
+`web/`:
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | 过 |
+| `npm exec eslint --`(TASK 静态清单 + `ExploreAttribution.tsx`) | 过 |
+| `npm exec prettier -- --check`(同清单 + `styles.css`) | 过 |
+| `npm run test -- run src/entities/explore src/features/explore src/shared/api/explore-api.test.ts src/shared/api/api-client.test.ts src/shared/api/auth-store.test.ts src/shared/auth src/shared/navigation/destination-model.test.ts src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx src/features/entry/EntryPage.test.tsx src/routes/router.test.tsx` | 13 文件 / 180 用例全过 |
+| `npm run build` | 成功 |
+| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts` | 10 passed(0 skip) |
+
+新增/调整的关键用例(均走既有真实入口,未拦探索 JSON,图片为本地 fixture):
+
+- `tests/test_explore.py`:`test_vote_floor_reaches_upstream_for_every_sort_and_gates_results`
+  以参数过滤假上游对电影/剧集 × 三种排序断言实际收到 `vote_count.gte=2000` 且返回
+  作品全部满足条件(低票/未评分被上游滤掉);
+  `test_vote_floor_defaults_stay_sort_scoped_and_explicit_zero_wins`(默认 100/无条件/
+  显式 250/显式 0)、`test_applied_min_votes_echo_matches_the_upstream_request`、
+  `test_detail_document_carries_nullable_episode_counts`。
+- `tests/test_explore_api.py`:详情文档 `numberOfEpisodes` movie=null/TV=24。
+- `web/src/features/explore/ExplorePage.test.tsx`(+4):搜索态切类型退出完整恢复
+  浏览锚点与缓存;options 失败面板/禁用占位/重读恢复且 browse 请求不增加、身份保留;
+  TV 详情背景图 w780、季数 4/集数 42、缺项“缺项”、背景图失败后事实仍可读;
+  署名区声明/本地标识/回链可聚焦。
+- `web/src/entities/explore/explore.test.ts`:`numberOfEpisodes` 归一化(42/缺省 null/
+  错型 malformed)。
+- `web/tests/e2e/explore.python.spec.ts`(+4,复用既有评审入口):默认热门下
+  最低评分人数 2000 经“更多筛选→应用筛选”真实下发(`stats.voteFloors` 证
+  discover/movie 三排序各 `:2000`、评分排序回默认 `:100`)且假上游过滤后诚实总数
+  8/45、无假“暂无评分”;浏览(电影+动作+英语)→搜索→搜索态切剧集→再次提交关键词
+  →退出:类型/条件/6 作品/滚动(>0) 精确恢复且 browse 读取数不增、空搜索诚实呈现;
+  冷 TV 目录在 `genre_503` 下列表照常、面板+禁用占位+“重新读取筛选选项”恢复且
+  discover/tv 读取数不增、恢复后“动作与冒险”真实可选;页面/详情卡署名与 w780 背景、
+  TV 季/集数、390px 署名可见且无横向溢出。既有 6 用例外加适配:上游凭据文案断言
+  改为限定列表失败面板(options 面板合法同文案),严格选择器加 `exact`。
+
+测试耗时低于本轮总时长 30%(测试/构建类命令累计计时约 2 分钟,本轮总时长约 55 分钟)。
+
+### 剩余风险 / B 待执行
+
+- 未运行 Node 系 `deep-link.spec.ts` / `page-transition.spec.ts` 及全仓 Python/Web/
+  E2E 回归;本轮未改 API 权限与静态 CSP,仅改接的直接受影响测试如上全过。B 按原
+  affected-test 计划补做其门禁(含竞态、reduced-motion 交互与其余失败恢复)。
+- 署名标识为官方 blue_short 资产本地化分发;若 A/B 要求原始 bytes 分发,
+  需另行讨论静态层 `style-src` 豁免(本轮不建议、未改 CSP)。
+- `explore/options` 目录读取与列表同缓存策略:目录恢复只重读当前类型,已在页面与
+  浏览器层证明“不重读已成功作品页”;跨身份缓存清理仍由现有 query 键隔离承载。
+- 本轮工作区起点 `main`/HEAD `66e768a6`;预存 `mediaflow/.DS_Store` 修改与全部
+  未跟踪日志/`.DS_Store`/`.explore_adapter_block.py`/`15`/output 产物原样保留、未入
+  checkpoint;私有配置未触及;未推送。
 
 ## B Review Result
 
