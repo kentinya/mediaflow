@@ -307,6 +307,40 @@ function PlanEvidenceBlock({
           </dd>
         </div>
         <div>
+          <dt>命名分析</dt>
+          <dd>
+            {analysis?.naming === null || analysis === null
+              ? "—"
+              : `策略 ${safeValue(analysis.naming.policyId)} · 目录 ${safeValue(
+                  analysis.naming.directory,
+                )} · 文件 ${safeValue(analysis.naming.filename)}${
+                  analysis.naming.available ? "" : "（不可用）"
+                }`}
+          </dd>
+        </div>
+        <div>
+          <dt>分类分析</dt>
+          <dd>
+            {analysis?.classification === null || analysis === null
+              ? "—"
+              : `策略 ${safeValue(
+                  analysis.classification.policyId,
+                )} · 媒体库 ${safeValue(
+                  analysis.classification.mediaLibraryId,
+                )} · 相对路径 ${safeValue(
+                  analysis.classification.relativePath,
+                )} · 规则 ${safeValue(
+                  analysis.classification.matchedRuleName,
+                )}(${safeValue(
+                  analysis.classification.matchedRuleId,
+                )}) · 依据 ${
+                  analysis.classification.evidence.length === 0
+                    ? "无"
+                    : analysis.classification.evidence.join("; ")
+                }`}
+          </dd>
+        </div>
+        <div>
           <dt>操作</dt>
           <dd>{safeValue(plan?.operation ?? null)}</dd>
         </div>
@@ -439,6 +473,168 @@ function PlanEvidenceBlock({
         </div>
       )}
     </>
+  );
+}
+
+const MEDIA_TYPE_LABELS: Readonly<Record<string, string>> = {
+  movie: "电影",
+  tv: "电视剧",
+};
+
+const CLASSIFICATION_EVIDENCE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  media_type: "媒体类型",
+  genre: "类型",
+  genres: "类型",
+  country: "国家/地区",
+  countries: "国家/地区",
+  language: "语言",
+  languages: "语言",
+};
+
+function mediaTypeLabel(value: string | null): string | null {
+  return value === null ? null : (MEDIA_TYPE_LABELS[value] ?? value);
+}
+
+function classificationEvidenceLabel(value: string): string {
+  const separator = value.indexOf("=");
+  if (separator <= 0) {
+    return value;
+  }
+  const field = value.slice(0, separator);
+  const raw = value.slice(separator + 1);
+  if (field === "media_type") {
+    return `媒体类型 ${mediaTypeLabel(raw) ?? raw}`;
+  }
+  const label = CLASSIFICATION_EVIDENCE_FIELD_LABELS[field];
+  return label === undefined ? value : `${label} ${raw}`;
+}
+
+/**
+ * The readable recognition → metadata → naming → classification explanation
+ * of one captured reviewed plan. It reads only the durable plan document of
+ * this exact item, so an old Task keeps the explanation it was executed with;
+ * the raw plan, ids and warnings remain in the technical diagnostics below.
+ */
+function PlanProcessingSummary({
+  evidence,
+}: {
+  readonly evidence: RunPlanEvidence;
+}) {
+  const plan = evidence.plan;
+  const analysis = plan?.analysis ?? null;
+  if (!evidence.available || plan === null || analysis === null) {
+    return null;
+  }
+  const identity = analysis.metadata?.identity ?? plan.mediaIdentity;
+  const rows: { readonly label: string; readonly value: string }[] = [];
+  const recognitionType =
+    analysis.recognition?.recognitionTypeId ?? plan.recognitionType;
+  const parse = analysis.parse;
+  if (parse !== null && parse.titleCandidate !== null) {
+    const year = parse.year === null ? "" : ` (${parse.year})`;
+    const episode =
+      parse.season === null && parse.episode === null
+        ? ""
+        : `，第 ${parse.season ?? "—"} 季第 ${parse.episode ?? "—"} 集`;
+    rows.push({
+      label: "文件识别",
+      value: `从文件名识别为《${parse.titleCandidate}》${year}${episode}${
+        recognitionType === null ? "" : `；识别类型 ${recognitionType}`
+      }`,
+    });
+  } else if (recognitionType !== null) {
+    rows.push({ label: "识别类型", value: recognitionType });
+  }
+  const metadata = analysis.metadata;
+  if (metadata !== null && metadata.available) {
+    if (identity !== null) {
+      const provider = identity.provider ?? plan.provider;
+      const providerId = identity.providerId ?? plan.providerId;
+      const title = identity.title ?? plan.title;
+      const year = identity.year === null ? "" : ` (${identity.year})`;
+      const parts = [
+        provider === null && providerId === null
+          ? null
+          : `${provider ?? "元数据"}${providerId === null ? "" : ` #${providerId}`}`,
+        title === null ? null : `${title}${year}`,
+        mediaTypeLabel(identity.mediaType),
+        metadata.match?.score === null || metadata.match?.score === undefined
+          ? null
+          : `匹配分 ${metadata.match.score}`,
+      ].filter((part): part is string => part !== null && part !== "");
+      rows.push({ label: "作品匹配", value: `匹配 ${parts.join("，")}` });
+    } else {
+      rows.push({ label: "作品匹配", value: "未匹配到可用的作品身份。" });
+    }
+  } else if (metadata !== null) {
+    rows.push({ label: "作品匹配", value: "未记录可用的作品匹配结果。" });
+  }
+  const naming = analysis.naming;
+  if (naming !== null) {
+    if (
+      naming.available &&
+      (naming.directory !== null || naming.filename !== null)
+    ) {
+      rows.push({
+        label: "命名结果",
+        value: `目录 ${naming.directory ?? "未生成"}；文件名 ${
+          naming.filename ?? "未生成"
+        }`,
+      });
+    } else if (!naming.available) {
+      rows.push({ label: "命名结果", value: "未记录可用的命名结果。" });
+    }
+  }
+  const classification = analysis.classification;
+  if (classification !== null) {
+    if (classification.available) {
+      const target = [
+        classification.mediaLibraryId === null
+          ? null
+          : `媒体库 ${classification.mediaLibraryId}`,
+        classification.relativePath === null
+          ? null
+          : `相对路径 ${classification.relativePath}`,
+      ].filter((part): part is string => part !== null);
+      const rule =
+        classification.matchedRuleName ?? classification.matchedRuleId;
+      const ruleDetail =
+        classification.matchedRuleId !== null &&
+        classification.matchedRuleName !== null &&
+        classification.matchedRuleId !== classification.matchedRuleName
+          ? `规则 ${classification.matchedRuleName}（${classification.matchedRuleId}）命中`
+          : rule === null
+            ? null
+            : `规则 ${rule} 命中`;
+      const basis =
+        classification.evidence.length === 0
+          ? null
+          : `依据 ${classification.evidence
+              .map(classificationEvidenceLabel)
+              .join("、")}`;
+      rows.push({
+        label: "分类结果",
+        value:
+          [target.join("，"), ruleDetail, basis]
+            .filter((part): part is string => part !== null && part !== "")
+            .join("；") || "未记录可用的分类依据。",
+      });
+    } else {
+      rows.push({ label: "分类结果", value: "未记录可用的分类结果。" });
+    }
+  }
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <dl className="mf-dashboard-facts" aria-label="识别、命名与分类">
+      {rows.map((row) => (
+        <div key={row.label}>
+          <dt>{row.label}</dt>
+          <dd>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -2300,8 +2496,21 @@ function storageStepLabel(step: string): string {
   return label === undefined ? step : `${label}（${step}）`;
 }
 
+function refusalReasonLabel(reason: string): string {
+  const token = reason.split(":", 1)[0] ?? reason;
+  return (
+    REFUSAL_REASON_LABELS[reason] ??
+    REFUSAL_REASON_LABELS[token] ??
+    "未识别原因"
+  );
+}
+
 function resultStatusLabel(status: string): string {
-  return RESULT_STATUS_LABELS[status] ?? status;
+  return (
+    RESULT_STATUS_LABELS[status] ??
+    RESULT_STATUS_LABELS[status.toLowerCase()] ??
+    status
+  );
 }
 
 /** Business names for known durable refusal tokens; unknown tokens stay exact. */
@@ -2310,6 +2519,7 @@ const REFUSAL_REASON_LABELS: Readonly<Record<string, string>> = {
   blocked: "等待处理决定",
   authority_required: "需要重新明确执行授权",
   storage_unavailable: "目标存储当前不可用",
+  replay_not_offered: "已结束的条目不再提供重放",
 };
 
 /** The last path segment an operator recognises as the processed file. */
@@ -2438,7 +2648,6 @@ function RunEvidenceSection({
               : (taskFailureReason(failure.category) ?? "处理未完成");
           const needsAttention =
             failure !== null ||
-            checkpoint.refusalReason !== null ||
             checkpoint.blockerKind !== null ||
             checkpoint.effectCertainty === "attempted_unverified" ||
             checkpoint.uncertainEffects.length > 0;
@@ -2535,6 +2744,7 @@ function RunEvidenceSection({
               </section>
               <section className="mf-run-evidence-block" aria-label="处理经过">
                 <h5>处理经过</h5>
+                <PlanProcessingSummary evidence={evidence.planEvidence} />
                 {evidence.results.length === 0 &&
                 checkpoint.completedOperations.length === 0 ? (
                   <p className="mf-dashboard-meta">尚无已记录的处理步骤。</p>
@@ -2576,13 +2786,6 @@ function RunEvidenceSection({
                 >
                   <h5>需处理原因</h5>
                   {failure !== null && <p>{failureReason}。</p>}
-                  {checkpoint.refusalReason !== null && (
-                    <p>
-                      未继续原因：
-                      {REFUSAL_REASON_LABELS[checkpoint.refusalReason] ??
-                        checkpoint.refusalReason}
-                    </p>
-                  )}
                   {checkpoint.blockerKind !== null && (
                     <p>
                       当前阻塞：
@@ -2640,6 +2843,16 @@ function RunEvidenceSection({
                     <dt>重试安全性</dt>
                     <dd>{checkpoint.retrySafety}</dd>
                   </div>
+                  {checkpoint.refusalReason !== null && (
+                    <div>
+                      <dt>拒绝原因</dt>
+                      <dd>
+                        {refusalReasonLabel(checkpoint.refusalReason)}
+                        （
+                        <TechnicalToken value={checkpoint.refusalReason} />）
+                      </dd>
+                    </div>
+                  )}
                   {failure !== null && (
                     <>
                       <div>

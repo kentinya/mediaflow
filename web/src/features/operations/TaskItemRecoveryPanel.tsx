@@ -45,6 +45,88 @@ const PENDING_ACTION_LABELS: Readonly<Record<string, string>> = {
   confirm: "确认计划摘要",
 };
 
+/** Business names for the checkpoint facts shown beside a live recovery. */
+const RECOVERY_STAGE_LABELS: Readonly<Record<string, string>> = {
+  pending: "待处理",
+  queued: "排队中",
+  processing: "进行中",
+  scanning: "扫描",
+  parsing: "解析",
+  recognition: "识别",
+  metadata: "元数据",
+  naming: "命名",
+  classification: "分类",
+  strategy: "整理策略",
+  storage: "存储操作",
+  analyze: "安全分析",
+  organizing: "整理执行",
+  waiting_confirm: "等待确认",
+  waiting_recognition: "等待识别决定",
+  waiting_metadata: "等待元数据决定",
+  waiting_metadata_correction: "等待元数据修正",
+  waiting_classification: "等待分类决定",
+  failed: "失败",
+  completed: "已完成",
+  cancelled: "已取消",
+  paused: "已暂停",
+};
+
+const RECOVERY_EFFECT_LABELS: Readonly<Record<string, string>> = {
+  none: "无存储变更",
+  verified_complete: "已验证完成",
+  attempted_unverified: "已尝试，未验证",
+  unknown: "未知",
+};
+
+const RECOVERY_RETRY_SAFETY_LABELS: Readonly<Record<string, string>> = {
+  safe: "可安全重试",
+  unsafe: "不要重放",
+  unknown: "未知",
+};
+
+const RECOVERY_ACTION_LABELS: Readonly<Record<string, string>> = {
+  retry: "显式重新检查",
+  continue: "继续安全分析",
+  ignore: "按策略忽略",
+  resolve_recognition: "确认识别类型",
+  resolve_metadata: "确认元数据选择",
+  resolve_metadata_correction: "确认元数据修正",
+  resolve_classification: "确认分类目标",
+  resolve_conflict: "处理文件冲突",
+};
+
+/** One short, factual sentence for a read-only technical-history item. */
+function technicalHistoryMessage(
+  checkpoint: {
+    readonly status: string;
+    readonly effectCertainty: string;
+  } | null,
+): string {
+  if (checkpoint === null) {
+    return "条目状态暂不可用。";
+  }
+  if (
+    checkpoint.effectCertainty === "attempted_unverified" ||
+    checkpoint.effectCertainty === "unknown"
+  ) {
+    return "目标文件结果尚未确认；请先核对上方已记录的效果，不要直接重放。";
+  }
+  switch (checkpoint.status) {
+    case "success":
+      return "文件已整理完成，没有待处理操作。";
+    case "failed":
+      return "处理失败；请查看上方失败原因与已记录结果。";
+    case "cancelled":
+      return "处理已取消，没有待处理操作。";
+    case "skipped":
+      return "此文件已跳过，没有待处理操作。";
+    case "ignored":
+      return "此文件已忽略，没有待处理操作。";
+    default:
+      return "此文件没有待处理操作。";
+  }
+}
+
 function outcomeMessage(code: string, status: number): string {
   if (code === "stale_checkpoint" || code === "decision_changed") {
     return "条目已变化。先重新读取当前证据，再决定下一步。";
@@ -589,43 +671,82 @@ export function TaskItemRecoveryPanel({
           onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
-      <dl className="mf-dashboard-facts">
-        <div>
-          <dt>当前阶段</dt>
-          <dd>{checkpoint?.stage ?? "不可用"}</dd>
-        </div>
-        <div>
-          <dt>效果确定性</dt>
-          <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
-        </div>
-        <div>
-          <dt>重试安全性</dt>
-          <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
-        </div>
-        <div>
-          <dt>可用操作</dt>
-          <dd>
-            {!owesRecoveryAction
-              ? "无（技术历史，仅只读）"
-              : permitted.size === 0
+      {owesRecoveryAction ? (
+        <dl className="mf-dashboard-facts">
+          <div>
+            <dt>当前阶段</dt>
+            <dd>
+              {RECOVERY_STAGE_LABELS[checkpoint?.stage ?? ""] ??
+                checkpoint?.stage ??
+                "不可用"}
+            </dd>
+          </div>
+          <div>
+            <dt>效果确定性</dt>
+            <dd>
+              {RECOVERY_EFFECT_LABELS[checkpoint?.effectCertainty ?? ""] ??
+                checkpoint?.effectCertainty ??
+                "未知"}
+            </dd>
+          </div>
+          <div>
+            <dt>重试安全性</dt>
+            <dd>
+              {RECOVERY_RETRY_SAFETY_LABELS[checkpoint?.retrySafety ?? ""] ??
+                checkpoint?.retrySafety ??
+                "未知"}
+            </dd>
+          </div>
+          <div>
+            <dt>可用操作</dt>
+            <dd>
+              {permitted.size === 0
                 ? "无"
-                : [...permitted].join("、")}
-          </dd>
-        </div>
-      </dl>
-      {checkpoint?.refusalReason !== null &&
-        checkpoint?.refusalReason !== undefined && (
-          <p className="mf-dashboard-meta">{checkpoint.refusalReason}</p>
-        )}
-      {owesRecoveryAction && checkpoint?.nextAction && (
-        <p className="mf-dashboard-meta">下一步：{checkpoint.nextAction}</p>
-      )}
-      {!owesRecoveryAction && (
+                : [...permitted]
+                    .map((action) => RECOVERY_ACTION_LABELS[action] ?? action)
+                    .join("、")}
+            </dd>
+          </div>
+        </dl>
+      ) : (
         <p className="mf-dashboard-meta">
-          这是一个技术失败条目：任务中心只保留它的真实原因、阶段、已完成与不确定效果、
-          结果、日志和导出，不提供通用修复、重试或核查流程。成功或效果未知的记录不会被重放。
+          {technicalHistoryMessage(checkpoint)}
         </p>
       )}
+      <details className="mf-run-fact-diagnostics">
+        <summary>技术诊断（状态、重试与权限）</summary>
+        <dl className="mf-dashboard-facts">
+          <div>
+            <dt>阶段</dt>
+            <dd>{checkpoint?.stage ?? "不可用"}</dd>
+          </div>
+          <div>
+            <dt>效果确定性</dt>
+            <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>重试安全性</dt>
+            <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>可用操作标识</dt>
+            <dd>{permitted.size === 0 ? "无" : [...permitted].join("、")}</dd>
+          </div>
+          {checkpoint?.refusalReason !== null &&
+            checkpoint?.refusalReason !== undefined && (
+              <div>
+                <dt>拒绝原因</dt>
+                <dd>{checkpoint.refusalReason}</dd>
+              </div>
+            )}
+          {checkpoint?.nextAction && (
+            <div>
+              <dt>服务下一步</dt>
+              <dd>{checkpoint.nextAction}</dd>
+            </div>
+          )}
+        </dl>
+      </details>
       {busy && pendingAction !== null && (
         <StatusBanner variant="info" title="操作请求仍在进行">
           <p>

@@ -697,7 +697,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     evidence.getByRole("region", { name: "处理经过" }),
   ).toBeVisible();
   // The technical records stay reachable inside the diagnostics group.
-  await evidence.getByText(/技术诊断/).click();
+  await evidence.getByText(/技术诊断（计划、日志与审计/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
 
@@ -1023,11 +1023,42 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   });
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
-  await expect(itemEvidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    itemEvidence.getByText("文件已整理", { exact: true }),
+  ).toBeVisible();
+  await expect(itemEvidence.getByText("第 1 次执行：成功")).toBeVisible();
+  // The successful Worker result states recognition, match, naming and the
+  // Anime classification reason without opening the raw plan diagnostics.
+  await expect(
+    itemEvidence.getByText("从文件名识别为《One》 (2001)；识别类型 C"),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText("匹配 tmdb #101，One (2001)，电影，匹配分 100"),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText(
+      "目录 One (2001) [tmdbid-101]；文件名 One (2001).mkv",
+    ),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText(
+      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+    ),
+  ).toBeVisible();
+  // A successful item has no failure reason, empty control block or standing
+  // technical-failure tutorial; its terminal no-replay token stays technical.
+  await expect(itemEvidence.getByText("需处理原因")).toHaveCount(0);
+  await expect(itemEvidence.getByText(/技术失败条目/)).toHaveCount(0);
+  await expect(
+    itemEvidence.getByText("文件已整理完成，没有待处理操作。"),
+  ).toBeVisible();
   await expect(
     itemEvidence.getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
-  await itemEvidence.getByText(/技术诊断/).click();
+  await itemEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await expect(
+    itemEvidence.getByText(/已结束的条目不再提供重放/),
+  ).toBeVisible();
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1083,7 +1114,16 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const reloadedEvidence = reloadedDetail.getByRole("region", {
     name: "条目证据",
   });
-  await reloadedEvidence.getByText(/技术诊断/).click();
+  // The same durable plan still explains the completed file after restart.
+  await expect(
+    reloadedEvidence.getByText("从文件名识别为《One》 (2001)；识别类型 C"),
+  ).toBeVisible();
+  await expect(
+    reloadedEvidence.getByText(
+      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+    ),
+  ).toBeVisible();
+  await reloadedEvidence.getByText(/技术诊断（计划、日志与审计/).click();
   await expect(
     reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1645,8 +1685,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   });
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
-  await expect(itemEvidence.getByText("文件已整理")).toBeVisible();
-  await itemEvidence.getByText(/技术诊断/).click();
+  await expect(
+    itemEvidence.getByText("文件已整理", { exact: true }),
+  ).toBeVisible();
+  await itemEvidence.getByText(/技术诊断（计划、日志与审计/).click();
   // The reviewed-plan section keeps its honest unavailability…
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
@@ -1712,7 +1754,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
       exact: true,
     }),
   ).not.toHaveCount(0);
-  await reloadedEvidence.getByText(/技术诊断/).click();
+  await reloadedEvidence.getByText(/技术诊断（计划、日志与审计/).click();
   await expect(
     reloadedEvidence.getByText(/createdDirectories=Movies\/Movies\/Anime/),
   ).toBeVisible();

@@ -911,7 +911,7 @@ describe("TaskItemRecoveryPanel", () => {
   });
 });
 
-it("publishes a purely technical failure read-only without generic repair guidance", async () => {
+it("publishes a purely technical failure as a factual read-only history", async () => {
   authStore.setToken("task-recovery-test-token");
   const value = recognitionRecovery();
   const checkpoint = value["checkpoint"] as Record<string, unknown>;
@@ -940,14 +940,73 @@ it("publishes a purely technical failure read-only without generic repair guidan
     />,
   );
   const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
-  expect(await within(panel).findByText(/技术失败条目/)).toBeVisible();
-  expect(within(panel).getByText("无（技术历史，仅只读）")).toBeVisible();
+  // An actual failure stays a short fact; the old standing "technical failure"
+  // tutorial and the empty read-only action list are not the operator's task.
   expect(
-    within(panel).queryByText(/repair the dependency/),
-  ).not.toBeInTheDocument();
+    await within(panel).findByText(
+      "处理失败；请查看上方失败原因与已记录结果。",
+    ),
+  ).toBeVisible();
+  expect(within(panel).queryByText(/技术失败条目/)).toBeNull();
+  expect(within(panel).queryByText("无（技术历史，仅只读）")).toBeNull();
   expect(
     within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
   ).not.toBeInTheDocument();
+  // The raw checkpoint and server guidance remain available on demand.
+  await userEvent
+    .setup()
+    .click(within(panel).getByText("技术诊断（状态、重试与权限）"));
+  expect(
+    within(panel).getByText(/repair the dependency, then continue/),
+  ).toBeVisible();
+  expect(within(panel).getByText("retry")).toBeVisible();
+});
+
+it("keeps a successful technical-history item free of failure guidance", async () => {
+  authStore.setToken("task-recovery-test-token");
+  const value = recognitionRecovery();
+  const checkpoint = value["checkpoint"] as Record<string, unknown>;
+  value["decision"] = null;
+  checkpoint["status"] = "success";
+  checkpoint["stage"] = "completed";
+  checkpoint["raw_stage"] = "completed";
+  checkpoint["effects"] = { certainty: "verified_complete" };
+  checkpoint["blocker"] = null;
+  checkpoint["retry_safety"] = "unsafe";
+  checkpoint["permitted_action_ids"] = [];
+  checkpoint["refusal_reason"] =
+    "replay_not_offered: item has a terminal outcome";
+  checkpoint["next_action"] = null;
+  value["manualRecoveryAvailable"] = false;
+  value["recoveryKind"] = "technical_history";
+  value["next_action"] = "none";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify(value), { status: 200 })),
+  );
+  renderWithProviders(
+    <TaskItemRecoveryPanel
+      taskId="task-1"
+      itemId="item-1"
+      runId="task-1"
+      active={false}
+    />,
+  );
+  const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+  expect(
+    await within(panel).findByText("文件已整理完成，没有待处理操作。"),
+  ).toBeVisible();
+  expect(within(panel).queryByText(/技术失败条目/)).toBeNull();
+  expect(within(panel).queryByText("无（技术历史，仅只读）")).toBeNull();
+  // The terminal no-replay token is technical history, not a user-facing
+  // repair instruction; it stays in the diagnostics.
+  await userEvent
+    .setup()
+    .click(within(panel).getByText("技术诊断（状态、重试与权限）"));
+  expect(
+    within(panel).getByText("replay_not_offered: item has a terminal outcome"),
+  ).toBeVisible();
+  expect(within(panel).getByText("unsafe")).toBeVisible();
 });
 
 it("handles the exact linked blocker in the original context without navigation", async () => {

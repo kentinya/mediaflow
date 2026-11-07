@@ -330,8 +330,16 @@ function planEvidenceDocument(overrides: Record<string, unknown> = {}) {
         metadata: {
           available: true,
           status: "matched",
+          identity: {
+            provider: "tmdb",
+            providerId: "101",
+            mediaType: "movie",
+            title: "One",
+            year: 2001,
+          },
           match: {
             status: "matched",
+            score: 100,
             candidates: [],
             reasons: [],
             warnings: [],
@@ -352,8 +360,10 @@ function planEvidenceDocument(overrides: Record<string, unknown> = {}) {
           status: "classified",
           policyId: "A",
           mediaLibraryId: "movies",
-          relativePath: "Movies",
-          evidence: [],
+          relativePath: "Anime",
+          matchedRuleId: "anime-movie",
+          matchedRuleName: "Japanese Animation",
+          evidence: ["media_type=movie", "genre=Animation", "country=JP"],
           warnings: [],
         },
       },
@@ -855,6 +865,13 @@ function preparedSummaryDocument(status: "prepared" | "confirmed") {
 }
 
 interface DetailJourneyOptions {
+  /** One exact item-1 evidence document, when a test needs a specific result. */
+  readonly evidenceItem1?: unknown;
+  /** The exact native recovery read of item-1, when a test drives it. */
+  readonly recoveryItem1?: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>;
   /** The exact native recovery reads/commands of item-2, when a test drives
    * them.  Without it the existing 404 fallback is unchanged. */
   readonly recovery?: (
@@ -880,6 +897,12 @@ function stubDetailJourney(
     requested.push(url);
     if (url === "/api/v1/auth/principal") {
       return jsonResponse({ principal_id: "test-principal" });
+    }
+    if (url.startsWith("/api/v1/tasks/task-001/items/item-1/recovery")) {
+      if (options.recoveryItem1 !== undefined) {
+        return options.recoveryItem1(input, init);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
     }
     if (url.startsWith("/api/v1/tasks/task-001/items/item-2/recovery")) {
       if (options.recovery !== undefined) {
@@ -923,7 +946,9 @@ function stubDetailJourney(
       return jsonResponse(evidenceDocument());
     }
     if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
-      return jsonResponse(manualExecutionEvidenceDocument());
+      return jsonResponse(
+        options.evidenceItem1 ?? manualExecutionEvidenceDocument(),
+      );
     }
     if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
       const status = new URLSearchParams(url.split("?")[1] ?? "").get("status");
@@ -1251,6 +1276,97 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
   });
 
+  it("PATCH-20261107-1 explains a successful file in business terms and keeps terminal refusal in diagnostics", async () => {
+    const user = userEvent.setup();
+    const success = manualExecutionEvidenceDocument({
+      results: [evidenceResultRow({ status: "SUCCESS" })],
+    });
+    (success.checkpoint as Record<string, unknown>)["refusal_reason"] =
+      "replay_not_offered: item has a terminal outcome";
+    const successRecovery = {
+      task_id: "task-001",
+      item_id: "item-1",
+      checkpoint: {
+        status: "success",
+        stage: "completed",
+        raw_stage: "completed",
+        effects: { certainty: "verified_complete" },
+        retry_safety: "unsafe",
+        checkpoint_version: "a".repeat(64),
+        blocker: null,
+        permitted_action_ids: [],
+        refusal_reason: "replay_not_offered: item has a terminal outcome",
+        next_action: null,
+      },
+      decision: null,
+      manualRecoveryAvailable: false,
+      recoveryKind: "technical_history",
+      next_action: "none",
+    };
+    stubDetailJourney([], {
+      evidenceItem1: success,
+      recoveryItem1: async () => jsonResponse(successRecovery),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：a.mkv");
+    expect(within(evidence).getByText("文件已整理")).toBeVisible();
+    // The real API returns an uppercase SUCCESS status; it reads as the same
+    // business fact as the lowercase item status.
+    expect(within(evidence).getByText("第 1 次执行：成功")).toBeVisible();
+
+    // Recognition, metadata, naming and classification are readable without
+    // opening the raw plan or querying current configuration.
+    expect(
+      within(evidence).getByText("从文件名识别为《One》 (2001)；识别类型 C"),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(
+        "匹配 tmdb #101，One (2001)，电影，匹配分 100",
+      ),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText("目录 One (2001)；文件名 One (2001).mkv"),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(
+        "媒体库 movies，相对路径 Anime；规则 Japanese Animation（anime-movie）命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+      ),
+    ).toBeVisible();
+
+    // A completed successful file has no standing technical-failure tutorial,
+    // no empty control block and no reason-to-act section.
+    const recovery = await within(evidence).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    expect(
+      await within(recovery).findByText("文件已整理完成，没有待处理操作。"),
+    ).toBeVisible();
+    expect(within(recovery).queryByText(/技术失败条目/)).toBeNull();
+    expect(within(evidence).queryByText(/需处理原因/)).toBeNull();
+
+    // The terminal refusal and raw checkpoint stay in the collapsed technical
+    // diagnostics, not in the primary body.
+    await user.click(within(evidence).getByText(/技术诊断（计划、日志与审计/));
+    expect(
+      await within(evidence).findByText(/已结束的条目不再提供重放/),
+    ).toBeVisible();
+    await user.click(
+      within(recovery).getByText("技术诊断（状态、重试与权限）"),
+    );
+    expect(
+      within(recovery).getByText(
+        "replay_not_offered: item has a terminal outcome",
+      ),
+    ).toBeVisible();
+    expect(within(recovery).getByText("unsafe")).toBeVisible();
+  });
+
   it("submits the item disposition filter to the server and keeps the population totals", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
@@ -1324,12 +1440,10 @@ describe("selected-run detail tabs", () => {
     // instead of surfacing the raw review tokens as the primary facts.
     expect(within(evidence).getByText(/当前阻塞/)).toBeVisible();
     expect(within(evidence).getByText(/等待元数据决定/)).toBeVisible();
-    expect(
-      within(evidence).getByText(/未继续原因：等待处理决定/),
-    ).toBeVisible();
-    // The technical next action and fixed configuration stay reachable inside
-    // the collapsed diagnostics.
+    // The technical next action, refusal token and fixed configuration stay
+    // reachable inside the collapsed diagnostics instead of the readable body.
     await user.click(within(evidence).getByText(/技术诊断/));
+    expect(within(evidence).getByText(/等待处理决定/)).toBeVisible();
     expect(
       within(evidence).getByText(/choose a metadata candidate/),
     ).toBeVisible();
