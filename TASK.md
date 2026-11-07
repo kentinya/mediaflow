@@ -1,8 +1,8 @@
-# Task 51.1 — 探索完整旅程与 V2 首页切换
+# Task 51.1 — B PASS / Slice51 ready for A review
 
-Authority: committed [Slice51](SLICE.md) at
-`58a748663b67180c103c37f65062dddd95ac5645`, including A51-01;
-[Development Workflow](docs/development-workflow.md) governs the same-Task correction and test ownership.
+Task51.1 修正轮 — **独立 B PASS（2026-11-07）**。A51-01 已解决，Slice51 全部必需
+结果／表面已重评；下一步为 **SLICE READY FOR A REVIEW**，由 A 终审完整 Slice。
+停止规划新 Task；本结论不关闭 Slice，也不授权推送或部署。
 
 ```text
 Task ID: 51.1
@@ -12,293 +12,141 @@ Status: READY FOR B REVIEW
 Task Base: 3c8053b06c218e76084ec1c06cf57f03259da84c
 Difficulty: High
 Test Level: T3
-Planner / Reviewer: User-authorized B substitution for this correction plan; independent B review pending
-Implementation Authorization: AUTHORIZED — TASK 51.1 A51-01 CORRECTION; B REVIEW PENDING
+B Decision: PASS
+Next Action: A FINAL REVIEW; NO FURTHER IMPLEMENTATION
 ```
 
-用户本轮明确“代替 B 规划 Task”，授权同一代理在 A 退回后代替 B 补齐本 Task 修正计划。
-这是规划角色例外，不构成独立 B 验收或修正后的 A Final Review；规划轮不启动
-Developer 实施、不把状态改为 IN PROGRESS，也不以本计划批准候选。后续实施按用户指令
-启动，B 独立验收，A 再审完整 Slice。原 ID／Task Base／Goal／Scope／High／T3 保持，不创建 Task51.3。
-本次是在原 Task 内对 A51-01 给出具体修正指导，合法继续；原完整计划／验收／测试分工仍见
-`9efe8ccd:TASK.md`，历史实现不重做。本轮具体工作以下列指导为准，未完成的 A 阻塞不重置。
+上方 Status 保留提交候选时的交接值，仅供现有治理检查读取；当前 B 判定为 PASS。
+现有检查不识别 Task PASS，且在 A 的 Slice FIX REQUIRED 状态下拒绝无活动 Task 通知。
+本轮曾将标题改为无活动通知，检查因此失败；已保留此限制，采用交接元数据＋独立
+B 结论，不改治理工具或 A 文件。A 接受后统一协调为无活动 Task；这不构成待开发工作。
 
-## Goal and existing journey
 
-原目标仍为 Slice51 RO-2／RO-3／RO-4 和 RO-1 的 V2 Web 首页替换：浏览 → 筛选／搜索 →
-准确详情 → 返回，加载、真实空态及失败分别可见且可恢复。
-本轮只完成 **A51-01：合法零结果经过生产 TMDB adapter／API 后呈现真实空态并可恢复**。
-对应 `V2-EXPLORE-002/004/007/008/010`、Slice RO-2／4、AC-3／4／7／9／10；
-[完整旅程](docs/product-experience.md#target--v2-explore-homepage-slice51)及
-[Provider／API 边界](docs/architecture.md#target--v2-explore-homepage-slice51)保持。
-
-| 现有入口／动作 | 修正后可见结果和恢复 |
-|---|---|
-| `/ui-v2/` 连接 → 探索 → 选择合法但无匹配的筛选，例如本地夹具的韩语 | 请求成功，显示“没有符合条件的作品”，没有读取失败、海报或加载更多；清除条件恢复真实非空列表 |
-| 作品名搜索提交无匹配关键词 → 切电影／剧集 | 两类型均为正常搜索空态，明确当前类型与关键词；修改关键词后仍可搜索到作品 |
-| 从已有筛选／已加载列表进入空搜索 → 退出搜索 | 恢复原浏览类型、条件、已加载页及位置，不把空搜索混成旧条件结果 |
-| 真正的畸形上游／网络／凭据失败 → 原有读取恢复 | 仍显示相应失败，保留已成功区域和原恢复入口；不得把所有异常吞成空结果 |
-
-零结果是一次成功的外部只读查询，不创建 Task、执行权限、Draft／Active 或媒体效果。
-请求页仍为 1–500；数据源总页数为 0 与用户请求第 0 页是不同含义。
-
-## Actual gap and preserved evidence
-
-本轮从 `main` / `58a748663b67180c103c37f65062dddd95ac5645` 开始，治理检查 PASS，
-工作区与 Git 可写。`git diff d91a9dd2 HEAD -- mediaflow scripts tests web` 为空，A 所审的
-产品、测试与 harness 未变。已核对原 A 浏览器复现的请求／响应、零 Storage 调用及业务表
-计数保持；复用其实际发现，不新造产品入口，不联系真实 TMDB 或用户媒体。
-本机证据：`.git/validation-evidence/d91a9dd2/a51-final/` 的
-`empty-journey-details.json`／`upstream-empty-pages.jsonl`／`tmdb-schema-note.json`；
-它们是本机契约驱动的假上游证据，不承诺远程可访问。
-
-修正前 `TMDBProvider.browse/search` 共用 `_explore_page`，在进入内部模型前拒绝
-`total_pages < 1`。内部 `ExplorePage`、API `totalPages` 和前端 normalizer 均沿用至少
-一个展示页的约定；现有 UI 已支持 `totalResults=0 / items=[] / hasMore=false` 的正常空态。
-`scripts/explore_harness.py::_list_payload` 却用 `max(1, …)` 生成上游总页数，adapter
-空页用例也写成 1；`test_explore_api.py` 的原 API double 直接生成内部页，不经过 TMDB
-归一化。因此需要在上游边界修正并贯通验证，不能只给内部空页再添一个相同断言。
-
-## Implementation Scope and ordered correction guidance
-
-1. **先固定失败输入。** 在 `tests/test_explore.py` 扩展现有 route-aware transport／provider
-   用例：对 browse/search × movie/tv 使用成功的上游
-   `{"page":1,"total_pages":0,"total_results":0,"results":[]}`，通过公开 Provider
-   方法触发归一化，修正前应复现失败。保留已有总页数为 1 的空页兼容用例；不调用
-   `_explore_page` 来代替真实 adapter 入口。补充零页但有结果／条目、负数、布尔和错误
-   类型等非法分页数据，证明修正没有扩大为任意畸形响应容忍；不用扩大到所有字段组合。
-
-2. **只在 TMDB 边界归一合法空页。** 修改 `mediaflow/infrastructure/tmdb.py::_explore_page`：
-   先保持对结果数组、整数总页／总数及 bool 的校验；仅当 `total_pages == 0`、
-   `total_results == 0` 且原 `results` 数组为空时，归一到现有内部 `total_pages=1`。
-   零页却带正总数或非空条目仍报 `MALFORMED_RESPONSE`；负数／类型错误仍失败。
-   非空页、正总页数、请求页、上限、applied 条件、去重／末页和缓存规则保持。
-   在归一化处写清“数据源零页 → 内部可展示的空窗口”的含义；不伪造总结果数或可翻页性。
-   保留 `ExplorePage`／API／前端的现有内部契约，不需要放宽 domain 或前端模型；
-   不修改共享 transport、错误映射、READ、配置绑定或整理用 Metadata 调用路径。
-
-3. **补通生产 adapter → API。** 在 `tests/test_explore_api.py` 增加生产 `TMDBProvider`／
-   `TMDBClient`（本地假 transport）接入现有 `MediaFlowApi` 的用例，复用真实 request helper、
-   临时 SQLite 和合法 READ 身份。分别请求现有 browse/search 入口并检查 movie/tv：
-   HTTP 200，`totalPages=1, totalResults=0, items=[], hasMore=false`，请求页／类型和
-   搜索或筛选 applied 值正确，无错误 envelope；重复读取与现有有界缓存语义一致。
-   对代表性非法上游总数通过同一 API 检查 `502 / provider_malformed`，非法请求页仍是
-   400 且不触发 Provider。已有身份／零业务效果断言保留，不以业务库完全零写入否定正常审计。
-
-4. **修正上游夹具并覆盖已有页面恢复。** 修改 `scripts/explore_harness.py::_list_payload`，
-   空结果真实生成 0 总页，非空页仍按实际数量计算，不能在假上游提前归一成内部 1。
-   保持本地 `httpx.MockTransport`、生产 adapter／API、图片拦截和临时数据库结构。
-   在 `web/tests/e2e/explore.python.spec.ts` 复用并加强现有空筛选和搜索态退出旅程，
-   补一条命名含 `zero-page` 的正常 UI 操作用例，覆盖电影／剧集无匹配搜索、改词得到
-   非空结果、清除筛选／退出搜索恢复。响应监听检查真实 API 的 200 与内部空页字段，
-   结合 harness 上游记录或 API adapter 用例证明上游为 0；不得拦截探索 JSON 假装通过。
-   复用零 Storage 调用和耐久业务表计数对照，确认没有工作／配置效果；原凭据／限流／
-   失败恢复与独立分页用例保持。桌面／390px 在同一有界旅程中核对空态、按钮及恢复。
-
-5. **提交同一 Task 修正候选。** 只改上述 adapter、harness、直接测试和必要就地说明；
-   运行下方 Developer 计划，检查完整差异、未跟踪私有文件和范围，提交实际 checkpoint，
-   更新本页完成报告为 READY FOR B REVIEW。报告具体归一化规则、失败分支及实际命令／
-   结果，保留 A51-01 与旧 B/A 结论指针；不自行 PASS 或关闭 Slice。
-
-## Acceptance Criteria
-
-- [ ] A51-01 原正常入口不再显示读取失败：合法零页空筛选、电影／剧集空搜索通过生产 adapter／API 显示真实空态。
-- [ ] 上游 0 仅在零总数＋空条目时归一为内部 1；API 总结果为 0、无条目且不可加载更多。原内部 1 页空态和非空分页／末页保持。
-- [ ] 当前类型、关键词／筛选归属准确；修改关键词、清除条件、退出搜索能回到相应真实内容，原浏览条件／已加载列表／返回上下文保持。
-- [ ] 负数／bool／错误类型、零页有结果等畸形返回仍为真实失败；非法请求页仍被拒绝，原权限／上游凭据／网络失败与空态不混淆。
-- [ ] 上游 fixture 确实生成零总页，API 用例经过生产 TMDB adapter；真实 Python＋生产 Web＋本地上游验证不拦截探索 JSON，桌面／390px 空态及恢复可用。
-- [ ] 零 Storage 调用、零新增业务 Task／执行权／配置发布；原请求限制、缓存、认证、脱敏和整理路径不改。Dashboard 退出与 Task51.2 已交付行为保持。
-- [ ] 原 Task Base、Slice Base 和历史身份不变；B 独立接受新候选后重评全部 Slice 结果并交最终包，A 决定最终关闭。
-
-## Required Tests
-
-测试归属遵循 [workflow §6](docs/development-workflow.md#6-test-levels)。High／T3 是原 Task
-等级，不因本轮修正集中而降级；只读上游归一化不改变权限、Active、schema 或媒体执行。
-实际若出现这些高风险影响，先回 B 重评，不沿用 T3 绕过门禁。
-
-### Developer — affected tests
-
-根目录，覆盖新回归、非法／不一致分页、真实 API、原 Metadata 调用和读取安全：
-
-```sh
-python3 scripts/check_governance.py
-.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_metadata.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'
-.venv/bin/ruff check mediaflow/infrastructure/tmdb.py scripts/explore_harness.py tests/test_explore.py tests/test_explore_api.py
-.venv/bin/ruff format --check mediaflow/infrastructure/tmdb.py scripts/explore_harness.py tests/test_explore.py tests/test_explore_api.py
-git diff --check
-```
-
-`web/` 中构建生产资产，再只跑本轮新增与空上游直接影响的原生用例；新用例名含
-`zero-page`，其余 grep 项对应当前已存在的完整用例名，不得因未匹配新用例而假通过：
-
-```sh
-npm run build
-npm exec prettier -- --check tests/e2e/explore.python.spec.ts
-npm exec eslint -- tests/e2e/explore.python.spec.ts
-npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --grep 'zero-page|desktop: browse|search with its own type'
-```
-
-交接注明实际收集的新／旧用例和数量；若改动额外直接受影响文件，补跑它们的相关检查。
-不要求 Developer 跑全仓 Python／Web／E2E、安装包或发布矩阵，不写全量证据 dossier。
-
-### B — independent acceptance and Slice final
-
-B 独立检查原 Task Base..新候选的完整差异，并特别核对本次相对
-`d91a9dd2fd5833a5977a319e90d0283b05625e9a` 的修正范围。先核对生产 adapter 的零页成功
-及畸形失败，再运行下列当前候选验收；修正引入的执行输入不能只复用原 PASS 标签。
-
-根目录，除上述直接 Python／Ruff 外，读取身份／静态资源／旧入口退出仍正常：
-
-```sh
-.venv/bin/python -m unittest discover -s tests -p 'test_api_credentials.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_v2_ui.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_dashboard.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_operator_ui.py'
-```
-
-`web/` 中运行原探索前端契约、类型／条件归属／独立恢复回归，并在真实 Python 链路运行
-完整探索 spec，覆盖本轮零页、非空多页／末页／返回及原失败恢复。T3 选这几个直接边界，
-不新增全仓／全发布矩阵；同一候选一次完整探索 spec 已含 Developer grep，无需再重复 grep。
-
-```sh
-npm run typecheck
-npm run test -- run src/entities/explore/explore.test.ts src/features/explore/ExplorePage.test.tsx src/shared/api/explore-api.test.ts
-npm run build
-npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts
-```
-
-B 从现有页面亲自核对零结果到恢复的请求／可见状态，检视桌面／390px 当前截图，确认
-harness 发出的是真实零页且没有媒体／工作效果；这些若已由当前 spec 完整证明，不再
-另造一套同义脚本。若因改动新增其他集成影响，再针对该事实补充检查。
-
-B 重评原 Slice AC-1–11／全部 Required Surfaces。未变的导航／详情／图片、Dashboard
-删除实现与既有共享读取／历史等可引用原报告中对应不变输入的证据，并明确比较范围、
-依赖／配置／资产身份和原始失败／限制。本轮 Python adapter 与 harness 的新输入必须
-重验；旧 wheel／生产构建证据只属于原产物，不宣称新候选已通过未运行的安装包或发布
-门禁。若实际交付变化触发新包装／T4 门禁，按工作流重评并由 B 执行。
-保留 `01f4e05d:TASK.md`／`ab3edf8d:TASK.md` 的原失败、Base 对照、共享夹具／定位、
-可选 skip 及未运行项；保存精确 candidate、命令／cwd／实际结果和稳定本机或 CI 日志。
-
-A51-01 及全部必需结果满足后停止规划，重交 **SLICE READY FOR A REVIEW** 的更新包，
-包含原 Slice Base、新 Implementation Head、逐项结果、当前验证／合法复用和文档协调项。
-B 不自行修改 A 的 Contract／Roadmap／Progress 或宣告 Slice CLOSED；若仍失败则本 Task
-FIX REQUIRED，不为测试数量、可选证明或 P2 整理创建下一 Task。
-
-## Non-goals
-
-新增探索功能或 API、改前端展示／权限模型、放宽任意畸形上游、改变内部分页契约、
-重设计缓存／请求控制／详情／搜索状态、重新实施 Task51.2、修复其他页面或旧测试维护项、
-新 Provider／schema／队列／引擎、真实 TMDB／用户媒体／私有运行库验收、推送／部署。
-全部原 Slice 延期保持；本轮不改 A 文件或转正 CURRENT，也不使用计划文档宣称修正已交付。
-
-## Preserved checkpoints
-
-- Task51.1 原已审范围：`3c8053b06c218e76084ec1c06cf57f03259da84c..9efe8ccd480b257e12eee29b9b90075ee8f809f6`；
-  产品实现 `de86eab84e8627c0f656e51cea66e17e8ef1baf2`，原 B 报告 `01f4e05d:TASK.md`。
-- Task51.2 原 B PASS：`01f4e05d5cc03822d2e9ced3dfa91a2838990f62..d91a9dd2fd5833a5977a319e90d0283b05625e9a`；
-  完整报告及原 Closure Packet：`ab3edf8d3973012b2fb4f7152a18b90a0bf6e3f8:TASK.md`。
-- A 已审 Slice 范围：`214b69b1e64b24fc22068c2e1760cd1b0c6ac787..d91a9dd2fd5833a5977a319e90d0283b05625e9a`；
-  A FIX REQUIRED：`58a74866:SLICE.md`。旧 COMPLETE／READY 是 B 当时结论，已被 A51-01
-  退回，不能作为当前 Slice 接受证据；Slice50／PATCH-20261107-1 及更早身份／延期保持。
-
-## Developer Completion Report
-
-```text
-Implementation checkpoint: f31c47f0ef9fff65b5685ef194ead52a69e20ab1
-Task Base unchanged: 3c8053b06c218e76084ec1c06cf57f03259da84c
-Scope: A51-01 only; Dashboard retirement, Slice docs and other pages untouched
-Status after this report: READY FOR B REVIEW (Developer 不自签 PASS)
-```
-
-### 本轮修改行为(源码身份)
-
-1. **TMDB adapter 边界** `mediaflow/infrastructure/tmdb.py::_explore_page`：
-   保留 results 数组、整数总页／总数及 bool 校验。仅当上游
-   `total_pages=0`、`total_results=0` 且 `results=[]` 时，把“数据源零页”
-   归一为既有内部可展示空窗口 `total_pages=1`；`total_results` 仍为 0、
-   items 为空、不可翻页，不伪造总数。零页但正总数或带条目、负数、bool、
-   错误类型仍抛 `MALFORMED_RESPONSE`；正总页／非空页、请求页、缓存与
-   整理用 Metadata 路径未改。
-2. **Harness 上游真值** `scripts/explore_harness.py`：`_list_payload` 不再用
-   `max(1, …)`，空结果真实生成 `total_pages=0`，非空页按实际数量计算；
-   `/__harness__/stats` 新增 `upstreamListPages` 记录每条 discover/search
-   假上游回答的 `page/totalPages/totalResults`，供浏览器用例核对归一化前真值。
-3. **真实 adapter → API 测试** `tests/test_explore_api.py`：新增生产
-   `TMDBProvider`／`TMDBClient`／`HttpxTransport`（本地 MockTransport）接入
-   现有 `MediaFlowApi` 的用例。browse 电影／剧集（含题材、语言、年份、评分、
-   人数与排序）和 search 电影／剧集均为 HTTP 200、`totalPages=1`、
-   `totalResults=0`、`items=[]`、`hasMore=false`、applied 准确；重复请求
-   命中既有有界缓存。代表性非法上游总数经同一 API 为 502
-   `provider_malformed`；非法请求页仍为 400 且未触发 Provider。
-4. **真实 Python + 生产 Web 浏览器用例** `web/tests/e2e/explore.python.spec.ts`：
-   新增 `zero-page: empty filters and searches recover in place at desktop and 390px`。
-   从正常连接入口以 `fr` 原始语言触发真实空筛选，清除后恢复非空列表；以
-   不存在关键词分别搜索电影／剧集，两类型均是 200 空态而非读取失败；390px
-   检查空态、恢复按钮与无横向溢出；改词“北岸”得到真实剧集结果；退出搜索
-   恢复原电影浏览条件与列表。响应监听断言真实 API 空页字段与无错误 envelope，
-   harness `upstreamListPages` 断言对应上游确为 0 页，改词后有非空页；同时
-   复核零 Storage 调用与耐久业务表计数不变。未拦截探索 JSON，仅按既有方式
-   本地拦截海报图片。
-5. **Adapter 直接测试** `tests/test_explore.py`：新增公开 `browse/search` ×
-   电影／剧集零页成功用例，以及零页正总数／带条目、负数、bool、错误类型、
-   负总数仍失败的边界用例；原 `total_pages=1` 空页兼容用例保留。先以修正前
-   代码运行零页成功用例，得到 4 errors（browse/search × 电影／剧集均以
-   `MALFORMED_RESPONSE` 失败），再加归一化修正转绿。
-
-### 本轮实际执行命令与结果
-
-仓库根（cwd=/Users/songzhidong/mediaflow）：
-
-| 命令 | 实际结果 |
-|---|---|
-| `python3 scripts/check_governance.py` | PASS |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'` | 46 tests OK |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_metadata.py'` | 36 tests OK |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'` | 13 tests OK |
-| `ruff check` + `ruff format --check`（TASK 指定 4 个 Python 文件） | 全过 |
-| `git diff --check` | 干净 |
-
-`web/`：
-
-| 命令 | 实际结果 |
-|---|---|
-| `npm run build` | 成功（生产资产，163ms） |
-| `npm exec prettier -- --check tests/e2e/explore.python.spec.ts` | 通过 |
-| `npm exec eslint -- tests/e2e/explore.python.spec.ts` | 通过 |
-| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --grep 'zero-page\|desktop: browse\|search with its own type'` | 3 passed（desktop 1.5s；search anchor 0.6s；zero-page 0.5s） |
-
-本地校验时还以临时数据库手动启动 harness，确认 `browse?originalLanguage=fr`
-与 `search?mediaType=tv&query=no such work` 均返回内部空页，且
-`upstreamListPages` 记录对应 `totalPages=0`；该临时进程已结束，不构成新的
-验收证据来源。测试／构建类命令累计约 2–3 分钟，低于本轮总时长 30%。
-
-### 剩余风险 / B 待执行
-
-- 按 Developer 分工只跑直接受影响 Python 用例、构建、静态检查和指定 E2E
-  grep；未运行全量 Python／Web 单测／完整 E2E spec。B 仍须按 TASK 的独立验收
-  计划跑完整探索 spec、前端契约／类型测试及读取身份／旧入口回归，并亲自核对
-  桌面／390px 当前截图。
-- 归一化仅在 TMDB 边界、且只接受“零总页＋零总数＋空 results”；B 应重点复核
-  零页带结果／正总数仍 502、非法请求页仍 400 且无 Provider 调用，以及原
-  `total_pages=1` 空页和非空分页／末页未变。
-- 本轮未改 domain／API／前端内部至少一页契约、权限、schema、Active、配置发布、
-  Storage 或整理调用；未推送、未发布、未自行 PASS。
-- 工作区起点 `main`/HEAD `aa35bacf`；预存 `mediaflow/.DS_Store` 修改与全部
-  未跟踪 `.DS_Store`、日志、`.explore_adapter_block.py`、`15`、`output/` 等产物
-  原样保留，未纳入 checkpoint；私有配置未读取／修改。
+- Task Base：`3c8053b06c218e76084ec1c06cf57f03259da84c`（不变）。
+- 完整已审候选：`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`；产品修正实现：
+  `f31c47f0ef9fff65b5685ef194ead52a69e20ab1`。两者之间只改 `TASK.md`，执行输入相同。
+- 原 Goal／Scope／High／T3 不变；完整修正计划、开发指导、验收和 Developer 交接见
+  `30c99f1b:TASK.md`，规划 checkpoint 为 `aa35bacf:TASK.md`。
+- A 退回记录保留于 `58a74866:SLICE.md`；本次独立复核不抹去原失败或以旧 PASS 代替修正验收。
+- Task51.1 原 B 报告 `01f4e05d:TASK.md`、Task51.2 B PASS／原最终包
+  `ab3edf8d:TASK.md` 保留；Slice50／PATCH-20261107-1 及更早接受身份／延期不变。
 
 ## B Review Result
 
 ```text
-Reviewed: correction candidate NOT SUBMITTED
-Decision: FIX REQUIRED — A51-01 remains open
-Acceptance runs: PENDING; this checkpoint only checks governance, plan references/scope and whitespace
-Task blockers: A51-01
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: DEVELOPER CORRECTION AFTER IMPLEMENTATION INSTRUCTION → INDEPENDENT B REVIEW → RENEWED SLICE CLOSURE PACKET
+Reviewed Task Base: 3c8053b06c218e76084ec1c06cf57f03259da84c
+Reviewed Head: 30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113
+Correction comparison: d91a9dd2fd5833a5977a319e90d0283b05625e9a..30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113
+Decision: PASS
+Task blockers: NONE
+A51-01: RESOLVED
+Slice Required Outcomes / Surfaces all satisfied: YES
+Next: SLICE READY FOR A REVIEW
 ```
 
-预存 `mediaflow/.DS_Store` 修改，以及各 `.DS_Store`、本地日志、`.explore_adapter_block.py`、
-`15`、`output/` 等未跟踪产物全部保留，不纳入本 checkpoint；不读取用户运行库／私有配置。
+本轮从 `main`／上述 Head 开始，治理检查 PASS，工作区／Git 可写。B 按完整 Task Base..Head
+审查范围，结合原 B／A 报告与原始证据重新核对探索分层、Provider／共享 transport 和
+缓存、API／READ／审计／CSP、前端状态与恢复、入口／Dashboard 全垂直退出、共享
+持久读取／接线、测试／harness／探针及文档；完整范围为 93 个文件。针对 A 退回后的
+5 个执行文件逐项核对；其余变更为阶段／计划／报告文档。没有新权限、Active、schema、
+媒体执行或核心并发变化，High／T3 保持适用。没有实施产品或使用原规划角色例外自验收。
+
+### 修正结果与完整旅程
+
+| 用户操作 | B 验收结果 |
+|---|---|
+| 连接 `/ui-v2/` → 探索 → 选择无匹配原始语言 → 清除条件 | 生产 TMDB adapter 收到真实 0 总页／0 结果／空数组，API 200；页面显示“没有符合条件的作品”，无失败或加载更多；清除后恢复作品 |
+| 搜索不存在的作品 → 切电影／剧集 → 修改关键词 → 退出搜索 | 两类型均为正常空搜索，类型／关键词准确；改词得到真实剧集结果；退出恢复电影浏览条件与列表，原多页／位置保持用例同时通过 |
+| 同一空搜索在桌面和 390px 查看／恢复 | 空态、输入、类型及退出入口可见；窄屏无横向溢出，修改关键词可继续 |
+| 非空浏览 → 翻页／末页 → 详情 → 关闭／Escape／后退 | 当前真实 Python 原生 spec 保持通过；准确类型＋ID、背景图／季集数／署名与回焦保持 |
+| 上游凭据失败或 search 500 → 对应重读 | 失败仍可辨，有效本方身份和成功区域保留，显式重读恢复；畸形上游不冒充空结果 |
+
+归一化只发生在 `TMDBProvider` 的探索边界：仅 `total_pages=0`、`total_results=0`
+且原 `results=[]` 转为内部一个空展示窗口。结果总数仍是 0、无条目、不可翻页；内部
+Domain／API／Web 至少一页契约不变。零页但有结果／条目、负数、bool／错误类型仍失败；
+代表性非法上游经生产 adapter／API 为 `502 / provider_malformed`。请求第 0／501 页仍
+400 且不调用 Provider，原 1 页空结果兼容、非空分页及缓存保持。
+
+Harness 先生成真实上游 0 页再交生产 adapter，原生用例检查 API 200 空页字段及
+`upstreamListPages` 中归一化前的 0 页。没有拦截探索 JSON，只拦截固定来源图片为本地
+fixture。整个旅程 Storage 调用为零、受监控耐久业务表计数不变；没有新 Task、执行权或
+配置发布，正常审计不视作业务效果。未连接真实 TMDB／用户媒体／私有数据库。
+
+### 本轮独立执行与证据
+
+稳定本机目录：`.git/validation-evidence/30c99f1b/b-review/`。`task-range.patch`／
+`manifest.txt` 固定完整范围；`workspace.txt` 固定预存变更；各 JSON 记录实际命令／cwd、
+退出码或测试计数及耗时，对应日志保留原始输出。这些材料仅在本机，不承诺远程可访问。
+
+| 实际命令／cwd | 结果 |
+|---|---|
+| 根目录 `python3 scripts/check_governance.py`；`git diff --check 3c8053b HEAD` | PASS |
+| 根目录 `.venv/bin/python` 合并 unittest discover：`test_explore*.py`、`test_metadata.py`、`test_api_security.py`、`test_api_credentials.py`、`test_v2_ui.py`、`test_dashboard.py`、`test_operator_ui.py` | 159 PASS，0 skip；精确 patterns 见 `python-venv.json`，原始结果见 `python-venv.log` |
+| 根目录 `.venv/bin/ruff check`／`format --check`：tmdb.py、explore_harness.py、test_explore.py、test_explore_api.py | PASS；参数见 `quality.json` |
+| `web/`：`npm run typecheck`；`npm run build` | PASS |
+| `web/`：`npm run test -- run src/entities/explore/explore.test.ts src/features/explore/ExplorePage.test.tsx src/shared/api/explore-api.test.ts` | 3 文件／67 PASS |
+| `web/`：`npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts` | 11 PASS，0 skip；含新增 zero-page、分页／末页／返回及原失败恢复 |
+| `web/`：`npm exec eslint -- tests/e2e/explore.python.spec.ts`；`npm exec prettier -- --check tests/e2e/explore.python.spec.ts` | PASS |
+
+本轮首次 Python 命令误用了系统 `python3`，159 tests 中出现 7 个 httpx 缺依赖 errors；
+`python.log`／`python.json` 原样保留。改用任务指定的 `.venv/bin/python` 后全部通过，
+没有改产品、删断言或安装额外依赖；这是 B 执行环境错误。Web 的 jsdom scrollTo 和
+NO_COLOR 提示保留，未影响通过结果。
+
+已检视当前 `screenshots/zero-page-mobile-390.png`、桌面网格及详情截图。当前 spec 的
+详情截图仍可能落在入场动画中间帧；布局终态补充复用并检视原
+`.git/validation-evidence/d91a9dd2/b-review/detail-1280.png`／`detail-390.png`。
+`reuse-identity.json` 证明当前重建的全部 5 个 Web 产物及 package-lock 摘要与原验收完全
+一致，前端 source／public／依赖锁及 pyproject 相对 d91a9dd2 均未改。图片为夹具，截图
+不作为真实 TMDB 海报美术证明。当前 API／adapter 新输入由本轮重新验证。
+
+测试／构建／静态检查（包括误用解释器的失败）累计约 32 秒；仅证据记录后的保守复核
+时长已超过 107 秒，比例约 30%，早于该起点的文档／代码阅读未计入分母。
+`time-allocation.json` 保留计算。本轮测试时间小于总时间的 50%。
+
+### 复用范围与限制
+
+本轮没有重新跑全仓 Python／Web／E2E、wheel smoke 或 Docker 发布矩阵。采用既定 T3
+直接边界验收，不声称未运行的门禁通过。旧安装包／wheel 证据属于旧产物；本次修改了
+Python adapter，不把旧 wheel 声称为当前新包验证。没有发布新包或部署。
+
+Dashboard 删除、CLI／API／V1 消费者／runtime 绑定／历史保留、改接探针的执行输入
+相对 d91a9dd2 未改，原 `ab3edf8d:TASK.md` 的实际 309 个 Python、原生绑定／历史与
+干净源码隔离安装证据保留；本轮另重跑 Dashboard、身份和 V1／静态读取的直接回归。
+原 `01f4e05d:TASK.md` 中 Node 两项定位／旧占位断言、共享可变夹具、旧自动化标题及
+Unicode 旧控件失败与 Base 对照／同义验证限制继续保留；不把这些原始失败改写为套件
+全绿。原 wheel 构建 backend／旧 build/lib 污染及探针抽取失败亦保留在原报告。
+
+## Slice51 Closure Packet
+
+```text
+Slice: 51 — V2 Explore Homepage Replacing Dashboard
+Base SHA: 214b69b1e64b24fc22068c2e1760cd1b0c6ac787
+Implementation Head: 30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113
+Required Outcomes / Surfaces: COMPLETE
+Tasks completed: 51.1 PASS (A51-01 corrected); 51.2 PASS retained
+Task blockers: NONE
+Decision: SLICE READY FOR A REVIEW
+```
+
+| 全部结果／验收 | 最终重评 |
+|---|---|
+| RO-1／AC-1、11 | 探索默认首页，旧 Web 普通未找到；Dashboard API／CLI／专属后端及消费者完整退出。当前直接回归和不变输入的原共享读取／历史证据支持 |
+| RO-2／AC-2–4 | 电影／剧集浏览、筛选／三类排序、显式搜索、有界分页／去重／末页、上下文归属保持；本次补齐合法上游零页，经生产 adapter／API／Web 成功并恢复 |
+| RO-3／AC-5、6 | 可读海报、准确详情／字段／署名、桌面／390px、关闭／Escape／后退／回焦保持；当前 spec 与一致 Web 产物的稳定截图支持 |
+| RO-4／AC-7–9 | 真实空态与失败分开；首次／分页／详情独立恢复、身份／上游凭据区分、有界请求／缓存、可信图片／精确 CSP 和零业务效果保持 |
+| AC-10／全部必需表面 | 生产 Web＋真实 Python＋本地上游当前验收通过；Provider／application／API／React、CLI／SQLite／runtime／V1 及必要操作说明已覆盖；整体 CURRENT 对齐由 A 接受后完成 |
+
+Explicitly Deferred：全部原 Contract 延期保持，含新源、推荐／订阅／下载／播放、独立
+详情深链与刷新重连恢复、无 Active 专用启动、其他页面重设计、新 schema／权限／引擎、
+全发布矩阵与生产部署。没有新增必须完善项或下一 Task。
+
+Documentation Reconciliation Needed：A 审查原 Slice Base..本包 Head，接受后同步
+SLICE 状态／最终 Head、Roadmap／Progress、README／docs README、Requirements／
+V2 Requirements、Product Experience／Architecture 的阶段事实和 CURRENT／TARGET。
+本包明确纠正根 Task 旧的“候选未提交／验收待执行”结论；A 文件仍保留上次退回事实，
+B 不改 A 合同／关闭账本、不自行声明 Slice CLOSED。
+
+预存 `mediaflow/.DS_Store` 修改，以及所有未跟踪 `.DS_Store`、日志、
+`.explore_adapter_block.py`、`15`、output 产物保留，未纳入提交。B 仅更新本 Task 报告及
+忽略的本机证据；未读取私有配置／用户运行数据库，未修改产品／仓库测试、推送或部署。
