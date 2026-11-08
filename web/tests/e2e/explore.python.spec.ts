@@ -1188,3 +1188,36 @@ test("the detail body really scrolls to its end while the background stays still
   await expect(opener).toBeFocused();
   expect(await page.evaluate(() => window.scrollY)).toBe(backgroundBefore);
 });
+
+test("Task52.2 explore result paging hands real reads over without flashing fast waits", async ({
+  page,
+}) => {
+  await connect(page);
+  await expect(page.getByText(/第 1 \/ 3 页/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+  // A fast real page switch: the target page's content lands directly and no
+  // "reading page 2" status is left behind once it has.
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页/)).toBeVisible();
+  await expect(page.getByText(/正在读取第 2 页/)).toHaveCount(0);
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  await expect(page.getByText(/正在读取作品列表/)).toHaveCount(0);
+
+  // The harness's own slow-read mode (server-side delay on page 2+ list
+  // reads): the displayed page stays readable and stationary, one stable
+  // status names the real target, and the content replaces it exactly once
+  // the response arrives.
+  await setFailure(page, "slow_page_2");
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(
+    page.getByText("正在读取第 3 页(当前显示第 2 页)\u2026"),
+  ).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  await expect(page.getByText(/第 2 \/ 3 页/)).toBeVisible();
+  await expect(page.getByText(/第 3 \/ 3 页/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(5);
+  await expect(page.getByText(/正在读取第 3 页/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
+  await setFailure(page, "none");
+});

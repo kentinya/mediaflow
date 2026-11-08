@@ -42,6 +42,7 @@ import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
 import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -514,6 +515,13 @@ export function OperationsLanding() {
       cursor,
     }),
   );
+  // Slice52 RO-3: the run-list banner inside the already-visible chrome (view
+  // navigation and filters) appears only when the inventory read is
+  // genuinely slow; a fast or cached return mounts the table directly. An
+  // error state still renders immediately through its own branch.
+  const showRunListWait = useReadReveal(
+    query.data === undefined && !query.isError,
+  );
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
@@ -826,9 +834,11 @@ export function OperationsLanding() {
                       </div>
                     </section>
                     {query.data === undefined ? (
-                      <StatusBanner variant="info" title="正在加载运行清单">
-                        <p>正在从 MediaFlow API 读取运行清单。</p>
-                      </StatusBanner>
+                      showRunListWait ? (
+                        <StatusBanner variant="info" title="正在加载运行清单">
+                          <p>正在从 MediaFlow API 读取运行清单。</p>
+                        </StatusBanner>
+                      ) : null
                     ) : !query.data.ok ? (
                       <StatusBanner
                         variant="error"

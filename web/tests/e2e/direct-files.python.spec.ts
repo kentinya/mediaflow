@@ -2265,3 +2265,79 @@ for (const kind of ["resource", "media"] as const) {
     await otherContext.close();
   });
 }
+
+test("Task52.2 both Files pages keep one reserved refresh state over real reads, and a normal command runs once", async ({
+  page,
+}) => {
+  const DELAY =
+    /\/api\/v1\/(?:resource-libraries\/[^/]+|media-libraries\/[^/]+)\/files(?:\?|$)/;
+
+  for (const kind of ["resource", "media"] as const) {
+    await openFiles(page, kind);
+    const slot = page.locator(".mf-files-refresh-slot");
+    await expect(slot).toBeVisible();
+    const content = page.locator(".mf-files-grid");
+    await expect(content).toBeVisible();
+    const contentBefore = await content.boundingBox();
+    const slotBefore = await slot.boundingBox();
+    expect(contentBefore).not.toBeNull();
+
+    // The quick real refresh really repeats, yet no transient busy line is
+    // inserted and nothing in the list moves.
+    await page.getByRole("button", { name: /刷新/ }).click();
+    await expect(content).toBeVisible();
+    await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+    expect((await content.boundingBox())?.y).toBeCloseTo(
+      contentBefore?.y ?? 0,
+      1,
+    );
+
+    // The slow real refresh (delayed through interception of the page's own
+    // list read) shows one stable busy line in the reserved slot while the
+    // current directory stays readable and stationary; it clears when the
+    // read lands.
+    await page.route(DELAY, async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: /刷新/ }).click();
+    await expect(page.getByText("正在刷新当前目录...")).toBeVisible();
+    await expect(content).toBeVisible();
+    expect((await content.boundingBox())?.y).toBeCloseTo(
+      contentBefore?.y ?? 0,
+      1,
+    );
+    expect((await slot.boundingBox())?.y).toBeCloseTo(slotBefore?.y ?? 0, 1);
+    await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+    expect((await content.boundingBox())?.y).toBeCloseTo(
+      contentBefore?.y ?? 0,
+      1,
+    );
+    await page.unroute(DELAY);
+  }
+
+  // One ordinary command through the real dialog runs exactly once; the
+  // post-command update and a following manual refresh are presentation-only
+  // reads that never re-send the command.
+  const commands: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/commands")
+    ) {
+      commands.push(request.url());
+    }
+  });
+  await openFiles(page, "resource");
+  await createFolderThroughNativePage(page, "resource", "-Refresh");
+  expect(commands).toHaveLength(1);
+  await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect(
+    page.getByLabel(`文件条目 Browser-Status-Resource-Refresh`, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(commands).toHaveLength(1);
+});

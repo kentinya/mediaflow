@@ -451,3 +451,54 @@ test("MediaLibrary and ResourceLibrary reads never share request authority", asy
     ),
   ).toBe(true);
 });
+
+test("Task52.2 MediaLibrary refresh keeps one reserved busy state without pushing the rows", async ({
+  page,
+}) => {
+  const requests = apiRequestsOf(page);
+  await openMediaLibrary(page);
+  const table = page.getByRole("table");
+  await expect(table).toBeVisible();
+  const slot = page.locator(".mf-files-refresh-slot");
+  await expect(slot).toBeVisible();
+  const rowsBefore = await table.boundingBox();
+  const slotBefore = await slot.boundingBox();
+  expect(rowsBefore).not.toBeNull();
+  const filesReads = () =>
+    requests.filter((request) =>
+      request.url.includes("/api/v1/media-libraries/"),
+    ).length;
+
+  // A fast real re-read never flashes the transient busy line and never
+  // moves the list.
+  const readsBefore = filesReads();
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect.poll(filesReads).toBeGreaterThan(readsBefore);
+  await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+  expect((await table.boundingBox())?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+
+  // A slow real re-read: the reserved row carries one stable busy line while
+  // the current directory stays readable and stationary.
+  await page.route(
+    /\/api\/v1\/media-libraries\/[^/]+\/files(?:\?|$)/,
+    async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await route.fulfill({ response });
+    },
+  );
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect(page.getByText("正在刷新当前目录...")).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+  expect((await table.boundingBox())?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+  const slotDuringSlow = await slot.boundingBox();
+  expect(slotDuringSlow?.y).toBeCloseTo(slotBefore?.y ?? 0, 1);
+
+  await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+  expect((await table.boundingBox())?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+  expect(
+    requests.every(
+      (request) => request.method === "GET" || request.method === "HEAD",
+    ),
+  ).toBe(true);
+});

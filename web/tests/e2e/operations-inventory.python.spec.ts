@@ -3676,3 +3676,43 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
     [],
   );
 });
+
+test("Task52.2 the task center handoff waits on the real inventory read without blocking the shell", async ({
+  page,
+}) => {
+  const api = recordApiCalls(page);
+  await connect(page);
+
+  // Slow only the page's own run-inventory read so the real waiting state is
+  // observable on this real Python API boundary. The interception count at
+  // the end proves the injection really applied to the landing's read; the
+  // handler is kept registered until the delayed response lands, so the page
+  // really waits through its own read instead of being released early.
+  let intercepted = 0;
+  await page.route(/\/api\/v1\/operations\/runs\?/, async (route) => {
+    intercepted += 1;
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 2_400));
+    await route.fulfill({ response });
+  });
+
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+  // Navigation and the page chrome are usable immediately: only the list
+  // region waits, and it waits with one stable, explicit state.
+  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "运行筛选" })).toBeVisible();
+  await expect(page.getByText("正在加载运行清单")).toBeVisible();
+
+  await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+  await page.unroute(/\/api\/v1\/operations\/runs\?/);
+  await expect(page.getByText("正在加载运行清单")).toHaveCount(0);
+  await expect(page.locator("[data-main-page='operations']")).toHaveCount(1);
+  expect(
+    api.every((call) => call.method === "GET" || call.method === "HEAD"),
+  ).toBe(true);
+  expect(intercepted).toBeGreaterThan(0);
+});

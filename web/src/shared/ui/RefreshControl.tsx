@@ -1,4 +1,5 @@
 import { Button } from "./Button";
+import { useReadReveal } from "./read-reveal";
 
 export interface RefreshControlProps {
   readonly onRefresh: () => void;
@@ -17,6 +18,11 @@ export function RefreshControl({
   label = "Refresh",
   refreshingLabel = "Refreshing…",
 }: RefreshControlProps) {
+  // The re-read starts immediately and the disabled state stays exact, but
+  // the label swap waits for the shared reveal window: a fast refresh keeps
+  // its resting text instead of flashing "refreshing" for one frame, while a
+  // slow one stays visibly busy through its own stable label.
+  const showRefreshing = useReadReveal(refreshing);
   return (
     <Button
       variant="secondary"
@@ -27,7 +33,7 @@ export function RefreshControl({
       onClick={onRefresh}
       disabled={refreshing}
     >
-      {refreshing ? refreshingLabel : label}
+      {showRefreshing ? refreshingLabel : label}
     </Button>
   );
 }

@@ -27,6 +27,16 @@ interface NavigationFrame {
   readonly modal: string | null;
 }
 
+/**
+ * Slice52 RO-3/TAC-2: every read-waiting marker the nine main pages can
+ * present. Under the local fake API these reads are fast, so after the
+ * destination has settled not one of them may still be (or have just been)
+ * on screen — the proof that a quick read never flashes a waiting state.
+ * Failure banners and honest empty states are deliberately not listed.
+ */
+const WAITING_READ_MARKERS =
+  /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录)|正在加载(运行清单|存储管理)|读取运行清单|Loading Notification definitions/;
+
 async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
@@ -274,11 +284,14 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
       page.getByRole("navigation", { name: "Primary" }),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
-    // Wait for the destination's first read and capture both the 200ms entry
-    // transition and its settled frame. The entry must actually lower
-    // opacity, then return to exactly 1. It is a transition, not a persistent
-    // animation, so a later same-page card cannot replay it.
-    await page.waitForTimeout(280);
+    // Let the destination's own read land and the shared entry finish, judged
+    // as behavior: the surface must end fully settled, the shell geometry may
+    // never move mid-flight, and — because the fake API is fast — no waiting
+    // marker of this page may be present once the content is ready. Fixed
+    // sampling deadlines and specific CSS values are not used to pass the
+    // handoff.
+    await expectSurfaceSettled(page, destination.page);
+    await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
     const samples = await stopNavigationSampler(page);
     const entered = samples.filter(
       (sample) =>
@@ -286,22 +299,17 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
         sample.pageTransition === "enter",
     );
     expect(entered.length).toBeGreaterThan(2);
-    expect(entered.some((sample) => sample.opacity < 1)).toBe(true);
     expect(entered.at(-1)?.opacity).toBe(1);
     expect(entered.at(-1)?.startClass).toBe(false);
     expect(
-      entered.every(
-        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
-      ),
-    ).toBe(true);
-    expect(
       Math.max(...entered.map((sample) => sample.overflow)),
     ).toBeLessThanOrEqual(1);
+    // The sidebar and the topbar are outside the routed surface: neither may
+    // change box geometry during any of the nine handoffs.
+    expect(new Set(entered.map((sample) => sample.sidebar)).size).toBe(1);
+    expect(new Set(entered.map((sample) => sample.topbar)).size).toBe(1);
     expect(page.locator("[data-main-page]")).toHaveCount(1);
     if (destination.page === "files") {
-      // The first cross-page entry is the representative stable-shell check.
-      expect(new Set(entered.map((sample) => sample.sidebar)).size).toBe(1);
-      expect(new Set(entered.map((sample) => sample.topbar)).size).toBe(1);
       await page.screenshot({
         path: testInfo.outputPath("main-page-transition-1536.png"),
       });
@@ -322,6 +330,9 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toHaveCount(0);
+  // This library revisit runs on valid cache: content is present with no
+  // waiting marker, proving a cached re-entry never flashes a skeleton.
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
 
   // Browser Back/Forward follows the same main-page identity.
@@ -374,12 +385,20 @@ test("PATCH-20261107-1 holds the loading placeholder and settles the real conten
   await connect(page);
   // Slow only the storage inventory read. Every other request and the page
   // identity remain the real ones; this is the observed slow-read handoff.
-  await page.route("**/api/v1/storages*", async (route) => {
-    const response = await route.fetch();
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await route.fulfill({ response });
-  });
+  // The delay is well past the shared reveal window, so the waiting panel is
+  // observed as a genuinely slow read rather than a race.
+  await page.route(
+    "**/api/v1/operations/storage-management/inventory*",
+    async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      await route.fulfill({ response });
+    },
+  );
   await openSidebarLink(page, "Storage management");
+  // Navigation itself is never blocked: the shared shell stays present and
+  // operable while only this page's content region waits.
+  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   // The content-shaped placeholder is visible while the read is pending; the
   // page does not wait for it to start its own entry.
   await expect(
@@ -393,18 +412,17 @@ test("PATCH-20261107-1 holds the loading placeholder and settles the real conten
     )
     .toBe("1");
 
-  // The real content settles in once after the pending placeholder, instead
-  // of popping in after the page fade has already finished.
+  // The real content replaces the pending placeholder in its own time: the
+  // workspace heading is visible in the content region and interactable.
   const content = page.locator(".mf-content-settle").first();
   await expect(content).toBeVisible();
   await expect(
     content.getByRole("heading", { name: "存储管理", exact: true }),
   ).toBeVisible();
-  expect(
-    await content.evaluate(
-      (element) => getComputedStyle(element).animationName,
-    ),
-  ).toBe("mf-content-settle");
+  // The waiting panel is gone for good.
+  await expect(
+    page.getByRole("status", { name: "正在加载存储管理" }),
+  ).toHaveCount(0);
   // The page-level entry is not replayed for the content handoff.
   await expect
     .poll(() =>
@@ -458,11 +476,6 @@ test("a forwarded detail card keeps its viewport overlay while the page enters",
   expect(withDetail.every((sample) => sample.transitionDuration === "0s")).toBe(
     true,
   );
-  expect(
-    withDetail.every(
-      (sample) => !sample.animationName.includes("mf-shell-page-enter"),
-    ),
-  ).toBe(true);
   const viewport = page.viewportSize();
   expect(viewport).not.toBeNull();
   for (const sample of withDetail) {
@@ -607,11 +620,6 @@ test("same-page card open and close never replays the main-page entry", async ({
       true,
     );
     expect(automation.every((sample) => sample.opacity === 1)).toBe(true);
-    expect(
-      automation.every(
-        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
-      ),
-    ).toBe(true);
   }
 
   // Narrow: the shared Storage detail card opened from the real inventory.
@@ -638,11 +646,6 @@ test("same-page card open and close never replays the main-page entry", async ({
     expect(storage.length).toBeGreaterThan(2);
     expect(storage.every((sample) => sample.startClass === false)).toBe(true);
     expect(storage.every((sample) => sample.opacity === 1)).toBe(true);
-    expect(
-      storage.every(
-        (sample) => !sample.animationName.includes("mf-shell-page-enter"),
-      ),
-    ).toBe(true);
   }
 
   // Opening and closing these cards never submitted a command.

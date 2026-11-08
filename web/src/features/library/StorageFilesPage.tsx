@@ -15,6 +15,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -48,6 +49,7 @@ import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
 import { LibraryCardStrip } from "./LibraryCardStrip";
 import { LibraryLoadingPanel } from "./library-loading";
+import { FilesRefreshState } from "./FilesRefreshState";
 import {
   LibrarySaveRecoveryPanel,
   classifyLibrarySaveFailure,
@@ -1248,11 +1250,7 @@ function FileBrowseView({
               </button>
             </div>
           </div>
-          {refreshing && (
-            <p className="mf-files-refresh-state" role="status">
-              正在刷新当前目录…
-            </p>
-          )}
+          <FilesRefreshState refreshing={refreshing} />
           {previewError !== null && (
             <p className="mf-error" role="status">
               {previewError}
@@ -1491,6 +1489,15 @@ function OrganizeWorkPanel({
   const workQuery = useQuery(
     filesOrganizeWorkQueryOptions(token, libraryId, cursor),
   );
+  // Slice52 RO-3: the panel distinguishes its own first read from a
+  // background re-read of already-shown work. The waiting line is revealed
+  // only when the exact read stays slow; a fast first read shows the result
+  // directly and a fast re-read simply keeps the current list on screen —
+  // successful content is never swapped away for a transient busy line.
+  const showFirstWorkWait = useReadReveal(workQuery.data === undefined);
+  const showWorkRefetch = useReadReveal(
+    workQuery.data !== undefined && workQuery.isFetching,
+  );
   const items = workQuery.data?.ok === true ? workQuery.data.items : [];
   const nextBefore =
     workQuery.data?.ok === true ? workQuery.data.nextBefore : null;
@@ -1512,8 +1519,10 @@ function OrganizeWorkPanel({
         这里列出本资源库由本账号提交的整理工作。打开记录可查看精确计划摘要并明确确认执行;
         浏览本页不会创建、恢复或重复提交任何工作。
       </p>
-      {workQuery.data === undefined || workQuery.isFetching ? (
-        <p className="mf-dashboard-meta">正在读取整理记录…</p>
+      {workQuery.data === undefined ? (
+        showFirstWorkWait ? (
+          <p className="mf-dashboard-meta">正在读取整理记录...</p>
+        ) : null
       ) : !workQuery.data.ok ? (
         <p className="mf-dashboard-meta" role="status">
           整理记录暂时无法读取,稍后可刷新重试;已持久保存的工作不受影响。
@@ -1554,6 +1563,9 @@ function OrganizeWorkPanel({
           ))}
         </ul>
       )}
+      {showWorkRefetch ? (
+        <p className="mf-dashboard-meta">正在读取整理记录...</p>
+      ) : null}
       {workQuery.data?.ok === true && items.length > 0 ? (
         <footer className="mf-section-foot">
           {cursors.length > 1 ? (
@@ -2508,6 +2520,18 @@ export function StorageFilesPage() {
       Boolean(status?.configurationActive && activeLibraryId && !invalidPath),
     ),
   );
+  // Slice52 RO-3: distinguish the first library-information wait and the
+  // first directory wait from everything faster. Each waiting branch below is
+  // revealed only when that exact read stays slow; fast or cached returns show
+  // the ready content directly. Error branches are excluded so a failure is
+  // never delayed behind the reveal window.
+  const statusAwaiting = statusQuery.data === undefined && !statusQuery.isError;
+  const showStatusWait = useReadReveal(statusAwaiting);
+  const filesAwaiting =
+    statusQuery.data !== undefined &&
+    filesQuery.data === undefined &&
+    !filesQuery.isError;
+  const showFilesWait = useReadReveal(filesAwaiting);
 
   const organizeMutation = useMutation({
     mutationFn: async ({
@@ -3689,13 +3713,15 @@ export function StorageFilesPage() {
           refresh: refreshStatus,
         }) => {
           if (currentStatus === undefined) {
-            return (
+            // The header above stays put through the un-revealed first frame;
+            // a genuinely slow read then shows one stable panel.
+            return showStatusWait ? (
               <LibraryLoadingPanel
                 variant="cards"
                 title="正在读取资源库信息"
-                detail="正在读取 Active 配置、可用 Storage 与资源库列表…"
+                detail="正在读取 Active 配置、可用 Storage 与资源库列表..."
               />
-            );
+            ) : null;
           }
           if (!currentStatus.configurationActive) {
             return (
@@ -3839,17 +3865,19 @@ export function StorageFilesPage() {
                     libraryId={activeLibraryId}
                     operationsReturn={operationsReturn}
                   />
-                  <LibraryLoadingPanel
-                    variant="rows"
-                    title="正在读取文件"
-                    detail={
-                      "正在读取" +
-                      (effectivePath === ""
-                        ? "资源库根目录"
-                        : "“" + effectivePath + "”") +
-                      "的文件…"
-                    }
-                  />
+                  {showFilesWait ? (
+                    <LibraryLoadingPanel
+                      variant="rows"
+                      title="正在读取文件"
+                      detail={
+                        "正在读取" +
+                        (effectivePath === ""
+                          ? "资源库根目录"
+                          : "“" + effectivePath + "”") +
+                        "的文件..."
+                      }
+                    />
+                  ) : null}
                 </>
               ) : filesQuery.isError ? (
                 <>
@@ -3884,7 +3912,7 @@ export function StorageFilesPage() {
                 >
                   {({ data: filesRead, isFetching, refresh }) => {
                     if (filesRead === undefined) {
-                      return (
+                      return showFilesWait ? (
                         <LibraryLoadingPanel
                           variant="rows"
                           title="正在读取文件"
@@ -3893,10 +3921,10 @@ export function StorageFilesPage() {
                             (effectivePath === ""
                               ? "资源库根目录"
                               : "“" + effectivePath + "”") +
-                            "的文件…"
+                            "的文件..."
                           }
                         />
-                      );
+                      ) : null;
                     }
                     if (!filesRead.ok) {
                       return (

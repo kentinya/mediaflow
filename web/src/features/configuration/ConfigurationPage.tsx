@@ -7,6 +7,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { Button } from "../../shared/ui/Button";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   readSettingsReturnContext,
   settingsReturnDestination,
@@ -382,6 +383,12 @@ export function ConfigurationPage() {
     enabled: token !== null,
     retry: false,
   });
+  // Slice52 RO-3: the configuration-status banner is revealed only when the
+  // authoritative read is genuinely slow; a fast return shows the existing
+  // workspace directly, and an error still goes to the boundary immediately.
+  const showStatusWait = useReadReveal(
+    query.data === undefined && !query.isError,
+  );
   const [revisionId, setRevisionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [json, setJson] = useState<string>("");
@@ -533,11 +540,11 @@ export function ConfigurationPage() {
     <AuthorizedReadBoundary query={query} unavailableTitle="配置状态不可用">
       {({ data, isPending, isFetching, refresh }) => {
         if (isPending || !data)
-          return (
+          return showStatusWait ? (
             <StatusBanner variant="info" title="正在读取配置状态">
               <p>读取后端权威配置状态,不会创建 Draft 或启动工作。</p>
             </StatusBanner>
-          );
+          ) : null;
         const active = data.active ?? null;
         const draft = data.setupDraft ?? null;
         const selected = revisionId ?? text(draft?.revisionId, "");

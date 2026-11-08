@@ -1821,3 +1821,59 @@ test("move exposes the compound cross-storage truth and per-item outcomes", asyn
   await moveProgress.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+test("Task52.2 ResourceLibrary refresh keeps one reserved busy state without pushing the rows", async ({
+  page,
+}) => {
+  const requests = apiRequestsOf(page);
+  await openFiles(page);
+  const table = page.getByRole("table");
+  await expect(table).toBeVisible();
+  const slot = page.locator(".mf-files-refresh-slot");
+  await expect(slot).toBeVisible();
+  const rowsBefore = await table.boundingBox();
+  const slotBefore = await slot.boundingBox();
+  expect(rowsBefore).not.toBeNull();
+  const filesReads = () =>
+    requests.filter((request) =>
+      request.url.includes("/api/v1/resource-libraries/"),
+    ).length;
+
+  // A fast re-read: the refresh really repeats (read count grows), yet no
+  // transient busy line appears and the table never moves.
+  const readsBefore = filesReads();
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect.poll(filesReads).toBeGreaterThan(readsBefore);
+  await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+  const rowsAfterQuick = await table.boundingBox();
+  expect(rowsAfterQuick?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+
+  // A slow re-read: one stable busy line fades into the reserved slot while
+  // the already-read rows stay readable and exactly where they were.
+  await page.route(
+    /\/api\/v1\/resource-libraries\/[^/]+\/files(?:\?|$)/,
+    async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await route.fulfill({ response });
+    },
+  );
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect(page.getByText("正在刷新当前目录...")).toBeVisible();
+  await expect(page.getByRole("row", { name: /sample\.mkv/ })).toBeVisible();
+  const rowsDuringSlow = await table.boundingBox();
+  expect(rowsDuringSlow?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+  const slotDuringSlow = await slot.boundingBox();
+  expect(slotDuringSlow?.y).toBeCloseTo(slotBefore?.y ?? 0, 1);
+
+  // When the read lands the line leaves for good — again without shifting a
+  // single row.
+  await expect(page.getByText("正在刷新当前目录...")).toHaveCount(0);
+  const rowsAfterSlow = await table.boundingBox();
+  expect(rowsAfterSlow?.y).toBeCloseTo(rowsBefore?.y ?? 0, 1);
+  expect(
+    requests.every(
+      (request) => request.method === "GET" || request.method === "HEAD",
+    ),
+  ).toBe(true);
+});

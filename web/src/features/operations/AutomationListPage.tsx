@@ -66,6 +66,7 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   AutomationCreateDialog,
   type AutomationCreateOutcomeMeta,
@@ -1465,6 +1466,19 @@ export function AutomationListPage({
       tab === "records",
     ),
   );
+  // Slice52 RO-3: each tab's one-line loading banner is revealed only when
+  // that tab's own read is genuinely slow. A tab activation remains fast: a
+  // quick definition or record read shows its content directly with no banner
+  // flash, while a slow one keeps one stable waiting state. The read itself,
+  // its cache identity and the failure branch are untouched.
+  const showDefinitionsWait = useReadReveal(
+    tab === "definitions" && listQuery.data === undefined && !listQuery.isError,
+  );
+  const showRecordsWait = useReadReveal(
+    tab === "records" &&
+      recordsQuery.data === undefined &&
+      !recordsQuery.isError,
+  );
 
   // Restore the exact list scroll position saved by the create or edit entry.
   // The query must have produced its rows first; the restored position is then
@@ -1938,11 +1952,11 @@ export function AutomationListPage({
           >
             {({ data, isFetching, refresh }) => {
               if (data === undefined) {
-                return (
+                return showDefinitionsWait ? (
                   <StatusBanner variant="info" title="正在读取自动化任务">
                     <p>正在读取已生效与草稿中的自动化任务。</p>
                   </StatusBanner>
-                );
+                ) : null;
               }
               if (!data.ok) {
                 return (
@@ -2042,11 +2056,11 @@ export function AutomationListPage({
           >
             {({ data, isFetching, refresh }) => {
               if (data === undefined) {
-                return (
+                return showRecordsWait ? (
                   <StatusBanner variant="info" title="正在读取执行记录">
                     <p>正在读取已受理的自动化执行记录。</p>
                   </StatusBanner>
-                );
+                ) : null;
               }
               if (!data.ok) {
                 return (

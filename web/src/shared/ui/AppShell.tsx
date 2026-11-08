@@ -70,6 +70,14 @@ export function useStorageSearch(): StorageSearchContextValue {
 }
 
 /**
+ * How long the shell entry keeps owning the visual handoff after its one
+ * opacity transition starts. Content elements mounting inside this window
+ * must not stack a second fade over the page entry (Slice52 RO-3), while a
+ * read that resolves later still gets its own single content settle.
+ */
+const ENTRY_WINDOW_MS = 320;
+
+/**
  * The one persistent main-content surface that plays the shared page
  * transition.
  *
@@ -85,7 +93,9 @@ export function useStorageSearch(): StorageSearchContextValue {
  * entering class runs one opacity transition. The start class is never
  * re-added for the same version, so a same-page overlay (which suppresses the
  * transient opacity through `:has(...)` in the stylesheet) cannot replay the
- * entry when it closes.
+ * entry when it closes. While that one transition plays, the surface also
+ * carries `mf-page-surface-entry-active` so a content region mounting in the
+ * same handoff (storage and both library settles) is not faded twice.
  */
 function ShellPageSurface({
   identity,
@@ -98,15 +108,25 @@ function ShellPageSurface({
 }) {
   const [startedVersion, setStartedVersion] = useState(entryVersion);
   const [starting, setStarting] = useState(false);
+  const [entryActive, setEntryActive] = useState(false);
   if (startedVersion !== entryVersion) {
     setStartedVersion(entryVersion);
     setStarting(true);
+    setEntryActive(true);
   }
   useEffect(() => {
     if (!starting) return;
     const frame = window.requestAnimationFrame(() => setStarting(false));
     return () => window.cancelAnimationFrame(frame);
   }, [starting]);
+  useEffect(() => {
+    if (!entryActive) return undefined;
+    const clear = window.setTimeout(
+      () => setEntryActive(false),
+      ENTRY_WINDOW_MS,
+    );
+    return () => window.clearTimeout(clear);
+  }, [entryActive, entryVersion]);
   const entering = entryVersion > 0;
   return (
     <div
@@ -114,6 +134,7 @@ function ShellPageSurface({
         "mf-page-surface",
         entering ? "mf-page-surface-entering" : "",
         starting ? "mf-page-surface-enter-start" : "",
+        entryActive ? "mf-page-surface-entry-active" : "",
       ]
         .filter((value) => value !== "")
         .join(" ")}

@@ -1538,8 +1538,19 @@ body {
   animation: mf-library-loading-shimmer 1.4s linear infinite;
 }
 
+/* Slice52 RO-3 / V2-UX-015: a background re-read of the current directory
+   gets one reserved row below the toolbar. The row always occupies the same
+   height, so a quick refresh that never reveals its text cannot insert or
+   remove a line and shove the list, while a slow refresh fades its one stable
+   status line into the reserved space. */
+.mf-files-refresh-slot {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+}
+
 .mf-files-refresh-state {
-  margin: 0 0 6px;
+  margin: 0;
   color: #5f6b7d;
   font-size: 13px;
 }
@@ -2339,13 +2350,27 @@ button.mf-grid-button {
   min-width: 0;
 }
 
+/* Slice52 RO-3: the handoff starts from a readable midtone instead of a nearly
+   transparent frame and eases over a slightly longer stretch, so the switch
+   between two normal pages never dips into a flash of background or a sudden
+   brightness jump. Geometry is untouched: a pure opacity fade keeps the shell,
+   sticky controls and overlay layers where they were. */
 .mf-page-surface-entering {
-  transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .mf-page-surface-enter-start {
-  opacity: 0.2;
+  opacity: 0.5;
   transition: none;
+}
+
+/* The shell entry owns one visual handoff. A content region that mounts in
+   the same window (storage / both library settles) must not add a second fade
+   over the still-running page transition: stacking them made the target page
+   dip dark twice. A read that resolves after this window still plays its
+   single content settle, so a slow first read keeps its own gentle handoff. */
+.mf-page-surface-entry-active .mf-content-settle {
+  animation: none;
 }
 
 /*
@@ -2386,10 +2411,33 @@ button.mf-grid-button {
  */
 @keyframes mf-content-settle {
   from {
-    opacity: 0.55;
+    opacity: 0.7;
   }
   to {
     opacity: 1;
+  }
+}
+
+/* --- Slice52 RO-3 read feedback reveal ---------------------------------
+   A bounded waiting state is mounted only when the read is genuinely slow
+   (see useReadReveal); when it appears it eases in once instead of popping.
+   Nothing here delays the request, an error or ready content. */
+@keyframes mf-wait-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mf-wait-reveal {
+  animation: mf-wait-reveal 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-wait-reveal {
+    animation: none;
   }
 }
 

@@ -20,11 +20,14 @@ export function LoadingPanel({
   const placeholderCount = variant === "cards" ? 3 : 5;
   return (
     <section
-      className={
+      className={[
+        // Callers mount this only when the read is genuinely slow (see
+        // useReadReveal), so its one appearance eases in instead of popping.
+        "mf-wait-reveal",
         variant === "cards"
           ? "mf-library-loading mf-library-loading-cards"
-          : "mf-library-loading mf-library-loading-rows"
-      }
+          : "mf-library-loading mf-library-loading-rows",
+      ].join(" ")}
       role="status"
       aria-label={title}
     >

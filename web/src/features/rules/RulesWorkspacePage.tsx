@@ -51,6 +51,7 @@ import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { readRuleDraft } from "./rules-workspace-labels";
 import { Icon } from "../../shared/ui/Icons";
 import { Button } from "../../shared/ui/Button";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 
 type Section = "overview" | RuleFamily;
 
@@ -701,6 +702,12 @@ export function RulesWorkspacePage() {
     enabled: token !== null,
     retry: false,
   });
+  // Slice52 RO-3: the header above is the stable chrome; the Active-rules
+  // status line inside it appears only when the inventory read is genuinely
+  // slow, so a fast or cached return starts directly on the workspace body.
+  const showInventoryWait = useReadReveal(
+    query.data === undefined && !query.isError,
+  );
 
   // Leaving a family discards only the *keyword* scope: the correctable draft
   // for that family stays in its own session store, so the next explicit
@@ -750,9 +757,11 @@ export function RulesWorkspacePage() {
           return (
             <section className="mf-rules-page">
               {header}
-              <div className="mf-rules-state" role="status">
-                正在读取 Active 规则...
-              </div>
+              {showInventoryWait ? (
+                <div className="mf-rules-state mf-wait-reveal" role="status">
+                  正在读取 Active 规则...
+                </div>
+              ) : null}
             </section>
           );
         if (!data.available)

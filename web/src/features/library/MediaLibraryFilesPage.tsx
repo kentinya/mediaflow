@@ -20,6 +20,7 @@ import {
   useModalLayer,
 } from "../../shared/ui/modal-card";
 import { Icon } from "../../shared/ui/Icons";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   FilesBreadcrumbs,
   IdentityLabel,
@@ -76,6 +77,7 @@ import {
 import { TransferDialog } from "./TransferDialog";
 import { LibraryCardStrip } from "./LibraryCardStrip";
 import { LibraryLoadingPanel } from "./library-loading";
+import { FilesRefreshState } from "./FilesRefreshState";
 import {
   LibrarySaveRecoveryPanel,
   classifyLibrarySaveFailure,
@@ -868,11 +870,7 @@ function MediaBrowseView({
               </button>
             </div>
           </div>
-          {refreshing && (
-            <p className="mf-files-refresh-state" role="status">
-              正在刷新当前目录…
-            </p>
-          )}
+          <FilesRefreshState refreshing={refreshing} />
           {rows.length === 0 ? (
             <p className="mf-files-state">
               {query !== ""
@@ -2099,11 +2097,17 @@ export function MediaLibraryFilesPage() {
   );
   const canAddMediaLibrary =
     Boolean(status?.configurationActive) && eligibleStorages.length > 0;
-  const addDisabledReason = status?.configurationActive
-    ? eligibleStorages.length > 0
-      ? null
-      : "当前 Active 配置没有可用的已启用 Storage，请先启用 Storage"
-    : "当前没有 Active 配置，请先激活配置";
+  // While the parallel system-status read is still outstanding, the Add entry
+  // states that wait instead of claiming “no Active configuration” for a
+  // status that simply has not arrived yet.
+  const statusAwaiting = statusQuery.data === undefined && !statusQuery.isError;
+  const addDisabledReason = statusAwaiting
+    ? "正在读取系统状态,完成后即可判断能否添加媒体库"
+    : status?.configurationActive
+      ? eligibleStorages.length > 0
+        ? null
+        : "当前 Active 配置没有可用的已启用 Storage,请先启用 Storage"
+      : "当前没有 Active 配置,请先激活配置";
   const listQuery = useQuery(mediaLibraryListQueryOptions(token));
   const libraries = useMemo(
     () => listQuery.data?.items ?? [],
@@ -2153,6 +2157,15 @@ export function MediaLibraryFilesPage() {
       statusReady,
     ),
   );
+  // Slice52 RO-3: the first MediaLibrary-list wait and the first directory
+  // wait are revealed only when that exact read is genuinely slow; a fast or
+  // cached return shows its ready content directly, and an error branch is
+  // never held behind the reveal window.
+  const librariesAwaiting = listQuery.data === undefined && !listQuery.isError;
+  const showLibrariesWait = useReadReveal(librariesAwaiting);
+  const filesAwaiting =
+    statusReady && filesQuery.data === undefined && !filesQuery.isError;
+  const showFilesWait = useReadReveal(filesAwaiting);
 
   const resetBrowseState = () => {
     setSelectedFiles(new Set());
@@ -3274,13 +3287,13 @@ export function MediaLibraryFilesPage() {
       >
         {({ isPending: librariesPending }) => {
           if (librariesPending && listQuery.data === undefined) {
-            return (
+            return showLibrariesWait ? (
               <LibraryLoadingPanel
                 variant="cards"
                 title="正在读取媒体库信息"
-                detail="正在读取当前 Active 配置中已启用的媒体库…"
+                detail="正在读取当前 Active 配置中已启用的媒体库..."
               />
-            );
+            ) : null;
           }
           if (libraries.length === 0) {
             return (
@@ -3393,7 +3406,7 @@ export function MediaLibraryFilesPage() {
               >
                 {({ data: filesRead, isFetching, refresh }) => {
                   if (filesRead === undefined) {
-                    return (
+                    return showFilesWait ? (
                       <LibraryLoadingPanel
                         variant="rows"
                         title="正在读取文件"
@@ -3402,10 +3415,10 @@ export function MediaLibraryFilesPage() {
                           (effectivePath === ""
                             ? "媒体库根目录"
                             : "“" + effectivePath + "”") +
-                          "的文件…"
+                          "的文件..."
                         }
                       />
-                    );
+                    ) : null;
                   }
                   if (!filesRead.ok) {
                     return (

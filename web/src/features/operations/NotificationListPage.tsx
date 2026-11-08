@@ -20,6 +20,7 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import { Button } from "../../shared/ui/Button";
 
 function readinessLabel(
@@ -37,6 +38,12 @@ export function NotificationListPage() {
   const [error, setError] = useState<string | null>(null);
 
   const query = useQuery(notificationListQueryOptions(token));
+  // Slice52 RO-3: the full-block loading banner only appears when this read is
+  // genuinely slow; a fast or cached return presents the page content directly
+  // instead of swapping a one-line banner for the whole dashboard.
+  const showLoadingWait = useReadReveal(
+    query.data === undefined && !query.isError,
+  );
 
   const draftMutation = useMutation({
     mutationFn: (activeRevisionId: string) =>
@@ -63,14 +70,14 @@ export function NotificationListPage() {
     >
       {({ data, isFetching, refresh }) => {
         if (data === undefined) {
-          return (
+          return showLoadingWait ? (
             <StatusBanner
               variant="info"
               title="Loading Notification definitions"
             >
               <p>Reading the exact Active and Draft Webhook definitions.</p>
             </StatusBanner>
-          );
+          ) : null;
         }
         if (!data.ok) {
           return (

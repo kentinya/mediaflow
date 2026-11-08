@@ -5,6 +5,7 @@ import {
   type ExploreWorkSummary,
 } from "../../entities/explore/explore";
 import { Button } from "../../shared/ui/Button";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import { explorePageWindow } from "./explore-state";
 
 export interface ExplorePosterGridProps {
@@ -60,6 +61,16 @@ export function ExplorePosterGrid({
   note,
   firstError,
 }: ExplorePosterGridProps) {
+  // Slice52 RO-3: the retained-page area waits for the target-page read only
+  // when that read is genuinely slow, so fast paging never flashes the
+  // "reading page N" status line over an already-displayed window. The
+  // displayed items, failure and first-load branches are untouched.
+  const targetPending =
+    displayedPage !== undefined &&
+    displayedPage !== targetPage &&
+    busy &&
+    !readFailed;
+  const showTargetWait = useReadReveal(targetPending);
   if (firstError != null && items.length === 0) {
     return <div className="mf-explore-center">{firstError}</div>;
   }
@@ -85,11 +96,7 @@ export function ExplorePosterGrid({
       </div>
     );
   }
-  const pending =
-    displayedPage !== undefined &&
-    displayedPage !== targetPage &&
-    busy &&
-    !readFailed;
+  const pending = targetPending && showTargetWait;
   const failed = readFailed && displayedPage !== undefined;
   const upperBound = lastPage ?? targetPage;
   // The status always reports the page really on screen; the pending line

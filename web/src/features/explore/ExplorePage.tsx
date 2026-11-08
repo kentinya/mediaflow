@@ -20,6 +20,7 @@ import {
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import { ExploreAttribution } from "./ExploreAttribution";
 import { ExploreDetailCard } from "./ExploreDetailCard";
 import { ExplorePosterGrid } from "./ExplorePosterGrid";
@@ -481,6 +482,14 @@ export function ExplorePage() {
     void navigate({ to: "/explore", search: {}, replace: true });
   };
 
+  // Slice52 RO-3: the first-page skeleton, the applied-conditions line and
+  // the options status line are presentations of a pending read — they are
+  // revealed only when that read is genuinely slow, so a fast response or a
+  // valid cache return shows results directly without a skeleton flashing in
+  // and out. The queries, their errors and ready content are untouched.
+  const loadingFirstPage = shownForActive === undefined && targetInFlight;
+  const showFirstRead = useReadReveal(loadingFirstPage);
+  const showOptionsWait = useReadReveal(optionsLoading);
   if (token === null) {
     return rejected ? (
       <AuthStateBanner
@@ -497,11 +506,11 @@ export function ExplorePage() {
     );
   }
 
-  const loading = shownForActive === undefined && targetInFlight;
+  const loading = loadingFirstPage && showFirstRead;
   const appliedText =
     pageModel !== undefined
       ? appliedSummary(pageModel.applied, options)
-      : firstLoadError !== null
+      : firstLoadError !== null || !showFirstRead
         ? null
         : "正在读取已应用条件...";
   const lastPage =
@@ -587,7 +596,7 @@ export function ExplorePage() {
         </p>
       ) : (
         <div className="mf-explore-filters">
-          {optionsLoading ? (
+          {optionsLoading && showOptionsWait ? (
             <p className="mf-explore-options-status" role="status">
               正在读取筛选选项...
             </p>

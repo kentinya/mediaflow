@@ -29,6 +29,7 @@ import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { LoadingPanel } from "../../shared/ui/LoadingPanel";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -1490,6 +1491,12 @@ export function StorageManagementPage() {
   const inventoryQuery = useQuery(
     storageInventoryQueryOptions(token, selection),
   );
+  // Slice52 RO-3: the content-shaped panel is mounted only when the inventory
+  // read is genuinely slow; a fast or cached return presents the workspace
+  // directly without the panel flashing in and out.
+  const showInventoryWait = useReadReveal(
+    inventoryQuery.data === undefined && !inventoryQuery.isError,
+  );
 
   const checkMutation = useMutation({
     mutationFn: async ({
@@ -2066,13 +2073,13 @@ export function StorageManagementPage() {
       >
         {({ data, isPending, isFetching, refresh }) => {
           if (isPending || data === undefined) {
-            return (
+            return showInventoryWait ? (
               <LoadingPanel
                 variant="rows"
                 title="正在加载存储管理"
-                detail="正在读取 Active 配置中的存储清单…"
+                detail="正在读取 Active 配置中的存储清单..."
               />
-            );
+            ) : null;
           }
           if (!data.available) {
             return (
