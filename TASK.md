@@ -1,26 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Slice52 已于 2026-11-08 经独立 A Final Review **PASS / CLOSED**。
-
-- Slice Base: `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`
-- Reviewed Implementation Head: `f5409da41191c6e4bbf238bb7def601229fc59dc`
-- B Closure Packet / Task52.3 PASS: `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md`
-- Task52.1 / 52.2 PASS: `4cf0efdf:TASK.md` / `f4279b95:TASK.md`
-- A Final Review、全部结果／失败／复用／延期见 [SLICE.md](SLICE.md#closure-packet-and-a-final-review)。
-
-Next Action: A SELECTS THE NEXT LARGE SLICE
-
-当前仅授权下方一个独立修正 Task 的规划，尚未授权实施；不自动启动下一 Slice。
-独立小版本 bug 由 B 按开发流程处理，不重开已关闭 Slice。本次规划不推送、发布或部署。
-
----
-
 # Task PATCH-20261108-1 — 探索筛选、来源呈现与详情背景位置修正
 
-**PLANNING-ONLY DRAFT — 尚未授权实施。** 用户授权实施后，将本草案提升为根 Task，
-保留以下 Task ID、Base 和范围，再进入实施；本次不改产品代码或其他文档。
+**已激活，待 Developer 开始实施。** 用户于 2026-11-08 明确要求“激活Task吧”，
+本 Task 从规划草案提升为活动实施 Task，保留原 ID、Base、范围、验收和测试分工。
+本轮仅激活并 checkpoint；Developer 开工时将状态改为 IN PROGRESS。
 
-Authority: 用户于 2026-11-08 提出的四项探索体验问题及“规划一个Task吧”；
+Authority: 用户于 2026-11-08 提出的四项探索体验问题、“规划一个Task吧”及“激活Task吧”；
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) §3.1、§5–8。
 参考已接受 Slice51/52，不以它们作为父 Slice，不修改其 Base、已审 Head、关闭记录、
 Roadmap 或 Progress。B 负责本 Task 规划及后续独立验收，Developer 不自审。
@@ -34,7 +18,8 @@ Task Base: aa752cc3bc194707808a1af79afd8978ce4aef44
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR DEVELOPER
+Next Action: DEVELOPER IMPLEMENTS THIS TASK
 ```
 
 ## Goal
@@ -116,7 +101,7 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
 预期受影响文件为 Explore 页面／详情／署名组件、探索样式、`AppShell`、小型静态
 关于模块、对应单元／E2E测试及必要的本地夹具；不改产品 Python、API、Provider、schema、
 配置发布、权限或媒体执行。若实测需要超出此范围，先交 B 重评范围及 Test Level。
-实现仅必要同步当前用户说明，不追改旧 Slice 关闭事实；本轮规划只写 `TASK.md`。
+实现仅必要同步当前用户说明，不追改旧 Slice 关闭事实；本轮激活只写 `TASK.md`。
 
 ## Acceptance Criteria
 
@@ -215,18 +200,22 @@ B 检查相同视口、相同夹具的改前／改后完整页面和详情末尾
   不为滚动修正全局重构 Router／Shell／弹层，不改其他页面业务和主题。
 - 不读取／修改私有配置和用户运行数据，不推送、发布、部署或更改 Git 历史。
 
-## Workspace and planning checks
+## Workspace and activation checks
 
 规划基线为 `main` / `aa752cc3bc194707808a1af79afd8978ce4aef44`，暂存区为空；规划前治理
 检查 PASS。预存已跟踪修改仅 `mediaflow/.DS_Store`；未跟踪系统元数据、调查脚本、日志、
 `15` 及既有 `output/` 材料全部保留，不读取或纳入本 Task checkpoint。本次只修改
-`TASK.md`；Task Base 不随规划提交后移。规划检查不构成产品测试或验收 PASS。
+`TASK.md`；Task Base 不随规划／激活提交后移。
+
+激活起点为 `main` / `4d974355827132121cec51a140b4dcc853411cb5`，即已提交的规划草案；
+激活前治理检查 PASS，暂存区为空，预存 dirty／未跟踪文件保持。本轮只激活 Task，
+未开始产品实施；文档／治理检查不构成产品测试或验收 PASS。
 
 ## Developer Completion Report
 
-未开始；等待用户授权实施。后续按模板记录候选 SHA、实际受影响测试／风险和
-READY FOR B REVIEW，不在本次规划填入实施或验证结论。
+未开始；Task 已激活，下一步由 Developer 按本 Task 实施。后续按模板记录候选 SHA、
+实际受影响测试／风险和 READY FOR B REVIEW，不在本次激活填入实施或验证结论。
 
 ## B Review Result
 
-NOT REVIEWED — 本次只规划；产品验收与修复验证均待实施候选提交后独立完成。
+NOT REVIEWED — 本次只激活；产品验收与修复验证均待实施候选提交后独立完成。
