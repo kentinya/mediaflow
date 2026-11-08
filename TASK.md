@@ -609,3 +609,113 @@ npm run test:e2e -- tests/e2e/page-transition.spec.ts → 10 passed(39.1s;
   机制);极慢 CI 停顿理论上可误报,本轮各次运行均未出现。
 - 既有 403 文案定位失败事实保留;本 Task 未宣称旧 E2E 全绿;Slice52 仍 ACTIVE,
   RO-4 仍留待后续授权规划,本轮不改 Slice/Roadmap/Progress/合同。
+
+## Developer fix completion report — B52.2-02(修正轮 3,接入推挤)
+
+**READY FOR B REVIEW(修正轮 3)** — Task Base `4cf0efdf23981351ee3c7ef19d599726a070a4bb`
+(保持不变)→ 实现 checkpoint `35fec54c`(web 源码与测试,3 个文件),本报告为其后的
+docs checkpoint。工作区:分支 main,治理检查 PASS(实现前后各一次),预存跟踪变更
+`mediaflow/.DS_Store` 与全部未跟踪文件保留未动,暂存区只含本 Task 文件;未推送、
+未发布、未读取运行数据库/私密配置/用户媒体,夹具均为既有 Node fake-server 与本地
+Python stub。本轮只处理 B 判定的同一 P1:“引擎等待区域 → 就绪表单 → 下方规则就绪
+内容”的接入推挤,不改其他页、不动 52.1 已交付结果。
+
+### 根因与修正(真实源码身份)
+
+- **根因确认(B 命中)**:`ConfigurationPage.tsx` 的 `RuleReadinessPanel` 随配置状态
+  立即渲染,位于引擎区域**之后**的正常文档流中;`AutomationSettingsPanel.tsx` 的读取
+  有多个会改变该区域高度的视觉阶段(首次 0 高度 → 400ms 后等待横幅 → 表单,以及
+  无发布/读取失败分支),每次阶段变化都把已显示的阅读块在**单帧**内推走。
+  `mf-content-settle` 只过渡 opacity,不协调任何空间——B 的 frame 探针正是这个机制。
+- **修正(commit `35fec54c`,语义变更 `AutomationSettingsPanel.tsx` +125/−6;
+  其余 diff 为 children 块因新增一层包裹的 prettier 重排,无逻辑变化)**:
+  - 新增 `useReadStageHandoff(stage)`:把面板(含 `AuthorizedReadBoundary` 的全部
+    分支)包进 `div.mf-engine-read-region`;按读取视觉阶段
+    (`reading` / `reading-with-wait` / `engine-ready` / `no-published-settings` /
+    `engine-unreadable` / `read-failed`)在无依赖 `useLayoutEffect` 中记录真实渲染
+    高度,**仅在阶段本身变化且高度不同且非 reduced-motion** 时,用一次 Web Animations
+    (常量 `ENGINE_HANDOFF_MS = 300`,ease-out)把旧高度插值到新高度;插值期间仅临时
+    `overflow: hidden`,结束后即释放。普通重渲染只重记高度、不打断进行中的交接;
+    下一阶段从当前在屏高度起算;卸载时取消动画。
+  - 效果:引擎区域上方接入新阶段时,下方“整理规则就绪状态”阅读块从一次单帧跳变
+    (实测 703px/581px)变为**分摊多帧的平顺滑动**,全程保持可见;这正是 B 允许的
+    “平顺变化”,且不规定固定像素高度或骨架。
+  - **不延后任何东西**:请求、启用条件、400ms 呈现门(快读仍 0 帧提示)、错误直达、
+    授权分支、已就绪内容、Save/Active/采用读回/未知提交核对语义、查询键与 5s 回读
+    一律未改;高度差 <1px(re jsdom 零布局)直接跳过,不调用 animate。
+- **未改动**:`ConfigurationPage.tsx`、`LoadingPanel.tsx`、`RefreshControl.tsx`、
+  `read-reveal.ts`、`styles.css`、`AppShell.tsx`、两库刷新预留行、九页其余读取接入、
+  Router/AuthBoundary/Query/公共 Modal、后端/权限/schema/任务引擎。
+
+### 覆盖(新增测试,均在真实现有侧栏入口上)
+
+- `web/tests/e2e/page-transition.spec.ts`:`SettingsFrame` 探针增记
+  `readiness`(该阅读块是否渲染)与 `readinessTop`(逐 rAF 文档绝对 top);新增共享
+  断言 `expectReadinessKeptThroughHandoff`:①工作区状态出现的首帧该块即在屏;
+  ②其后任何帧不得消失;③位置变化必须分摊——**单帧位移 ≤ 总位移的 50%**(允许
+  平顺滑动,拒绝一帧整跳,不是“所有帧坐标相等”的过强断言)。接入三处既有用例:
+  快读用例(桌面 + 缓存重进 + **新增 390×844 同侧栏入口**)、慢读用例(覆盖等待
+  横幅出现与表单接管两次交接全程)、失败恢复用例(错误分支接入同样不推挤)。
+  快读 0 帧横幅、慢读单段无缝横幅、失败文案、零写入等既有断言未删未弱化。
+- `src/features/operations/AutomationSettingsPage.test.tsx`:快读、慢读两用例补
+  “下方就绪块在读取等候期间与表单接管后始终在屏”的真实 `/ui-v2/configuration`
+  入口断言(jsdom 无布局,位移分帧由上列 E2E 承担)。
+
+### 可达性核验(防把结论建立在抓不住缺陷的断言上)
+
+**先写测试、在改前(工作区原样)构建上运行**:三用例中 2 failed、1 passed——
+快读用例 `biggestStep 703 > 351.5`(单帧整跳 = 总位移,正是 B 的 442.5→1146.2)、
+慢读用例 `biggestStep 581 > 351.5`;失败恢复用例通过(其错误横幅较矮,未越过阈值,
+如实记录——它是恢复路径的断言,不是本次推挤的判别器)。修正后同一套断言全部通过。
+即:新断言在真实入口上能抓住 B 报告的突然挤走,且不依赖固定时长或 CSS 值。
+
+### 受影响测试实际结果(全部实测)
+
+```text
+python3 scripts/check_governance.py                → PASS(实现前后各一次)
+git diff --check                                    → 干净
+npx prettier --check <3 个改动路径>                  → PASS
+npx eslint <3 个改动 ts/tsx>                         → PASS
+npm run typecheck                                   → PASS
+npm run build                                       → PASS(3 次:改前基线、
+  移除修正的隔离复现、终版;全部 E2E 均跑在终版产物)
+npm run test -- run AppShell/modal-card/read-reveal/
+  AuthorizedReadBoundary/ConfigurationPage/
+  AutomationSettingsPage/StorageFilesPage/
+  MediaLibraryFilesPage 8 个受影响单测文件            → 8 files / 166 tests passed(49.5s)
+npm run test:e2e -- tests/e2e/page-transition.spec.ts
+                                                    → 终版 10 passed(38.8s;
+  既有 6 + B52.2-01 修正 1 + 设置 3,设置 3 含本轮新断言与 390px 段)
+可达性互换(改前产物,先跑)                  → 快读/慢读 2 failed(703/581 单帧),
+  失败恢复 1 passed,如实记录
+npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-settings.python.spec.ts      → 12 passed / 3 failed(43.7s)
+```
+
+关于 Python 设置旅程 3 个失败(`system runtime settings publish 1025…` /
+`share one organizing allowance…` / `keep an old summary…`,均超时在
+`organizeOneFileThroughFiles` 的 Files `目录` 字段):**在同一工作区移除本修正、
+重建后原样复现同样 3 个失败**(用例名单一致),且失败点在 Files 批量整理侧、
+改动仅限设置面板呈现——判定为本环境既有失败,不在本 Task 掩盖、删除或顺手修复,
+交 B 按验收计划定归属。调试期无其他失败;未删减任何既有断言。
+
+### 时间约束
+
+计时窗口以实测命令时间戳 `15:32:43`(此前为只读文档/代码阅读,未运行测试)起至
+本轮交接,总约 20 分钟;上述全部测试/构建/静态检查命令累计执行约 4.4 分钟
+(各命令首尾时间戳相加,含改前基线、隔离复现实验与终版复跑)≈ 22%,低于 30% 上限,
+未以等待凑时间。
+
+### 剩余风险与待 B
+
+- 交接呈现参数:滑动 300ms ease-out、等待门 400ms、settle 0.7·170ms、entry 窗口
+  320ms、入场 0.5·260ms。TAC 按完整过程判定;若 B 在真实视口(390px 下单次位移
+  约 1275px)认为节奏不当,请同 Task 给单点 FIX 指示。
+- 已知边界:采用详情 `<details>` 原生展开不产生 React 提交;若在展开期间恰好发生
+  读取阶段变化,起算高度可能差一个详情块高度(单次小位移),现实路径罕见,记录备查。
+- reduced-motion 下无插值、阶段直接落位,与既有静态语义一致。
+- 本轮未跑:B 分工的全量 Web 单测 `run`、全仓 lint/format、page-transition 之外的
+  E2E(`automation-settings.python.spec.ts` 已实跑并见上,含 3 个既有失败)、
+  TAC 九页桌面/390px 同视口改前改后人工比较;两库与探索本轮无代码变更,未重跑。
+- 既有 403 文案定位失败事实保留;本 Task 未宣称旧 E2E 全绿;Slice52 仍 ACTIVE,
+  RO-4 仍留待后续授权规划,本轮不改 Slice/Roadmap/Progress/合同。
