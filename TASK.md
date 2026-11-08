@@ -17,7 +17,7 @@ Parent Slice: NONE
 Status: READY FOR B REVIEW
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
 Reviewed Head: f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c
-Correction Candidate: PENDING-IMPLEMENTATION-CHECKPOINT
+Correction Candidate: 763da6da53c971ee4b661c654e54d75626747ddf (implementation checkpoint)
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
