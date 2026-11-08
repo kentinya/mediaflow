@@ -30,9 +30,10 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 
 ### Goal and observed gap
 
-恢复已有 OpenList 属性查询的纯元数据语义，使同一 Storage 内的原生 Move／Rename 不因
-下载链接不可用而在提交、分析、执行前检查或执行后校验阶段失败。普通文件属性仍是真实
-目录项的名称、类型、大小和修改时间；不能用“存在即成功”或省略校验实现零取链接。
+恢复已有 OpenList 属性查询的纯元数据语义，使不需要读取内容的同一 Storage 原生
+Move／Rename 路径不因下载链接不可用而在提交、分析、执行前检查或执行后校验阶段失败。
+普通文件属性仍是真实目录项的名称、类型、大小和修改时间；不能用“存在即成功”或省略
+校验实现零取链接。
 
 实际代码缺口：
 `OpenListStorage.stat()/exists()` 调用 `HttpOpenListClient.stat()`，后者直接请求
@@ -61,7 +62,7 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 - 行动／成功：在同一 Storage ID 内按真实计划确认原生移动，Worker 完成移动与必要重命名，
   核验目标属性和源不存在，持久化每项 Result；文件页刷新和任务详情读回实际成功结果。
 - 失败／恢复：列表读取、分页、权限、源变化、目标冲突、移动／重命名及结果核验的真实失败
-  仍走现有每项状态和允许的恢复。失败前无 mutation 则保留源；已完成或不确定的效果不得
+  仍走现有每项状态和允许的恢复。执行前失败不由本任务修改源；已完成或不确定的效果不得
   自动重放，成功兄弟项不因其他项失败重跑。刷新／重复读回不提交第二次整理。
 
 ### Implementation scope and steps
@@ -75,12 +76,15 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
    同时覆盖 HTTP 200／业务 code 405，以防只针对某种错误映射绕过。
 2. **客户端 stat 仅用目录列表。** 普通条目按父目录分页查找精确 basename，沿用配置页长、
    DTO 校验、超时、重试和并发边界。目标可在第二页以后；名称含中文、空格及边界空白不
-   改写。找到后返回真实目录项属性；只有完整、有效的查找确认缺失才报 NOT_FOUND。
-   后续页失败、非空总数对应空页等不完整证据不能当作“不存在”；不得回退 fs/get。
+   改写。找到后即可返回真实目录项属性，不要求继续扫描剩余页；未找到时，只有完整、有效
+   的遍历确认缺失才据此报 NOT_FOUND。父目录明确返回 NOT_FOUND 时沿用既有映射。
+   未找到且遍历未完成时的页失败、总数表明仍有条目却返回空页等不能当作“不存在”；
+   不得回退 fs/get。
 3. **处理配置根与路径边界。** 配置根（包括空 rootPath、`/` 和非空挂载根）通过列自身
    验证目录可访问，不越界列配置根的父目录。根无自身条目时可沿用 S3 根目录的目录合成
    约定（size=0、固定 UTC epoch 作为未知 mtime 占位）；不使用当前时刻伪装远端修改时间，
-   不将合成根属性当作普通文件版本／稳定性证据。不存在、非目录、无权或格式错误仍失败。
+   不将合成根属性当作普通文件版本／稳定性证据。服务端报告不存在、非目录、无权或返回
+   格式错误时仍失败，不用合成属性掩盖错误。
 4. **内容读取单独取链接。** `open_read()` 显式调用 fs/get 解码 raw_url 并按原流式路径
    读取；不再借用 metadata stat 获取 URL。保留真正 read 的成功、无链接和错误语义。
    `exists()` 仍只将 NOT_FOUND 转 false；健康检查、Delete 类型检查和上传的 absent
@@ -91,9 +95,10 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
    改用 `refresh: true`、清缓存、调用管理接口刷新存储或以其他方式绕过缓存强制更新。
    依赖 OpenList 正常缓存生命周期及原生操作后的缓存处理，不新增目录缓存或权限要求；
    正常未命中／到期可能触发的上游目录读取不属于强制刷新，也不承诺其请求数为零。
-   正常列表返回可观察到矛盾、不完整或读取失败时，不能据此标记 verified success；沿用
-   既有失败／效果未核验语义，不通过读媒体补证或自动重放。不要求识别上游返回中不可观察
-   的陈旧状态，不扩展外部修改及提供商目录可见性窗口的既有一致性保证。
+   用于某项效果核验的必要列表证据矛盾、不完整或读取失败时，不能据此标记该效果
+   verified success；沿用既有失败／效果未核验语义，不因之后无关的浏览失败撤销已持久化
+   的核验结果，不通过读媒体补证或自动重放。不要求识别上游返回中不可观察的陈旧状态，
+   不扩展外部修改及提供商目录可见性窗口的既有一致性保证。
 6. **补完整隔离证明。** 优先扩展现有适配器测试、整理集成测试及原生浏览夹具，经真实
    生产服务、API、SQLite、Worker 与真实 OpenList HTTP 适配器验证批量结果，并从生产
    构建文件页驱动提交、摘要确认和结果读回。复用不足时可新增最小测试辅助代码，文件名、
@@ -101,6 +106,10 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
    pin／fence／稳定性。
 
 ### Acceptance criteria
+
+下述完整旅程零取链接／零内容读取、仅原生 Move／Rename 的断言适用于明确配置的 405
+核心场景；NFO 解析、Hash 或跨 Storage 流式传输等真正内容需求保持既有语义。元数据
+stat／exists 不取链接、不读内容，以及不强制刷新存储的约束不因场景而放宽。
 
 - [ ] 所有 metadata-only stat／exists（文件、目录、配置根、缺失项）不请求 fs/get，
       不访问 raw_url／代理下载／其他内容端点；health 的既有 ping 可保留。
@@ -126,10 +135,14 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
       raw_url／代理下载），不限制正常业务 API／元数据夹具／静态资源请求；确认之前媒体
       mutation=0；最终只有精确授权的 Move／Rename，各项源消失、目标大小正确，结果
       已持久化；刷新、重复结果读取及再次 Worker poll 不增加 mutation。
-- [ ] 未解决或未获授权的目标冲突、源元数据变化在 mutation 前拒绝；合法 Skip／Rename／
-      显式授权 Overwrite 保持现有策略语义。目标大小错误／源仍存在／执行后
-      列表失败不能变成成功；重命名失败保留现有补偿与不确定效果规则。批量一项失败不重放
-      已成功兄弟项，现有故障语义及 C→A RecognitionType 身份回归不被放宽。
+- [ ] 对受影响条目，未解决或未获授权的目标冲突、按现有源版本证据观察到的缺失／不匹配，
+      在该项 mutation 前拒绝；不新增对任意元数据字段变化的拒绝规则。在既有能力与权限
+      允许时，Skip／Rename／显式授权 Overwrite 保持现有策略语义，不要求全批次失败。
+- [ ] 对实际执行原生 Move／Rename 且源目标路径不同的条目，目标不存在／类型或大小不符、
+      原路径仍存在，或必要的执行后列表证据读取失败，不能标记该文件效果已核验成功。
+      Skip／NoOp 按原结果及零 mutation 语义判断，不要求源消失；后续浏览失败不改写已核验
+      的持久化效果。重命名失败保留现有补偿与不确定效果规则，批量一项失败不重放已成功
+      兄弟项；现有故障语义及 C→A RecognitionType 身份回归不被放宽。
 - [ ] 生产变更未扩大 Storage 能力、隐式 overwrite／delete／copy fallback、授权、
       配置／schema／Task 状态；测试不访问真实网盘、TMDB、用户媒体、运行数据库或私有凭据。
 
