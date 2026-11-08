@@ -13,7 +13,8 @@ Detailed superseded delivery notes are retained at
 
 ## Current journey boundary
 
-Current journeys incorporate accepted Slice51 Explore/Dashboard retirement `V2-EXPLORE-001–011`,
+Current journeys incorporate accepted Slice52 experience refinements `V2-EXPLORE-012–015`,
+`V2-UX-014/015`, `V2-AUTO-016`, accepted Slice51 Explore/Dashboard retirement `V2-EXPLORE-001–011`,
 Slice50 presentation/loading/stability amendments `V2-UX-005–013`,
 Slice49 Automation amendments `V2-AUTO-013–015`, Slice48 flow/rate amendments `V2-TASK-012–014` /
 `V2-AUTO-012`, Slice47 Task-only scheduling/settings/history `V2-TASK-001–011`, and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
@@ -22,12 +23,13 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Slice52 experience refinement (ACTIVE)
+## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
-[Slice52](../SLICE.md) 已为首个 Task 规划激活，用户授权 A 代 B 规划 Task52.1，实施尚未
-授权；以下仍为七项体验问题的未交付目标旅程，下方 CURRENT 及
-旧 Slice 的接受事实保留。稳定要求为 `V2-EXPLORE-012–015`、`V2-UX-014/015`、`V2-AUTO-016`。
-用户补充明确：闪烁感涉及全部主页面切换，两种库刷新提示是需要一并解决的具体表现。
+[Slice52](../SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
+**PASS / CLOSED**，原 Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` 至实现
+`f5409da41191c6e4bbf238bb7def601229fc59dc`。以下为七项体验修整的 CURRENT 旅程，
+稳定要求为 `V2-EXPLORE-012–015`、`V2-UX-014/015`、`V2-AUTO-016`。
+它们细化下方探索、主页面切换和自动化入口，旧 Slice 接受身份与未变延期保持。
 
 **探索：**
 
@@ -37,8 +39,8 @@ progress and four business recovery types; Automation owns saved-definition sche
   层级、密度、比例、留白及字体／色彩协调，以相同视口改前／改后和实际浏览验收整体美观，
   只修错位或证明不溢出不足以通过。
 - 可见状态／动作：浏览更多结果不会持续拉长文档或累加渲染条目，仍能继续浏览和返回
-  先前位置。推荐沿用现有单次至多20项API采用普通分页，具体界面页长／页码形式是方案
-  选择，不是用户新增要求。显示真实位置、末页和服务可访问边界，不截断后续结果。
+  先前位置。现采用现有单次至多20项API的普通分页，上一页／下一页及紧凑页码替换当前网格，
+  仅保留有界页缓存，不自动读取后续页。显示真实位置、末页和服务可访问边界，不截断后续结果。
   改条件／类型或提交新搜索回新结果集起点，切换结果合理定位，控制仍可键盘访问。
 - 详情／成功返回：准确作品在居中卡片打开，标题／关闭清楚，正文内部可用滚轮、触摸、
   键盘滚到简介末尾、基本信息和外链。长文案、背景图／缺图及矮视口不裁切必需内容。
@@ -103,14 +105,14 @@ MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅�
   清空／退出搜索回到原探索条件与上下文。空关键词或其他无效输入有可纠正反馈，禁止
   将搜索词解析为本地文件或自动作作品确认。
 - **列表／分页：** 2:3 海报、片名、年份常显，评分明确是 TMDB 评分，无评分不显示假 0；
-  长名称可完整获取。桌面自适应列数、390px 两列。点击“加载更多”追加下一有界页，按
-  Provider＋作品类型＋ID 去重，说明已到末页；改变条件从新结果集首页开始。旧请求不能
+  长名称可完整获取。桌面自适应列数、390px 两列。按 Slice52 普通分页读取并替换当前页，按
+  Provider＋作品类型＋ID 在显示范围去重，说明真实末页／服务窗口；改变条件从新结果集首页开始。旧请求不能
   覆盖新条件，过期条件的数据不冒充新结果；不自动无界翻页，不把当前页数当全部数量。
 - **详情动作：** 点击卡片在列表背景上打开稳定居中详情卡，窄屏适配可用高度，名称和
   关闭入口清楚。先看图片、中文名／原名、年份、TMDB 评分／人数、题材、简介及该类型
   可用基本信息，再通过准确外链看 TMDB 原页。详情用确切作品身份，不按名称猜匹配。
   无图片／简介等字段显示真实缺项，图片失败不阻止阅读或关闭。
-- **成功／返回：** 关闭、Escape 和浏览器后退恢复原筛选／搜索、已加载页、滚动位置和
+- **成功／返回：** 关闭、Escape 和浏览器后退恢复原筛选／搜索、当前成功页、滚动位置和
   卡片焦点。本次只要求页面内详情与返回，不增加独立详情链接／刷新重认证恢复该作品的
   义务；刷新／重认证按现有机制正常进入探索即可，自然恢复详情也可接受，不强制丢弃。
   其他既有页面的合法深链续转保持。
@@ -241,8 +243,9 @@ it does not replace Slice49's acceptance or introduce another lifecycle command.
 
 - **Goal/entry:** from `自动化 → 任务列表`, create or edit an automatic-organization definition
   in one familiar card, explicitly choose whether its schedule is enabled, copy a saved definition
-  from the list, or click a saved row's `运行一次` to immediately submit one real organizing Task. Available row actions appear as `打开 / 编辑 / 复制 / 运行一次` under backend
-  authority. Opening, browsing and closing do no work. The list, create/legacy-create and edit routes
+  from the list, or click a saved row's `运行一次` to immediately submit one real organizing Task. Available row actions appear as `编辑 / 复制 / 运行一次` under backend
+  authority. Names are plain text; the old Open/definition/editor journey is retired under Slice52.
+  Browsing and closing do no work. The list, create/legacy-create and edit routes
   share one background without an extra location label or its layout shift.
 - **Create state/action:** `新建自动化任务` opens the current list's Chinese card. Name, library,
   whole-library/subdirectory browser, interval value/unit, daily/weekly times, advanced Cron/timezone,
@@ -928,8 +931,10 @@ Slice47 replaces the former settings tab/four-field form with three System Setti
 Historical43/46 acceptance remains unchanged. Current settings follow accepted47, flow/results and
 rate follow accepted48, and creation/editing/list Run once follow accepted49 above.
 
-- **Entry/state:** shared-shell `自动化` opens the real definition inventory; name/打开/direct links
-  read saved definitions before/after enablement, including truthful disabled/unavailable states.
+- **Entry/state:** shared-shell `自动化` opens the real definition inventory with plain-text names
+  and explicit 编辑／复制／运行一次 actions. Current create/edit cards and their legal deep links
+  remain; old definition/editor Web addresses use ordinary not-found under Slice52. Readback before/after
+  enablement retains truthful disabled/unavailable states.
   Malformed/denied/not-found/read errors remain bounded; no grant-eligibility dependency returns.
   Inventory provides `任务列表 / 执行记录`, population metrics,
   source/scope/schedule/timezone/limit, next/latest outcome and distinct

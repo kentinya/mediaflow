@@ -25,13 +25,15 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## TARGET — Slice52 experience refinement (ACTIVE)
+## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
-用户于 2026-11-07 授权 [Slice52](../SLICE.md) 规划及 A 代 B 规划 Task52.1；本 Slice
-已为首个 Task 规划激活，本节仍为未实施／验收的 TARGET，不改变下方 CURRENT 的接受身份。`V2-EXPLORE-015` 拟替换 `004/006` 中
-追加加载及返回已加载列表的表示；`V2-AUTO-016` 拟取消 `V2-AUTO-001/014` 等对旧 Web
-定义详情／后继草稿编辑入口的保留义务。用户进一步明确闪烁感涉及全部主页面切换，
-两种库刷新文案只是具体表现。其余查询、权限、执行和历史边界保持。
+[Slice52](../SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
+**PASS / CLOSED**，真实 Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` 至实现
+`f5409da41191c6e4bbf238bb7def601229fc59dc`。下表为 CURRENT，旧 Slice 接受身份保持。
+`V2-EXPLORE-015` 以普通分页替换 `004/006` 中追加加载／返回已加载列表的表示；
+`V2-AUTO-016` 取消旧 Web 定义详情／后继草稿编辑入口的保留义务。
+九个主页面的完整切换与读取接入均已交付，两种库刷新提示包含在内。
+其余查询、权限、执行和历史边界保持。
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -43,10 +45,10 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 | V2-UX-015 | 全部主页面读取反馈与内容接入平顺。 | 按各页实际读取状态处理；快速响应／缓存避免加载提示或骨架突兀闪出又消失，确有等待时稳定反馈并平顺接入，必要请求／失败恢复保持。不以出现过加载反馈本身判失败。两种库切页进入不再短暂闪出“正在刷新当前目录”；后台重读、手动刷新及操作后更新不因瞬时插入／移除刷新行而突兀闪灭或挤动列表，仅移到固定位置后仍突兀闪现不算修复。真实空／失败／权限／无Active可辨，不串库／路径／页面；只作必要呈现修正，不重设计其他业务或强制统一骨架。 |
 | V2-AUTO-016 | 旧“打开”Web功能及其专属链路退出。 | 删除列表“打开”，名称为普通文本；旧 definition／editor 页面、路由、导航身份、入口和专属客户端依赖退出，旧地址普通未找到，无别名／重定向。历史页面返回合法列表／记录。保留现有新建／编辑卡及深链、保存／启停、复制／运行一次、执行记录／Task、未知请求核对和共享管理API／CLI，不删除历史或扩展后端退役范围。 |
 
-完整目标旅程见 [Product Experience TARGET](product-experience.md#target--slice52-experience-refinement-active)，
-技术边界见 [Architecture TARGET](architecture.md#target--slice52-experience-refinement-active)。
-首个 Task 由用户授权 A 代 B 规划，角色例外只限规划；实施仍需另行授权，B 独立验收与
-A 独立终审保持，不把规划校验当产品验收。
+完整现行旅程见 [Product Experience CURRENT](product-experience.md#current--slice52-experience-refinement-slice52-pass--closed)，
+技术边界见 [Architecture CURRENT](architecture.md#current--slice52-experience-refinement-slice52-pass--closed)。
+首个 Task 由用户授权 A 代 B 规划，例外仅限规划；后续实施分别获授权，B 独立验收与
+A 独立终审已完成。实际结果、非阻塞失败、复用和证据限制见 Contract／B Closure Packet。
 
 ## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 
@@ -63,9 +65,9 @@ A 独立终审保持，不把规划校验当产品验收。
 | V2-EXPLORE-001 | 探索成为 V2 默认首页，旧 Dashboard Web 直接退出。 | 侧栏“探索”、默认认证续转和页头一致使用 `/ui-v2/explore`，其他合法深链保持。旧 `/dashboard` 普通未找到，无旧页、重定向、别名、退役说明或兼容解析。移除旧页专属前端依赖／请求，保留仍被其他页使用的共享组件；API／CLI 和专属后端全退出见 V2-EXPLORE-011。 |
 | V2-EXPLORE-002 | 提供 TMDB 电影／剧集的真实有界探索。 | 默认热门电影，两类型身份／查询分离；中文展示并诚实回退，标明来源。复用现有部署 Provider 配置／就绪条件，不专门建设或验收无业务 Active／无库独立启动；自然可用不刻意禁用，配置不可用时明确原因和恢复。 |
 | V2-EXPLORE-003 | 有准确的筛选和排序语义。 | 常用题材／原始语言，更多条件含首次上映／首播年份、最低评分和最低评分人数；题材与作品类型匹配，语言不冒充产地。热度、评分、上映／首播日期排序真实作用于后端查询，最高评分排序具有可见的合理评分人数阈值；非法参数安全拒绝。 |
-| V2-EXPLORE-004 | 搜索、分页及结果归属完整。 | 显式提交名称进入独立搜索态，展示真实支持条件；不携带不受支持的探索过滤／排序或用单页假装全量筛选。退出恢复原探索。“加载更多”有界、去重／末页明确，失败保留成功页；条件变化重置页，旧响应不能污染新类型／查询。 |
+| V2-EXPLORE-004 | 搜索、分页及结果归属完整。 | 显式提交名称进入独立搜索态，展示真实支持条件；不携带不受支持的探索过滤／排序或用单页假装全量筛选。退出恢复原探索。按 V2-EXPLORE-015 用普通分页替换当前页，范围有界、去重／末页明确，失败保留成功页；条件变化重置页，旧响应不能污染新类型／查询。 |
 | V2-EXPLORE-005 | 海报网格可读、美观并可访问。 | 统一 2:3 海报，片名／年份始终可读，TMDB 评分与识别置信度分离，无评分不伪造 0。缺图占位，中文缺失诚实回退，长标题可完整获取；桌面自适应、390px 两列、键盘／reduced-motion 可用，首屏直接呈现内容。 |
-| V2-EXPLORE-006 | 作品详情与返回形成完整旅程。 | 同一 Provider＋作品类型＋ID 在当前页面打开协调稳定的居中详情卡，含可用图片、名称／原名、年份、评分／人数、类型、简介、基本信息及准确 TMDB 外链。关闭／Escape／后退恢复条件、已加载内容、滚动和焦点；不要求独立详情链接或刷新／重认证恢复该作品，其他既有页面的合法深链续转保持。 |
+| V2-EXPLORE-006 | 作品详情与返回形成完整旅程。 | 同一 Provider＋作品类型＋ID 在当前页面打开协调稳定的居中详情卡，含可用图片、名称／原名、年份、评分／人数、类型、简介、基本信息及准确 TMDB 外链。关闭／Escape／后退恢复条件、当前成功页、滚动和焦点；不要求独立详情链接或刷新／重认证恢复该作品，其他既有页面的合法深链续转保持。 |
 | V2-EXPLORE-007 | 各读取环节的适用失败可独立恢复。 | 仅覆盖所选读取链路实际可能的失败，不做环节与错误全组合。元数据 API 区分当前身份 401／403、Provider 配置／凭据失效、超时／429／5xx／畸形返回和真实空／缺失；上游凭据错误不清除有效 MediaFlow 身份。公开海报覆盖缺图／网络／CSP 加载失败，认证图片接口仅在采用时验证鉴权。重读失败范围、保留成功区域，无假空态或无限重试。 |
 | V2-EXPLORE-008 | 外部元数据读取保持 Provider 分层和有界资源。 | 业务使用 Provider 抽象及内部浏览模型，复用部署凭据、HTTP 请求控制和缓存；不依赖 TMDB DTO，不把搜索词交 Parser，不改变整理策略／匹配分数。仅明确探索请求可调用 Provider；缓存／并发／分页／时间均有界，不新增账户、隐式 fallback 或持久媒体索引。 |
 | V2-EXPLORE-009 | 图片来源可信、安全显示且缺图可恢复。 | 不锁定同源图片接口、代理或缓存，按实际依赖选最小实现；可受限加载 Provider 公开海报。精确限制可信来源和 CSP，密钥不进入浏览器／URL／cookie／持久存储。若新增服务端代理则验证来源、路径、重定向、私网拒绝、类型／大小／时间和现有权限；若使用缓存／对象 URL 则验证其边界与释放，不为未采用技术增加建设或验收要求。 |
@@ -443,7 +445,7 @@ The stable rows incorporate these amendments; historical43 delivery/closure is u
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
-| V2-AUTO-001 | One native Automation workspace provides definition inventory and execution records in the shared shell; runtime settings move to System Settings under the accepted Slice47 amendment. | One Chinese content title and the remaining two tabs retain consistent controls, content boundaries and focus styling. Remove the settings tab/form and safely navigate old settings links to the existing System Settings page. Preserve authoritative metrics, unavailable/empty/denied/error guidance, real bounded server search/filter/sort/paging and responsive/keyboard/deep-link reachability. The settings relocation is accepted under V2-TASK-011, without rewriting historical43 delivery. |
+| V2-AUTO-001 | One native Automation workspace provides definition inventory and execution records in the shared shell; runtime settings move to System Settings under the accepted Slice47 amendment. | One Chinese content title and the remaining two tabs retain consistent controls, content boundaries and focus styling. Remove the settings tab/form and safely navigate old settings links to the existing System Settings page. Preserve authoritative metrics, unavailable/empty/denied/error guidance, real bounded server search/filter/sort/paging and responsive/keyboard/deep-link reachability. V2-AUTO-016 retires only the old definition/editor Web journey; names are plain text and current create/edit cards remain. The settings relocation is accepted under V2-TASK-011, without rewriting historical43 delivery. |
 | V2-AUTO-002 | Definition lifecycle uses typed forms and one focused checked Save to publish the intended automatic-organization successor. | There is no mode selector or conversion action. Create/copy/edit/enable/disable/reference-safe remove retain whole-document validation, applicable evidence, RBAC, audit and optimistic concurrency without publishing sibling Draft edits. Published, enabled, authorized and running states remain distinct; copy starts disabled without authority and removal preserves history. |
 | V2-AUTO-003 | Native V2 combines exact zero-mutation planning with explicit scoped scheduled execution intent. | V2-AUTO-010 supplies intent through checked Enabled/enabled-successor publication and withdraws it through disable/removal; no independent grant or mandatory pre-analysis. Analysis never grants permission. Due execution retains pinned scope, full per-item plans and current permission/capability/conflict/effect checks before mutation. |
 | V2-AUTO-004 | Run once directly organizes one published definition’s bounded saved scope without changing its schedule. | Under V2-AUTO-011, one explicit command supplies current-principal one-run intent and admits the Task before readiness, with no file picker, prior grant/analysis or second initial confirmation. Complete enumeration within min(itemLimit,100), real stability and backend plans/checks precede effects; incomplete/overflow never executes first N. Empty alone is no-work. Four business blockers use explicit safe recovery; source ownership, exact request reconciliation, independent outcomes and successful/uncertain non-replay remain. Disabled definitions can run once without enabling. Old scan/plan definitions and analysis-only records acquire no execution authority. |

@@ -4,14 +4,14 @@
 Slice ID: 52
 Name: Explore, Navigation and Automation Entry Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8
-Implementation Head: NOT SET
+Implementation Head: f5409da41191c6e4bbf238bb7def601229fc59dc
 Working Branch: main
-Development Authorization: SLICE ACTIVATION AND TASK52.1 PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: USER-AUTHORIZED TASK52.1–52.3 IMPLEMENTATION COMPLETED; B PASS; A FINAL REVIEW PASS
 Risk: Medium
 Planned Test Level: T3; reassess if implementation changes T4 boundaries
-Next Action: USER AUTHORIZES IMPLEMENTATION AFTER TASK52.1 PLANNING
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and accepted baseline
@@ -20,7 +20,8 @@ Next Action: USER AUTHORIZES IMPLEMENTATION AFTER TASK52.1 PLANNING
 随后明确要求“开始规划 Slice”，并授权修正规划，澄清闪烁感指全部页面切换，两种库的
 刷新文案只是具体表现。用户随后明确授权“代替B规划第一个Task”；按工作流先激活本 Slice
 并 checkpoint，再由 A 代 B 规划 Task52.1。角色例外仅限这一次规划，后续 B 独立 Task
-验收及 A 独立终审保持；不授权产品实施、推送、发布或部署。
+验收及 A 独立终审保持。该次规划不授权产品实施；用户后续分别授权 Task52.1–52.3
+实施，具体授权与 B 独立验收保留于各 Task checkpoint。未授权推送、发布或部署。
 
 Base 固定为调查及规划前的接受基线 `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`；
 后续规划／激活提交不重设 Base。Slice51 原 Base、已审实现、终审及全部限制保留于
@@ -47,12 +48,12 @@ Slice50 和其他已关闭 Slice／独立修正的身份、延期与历史同样
 | RO-3 全部主页面切换与内容接入平顺 | 切页 1 全页面动画太快／闪烁抖动；2 两种库短暂刷新提示 | `V2-UX-014/015` |
 | RO-4 自动化旧打开功能退出 | 自动化 1 删除“打开”按钮及连带功能 | `V2-AUTO-016` |
 
-稳定定义见 [V2 TARGET](docs/v2-requirements.md#target--slice52-experience-refinement-active)，
-完整旅程见 [Product Experience TARGET](docs/product-experience.md#target--slice52-experience-refinement-active)，
-组件边界见 [Architecture TARGET](docs/architecture.md#target--slice52-experience-refinement-active)。
-本规划拟替换 `V2-EXPLORE-004/006` 中追加加载及“已加载列表”的返回表示，细化
+稳定定义见 [V2 CURRENT](docs/v2-requirements.md#current--slice52-experience-refinement-slice52-pass--closed)，
+完整旅程见 [Product Experience CURRENT](docs/product-experience.md#current--slice52-experience-refinement-slice52-pass--closed)，
+组件边界见 [Architecture CURRENT](docs/architecture.md#current--slice52-experience-refinement-slice52-pass--closed)。
+本次交付替换 `V2-EXPLORE-004/006` 中追加加载及“已加载列表”的返回表示，细化
 `V2-EXPLORE-005/006`、`V2-UX-012`，并取消 `V2-AUTO-001/014` 等对旧 Web 定义详情／
-后继草稿编辑入口的保留义务；CURRENT 在实现和独立验收前仍为既有接受基线。
+后继草稿编辑入口的保留义务；Slice52 结果已独立验收为 CURRENT，原 Slice 接受身份保持。
 其余 `REQ-WEB-*`、`UX-*`、`REQ-SAFE-*`、Explore 真实查询／来源／错误边界和自动化
 checked publication／执行记录／非重放语义保持，不扩大 V1、API／CLI 产品退役范围。
 
@@ -196,7 +197,58 @@ T4，不将其藏在视觉调整中，也不预先要求无关全发布矩阵。
 
 ## Closure Packet and A Final Review
 
-当前仅授权 Task52.1 规划，尚无产品实施、实现 checkpoint、产品验收或关闭结论。
-规划校验只证明文档／治理一致，
-不证明七项体验已修复。后续 B 提交精确 Base..Implementation Head 的 Closure Packet；
-A 独立审查本合同全部结果和表面后才能宣布 PASS / CLOSED。
+```text
+Reviewed Slice Base: 9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8
+Reviewed Implementation Head: f5409da41191c6e4bbf238bb7def601229fc59dc
+B Closure Packet: 5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md
+A Final Review: PASS / CLOSED — 2026-11-08
+Required Outcomes / Surfaces: COMPLETE
+P0/P1 blockers: NONE
+Next Action: A SELECTS THE NEXT LARGE SLICE
+```
+
+A 独立审查完整 Base..Implementation Head 的58文件，包括各次修正、页面删除、共享客户端
+清理、夹具／测试迁移与文档；Head 后到本轮起点仅 TASK.md 报告变化。未代行 B 验收，
+先前 A 代 B 的例外仅首次 Task 规划。当前 main，起点 HEAD 为 B Packet checkpoint；
+治理检查 PASS，预存 mediaflow/.DS_Store、全部未跟踪材料及私有文件保留且不纳入关闭。
+
+| 结果／条件 | A 结论与证据 |
+|---|---|
+| RO-1 / AC-1/2 | 同视口改前／改后整页和最终探索截图显示单一主标题、对齐搜索、清楚筛选／网格／分页／来源层级；桌面与390px两列协调。真实 Python 旅程验证电影／剧集、缺图／长简介、正文内滚到末尾、背景锁定及关闭／Escape／后退回焦。B52.1滚轮／触摸／矮视口材料保持。 |
+| RO-2 / AC-3/4 | 采用普通分页，每次替换一页，不累加文档和条目；全局16页缓存、独立条件身份与鉴权清理保持。实际入口复跑覆盖慢目标／失败保留与重读、迟到响应、末页与空态、搜索内切类型、退出回原页／滚动／焦点（含缓存淘汰）、慢翻页不抢搜索输入。 |
+| RO-3 / AC-5/6 | 独立复跑九页真实侧栏导航、快／缓存／慢读、前后退、认证续转、同页卡片和reduced-motion；检查B九页桌面／390px同视口等待／就绪材料与逐帧数据。设置现有入口另做6条逐帧复核：快读不闪等待、慢读反馈持续、等待与表单接入使下方阅读块连续移动，无原单帧整跳、正文二次变淡或遮盖。两库独立读取／刷新／命令后更新由B最终Node与28条Python旅程证明，未重发命令。 |
+| RO-4 / AC-7 | 现有列表名称为文本，无打开；两旧已注册地址普通未找到且无业务请求，源代码确认页面／路由／导航身份及专属查询／模型／调用退出。新建／编辑／复制／运行一次及未知请求核对的B原生结果保持；A复跑自动化10条含历史返回筛选、准确Task和旧地址退出。共享API／CLI／通知校验及耐久历史未删。 |
+| 安全 / AC-8 | 产品后端、权限、schema、引擎、Storage、命令会话未改；新增Python仅本地探索夹具。探索／纯导航零业务变更断言通过。pins／fences、独立文件效果及完成／未知非重放保持；C使用A命名／分类的身份不变量未触及。T3保持。 |
+
+**A 本轮独立验证：** 在最终候选相同执行输入上重新生产构建，
+web/ `npm run test:e2e -- tests/e2e/page-transition.spec.ts tests/e2e/automation.spec.ts`
+→ **20 passed (42.4s)**；web/ `npm run test:e2e -- --config=playwright.python.explore.config.ts
+tests/e2e/explore.python.spec.ts` → **18 passed (21.2s)**。均使用独立 `--output`，
+完整命令／cwd／起止／退出码及原始日志在本机
+`.git/validation-evidence/f5409da41191c6e4bbf238bb7def601229fc59dc/a52-final/`。原样复跑 B 的
+settings-position-probe（仅复制改变输出位置），从侧栏进入系统设置，桌面1536×1024／
+390×844分别核对正常、180ms与900ms读取，快读等待帧0，慢读等待各30帧；
+完整帧数据和画面位于同目录。数字只定位过程，结合中间画面判断平顺。无真实外部服务、
+用户运行数据库／配置／媒体；未声称交互工具手动验收或生产发布矩阵通过。
+
+**B 结果与复用边界：** 独立52.1／52.2／52.3接受点分别为
+`4cf0efdf:TASK.md`、`f4279b95:TASK.md`、上述Packet。A核对其原日志、截图与执行输入：
+最终全Web **96文件／1450通过**；静态门禁／生产构建通过；最终Node **112通过／1失败**，
+自动化Python合并 **49通过／3失败**，探索 **18通过**，两库 **28通过**。
+52.2设置 **12通过／3失败** 的既有证据依赖10项Git blob保持相同，最终导航与全Web另已重跑；
+客户端删除仅旧页面专用包装，设置使用的传输／解析未变，复用不伪称旧构建即当前构建。
+证据根为 `.git/validation-evidence/62a158f6/b52-review/`、
+`.git/validation-evidence/35fec54c/b52-2-review/` 和
+`.git/validation-evidence/f5409da41191c6e4bbf238bb7def601229fc59dc/b52-3-review/`，不承诺随Git同步。
+
+**非阻塞失败与限制保留：** 403脚本同句匹配2处导致strict失败，两个技术历史脚本停在
+旧教程文案，均有原Task Base同样失败与真实用户流程证据；合并自动化的筛选失败为遗留Draft
+夹具，当前／Base独立新进程均通过。三条旧容量脚本在Base及候选都停于已不存在的Files
+“目录”选择器，尚未执行后半容量断言；本Slice不改容量引擎，不能声称该链获得新证明。
+这些失败没有删断言、隐藏跳过、加重试或记作全套绿色。全部早期FIX REQUIRED、探针／
+夹具／构建失败留在原checkpoint；未跑无影响的全Python／wheel／Docker／全发布矩阵。
+
+四项必需结果完成，关闭只协调CURRENT事实和指针，不增加产品或安全范围。
+完整明确延期见上文；不选择下一Slice、不规划新Task、不推送／发布／部署。
+A／B／Developer经验均已复盘：A将连续呈现的教训并入已有共享呈现条目，B／Developer
+没有需要新增的通用经验，不制造清理Task或过程文档。

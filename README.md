@@ -60,14 +60,15 @@ The user-authorized B planning substitutions remain disclosed in that fixed Cont
 acceptance and A Final Review were independent. Development acceptance is distinct from a release
 or deployment.
 
-[Slice52](SLICE.md) is ACTIVE for first-Task planning under the user's 2026-11-07 delegation: coordinated
-whole-page Explore layout, scrollable details and browsing without accumulating document length;
-smooth transitions/read feedback/content handoff across all nine main pages, including library
-refresh-message flashes; retirement of the old Automation Open Web journey. Pagination controls and
-motion timing are implementation choices. These are TARGET requirements,
-not delivered changes. [TASK.md](TASK.md) has no active implementation Task. The user authorized A
-to substitute for B for Task52.1 planning only; prerequisite activation is complete, implementation
-is not authorized, and independent Task/final review remains required.
+[Slice52](SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED after independent A Final Review
+on 2026-11-08: coordinated whole-page Explore layout, complete scrollable details, bounded ordinary
+pagination with accurate return, smooth transitions/read feedback/content handoff across all nine
+main pages including both library refresh cases, and old Automation Open Web retirement. Original
+Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation `f5409da41191c6e4bbf238bb7def601229fc59dc`
+is accepted; [CURRENT requirements](docs/v2-requirements.md#current--slice52-experience-refinement-slice52-pass--closed)
+define the delivered boundary and the Contract retains failures/evidence limits. The first-Task
+planning role exception and independent B review remain disclosed. [TASK.md](TASK.md) has no active
+implementation Task; A selects the next large Slice separately. No release or deployment is claimed.
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,
@@ -95,7 +96,8 @@ contains `任务列表 / 执行记录`; the three shared runtime settings live i
 explicit enablement. Creation defaults disabled; choosing `启用定时计划` uses `创建并启用`.
 Editing can later enable/disable through the same compact switch and Save; cancellation or success
 preserves list context. The list and its create/edit backgrounds have no extra location-label row.
-A row's actions are `打开 / 编辑 / 复制 / 运行一次`, subject to backend permissions. Copy stays in the
+Names are plain text; a row's actions are `编辑 / 复制 / 运行一次`, subject to backend permissions.
+Old definition/editor Web addresses are ordinary not-found pages. Copy stays in the
 list, creates a disabled definition with a new ID and offers `编辑副本`, including when filters/paging
 hide it. An unknown copy uses `核对复制结果` for that original command; it is never automatically
 reposted. Concurrent changes require rereading the displayed source and its matching authority before

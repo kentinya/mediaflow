@@ -37,27 +37,23 @@ only in [the development workflow](development-workflow.md).
 | 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PASS / CLOSED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 | 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
-| 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | ACTIVE | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; user authorized A to substitute for B for Task52.1 planning, with prerequisite Slice activation; implementation remains unauthorized |
+| 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PASS / CLOSED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; independently accepted by A on 2026-11-08 through `f5409da41191c6e4bbf238bb7def601229fc59dc`; first-Task planning role exception retained, subsequent B review independent |
 
 ## Current boundary
 
-[Slice52](../SLICE.md) — **Explore, Navigation and Automation Entry Experience** — **ACTIVE** for first-Task planning only.
-Base is `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`. The user's seven Explore/navigation/Automation
-issues define this boundary, including the user's clarification that flicker concerns all main-page
-transitions and content handoff, not just the two libraries. Requirements, journeys and architecture
-label the changes TARGET; pagination controls and motion timing are solution choices.
-[TASK.md](../TASK.md) has no active implementation Task. The user authorized A to substitute for B
-for Task52.1 planning; this prerequisite activation does not authorize implementation. Independent
-B Task review and A Final Review remain unchanged.
-
-Latest accepted development remains Slice51 PASS / CLOSED, original Base
-`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`.
-Its Dashboard retirement and all older acceptance identities/deferrals remain; no closed Slice is
-reopened. Git synchronization is distinct from release/deployment.
+[Slice52](../SLICE.md) — **Explore, Navigation and Automation Entry Experience** — **PASS / CLOSED**.
+A independently accepted original Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation
+`f5409da41191c6e4bbf238bb7def601229fc59dc` on 2026-11-08. Four outcomes cover the seven requested corrections:
+coordinated Explore layout/scrollable detail, bounded ordinary pagination with accurate return,
+all nine main-page transitions/read handoff and both library refresh cases, and old Automation Open
+Web retirement with current cards/commands/history preserved. Requirements/journeys/architecture
+are CURRENT. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK; next action is
+A SELECTS THE NEXT LARGE SLICE, a separate action. Earlier acceptance, deferrals and evidence limits
+remain; development closure is distinct from Git push, release or deployment.
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice51's fixed Contract/A review](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review).
+Latest acceptance: [Slice52 Contract/A review](../SLICE.md#closure-packet-and-a-final-review).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

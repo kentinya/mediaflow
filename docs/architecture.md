@@ -2,7 +2,8 @@
 
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
-owns scope. Accepted CURRENT contracts include Slice51 Explore/Dashboard retirement,
+owns scope. Accepted CURRENT contracts include Slice52 Explore/paging/read handoff/Open retirement,
+Slice51 Explore/Dashboard retirement,
 Slice50 presentation/loading/stability, Slice49
 Automation forms/direct Run once, Slice48 independent Task flow/file outcomes, Slice47 Task-owned
 scheduling/settings, and the retained Automation/Task Center/live-list foundations and retirements.
@@ -10,20 +11,20 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Slice52 experience refinement (ACTIVE)
+## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
-[Slice52](../SLICE.md) 已为用户授权的 A 代 B 首 Task 规划激活，产品实施尚未授权；
-`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
-`V2-AUTO-016` 是 TARGET，下方 CURRENT 及历史接受身份不变。用户明确闪烁感涉及全部
-主页面切换的完整过程，两种库刷新提示是其中的具体问题。
+[Slice52](../SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 通过独立 A 终审
+**PASS / CLOSED**，原 Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` 至实现
+`f5409da41191c6e4bbf238bb7def601229fc59dc`。`V2-EXPLORE-012–015`、`V2-UX-014/015` 和
+`V2-AUTO-016` 为 CURRENT，细化下方探索／共享呈现／自动化入口，历史接受身份保持。
 
 **Explore presentation and reads:** keep React → authenticated same-origin Explore API →
 ExploreService → provider-neutral port → TMDB transport and the existing trusted image/CSP bounds.
 Reuse the existing page-addressable browse/search endpoints (up to 20 works, pages 1–500).
 The required outcome is bounded document length/rendered entries while later results and earlier
-positions remain reachable. Ordinary pagination is recommended; the exact UI page size and page-number
-controls are implementation choices, not new user requirements. Do not add page-size settings or
-another paging API. Preserve exact conditions/type/keyword/page query identity; distinguish the
+positions remain reachable. The implementation uses ordinary page replacement, previous/next and a
+compact page window; the list cache retains at most 16 pages across contexts in addition to the
+existing context/idle bounds. Do not add page-size settings or another paging API. Preserve exact conditions/type/keyword/page query identity; distinguish the
 pending target from visible results, reject late cross-context responses and retain successful
 same-context results after a failed read. Cache pages/contexts remain bounded and principal-isolated.
 No new endpoint, persistent catalog or provider behavior is required. Search exit/detail return
@@ -31,8 +32,8 @@ retain the browsing anchor without requiring all visited results to remain rende
 Consolidate the Explore heading and tool layout; remove its read-only Files search placeholder.
 Validate the whole page's visual hierarchy, density, proportions, spacing and typography/colour
 consistency through same-viewport before/after views and actual browsing, beyond individual alignment.
-Use the shared modal's bounded internal scroll capability, stable background lock/gutter/focus and
-accessible dismissal; detail content must reach its end at desktop, 390px and short viewport heights.
+The Explore modal body opts into bounded internal vertical scrolling while retaining shared
+background lock/gutter/focus and accessible dismissal; detail content must reach its end at desktop, 390px and short viewport heights.
 
 **All main-page transitions and content handoff:** Router/AuthBoundary/Query retain lifecycle and
 authority ownership. Cover all nine existing sidebar destinations from transition through actual
@@ -62,7 +63,15 @@ unknown-command reconciliation, records and exact Task links. General revision/s
 other shared backend/CLI consumers remain; this is not whole-backend Automation API retirement.
 Do not delete persisted configuration, definitions, Tasks, Results, records or audit history.
 
-No schema, execution engine, permission model, Storage mutation or new recovery state is planned.
+Implementation: pending feedback is revealed after a real read persists for 400ms; requests,
+errors and ready content are never delayed. The Shell starts at readable opacity and suppresses
+stacked content fades during entry; content uses a first-render opacity transition so lifting that
+suppression cannot dim already-visible content again. Both library pages reserve a refresh-status
+slot. The System Settings engine-read region interpolates read-stage height changes over 300ms
+to move the already-visible block below smoothly; reduced motion settles statically. These are
+presentation choices, not numerical product acceptance requirements.
+
+No schema, execution engine, permission model, Storage mutation or new recovery state changed.
 Shared modal/Shell changes require directly affected regression; any actual change to Active,
 permissions, mutation, concurrency or core safety requires Test Level reassessment under the workflow.
 
@@ -99,8 +108,10 @@ behavior. Explore has a separate 256-entry capacity-bound TTL cache (list/search
 3600s), keyed by source instance/locale/operation/type/query/page and applied values. It never bypasses
 API authentication. Client reads have a five-minute idle TTL and a bounded 16-context LRU, with exact
 query identities, independent detail reads, no automatic next-page fetch and no automatic retry.
-Condition/type/keyword changes cannot relabel old responses. Pagination deduplicates by full work
-identity and retains successful pages after failure. A successful upstream zero-page response is
+Condition/type/keyword changes cannot relabel old responses. Under Slice52, one exact page key is
+read at a time and replaces the grid; a bounded 16-page cache replaces accumulated infinite pages.
+Each displayed range deduplicates by full work identity and retains its successful page after a
+failed target read, labelling actual versus target. A successful upstream zero-page response is
 normalized only when both total results and items are empty: internally one displayable empty window,
 zero results, no fabricated work or next page. Inconsistent/negative/wrong-type totals still fail.
 
@@ -114,7 +125,7 @@ text/detail access. TMDB source and attribution are visible.
 **Routes/presentation:** `/ui-v2/explore` is the default connected homepage and sidebar identity;
 other supported intended routes keep their authentication continuation. A Chinese filter/search
 page renders a 2:3 grid (two columns at 390px), bounded manual paging and an exact-work centered
-`ModalCard`. Close/Escape/browser Back preserve list conditions/pages/scroll/invoker focus and do
+`ModalCard`. Close/Escape/browser Back preserve list conditions/current page/scroll/invoker focus and do
 not replay a Shell transition. The bounded `detail` parameter supports in-page navigation; independent
 detail deep links and refresh/re-authentication session restoration are not promised. Loading,
 empty, first-page/pagination/detail/image failure and recovery stay separate. 401/disconnect clears
@@ -207,9 +218,9 @@ its opacity entry changes, keeping AuthBoundary/Outlet lifecycle and URL state o
 Library Save verification retains the submitted candidate across allowed card close/reopen, reads
 the exact current Active projection and requires explicit intent before any further fenced Save.
 
-Beyond the selected Task/Storage/library surfaces and Automation create/edit stability, other
-sidebar destination pages participate in the main-page transition only; their business bodies are
-not redesigned. Python API/application/runtime/persistence retain authority; tokens remain memory-only, 401/403 and
+Under Slice52, all nine sidebar pages also coordinate their actual read feedback and content
+handoff; their business functions remain unchanged. Python API/application/runtime/persistence
+retain authority; tokens remain memory-only, 401/403 and
 query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
 the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below
 and earlier Base/Head/closure facts remain valid; these CURRENT presentation contracts supersede

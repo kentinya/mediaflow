@@ -8,12 +8,32 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice52](../SLICE.md) — Explore, Navigation and Automation Entry Experience — is **ACTIVE**
-from unchanged Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` for first-Task planning only.
-The user authorized A to substitute for B for Task52.1 planning; activation satisfies its workflow
-prerequisite. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK; implementation still needs
-separate authorization. No product acceptance or closure row is added.
-Latest accepted Slice51 and all older identities, deferrals and evidence limits remain unchanged.
+[Slice52](../SLICE.md#closure-packet-and-a-final-review) is **PASS / CLOSED** after independent A
+Final Review on 2026-11-08, unchanged Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation
+`f5409da41191c6e4bbf238bb7def601229fc59dc`. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK.
+Next Action: A SELECTS THE NEXT LARGE SLICE. No new Slice or implementation is authorized here.
+Original Slice51/50 and earlier identities, deferrals and evidence limits remain unchanged.
+
+## Latest accepted closure — Slice52
+
+Delivered coordinated whole-page Explore layout and complete scrollable details; bounded ordinary
+pagination with retained successful-page recovery, exact search/detail return and input ownership;
+comfortable transitions/read feedback/content handoff across all nine sidebar main pages, including
+both library refresh cases; old Automation Open/definition/editor Web pages/routes/exclusive client
+dependencies retired while current cards, commands, shared APIs/CLI and history remain.
+`V2-EXPLORE-012–015`, `V2-UX-014/015` and `V2-AUTO-016` are CURRENT.
+
+A reviewed the complete 58-file Base..Head and B's packet `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md`.
+A's final production-build browser runs: **20 navigation/Automation + 18 real-Python Explore passed**;
+six desktop/390px settings entry frame journeys confirm fast/slow handoff. Final B Web unit/static
+checks passed; raw Node **112 passed/1 failed**, Automation Python merged **49 passed/3 failed**,
+Explore **18 passed**, Files **28 passed**. Settings reuse retains **12 passed/3 failed** and matching
+input evidence. Baseline 403/old technical-message selectors, legacy Files capacity selectors and
+combined Draft fixture contamination remain disclosed with Base/isolated checks; no whole-E2E green
+claim or proof of the unexecuted capacity assertions. Original failures/fixes/limits remain in Git.
+Local evidence is under `.git/validation-evidence/f5409da41191c6e4bbf238bb7def601229fc59dc/a52-final/`,
+B's matching directories and prior52.1/52.2 directories named in the Contract; not promised remotely
+accessible. No full release matrix, production services/media, push, release or deployment claimed.
 
 ## Latest accepted closure — Slice51
 
@@ -62,6 +82,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 52 — Explore, Navigation and Automation Entry Experience | PASS / CLOSED | `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` | `f5409da41191c6e4bbf238bb7def601229fc59dc` | A Final Review PASS / CLOSED — 2026-11-08 | Coordinated Explore layout/scrollable details; bounded ordinary paging and exact return; nine-page transitions/read handoff and two-library refresh stability; old Automation Open Web journey and exclusive dependencies retired, current cards/commands/history preserved | New sources/download/play, persistent detail sessions, whole-site business redesign, full backend retirement, new commands/schema/permissions/queue/recovery engine, historical conversion, production/full release matrix; original validation limits retained |
 | 51 — V2 Explore Homepage Replacing Dashboard | PASS / CLOSED | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` | `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` | A Final Review PASS / CLOSED — 2026-11-07 | Default Explore; bounded movie/TV browse/filter/search/paging; exact poster detail/return; genuine zero-result recovery; trusted artwork/precise CSP; Dashboard Web/API/CLI and dedicated implementation/consumers fully retired, shared histories preserved | New sources, recommendations/subscriptions/download/play, standalone detail links and refresh/re-auth session restoration, dedicated no-Active startup, other-page redesign, new schema/permissions/engine, V1 expansion, production/full release matrix; original validation limits retained |
 | 50 — V2 Dialog, Readability and Navigation Experience | PASS / CLOSED | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` | `6b0927328a7bf0873faffce9cb38007fd4607764` | A Final Review PASS / CLOSED — 2026-11-07 | Original eight UX changes plus Automation create/edit stability; centered Task/Storage/library cards and readable actions; both page-local trees removed; nine main-page transitions and consistent library loading; exact publication, recovery and non-replay preserved | New backend/schema/engine/permissions/commands, other pages’ business redesign, themes/settings, automatic uncertain replay/rollback, V1 and production deployment; B failure/skip/validation limits retained |
 | 49 — Automation Task Creation, Editing and Direct Run Once | PASS / CLOSED | `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` | `9d6b78147d90b950ed2333f9747facc77bf0391a` | A Final Review PASS / CLOSED — 2026-11-05 | Confined sources and direct list Run once; exact request feedback/reconciliation; shared Chinese create/edit card and saved-value/fence pairing; optional default-off enabled atomic creation and later enable/disable with existing authority; truthful historical/current publication readback | New providers/commands, broad detail/records/Task Center redesign, new schema/queue/engine, bulk/cross-Task recovery, automatic retry/uncertain replay/rollback, old failed-Task repair/migration, cross-version upgrade/rollback, V1, external-service acceptance and production deployment; 7 optional skips and recorded gate/time limits retained |
