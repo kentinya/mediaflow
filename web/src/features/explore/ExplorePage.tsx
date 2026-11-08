@@ -21,7 +21,6 @@ import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
 import { useReadReveal } from "../../shared/ui/read-reveal";
-import { ExploreAttribution } from "./ExploreAttribution";
 import { ExploreDetailCard } from "./ExploreDetailCard";
 import { ExplorePosterGrid } from "./ExplorePosterGrid";
 import {
@@ -441,6 +440,14 @@ export function ExplorePage() {
       minRating: parsedRating.value,
       minVotes: parsedVotes.value,
     });
+    // The visible draft now states exactly the values that were applied
+    // (empty stays unspecified, an explicit 0 stays 0), so a pending draft
+    // cannot be mistaken for the conditions of the page already on screen.
+    setDraft({
+      year: parsedYear.value === null ? "" : String(parsedYear.value),
+      minRating: parsedRating.value === null ? "" : String(parsedRating.value),
+      minVotes: parsedVotes.value === null ? "" : String(parsedVotes.value),
+    });
     // A genuinely new condition set starts at the new result set's page 1;
     // re-applying identical values keeps the page the operator is on.
     if (changed) setBrowsePage(1);
@@ -468,9 +475,13 @@ export function ExplorePage() {
     invokerRef.current = invoker;
     openedByNavRef.current = true;
     const detail = exploreWorkIdentity(item.mediaType, item.providerId);
+    // Opening a same-page detail is not a page change: the list behind the
+    // card keeps the exact position the operator was reading when they
+    // clicked, including any non-zero scroll or scrollbar geometry.
     void navigate({
       to: "/explore",
       search: (previous) => ({ ...previous, detail }),
+      resetScroll: false,
     });
   };
   const closeDetail = () => {
@@ -479,7 +490,14 @@ export function ExplorePage() {
       router.history.back();
       return;
     }
-    void navigate({ to: "/explore", search: {}, replace: true });
+    // A detail opened from a deep link has no list entry to restore through
+    // history; closing it must leave the same list position untouched too.
+    void navigate({
+      to: "/explore",
+      search: {},
+      replace: true,
+      resetScroll: false,
+    });
   };
 
   // Slice52 RO-3: the first-page skeleton, the applied-conditions line and
@@ -520,6 +538,14 @@ export function ExplorePage() {
     items.length,
     displayedPage ?? 1,
   );
+  // The rating row is a draft until its explicit 应用筛选 succeeds: keep the
+  // not-yet-applied values distinguishable from the real applied summary.
+  const draftDirty =
+    draft.year !== (numeric.year === null ? "" : String(numeric.year)) ||
+    draft.minRating !==
+      (numeric.minRating === null ? "" : String(numeric.minRating)) ||
+    draft.minVotes !==
+      (numeric.minVotes === null ? "" : String(numeric.minVotes));
 
   const firstErrorPanel: ReactNode =
     firstLoadError !== null && !showUnauthorized && !showForbidden
@@ -572,35 +598,296 @@ export function ExplorePage() {
             </Button>
           ) : null}
         </form>
-        <div className="mf-explore-type" role="group" aria-label="作品类型">
-          {(["movie", "tv"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`mf-explore-type-button${
-                visibleType === value ? " is-active" : ""
-              }`}
-              aria-pressed={visibleType === value}
-              onClick={() => switchType(value)}
-            >
-              {EXPLORE_MEDIA_TYPE_LABELS[value]}
-            </button>
-          ))}
-        </div>
       </div>
 
       {activeKeyword !== null ? (
-        <p className="mf-explore-mode-note" role="status">
-          搜索模式:仅按作品名与当前类型搜索,浏览筛选暂不适用;退出搜索后将恢复此前的条件、
-          当前页与位置。当前关键词「{activeKeyword}」。
-        </p>
+        <>
+          <div
+            className="mf-explore-filter-board"
+            role="group"
+            aria-label="搜索类型筛选"
+          >
+            <div className="mf-explore-filter-row">
+              <span className="mf-explore-filter-label">类型</span>
+              <div
+                className="mf-explore-chip-group"
+                role="group"
+                aria-label="作品类型"
+              >
+                {(["movie", "tv"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`mf-explore-chip${
+                      visibleType === value ? " is-active" : ""
+                    }`}
+                    aria-pressed={visibleType === value}
+                    onClick={() => switchType(value)}
+                  >
+                    {EXPLORE_MEDIA_TYPE_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className="mf-explore-mode-note" role="status">
+            搜索模式:仅按作品名与当前类型搜索,浏览筛选暂不适用;退出搜索后将恢复此前的条件、
+            当前页与位置。当前关键词「{activeKeyword}」。
+          </p>
+        </>
       ) : (
-        <div className="mf-explore-filters">
+        <>
           {optionsLoading && showOptionsWait ? (
             <p className="mf-explore-options-status" role="status">
               正在读取筛选选项...
             </p>
           ) : null}
+          <div className="mf-explore-filter-board">
+            <div className="mf-explore-filter-row">
+              <span className="mf-explore-filter-label">类型</span>
+              <div
+                className="mf-explore-chip-group"
+                role="group"
+                aria-label="作品类型"
+              >
+                {(["movie", "tv"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`mf-explore-chip${
+                      visibleType === value ? " is-active" : ""
+                    }`}
+                    aria-pressed={visibleType === value}
+                    onClick={() => switchType(value)}
+                  >
+                    {EXPLORE_MEDIA_TYPE_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mf-explore-filter-row">
+              <span className="mf-explore-filter-label">排序</span>
+              <div
+                className="mf-explore-chip-group"
+                role="group"
+                aria-label="排序"
+              >
+                {(
+                  [
+                    ["popular", EXPLORE_SORT_LABELS.popular],
+                    ["rating", EXPLORE_SORT_LABELS.rating],
+                    ["date", EXPLORE_SORT_LABELS.date],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`mf-explore-chip${
+                      sort === value ? " is-active" : ""
+                    }`}
+                    aria-pressed={sort === value}
+                    onClick={() => {
+                      setSort(value);
+                      setBrowsePage(1);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mf-explore-filter-row">
+              <span className="mf-explore-filter-label">题材</span>
+              <div
+                className="mf-explore-chip-strip"
+                role="group"
+                aria-label="题材"
+                aria-busy={optionsLoading}
+              >
+                {options === undefined ? (
+                  <button type="button" className="mf-explore-chip" disabled>
+                    {optionsFailed ? "筛选选项读取失败" : "读取中..."}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={`mf-explore-chip${
+                        genreId === null ? " is-active" : ""
+                      }`}
+                      aria-pressed={genreId === null}
+                      onClick={() => {
+                        setGenreId(null);
+                        setBrowsePage(1);
+                      }}
+                    >
+                      全部
+                    </button>
+                    {options.genres.map((genre) => (
+                      <button
+                        key={genre.id}
+                        type="button"
+                        className={`mf-explore-chip${
+                          genreId === genre.id ? " is-active" : ""
+                        }`}
+                        aria-pressed={genreId === genre.id}
+                        onClick={() => {
+                          setGenreId(genre.id);
+                          setBrowsePage(1);
+                        }}
+                      >
+                        {genre.name}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="mf-explore-filter-row">
+              <span className="mf-explore-filter-label">原始语言</span>
+              <div
+                className="mf-explore-chip-strip"
+                role="group"
+                aria-label="原始语言"
+                aria-busy={optionsLoading}
+              >
+                {options === undefined ? (
+                  <button type="button" className="mf-explore-chip" disabled>
+                    {optionsFailed ? "筛选选项读取失败" : "读取中..."}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={`mf-explore-chip${
+                        originalLanguage === null ? " is-active" : ""
+                      }`}
+                      aria-pressed={originalLanguage === null}
+                      onClick={() => {
+                        setOriginalLanguage(null);
+                        setBrowsePage(1);
+                      }}
+                    >
+                      全部
+                    </button>
+                    {options.languages.map((language) => (
+                      <button
+                        key={language.code}
+                        type="button"
+                        className={`mf-explore-chip${
+                          originalLanguage === language.code ? " is-active" : ""
+                        }`}
+                        aria-pressed={originalLanguage === language.code}
+                        onClick={() => {
+                          setOriginalLanguage(language.code);
+                          setBrowsePage(1);
+                        }}
+                      >
+                        {language.name} ({language.code})
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="mf-explore-filter-row mf-explore-filter-row-rating">
+              <span className="mf-explore-filter-label">评分</span>
+              <div className="mf-explore-rating-controls">
+                <div className="mf-explore-rating-slider">
+                  <input
+                    id="explore-min-rating"
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.1"
+                    aria-label="最低评分"
+                    aria-valuetext={
+                      draft.minRating === ""
+                        ? "不限"
+                        : `${draft.minRating} 分以上`
+                    }
+                    value={draft.minRating === "" ? "0" : draft.minRating}
+                    onChange={(event) =>
+                      setDraft({ ...draft, minRating: event.target.value })
+                    }
+                  />
+                  <output
+                    className="mf-explore-rating-value"
+                    htmlFor="explore-min-rating"
+                    aria-live="polite"
+                  >
+                    {draft.minRating === "" ? "不限" : `≥ ${draft.minRating}`}
+                  </output>
+                  <button
+                    type="button"
+                    className="mf-explore-chip mf-explore-rating-clear"
+                    aria-label="不限制最低评分"
+                    disabled={draft.minRating === ""}
+                    onClick={() => setDraft({ ...draft, minRating: "" })}
+                  >
+                    清除
+                  </button>
+                </div>
+                <div className="mf-explore-rating-votes">
+                  <label htmlFor="explore-min-votes">最低评分人数</label>
+                  <input
+                    id="explore-min-votes"
+                    name="explore-min-votes"
+                    type="text"
+                    inputMode="numeric"
+                    aria-describedby="explore-min-votes-range"
+                    value={draft.minVotes}
+                    onChange={(event) =>
+                      setDraft({ ...draft, minVotes: event.target.value })
+                    }
+                  />
+                  <span
+                    id="explore-min-votes-range"
+                    className="mf-explore-rating-hint"
+                  >
+                    0–1000000000
+                  </span>
+                </div>
+                <Button type="button" onClick={applyDraft}>
+                  应用筛选
+                </Button>
+                {draftDirty ? (
+                  <span className="mf-explore-draft-state">待应用</span>
+                ) : null}
+              </div>
+              {draftError !== null ? (
+                <p className="mf-explore-more-error" role="alert">
+                  {draftError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mf-explore-filter-row mf-explore-filter-row-actions">
+              <span className="mf-explore-filter-label">操作</span>
+              <div className="mf-explore-filter-actions">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((open) => !open)}
+                >
+                  {moreOpen ? "收起更多筛选" : "更多筛选"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={clearBrowseConditions}
+                >
+                  清除条件
+                </Button>
+              </div>
+            </div>
+          </div>
+
           {optionsError !== null ? (
             <div className="mf-explore-options-error" role="alert">
               <p className="mf-explore-options-error-title">筛选选项读取失败</p>
@@ -619,101 +906,7 @@ export function ExplorePage() {
               </div>
             </div>
           ) : null}
-          <div className="mf-filter-field">
-            <label htmlFor="explore-genre">题材</label>
-            <select
-              id="explore-genre"
-              value={genreId === null ? "" : String(genreId)}
-              disabled={options === undefined}
-              aria-busy={optionsLoading}
-              onChange={(event) => {
-                setGenreId(
-                  event.target.value === "" ? null : Number(event.target.value),
-                );
-                setBrowsePage(1);
-              }}
-            >
-              <option value="">
-                {options === undefined
-                  ? optionsFailed
-                    ? "筛选选项读取失败"
-                    : "读取中..."
-                  : "全部题材"}
-              </option>
-              {(options?.genres ?? []).map((genre) => (
-                <option key={genre.id} value={String(genre.id)}>
-                  {genre.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="mf-filter-field">
-            <label htmlFor="explore-language">原始语言</label>
-            <select
-              id="explore-language"
-              value={originalLanguage ?? ""}
-              disabled={options === undefined}
-              aria-busy={optionsLoading}
-              onChange={(event) => {
-                setOriginalLanguage(
-                  event.target.value === "" ? null : event.target.value,
-                );
-                setBrowsePage(1);
-              }}
-            >
-              <option value="">
-                {options === undefined
-                  ? optionsFailed
-                    ? "筛选选项读取失败"
-                    : "读取中..."
-                  : "全部语言"}
-              </option>
-              {(options?.languages ?? []).map((language) => (
-                <option key={language.code} value={language.code}>
-                  {language.name} ({language.code})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="mf-filter-field">
-            <label htmlFor="explore-sort">排序</label>
-            <select
-              id="explore-sort"
-              value={sort}
-              onChange={(event) => {
-                setSort(event.target.value as ExploreSort);
-                setBrowsePage(1);
-              }}
-            >
-              {(
-                [
-                  ["popular", EXPLORE_SORT_LABELS.popular],
-                  ["rating", EXPLORE_SORT_LABELS.rating],
-                  ["date", EXPLORE_SORT_LABELS.date],
-                ] as const
-              ).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button
-            variant="secondary"
-            type="button"
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen((open) => !open)}
-          >
-            {moreOpen ? "收起更多筛选" : "更多筛选"}
-          </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            onClick={clearBrowseConditions}
-          >
-            清除条件
-          </Button>
-        </div>
+        </>
       )}
 
       {!moreOpen &&
@@ -721,7 +914,7 @@ export function ExplorePage() {
       sort === "rating" &&
       numeric.minVotes === null ? (
         <p className="mf-explore-hint">
-          评分排序默认最低评分人数 100(可在更多筛选中修改)。
+          评分排序默认最低评分人数 100(可在评分行修改)。
         </p>
       ) : null}
 
@@ -736,32 +929,9 @@ export function ExplorePage() {
               setDraft({ ...draft, year: event.target.value })
             }
           />
-          <TextField
-            id="explore-min-rating"
-            label="最低评分(0–10)"
-            inputMode="decimal"
-            value={draft.minRating}
-            onChange={(event) =>
-              setDraft({ ...draft, minRating: event.target.value })
-            }
-          />
-          <TextField
-            id="explore-min-votes"
-            label="最低评分人数(0–1000000000)"
-            inputMode="numeric"
-            value={draft.minVotes}
-            onChange={(event) =>
-              setDraft({ ...draft, minVotes: event.target.value })
-            }
-          />
-          <Button type="button" onClick={applyDraft}>
-            应用筛选
-          </Button>
-          {draftError !== null ? (
-            <p className="mf-explore-more-error" role="alert">
-              {draftError}
-            </p>
-          ) : null}
+          <p className="mf-explore-more-hint">
+            年份修改后使用上方评分行的“应用筛选”生效,评分与最低评分人数也在该行调整。
+          </p>
         </div>
       ) : null}
 
@@ -810,8 +980,6 @@ export function ExplorePage() {
           onClose={closeDetail}
         />
       ) : null}
-
-      <ExploreAttribution />
     </section>
   );
 }

@@ -146,15 +146,21 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
   await expect(page).toHaveURL(/\/ui-v2\/explore$/);
 
   // A real condition group reaches the Provider and is echoed back.
-  await page.getByLabel("题材").selectOption({ label: "动作" });
+  await page
+    .getByRole("group", { name: "题材" })
+    .getByRole("button", { name: "动作" })
+    .click();
   await expect(page.getByText(/已应用:电影 · 热度优先 · 动作/)).toBeVisible();
-  await page.getByLabel("排序").selectOption("rating");
+  await page
+    .getByRole("group", { name: "排序" })
+    .getByRole("button", { name: "评分优先" })
+    .click();
   await expect(page.getByText(/已应用:电影 · 评分优先/)).toBeVisible();
   await expect(page.getByText("评分排序默认最低评分人数 100")).toBeVisible();
 
   // 清除条件 restores the default applied set through a fresh read.
   await page
-    .locator(".mf-explore-filters")
+    .locator(".mf-explore-filter-board")
     .getByRole("button", { name: "清除条件" })
     .click();
   await expect(
@@ -162,10 +168,13 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
   ).toBeVisible();
 
   // A genuinely empty filter result is an honest empty state with recovery.
-  await page.getByLabel("原始语言").selectOption("ko");
+  await page
+    .getByRole("group", { name: "原始语言" })
+    .getByRole("button", { name: "韩语 (ko)" })
+    .click();
   await expect(page.getByText("没有符合条件的作品")).toBeVisible();
   await page
-    .locator(".mf-explore-filters")
+    .locator(".mf-explore-filter-board")
     .getByRole("button", { name: "清除条件" })
     .click();
   await expect(
@@ -261,6 +270,8 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
 test("390px: two readable columns without horizontal overflow", async ({
   page,
 }) => {
+  // The narrow, reduced-motion journey must stay fully static and usable.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await connect(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText(/已应用:电影/)).toBeVisible();
@@ -274,10 +285,26 @@ test("390px: two readable columns without horizontal overflow", async ({
   }));
   expect(layout.columns).toBe(2);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
-  // The attribution area stays visible and inside the narrow layout too.
+  // The narrow sidebar still reaches the one static attribution card.
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("button", { name: "关于与鸣谢" }).click();
+  const about = page.getByRole("dialog");
   await expect(
-    page.getByRole("region", { name: "数据来源与署名" }),
+    about.getByRole("region", { name: "数据来源与署名" }),
   ).toBeVisible();
+  const aboutLayout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }));
+  expect(aboutLayout.scrollWidth).toBeLessThanOrEqual(aboutLayout.innerWidth);
+  await page.waitForTimeout(260);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-mobile-390-about.png`,
+    fullPage: false,
+  });
+  await about.getByRole("button", { name: "关闭关于与鸣谢" }).click();
+  await expect(about).toHaveCount(0);
+  await page.getByRole("button", { name: "Close menu" }).click();
 
   // A long title stays inside its card; the detail card must not overflow.
   const opener = page.getByRole("button", { name: /第十二个夏天/ }).first();
@@ -423,7 +450,7 @@ test("the chosen vote floor reaches the fake upstream under every sort", async (
   // The real entry: 更多筛选 → 最低评分人数 → 应用筛选, with the default
   // popular sort untouched.
   await page.getByRole("button", { name: "更多筛选" }).click();
-  await page.getByLabel("最低评分人数(0–1000000000)").fill("2000");
+  await page.getByLabel("最低评分人数").fill("2000");
   await page.getByRole("button", { name: "应用筛选" }).click();
 
   await expect(page.getByText(/评分人数 ≥ 2000/)).toBeVisible();
@@ -436,12 +463,11 @@ test("the chosen vote floor reaches the fake upstream under every sort", async (
 
   // All three sorts re-issue the same floor; the echoed applied conditions
   // and the real upstream request stay consistent for each one.
-  for (const [sort, label] of [
-    ["rating", "评分优先"],
-    ["date", "上映/首播日期"],
-    ["popular", "热度优先"],
-  ] as const) {
-    await page.getByLabel("排序").selectOption(sort);
+  for (const label of ["评分优先", "上映/首播日期", "热度优先"] as const) {
+    await page
+      .getByRole("group", { name: "排序" })
+      .getByRole("button", { name: label })
+      .click();
     await expect(
       page.getByText(new RegExp(`已应用:电影 · ${label}`)),
     ).toBeVisible();
@@ -453,13 +479,16 @@ test("the chosen vote floor reaches the fake upstream under every sort", async (
   // condition), and the rating sort alone falls back to its documented
   // 100-vote default.
   await page
-    .locator(".mf-explore-filters")
+    .locator(".mf-explore-filter-board")
     .getByRole("button", { name: "清除条件" })
     .click();
   await expect(
     page.getByText(/已应用:电影 · 热度优先 · 全部题材/),
   ).toBeVisible();
-  await page.getByLabel("排序").selectOption("rating");
+  await page
+    .getByRole("group", { name: "排序" })
+    .getByRole("button", { name: "评分优先" })
+    .click();
   await expect(page.getByText(/评分人数 ≥ 100/)).toBeVisible();
 
   const floors = (await stats(page)).voteFloors ?? [];
@@ -485,8 +514,14 @@ test("search with its own type exits back to the exact browse anchor", async ({
 
   // Browse anchor: movies restricted to genre 动作 and original language
   // English — six of the 45 fixture movies match.
-  await page.getByLabel("题材").selectOption({ label: "动作" });
-  await page.getByLabel("原始语言").selectOption("en");
+  await page
+    .getByRole("group", { name: "题材" })
+    .getByRole("button", { name: "动作" })
+    .click();
+  await page
+    .getByRole("group", { name: "原始语言" })
+    .getByRole("button", { name: "英语 (en)" })
+    .click();
   await expect(
     page.getByText(/已应用:电影 · 热度优先 · 动作 · 原始语言 英语/),
   ).toBeVisible();
@@ -533,8 +568,16 @@ test("search with its own type exits back to the exact browse anchor", async ({
   await expect(
     page.getByText(/已应用:电影 · 热度优先 · 动作 · 原始语言 英语/),
   ).toBeVisible();
-  await expect(page.getByLabel("题材")).toHaveValue("28");
-  await expect(page.getByLabel("原始语言")).toHaveValue("en");
+  await expect(
+    page
+      .getByRole("group", { name: "题材" })
+      .getByRole("button", { name: "动作" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page
+      .getByRole("group", { name: "原始语言" })
+      .getByRole("button", { name: "英语 (en)" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".mf-explore-card")).toHaveCount(6);
   await expect
     .poll(() => page.evaluate(() => window.scrollY))
@@ -577,7 +620,10 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   // A legal filter with no upstream match: the source reports zero total
   // pages, the production adapter exposes one empty display window and the
   // page shows its real empty state instead of a read failure.
-  await page.getByLabel("原始语言").selectOption("fr");
+  await page
+    .getByRole("group", { name: "原始语言" })
+    .getByRole("button", { name: "法语 (fr)" })
+    .click();
   await expect(page.getByText("没有符合条件的作品")).toBeVisible();
   await expect(page.getByText("探索读取失败")).toHaveCount(0);
   await expect(
@@ -585,7 +631,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
   await page
-    .locator(".mf-explore-filters")
+    .locator(".mf-explore-filter-board")
     .getByRole("button", { name: "清除条件" })
     .click();
   await expect(
@@ -753,9 +799,10 @@ test("a failed filter catalog shows its recovery entry beside the working list",
     alert.getByRole("button", { name: "重新读取筛选选项" }),
   ).toBeVisible();
   // Not an empty catalog: the select states the failure and stays disabled.
-  const genre = page.getByLabel("题材");
-  await expect(genre).toBeDisabled();
-  await expect(genre.locator("option:checked")).toHaveText("筛选选项读取失败");
+  const genreGroup = page.getByRole("group", { name: "题材" });
+  await expect(
+    genreGroup.getByRole("button", { name: "筛选选项读取失败" }),
+  ).toBeDisabled();
   const matchesBefore = await page.locator(".mf-explore-card").count();
   expect(matchesBefore).toBeGreaterThan(0);
 
@@ -764,7 +811,9 @@ test("a failed filter catalog shows its recovery entry beside the working list",
   // The upstream heals; only the catalog re-read runs.
   await setFailure(page, "none");
   await page.getByRole("button", { name: "重新读取筛选选项" }).click();
-  await expect(genre).toBeEnabled();
+  await expect(
+    genreGroup.getByRole("button", { name: "动作与冒险" }),
+  ).toBeEnabled();
   await expect(page.getByRole("alert")).toHaveCount(0);
   const discoversAfter = (await stats(page)).upstreamRoutes["discover/tv"] ?? 0;
   expect(discoversAfter).toBe(discoversBefore);
@@ -772,7 +821,7 @@ test("a failed filter catalog shows its recovery entry beside the working list",
 
   // The recovered catalog really offers its genres through the normal
   // selection entry, condition applied end to end.
-  await genre.selectOption({ label: "动作与冒险" });
+  await genreGroup.getByRole("button", { name: "动作与冒险" }).click();
   await expect(
     page.getByText(/已应用:剧集 · 热度优先 · 动作与冒险/),
   ).toBeVisible();
@@ -781,14 +830,20 @@ test("a failed filter catalog shows its recovery entry beside the working list",
   await setFailure(page, "none");
 });
 
-test("the detail card shows the real backdrop, episode counts and the TMDB attribution", async ({
+test("the detail card shows the real backdrop, episode counts and one compact TMDB action", async ({
   page,
 }) => {
   await connect(page);
 
-  // Page-level attribution: the approved local logo really renders under the
-  // static CSP, the exact notice is readable and the link-back is focusable.
-  const attribution = page.getByRole("region", { name: "数据来源与署名" });
+  // The one attribution card is reachable from the sidebar; its approved
+  // local logo really renders under the static CSP, and the exact notice and
+  // link-back are readable and focusable.
+  const aboutEntry = page.getByRole("button", { name: "关于与鸣谢" });
+  await aboutEntry.click();
+  const about = page.getByRole("dialog");
+  const attribution = about.getByRole("region", {
+    name: "数据来源与署名",
+  });
   await expect(attribution).toBeVisible();
   await expect(
     attribution.getByText(
@@ -800,10 +855,18 @@ test("the detail card shows the real backdrop, episode counts and the TMDB attri
   await expect
     .poll(() => logo.evaluate((img: HTMLImageElement) => img.naturalWidth))
     .toBeGreaterThan(0);
-  const tmdbLink = attribution.getByRole("link");
+  const tmdbLink = attribution.getByRole("link", { name: /访问 TMDB 首页/ });
   await expect(tmdbLink).toHaveAttribute("href", "https://www.themoviedb.org");
   await tmdbLink.focus();
   await expect(tmdbLink).toBeFocused();
+  await page.waitForTimeout(260);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-desktop-about.png`,
+    fullPage: false,
+  });
+  await about.getByRole("button", { name: "关闭关于与鸣谢" }).click();
+  await expect(about).toHaveCount(0);
+  await expect(aboutEntry).toBeFocused();
 
   // Movie detail: the real backdrop at the fixed w780 rendition.
   await page.getByRole("button", { name: "深空回声 (1995)" }).click();
@@ -812,11 +875,23 @@ test("the detail card shows the real backdrop, episode counts and the TMDB attri
     dialog.locator(".mf-explore-detail-backdrop img"),
   ).toHaveAttribute("src", /^https:\/\/image\.tmdb\.org\/t\/p\/w780\//);
   await expect(dialog.getByText("片长")).toBeVisible();
+  const detailLink = dialog.getByRole("link", { name: "在 TMDB 查看" });
+  await expect(detailLink).toHaveAttribute(
+    "href",
+    /^https:\/\/www\.themoviedb\.org\/movie\/\d+$/,
+  );
+  await expect(detailLink.locator("img")).toHaveAttribute(
+    "src",
+    /\/tmdb-logo\.svg$/,
+  );
   await expect(
     dialog.getByText(
       "This product uses the TMDB API but is not endorsed or certified by TMDB.",
     ),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(dialog.getByText(/信息来自 TMDB,与本地媒体库无关/)).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: `${EVIDENCE}/desktop-detail-backdrop.png`,
     fullPage: false,
@@ -1128,6 +1203,9 @@ test("the detail body really scrolls to its end while the background stays still
   await connect(page);
   // The dedicated long-overview fixture (harness movie index 1).
   const opener = page.getByRole("button", { name: "城市边缘的光 (1998)" });
+  // The real click happens on the visible card: park it first so the anchor
+  // captured here is the position the operator actually clicked from.
+  await opener.scrollIntoViewIfNeeded();
   const backgroundBefore = await page.evaluate(() => window.scrollY);
   await opener.click();
   const dialog = page.getByRole("dialog");
@@ -1220,4 +1298,242 @@ test("Task52.2 explore result paging hands real reads over without flashing fast
   await expect(page.getByText(/正在读取第 3 页/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
   await setFailure(page, "none");
+});
+
+async function backgroundAnchor(
+  page: Page,
+  locator: ReturnType<Page["locator"]>,
+): Promise<{ x: number; y: number; scrollY: number }> {
+  const box = await locator.boundingBox();
+  if (box === null) throw new Error("the background work has no visible box");
+  return {
+    x: Math.round(box.x),
+    y: Math.round(box.y),
+    scrollY: Math.round(await page.evaluate(() => window.scrollY)),
+  };
+}
+
+function expectAnchored(
+  actual: { x: number; y: number; scrollY: number },
+  expected: { x: number; y: number; scrollY: number },
+): void {
+  expect(Math.abs(actual.scrollY - expected.scrollY)).toBeLessThanOrEqual(1);
+  expect(Math.abs(actual.x - expected.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(actual.y - expected.y)).toBeLessThanOrEqual(1);
+}
+
+test("PATCH-20261108-1 labelled filter rows, explicit rating draft and no list attribution strip", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByText(/已应用:电影/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card").first()).toBeVisible();
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-desktop-whole-page.png`,
+    fullPage: true,
+  });
+
+  // The whole page still puts title, search, every labelled row, grid and
+  // pager in one visible rhythm; the old attribution bar is gone.
+  expect(
+    await page.locator(".mf-explore-filter-label").allTextContents(),
+  ).toEqual(["类型", "排序", "题材", "原始语言", "评分", "操作"]);
+  await expect(
+    page.getByRole("region", { name: "数据来源与署名" }),
+  ).toHaveCount(0);
+
+  await page
+    .getByRole("group", { name: "排序" })
+    .getByRole("button", { name: "上映/首播日期" })
+    .click();
+  await page
+    .getByRole("group", { name: "题材" })
+    .getByRole("button", { name: "动作" })
+    .click();
+  await page
+    .getByRole("group", { name: "原始语言" })
+    .getByRole("button", { name: "英语 (en)" })
+    .click();
+  await expect(
+    page.getByText(/已应用:电影 · 上映\/首播日期 · 动作 · 原始语言 英语/),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("group", { name: "题材" })
+      .getByRole("button", { name: "动作" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // The slider is a real keyboard control; 7.5 is a legal decimal draft and
+  // the page keeps it visibly separate from the applied conditions.
+  const slider = page.getByRole("slider", { name: "最低评分" });
+  await slider.focus();
+  await page.keyboard.press("Home");
+  for (let step = 0; step < 75; step += 1) {
+    await page.keyboard.press("ArrowRight");
+  }
+  await expect(page.locator(".mf-explore-rating-value")).toHaveText("≥ 7.5");
+  await page.getByLabel("最低评分人数").fill("200");
+  await expect(page.getByText("待应用")).toBeVisible();
+  await expect(
+    page.getByText(/已应用:电影 · 上映\/首播日期 · 动作/),
+  ).not.toContainText("评分 ≥ 7.5");
+  await page.getByRole("button", { name: "应用筛选" }).click();
+  await expect(page.getByText(/评分 ≥ 7.5 · 评分人数 ≥ 200/)).toBeVisible();
+  await expect(page.getByText("待应用")).toHaveCount(0);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-desktop-labelled-rows.png`,
+    fullPage: true,
+  });
+
+  // Clearing the condition restores the default tags and one honest read.
+  await page.getByRole("button", { name: "清除条件" }).click();
+  await expect(
+    page.getByText(/已应用:电影 · 热度优先 · 全部题材 · 全部语言/),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("group", { name: "排序" })
+      .getByRole("button", { name: "热度优先" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // The same rows stay inside a 390px screen; long option strips scroll in
+  // their own region instead of widening the document.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole("group", { name: "题材" }).getByRole("button", {
+      name: "全部",
+    }),
+  ).toBeVisible();
+  const narrow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+    stripOverflow: getComputedStyle(
+      document.querySelector(".mf-explore-chip-strip") as Element,
+    ).overflowX,
+  }));
+  expect(narrow.scrollWidth).toBeLessThanOrEqual(narrow.innerWidth);
+  expect(narrow.stripOverflow).toBe("auto");
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-mobile-390-whole-page.png`,
+    fullPage: true,
+  });
+});
+
+test("PATCH-20261108-1 a non-top detail keeps the background anchored through loading, close and history", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+  // Hold the real movie-detail answer only while the loading frame is
+  // observed; the response still comes from the real Python harness.
+  let releaseDetail: (() => void) | null = null;
+  await page.route("**/api/v1/explore/movie/*", async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    await route.continue();
+  });
+
+  const opener = page.locator(".mf-explore-card").nth(9);
+  await opener.scrollIntoViewIfNeeded();
+  const before = await backgroundAnchor(page, opener);
+  expect(before.scrollY).toBeGreaterThan(0);
+  await opener.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/正在读取作品详情/)).toBeVisible();
+  expectAnchored(await backgroundAnchor(page, opener), before);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-midlist-detail-loading.png`,
+    fullPage: false,
+  });
+
+  if (releaseDetail === null) {
+    throw new Error("the exact movie detail read never started");
+  }
+  (releaseDetail as () => void)();
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeVisible();
+  expectAnchored(await backgroundAnchor(page, opener), before);
+  await page.waitForTimeout(260);
+  expectAnchored(await backgroundAnchor(page, opener), before);
+
+  // The body, not the page behind it, reaches the compact TMDB tail.
+  const body = page.locator(".mf-modal-body.mf-explore-detail");
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(before.scrollY);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-midlist-detail-tail.png`,
+    fullPage: false,
+  });
+
+  await dialog.getByRole("button", { name: "关闭作品详情" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  expectAnchored(await backgroundAnchor(page, opener), before);
+
+  // Browser Back closes the card and Browser Forward reopens it on the same
+  // list position; Escape is the final close path.
+  await opener.click();
+  await expect(dialog).toBeVisible();
+  await page.goBack();
+  await expect(dialog).toHaveCount(0);
+  expectAnchored(await backgroundAnchor(page, opener), before);
+  await page.goForward();
+  await expect(dialog).toBeVisible();
+  expectAnchored(await backgroundAnchor(page, opener), before);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expectAnchored(await backgroundAnchor(page, opener), before);
+  await expect(opener).toBeFocused();
+
+  // A different TV work at the bottom of a short 390px viewport keeps the
+  // same anchor while its long body is read to the end.
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page
+    .getByRole("group", { name: "作品类型" })
+    .getByRole("button", {
+      name: "剧集",
+    })
+    .click();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  const tvOpener = page.locator(".mf-explore-card").nth(14);
+  await tvOpener.scrollIntoViewIfNeeded();
+  const tvBefore = await backgroundAnchor(page, tvOpener);
+  expect(tvBefore.scrollY).toBeGreaterThan(0);
+  // Press the visible poster exactly where it is; a locator click could
+  // auto-scroll the card once more and invalidate the captured anchor.
+  const tvBox = await tvOpener.boundingBox();
+  if (tvBox === null) throw new Error("the TV work has no visible box");
+  await page.mouse.click(tvBox.x + tvBox.width / 2, tvBox.y + 20);
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeVisible();
+  expectAnchored(await backgroundAnchor(page, tvOpener), tvBefore);
+  await page.waitForTimeout(260);
+  expectAnchored(await backgroundAnchor(page, tvOpener), tvBefore);
+  await page.locator(".mf-modal-body.mf-explore-detail").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(tvBefore.scrollY);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-1-mobile-short-detail-tail.png`,
+    fullPage: false,
+  });
+  await dialog.getByRole("button", { name: "关闭作品详情" }).click();
+  await expect(dialog).toHaveCount(0);
+  expectAnchored(await backgroundAnchor(page, tvOpener), tvBefore);
 });

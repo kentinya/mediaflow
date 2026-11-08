@@ -283,7 +283,124 @@ describe("Explore homepage journey", () => {
     ).toBeNull();
     expect(stub.count("explore/browse?mediaType=tv")).toBe(1);
     // The catalog for the new type arrives for it, not for the old one.
-    expect(screen.getByRole("combobox", { name: "题材" })).toBeVisible();
+    const genreGroup = await screen.findByRole("group", { name: "题材" });
+    expect(
+      within(genreGroup).getByRole("button", { name: "动作与冒险" }),
+    ).toBeVisible();
+  });
+
+  it("applies MoviePilot-style type, sort, genre, language and rating rows as one honest draft", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    // The type is a labelled row, not an isolated control at the far right.
+    expect(
+      within(screen.getByRole("group", { name: "作品类型" })).getByRole(
+        "button",
+        { name: "电影" },
+      ),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(
+      within(screen.getByRole("group", { name: "排序" })).getByRole("button", {
+        name: "评分优先",
+      }),
+    );
+    expect(await screen.findByText(/已应用:电影 · 评分优先/)).toBeVisible();
+    expect(
+      screen.getByText("评分排序默认最低评分人数 100(可在评分行修改)。"),
+    ).toBeVisible();
+
+    const genreGroup = screen.getByRole("group", { name: "题材" });
+    await user.click(within(genreGroup).getByRole("button", { name: "动作" }));
+    const languageGroup = screen.getByRole("group", { name: "原始语言" });
+    await user.click(
+      within(languageGroup).getByRole("button", { name: "英语 (en)" }),
+    );
+    expect(
+      await screen.findByText(/已应用:电影 · 评分优先 · 动作 · 原始语言 英语/),
+    ).toBeVisible();
+    expect(
+      within(genreGroup).getByRole("button", { name: "动作" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(languageGroup).getByRole("button", { name: "英语 (en)" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // One rating slider and one votes input form a draft until 应用筛选.
+    const slider = screen.getByRole("slider", { name: "最低评分" });
+    fireEvent.change(slider, { target: { value: "7.5" } });
+    expect(screen.getByText("≥ 7.5")).toBeVisible();
+    expect(screen.getByText("待应用")).toBeVisible();
+    await user.type(screen.getByLabelText("最低评分人数"), "200");
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    expect(
+      await screen.findByText(/评分 ≥ 7.5 · 评分人数 ≥ 200/),
+    ).toBeVisible();
+    expect(screen.queryByText("待应用")).toBeNull();
+    expect(
+      stub.urls.some(
+        (url) =>
+          url.includes("genreId=28") &&
+          url.includes("originalLanguage=en") &&
+          url.includes("minRating=7.5") &&
+          url.includes("minVotes=200") &&
+          url.includes("sort=rating"),
+      ),
+    ).toBe(true);
+
+    // Explicit 0 is a real condition, while clearing the slider is unlimited.
+    fireEvent.change(slider, { target: { value: "0" } });
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    expect(await screen.findByText(/评分 ≥ 0/)).toBeVisible();
+    expect(
+      stub.urls.some(
+        (url) => url.includes("minRating=0") && url.includes("minVotes=200"),
+      ),
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "不限制最低评分" }));
+    expect(screen.getByText("不限")).toBeVisible();
+    expect(screen.getByText("待应用")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    await waitFor(() => expect(screen.queryByText(/评分 ≥ /)).toBeNull());
+    const browseUrls = stub.urls.filter((url) =>
+      url.startsWith("/api/v1/explore/browse"),
+    );
+    expect(browseUrls.at(-1)).not.toContain("minRating=");
+    expect(browseUrls.at(-1)).toContain("minVotes=200");
+  });
+
+  it("keeps invalid numeric drafts in place and reads only a valid applied set", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "更多筛选" }));
+    const year = screen.getByLabelText("年份(1–9999)");
+    await user.type(year, "0");
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    expect(await screen.findByText("取值范围 1–9999")).toBeVisible();
+    expect(year).toHaveValue("0");
+    const readsAfterInvalid = stub.count("/api/v1/explore/browse?");
+
+    await user.clear(year);
+    await user.type(year, "1999");
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    expect(await screen.findByText(/1999 年/)).toBeVisible();
+    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterInvalid + 1);
+    expect(stub.urls.at(-1)).toContain("year=1999");
+
+    const votes = screen.getByLabelText("最低评分人数");
+    await user.type(votes, "1.5");
+    await user.click(screen.getByRole("button", { name: "应用筛选" }));
+    expect(await screen.findByText("请输入整数")).toBeVisible();
+    expect(votes).toHaveValue("1.5");
+    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterInvalid + 1);
   });
 
   it("separates an honest empty result from any failure", async () => {
@@ -433,11 +550,8 @@ describe("Explore homepage journey", () => {
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     // Browse anchor: movie + genre 动作 (after the catalog arrives).
-    await screen.findByRole("option", { name: "动作" });
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "题材" }),
-      "28",
-    );
+    const genreGroup = await screen.findByRole("group", { name: "题材" });
+    await user.click(within(genreGroup).getByRole("button", { name: "动作" }));
     expect(
       await screen.findByText(/已应用:电影 · 热度优先 · 动作/),
     ).toBeVisible();
@@ -457,7 +571,7 @@ describe("Explore homepage journey", () => {
     ).toBeVisible();
     expect(screen.getByText(/已应用:剧集 · 搜索「matrix」/)).toBeVisible();
     // The browse conditions were never edited by the search-mode switch.
-    expect(screen.queryByRole("combobox", { name: "题材" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "题材" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "退出搜索" }));
 
@@ -466,7 +580,11 @@ describe("Explore homepage journey", () => {
       await screen.findByRole("button", { name: "Inception (2019)" }),
     ).toBeVisible();
     expect(screen.getByText(/已应用:电影 · 热度优先 · 动作/)).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "题材" })).toHaveValue("28");
+    expect(
+      within(screen.getByRole("group", { name: "题材" })).getByRole("button", {
+        name: "动作",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/搜索模式/)).toBeNull();
     // The anchor context comes from its own bounded cache, not a new read.
     expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
@@ -490,15 +608,14 @@ describe("Explore homepage journey", () => {
     expect(
       within(alert).getByRole("button", { name: "重新读取筛选选项" }),
     ).toBeVisible();
-    // Not treated as a legitimate empty catalog: the select states the
+    // Not treated as a legitimate empty catalog: the genre row states the
     // failure and stays disabled instead of silently offering nothing.
-    const genreSelect = screen.getByRole("combobox", {
-      name: "题材",
-    }) as HTMLSelectElement;
-    expect(genreSelect).toBeDisabled();
-    expect(genreSelect.options[genreSelect.selectedIndex].text).toBe(
-      "筛选选项读取失败",
-    );
+    const genreGroup = screen.getByRole("group", { name: "题材" });
+    expect(
+      within(genreGroup).getByRole("button", {
+        name: "筛选选项读取失败",
+      }),
+    ).toBeDisabled();
     // An upstream/provider family failure keeps this deployment's identity.
     expect(authStore.getToken()).toBe(TOKEN);
     expect(screen.queryByText("身份被拒绝")).toBeNull();
@@ -509,10 +626,11 @@ describe("Explore homepage journey", () => {
 
     // The recovery re-reads only the current type's catalog.
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    await waitFor(() => expect(genreSelect).toBeEnabled());
+    const recoveredGenre = await screen.findByRole("button", { name: "动作" });
+    expect(recoveredGenre).toBeEnabled();
     expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
     // Real catalog options are back and legal to apply.
-    await user.selectOptions(genreSelect, "28");
+    await user.click(recoveredGenre);
     expect(
       await screen.findByText(/已应用:电影 · 热度优先 · 动作/),
     ).toBeVisible();
@@ -534,12 +652,10 @@ describe("Explore homepage journey", () => {
     // Season and total-episode counts of this exact show.
     expect(within(dialog).getByText("4 季")).toBeVisible();
     expect(within(dialog).getByText("42 集")).toBeVisible();
-    // The required TMDB notice is reachable inside the card as well.
+    // The card's only attribution tail is its one exact-work TMDB action.
     expect(
-      within(dialog).getByText(
-        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
-      ),
-    ).toBeVisible();
+      within(dialog).getByRole("link", { name: "在 TMDB 查看" }),
+    ).toHaveAttribute("href", "https://www.themoviedb.org/tv/603");
 
     // A broken backdrop image drops out while every fact stays readable.
     fireEvent.error(backdrop);
@@ -583,37 +699,41 @@ describe("Explore homepage journey", () => {
     expect(router.state.location.search.detail).toBeUndefined();
   });
 
-  it("publishes the TMDB attribution area with the approved logo and notice", async () => {
+  it("keeps the detail tail to one compact exact-work TMDB action", async () => {
     authStore.setToken(TOKEN);
     stubExploreFetch();
+    const user = userEvent.setup();
     renderApp("/ui-v2/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
-    const attribution = screen.getByRole("region", {
-      name: "数据来源与署名",
-    });
-    expect(attribution).toBeVisible();
-    expect(
-      within(attribution).getByText(
-        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
-      ),
-    ).toBeVisible();
-    // The approved logo, served from this origin only.
-    expect(within(attribution).getByAltText("TMDB")).toHaveAttribute(
+    // No full attribution strip repeats at the bottom of the ordinary list.
+    expect(screen.queryByRole("region", { name: "数据来源与署名" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Inception (2019)" }));
+    const dialog = await screen.findByRole("dialog");
+    const link = within(dialog).getByRole("link", { name: "在 TMDB 查看" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://www.themoviedb.org/movie/27205",
+    );
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer noopener");
+    expect(link.querySelector("img")).toHaveAttribute(
       "src",
       expect.stringContaining("tmdb-logo.svg"),
     );
+    // The old repeated Chinese explanation and English notice are gone from
+    // this tail; the single exact-work action is the last visible control.
     expect(
-      within(attribution).getByText(/作品数据与图片来自 TMDB/),
-    ).toBeVisible();
-    // The required link-back is real and keyboard reachable.
-    const link = within(attribution).getByRole("link");
-    expect(link).toHaveAttribute("href", "https://www.themoviedb.org");
+      within(dialog).queryByText(
+        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+      ),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByText(/信息来自 TMDB,与本地媒体库无关/),
+    ).toBeNull();
     link.focus();
     expect(link).toHaveFocus();
-    // Notices stay below the journey: the page heading still leads.
-    const heading = screen.getByRole("heading", { name: "探索", level: 1 });
-    expect(heading.compareDocumentPosition(attribution) & 4).toBeTruthy();
   });
 
   it("renders exactly one page and returns to a previous page without a new read", async () => {
@@ -673,11 +793,8 @@ describe("Explore homepage journey", () => {
     await user.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByText(/第 2 \/ 2 页/);
 
-    await screen.findByRole("option", { name: "动作" });
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "题材" }),
-      "28",
-    );
+    const genreGroup = await screen.findByRole("group", { name: "题材" });
+    await user.click(within(genreGroup).getByRole("button", { name: "动作" }));
     // A new condition set is a fresh result set that really starts at 1.
     expect(await screen.findByText(/第 1 \/ 3 页/)).toBeVisible();
     expect(stub.count("genreId=28&page=1")).toBe(1);

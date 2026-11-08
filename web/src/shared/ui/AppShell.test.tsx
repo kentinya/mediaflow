@@ -365,6 +365,51 @@ describe("AppShell", () => {
     expect(document.title).toBe("任务中心 | MediaFlow");
   });
 
+  it("opens the static about and attribution card from the sidebar without page work", async () => {
+    const user = userEvent.setup();
+    stubShellReads();
+    authStore.setToken("shell-test-token");
+    const { router } = renderApp("/ui-v2/explore");
+    await screen.findByRole("heading", { name: "探索" });
+    const surface = document.querySelector<HTMLElement>(
+      '[data-main-page="home"]',
+    );
+    const callsBefore = vi.mocked(fetch).mock.calls.length;
+
+    const entry = screen.getByRole("button", { name: "关于与鸣谢" });
+    expect(entry).toHaveAttribute("aria-haspopup", "dialog");
+    await user.click(entry);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("heading", { name: "关于与鸣谢" }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByText(
+        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+      ),
+    ).toBeVisible();
+    expect(within(dialog).getByRole("img", { name: "TMDB" })).toHaveAttribute(
+      "src",
+      expect.stringContaining("tmdb-logo.svg"),
+    );
+    expect(
+      within(dialog).getByRole("link", { name: /访问 TMDB 首页/ }),
+    ).toHaveAttribute("href", "https://www.themoviedb.org");
+    // Same-page static card: no route, surface transition or API read starts.
+    expect(router.history.location.pathname).toBe("/ui-v2/explore");
+    expect(document.querySelector('[data-main-page="home"]')).toBe(surface);
+    expect(surface?.dataset.pageTransition).toBe("initial");
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore);
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "关闭关于与鸣谢" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(entry).toHaveFocus());
+    expect(router.history.location.pathname).toBe("/ui-v2/explore");
+  });
+
   it("shows Explore as one title without the read-only file search field", async () => {
     stubShellReads();
     authStore.setToken("shell-test-token");

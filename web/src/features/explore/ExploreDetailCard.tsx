@@ -14,8 +14,8 @@ import {
   useModalCardExit,
   useModalLayer,
 } from "../../shared/ui/modal-card";
-import { ExploreAttribution } from "./ExploreAttribution";
 import { exploreDetailQuery } from "./explore-query";
+import { TMDB_LOGO_URL } from "../about/AboutAttribution";
 import { EXPLORE_MEDIA_TYPE_LABELS } from "./explore-state";
 
 export interface ExploreDetailCardProps {
@@ -184,17 +184,15 @@ export function ExploreDetailCard({
           <p className="mf-explore-detail-overview">
             {detail.overview ?? "数据源暂无简介。"}
           </p>
-          <p className="mf-explore-detail-source">
-            信息来自 TMDB,与本地媒体库无关;本页不表示该作品已入库。
-          </p>
-          <ExploreAttribution compact />
           <a
             className="mf-explore-detail-link"
             href={detail.externalUrl}
             target="_blank"
             rel="noreferrer noopener"
           >
-            在 TMDB 查看
+            <img src={TMDB_LOGO_URL} alt="" aria-hidden="true" />
+            <span>在 TMDB 查看</span>
+            <span aria-hidden="true">↗</span>
           </a>
         </div>
       </div>

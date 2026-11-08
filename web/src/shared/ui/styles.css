@@ -2187,6 +2187,17 @@ button.mf-grid-button {
   color: var(--accent-strong);
 }
 
+/* A quiet, consistently reachable attribution entry at the sidebar bottom. */
+.mf-nav-about {
+  width: 100%;
+  margin-top: auto;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .mf-shell-content {
   min-height: 100vh;
   margin-left: 208px;
@@ -8226,7 +8237,6 @@ tr[aria-selected="true"] {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
   gap: 16px;
 }
 
@@ -8239,50 +8249,216 @@ tr[aria-selected="true"] {
 
 /* Explore-local field metrics (Slice 52 RO-1): the shared 16px field
    margin and shell context line left the search row visually detached from
-   the submit button and the type switch. Only this page's fields opt out;
-   every other page keeps the public .mf-field defaults. */
+   the submit button. Only this page's fields opt out; every other page keeps
+   the public .mf-field defaults. */
 .mf-explore-search .mf-field {
   min-width: 240px;
   flex: 1;
   margin: 0;
 }
 
-.mf-explore-type {
-  display: inline-flex;
+/* MoviePilot-style labelled filter rows (PATCH-20261108-1): one stable
+   label column, compact selectable chips on the right. A long genre or
+   language list scrolls inside its own row instead of widening the page. */
+.mf-explore-filter-board {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 10px;
   background: var(--panel);
+  overflow: hidden;
 }
 
-.mf-explore-type-button {
-  border: none;
-  background: transparent;
-  padding: 9px 20px;
-  font: inherit;
+.mf-explore-filter-row {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.mf-explore-filter-row:first-child {
+  border-top: 0;
+}
+
+.mf-explore-filter-label {
   color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.mf-explore-chip-group,
+.mf-explore-chip-strip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.mf-explore-chip-group {
+  flex-wrap: wrap;
+}
+
+.mf-explore-chip-strip {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 2px 0;
+  scrollbar-width: thin;
+}
+
+.mf-explore-chip {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.mf-explore-type-button + .mf-explore-type-button {
-  border-left: 1px solid var(--line);
+.mf-explore-chip:hover,
+.mf-explore-chip:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
-.mf-explore-type-button.is-active {
+.mf-explore-chip.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;
 }
 
-.mf-explore-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
+.mf-explore-chip:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
 }
 
-.mf-explore-filters .mf-filter-field {
-  min-width: 150px;
+.mf-explore-chip:disabled {
+  color: var(--disabled-ink);
+  background: var(--disabled-surface);
+  border-color: var(--disabled-line);
+  cursor: not-allowed;
+}
+
+.mf-explore-filter-row-rating {
+  align-items: start;
+}
+
+.mf-explore-filter-row-rating .mf-explore-filter-label {
+  padding-top: 7px;
+}
+
+.mf-explore-rating-controls {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.mf-explore-rating-slider {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 260px;
+  align-items: center;
+  gap: 8px;
+}
+
+.mf-explore-rating-slider input[type="range"] {
+  min-width: 120px;
+  flex: 1 1 160px;
+  accent-color: var(--accent-strong);
+}
+
+.mf-explore-rating-value {
+  min-width: 52px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mf-explore-rating-clear {
+  font-size: 0.82rem;
+}
+
+.mf-explore-rating-votes {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mf-explore-rating-votes label {
+  white-space: nowrap;
+}
+
+.mf-explore-rating-votes input {
+  width: 120px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 7px 9px;
+  font: inherit;
+}
+
+.mf-explore-rating-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.mf-explore-draft-state {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.mf-explore-filter-row-actions {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .mf-explore-filter-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .mf-explore-filter-label {
+    font-size: 0.85rem;
+  }
+
+  .mf-explore-rating-slider {
+    flex-basis: 100%;
+  }
+
+  .mf-explore-rating-votes {
+    flex: 1 1 150px;
+  }
+
+  .mf-explore-rating-votes input {
+    width: 100%;
+    max-width: 150px;
+  }
+}
+
+.mf-explore-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .mf-explore-more {
@@ -8298,6 +8474,13 @@ tr[aria-selected="true"] {
 
 .mf-explore-more .mf-field {
   min-width: 180px;
+  margin: 0;
+}
+
+.mf-explore-more-hint {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .mf-explore-more-error {
@@ -8560,10 +8743,120 @@ tr[aria-selected="true"] {
   margin: 12px 0;
 }
 
-.mf-explore-detail-source {
+/* The detail tail is one compact primary action: the approved local logo,
+   the exact-work TMDB link and no repeated notice block. */
+.mf-explore-detail-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--accent-strong);
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mf-explore-detail-link img {
+  display: block;
+  width: auto;
+  height: 16px;
+}
+
+.mf-explore-detail-link:hover,
+.mf-explore-detail-link:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+}
+
+.mf-explore-detail-link:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+/* The shared static attribution card opened from the sidebar. It reads no
+   Provider/configuration and is not part of the routed page surface. */
+.mf-about-card {
+  width: min(540px, 100%);
+  height: auto;
+  max-height: min(72dvh, 560px);
+}
+
+.mf-about-body {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 24px 24px;
+}
+
+.mf-about {
+  display: grid;
+  gap: 16px;
+}
+
+.mf-about-product {
+  margin: 0;
+  color: #101a2b;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.mf-about-source {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.7;
+}
+
+.mf-about-tmdb {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--accent-strong);
+  padding: 8px 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mf-about-tmdb img {
+  display: block;
+  width: auto;
+  height: 22px;
+}
+
+.mf-about-tmdb:hover,
+.mf-about-tmdb:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+}
+
+.mf-about-tmdb:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.mf-about-notice {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 0.85rem;
-  margin: 0 0 10px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .mf-about-body {
+    padding: 14px 16px 18px;
+  }
 }
 
 .mf-explore-detail-error p {
@@ -8624,46 +8917,6 @@ tr[aria-selected="true"] {
 
 .mf-explore-options-error-title {
   font-weight: 600;
-}
-
-/* TMDB attribution: a small, lower-page source area with the approved local
-   logo and the required notice; never a first-screen banner. */
-.mf-explore-attribution {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  margin: 28px 0 8px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.mf-explore-attribution-compact {
-  margin: 4px 0 0;
-  padding-top: 8px;
-  padding-bottom: 4px;
-  border-top: 1px dashed var(--line);
-}
-
-.mf-explore-attribution-logo {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.mf-explore-attribution-logo img {
-  display: block;
-  height: 18px;
-  width: auto;
-}
-
-.mf-explore-attribution-notice,
-.mf-explore-attribution-note {
-  margin: 0;
-  max-width: 64ch;
-  line-height: 1.5;
 }
 
 /* ============================================================

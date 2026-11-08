@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
+import { AboutAttributionCard } from "../../features/about/AboutAttribution";
 import { AuthControls } from "../auth/AuthControls";
 import {
   destinationForPath,
@@ -169,6 +170,7 @@ export function AppShell({ children }: AppShellProps) {
     });
   }
   const [menuOpen, setMenuOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
   const [storageSearch, setStorageSearch] = useState("");
   const filesSearchListeners = useRef(new Set<() => void>());
@@ -304,6 +306,17 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
+          <button
+            id="about-attribution-entry"
+            type="button"
+            className="mf-nav-link mf-nav-about"
+            aria-haspopup="dialog"
+            aria-expanded={aboutOpen}
+            onClick={() => setAboutOpen(true)}
+          >
+            <Icon name="info" />
+            <span>关于与鸣谢</span>
+          </button>
         </nav>
       </aside>
       <div className="mf-shell-content">
@@ -334,6 +347,9 @@ export function AppShell({ children }: AppShellProps) {
           </ShellPageSurface>
         </main>
       </div>
+      {aboutOpen ? (
+        <AboutAttributionCard onClose={() => setAboutOpen(false)} />
+      ) : null}
     </div>
   );
 }
