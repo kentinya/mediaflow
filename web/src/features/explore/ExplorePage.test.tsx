@@ -31,6 +31,17 @@ import {
 
 const TOKEN = "explore-journey-token";
 
+/**
+ * jsdom has no scrolling geometry, but *when* the results are repositioned
+ * is part of the journey (Slice 52 B52-01): this module-level stand-in for
+ * the browser's scrollIntoView lets a test prove that an explicitly selected
+ * page moves the page to its start only after it really lands — and that a
+ * slow, failed or superseded target never does. window.scrollTo stays
+ * jsdom's own no-op; the real geometry is asserted in the browser spec.
+ */
+const scrollIntoView = vi.fn();
+Element.prototype.scrollIntoView = scrollIntoView;
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -202,6 +213,7 @@ afterEach(() => {
   authStore.clearIntendedPath();
   vi.unstubAllGlobals();
   resetExploreContextOrder();
+  scrollIntoView.mockClear();
 });
 
 describe("Explore homepage journey", () => {
@@ -781,6 +793,198 @@ describe("Explore homepage journey", () => {
       await screen.findByRole("button", { name: "Inception (2019)" }),
     ).toBeVisible();
     expect(screen.getByText(/第 1 \/ 3 页/)).toBeVisible();
+    // The explicit jump to page one is a page selection: it lands at the
+    // start of its own results.
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }),
+    );
+  });
+
+  it("starts a selected page at its results only after it lands, with focus in the new works", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    const deferred: {
+      resolve: ((value: Response) => void) | null;
+    } = { resolve: null };
+    stub.browse = (url) => {
+      if (url.includes("page=2")) {
+        return new Promise<Response>((resolve) => {
+          deferred.resolve = resolve;
+        });
+      }
+      return jsonResponse({
+        ...exploreBrowsePayload,
+        applied: conditionsEchoedIn(url),
+      });
+    };
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    scrollIntoView.mockClear();
+
+    const nextPage = screen.getByRole("button", { name: "下一页" });
+    await user.click(nextPage);
+    // A slow target keeps the retained page exactly where it is: no move
+    // and no focus handover before the selected page really arrives.
+    expect(
+      await screen.findByText(/正在读取第 2 页\(当前显示第 1 页\)/),
+    ).toBeVisible();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(nextPage).toHaveFocus();
+
+    if (deferred.resolve === null) {
+      throw new Error("the page 2 read was never requested");
+    }
+    deferred.resolve(
+      jsonResponse({
+        ...exploreBrowsePage2Payload,
+        applied: { mediaType: "movie", page: 2, sort: "popular" },
+      }),
+    );
+    const firstWork = await screen.findByRole("button", {
+      name: "肖申克的救赎 (2019)",
+    });
+    // The successful page starts at its first row and the keyboard lands in
+    // the new results, so reading continues from the beginning.
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }),
+    );
+    await waitFor(() => expect(firstWork).toHaveFocus());
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Inception (2019)" }),
+    ).toHaveFocus();
+  });
+
+  it("keeps the retained page and place when a selected page fails, then positions after its retry", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    const pageTwoFailure = () => providerEnvelope("provider_unavailable", 502);
+    stub.browse = (url) => {
+      if (url.includes("page=2")) return pageTwoFailure();
+      return jsonResponse({
+        ...exploreBrowsePayload,
+        applied: conditionsEchoedIn(url),
+      });
+    };
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    scrollIntoView.mockClear();
+
+    const nextPage = screen.getByRole("button", { name: "下一页" });
+    await user.click(nextPage);
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(/第 2 页读取失败/)).toBeVisible();
+    // A failed target never takes over: the successful page keeps both its
+    // place and the focus the unread page must not receive yet.
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(nextPage).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+
+    // The explicit retry of the failed target is the same selection: once it
+    // lands, the new page starts at its results with focus inside them.
+    stub.browse = (url) =>
+      jsonResponse({
+        ...exploreBrowsePage2Payload,
+        applied: conditionsEchoedIn(url),
+      });
+    await user.click(screen.getByRole("button", { name: "重试第 2 页" }));
+    const firstWork = await screen.findByRole("button", {
+      name: "肖申克的救赎 (2019)",
+    });
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }),
+    );
+    await waitFor(() => expect(firstWork).toHaveFocus());
+  });
+
+  it("exits search to the cached browse page with reserved focus on the search entry", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreBrowsePage2Payload)
+        : jsonResponse(exploreBrowsePayload);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByRole("button", { name: "肖申克的救赎 (2019)" });
+    const input = screen.getByLabelText("作品名搜索");
+    const browseReads = stub.count("/api/v1/explore/browse?");
+
+    await user.type(input, "matrix");
+    await user.click(screen.getByRole("button", { name: "搜索" }));
+    expect(
+      await screen.findByRole("button", { name: "The Matrix (1999)" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "退出搜索" }));
+
+    // The cached page returns without a new read, and the button that was
+    // removed with search mode leaves usable focus in the search entry.
+    expect(
+      await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
+    expect(stub.count("/api/v1/explore/browse?")).toBe(browseReads);
+    await waitFor(() => expect(input).toHaveFocus());
+  });
+
+  it("re-reads the evicted browse page on search exit and still restores place and focus", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreBrowsePage2Payload)
+        : jsonResponse(exploreBrowsePayload);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByRole("button", { name: "肖申克的救赎 (2019)" });
+    // The landed page also completed its focus handover before anything
+    // else on the page starts moving: later typing can never race it.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "肖申克的救赎 (2019)" }),
+      ).toHaveFocus(),
+    );
+    const browseReads = stub.count("/api/v1/explore/browse?");
+    const input = screen.getByLabelText("作品名搜索");
+
+    // Repeated searches with their own type switches push distinct search
+    // contexts through the bounded Explore cache until the saved browse
+    // context and its page really are gone — the real entry for the
+    // eviction, not a helper called from a test.
+    for (let index = 1; index <= 9; index += 1) {
+      await user.clear(input);
+      await user.type(input, `星云${index}`);
+      expect(input).toHaveValue(`星云${index}`);
+      await user.click(screen.getByRole("button", { name: "搜索" }));
+      await screen.findByText(new RegExp(`当前关键词「星云${index}」`));
+      await user.click(
+        screen.getByRole("button", {
+          name: index % 2 === 1 ? "剧集" : "电影",
+        }),
+      );
+    }
+
+    await user.click(screen.getByRole("button", { name: "退出搜索" }));
+    // The same target page is re-read after eviction and the whole round
+    // trip — page, position intent and working focus — still completes.
+    expect(
+      await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
+    await waitFor(() =>
+      expect(stub.count("/api/v1/explore/browse?")).toBeGreaterThan(
+        browseReads,
+      ),
+    );
+    await waitFor(() => expect(input).toHaveFocus());
   });
 });
 

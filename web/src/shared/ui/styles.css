@@ -8271,6 +8271,9 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* A freshly selected page aligns its first row right below the sticky
+     58px topbar (Slice 52 RO-1 paging position), never underneath it. */
+  scroll-margin-top: 74px;
 }
 
 .mf-explore-grid {

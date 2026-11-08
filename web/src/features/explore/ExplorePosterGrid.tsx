@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import {
   tmdbImageUrl,
   type ExploreWorkSummary,
@@ -8,6 +8,8 @@ import { Button } from "../../shared/ui/Button";
 import { explorePageWindow } from "./explore-state";
 
 export interface ExplorePosterGridProps {
+  /** The results region a freshly selected page scrolls itself to start. */
+  readonly resultsRef: RefObject<HTMLDivElement | null>;
   readonly items: readonly ExploreWorkSummary[];
   readonly loading: boolean;
   /** The successful page currently displayed, or undefined before first read. */
@@ -43,6 +45,7 @@ function skeletonCards(count = 12): readonly number[] {
  * page, and honest empty/boundary notes keep their own recovery.
  */
 export function ExplorePosterGrid({
+  resultsRef,
   items,
   loading,
   displayedPage,
@@ -93,7 +96,7 @@ export function ExplorePosterGrid({
   // above names the target, so the two can never claim an unread position.
   const current = displayedPage ?? targetPage;
   return (
-    <div className="mf-explore-results" aria-busy={busy}>
+    <div className="mf-explore-results" aria-busy={busy} ref={resultsRef}>
       {pending ? (
         <p className="mf-explore-page-status" role="status">
           正在读取第 {targetPage} 页(当前显示第 {displayedPage} 页)…

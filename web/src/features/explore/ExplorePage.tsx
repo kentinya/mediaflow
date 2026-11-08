@@ -66,6 +66,28 @@ interface ShownExplorePage {
 }
 
 /**
+ * The single positioning intent of the latest explicit action: an explicit
+ * page selection wants the start of that page's results, a search submission
+ * wants the top of its own fresh result set and a search exit wants its
+ * saved browse position plus working focus (the clicked exit button is gone
+ * by then). Installing a new intent replaces the previous one, so an intent
+ * the operator already superseded can never move the page or the focus
+ * later; an intent is applied only once its own target page is really on
+ * screen, never while it is slow, failed or abandoned.
+ */
+type PendingExplorePosition =
+  | { readonly kind: "page"; readonly mode: ExploreMode; readonly page: number }
+  | {
+      readonly kind: "restore";
+      readonly mode: ExploreMode;
+      readonly y: number;
+      /** Search exit refocuses the persistent search entry (B52-02). */
+      readonly focusSearch: boolean;
+    };
+
+type ExploreMode = "browse" | "search";
+
+/**
  * The V2 Explore homepage (Slice 51 Task 51.1; ordinary pagination per
  * Slice 52 Task 52.1): one Chinese browse/search journey over the deployment
  * TMDB provider. Every visible state comes from an explicitly-triggered read
@@ -111,12 +133,11 @@ export function ExplorePage() {
   const openedByNavRef = useRef(false);
   const hadDetailRef = useRef(false);
   const savedBrowseScrollRef = useRef(0);
-  /** A mode round trip restores its saved position only once its own target
-   * page is really on screen (an evicted cache re-reads that same page). */
-  const pendingScrollRef = useRef<{
-    readonly mode: "browse" | "search";
-    readonly y: number;
-  } | null>(null);
+  /** The results region is the position anchor of a newly selected page. */
+  const resultsRef = useRef<HTMLDivElement | null>(null);
+  /** Fallback focus when a selected page carries no work to focus. */
+  const pageTitleRef = useRef<HTMLHeadingElement | null>(null);
+  const pendingPositionRef = useRef<PendingExplorePosition | null>(null);
 
   const browseFilters: ExploreBrowseFilters = useMemo(
     () => ({
@@ -131,8 +152,7 @@ export function ExplorePage() {
     [mediaType, sort, genreId, originalLanguage, numeric],
   );
   const browseContext = browseContextId(browseFilters);
-  const mode: "browse" | "search" =
-    activeKeyword === null ? "browse" : "search";
+  const mode: ExploreMode = activeKeyword === null ? "browse" : "search";
   const activeListContext =
     activeKeyword === null
       ? browseContext
@@ -212,26 +232,56 @@ export function ExplorePage() {
     });
   }
 
-  // Restore a mode round trip's position only after that mode's target page
-  // is really rendered: an evicted cache re-reads the same target first and
-  // the position follows the content, not the mode switch alone.
+  // The intent follows the content, not the action: an evicted cache first
+  // re-reads the same target page and the saved position is restored after
+  // that page is really rendered.
   const shownAtTarget =
     shownForActive !== undefined && shownForActive.page === targetPage;
+  // Apply the latest explicit intent only when its own target page is really
+  // on screen (a cached hit and a fresh read behave alike): while a target is
+  // slow or failed the retained page keeps its place, and a target superseded
+  // by another selection is dropped instead of acting later. An open detail
+  // owns focus and keeps the background locked, so its intent waits for the
+  // close the operator already asked for.
   useEffect(() => {
-    const pending = pendingScrollRef.current;
-    if (pending === null || pending.mode !== mode) return undefined;
-    if (!shownAtTarget) return undefined;
-    if (activeQuery.isFetching) return undefined;
-    pendingScrollRef.current = null;
+    const pending = pendingPositionRef.current;
+    if (pending === null || detailTarget !== null) return undefined;
+    // The mode is part of the intent's identity: a search exit must wake
+    // this effect even when page, shown state and fetch flags all look
+    // unchanged from the search render before it.
+    if (pending.mode !== mode) return undefined;
+    if (pending.kind === "page" && pending.page !== targetPage) {
+      // Another target was selected before this one landed.
+      pendingPositionRef.current = null;
+      return undefined;
+    }
+    if (!shownAtTarget || activeQuery.isFetching) return undefined;
+    pendingPositionRef.current = null;
     const frame = window.requestAnimationFrame(() => {
-      try {
-        window.scrollTo(0, pending.y);
-      } catch {
-        // A non-scrolling environment keeps its own position.
+      if (pending.kind === "restore") {
+        try {
+          window.scrollTo(0, pending.y);
+        } catch {
+          // A non-scrolling environment keeps its own position.
+        }
+        if (pending.focusSearch) {
+          const input = document.getElementById("explore-keyword");
+          if (input instanceof HTMLElement) {
+            input.focus({ preventScroll: true });
+          }
+        }
+        return;
       }
+      // A newly selected page starts at its first row, with focus inside the
+      // new results so the keyboard continues reading from the beginning.
+      resultsRef.current?.scrollIntoView?.({ block: "start" });
+      const focusTarget =
+        resultsRef.current?.querySelector<HTMLElement>(".mf-explore-card") ??
+        pageTitleRef.current;
+      focusTarget?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [mode, shownAtTarget, targetPage, activeQuery.isFetching]);
+  }, [mode, shownAtTarget, targetPage, activeQuery.isFetching, detailTarget]);
 
   // Return focus to the poster that opened the detail after any close path.
   useEffect(() => {
@@ -267,6 +317,10 @@ export function ExplorePage() {
   /** A failed target page keeps the successful page next to its own recovery. */
   const targetReadFailed = activeQuery.isError && shownForActive !== undefined;
   const setTargetPage = (page: number) => {
+    // Only an explicit page selection earns the start-of-results position
+    // and the focus handover; condition/type/keyword changes keep the
+    // operator where they are on their own fresh page 1.
+    pendingPositionRef.current = { kind: "page", mode, page };
     if (activeKeyword === null) setBrowsePage(page);
     else setSearchPage(page);
   };
@@ -318,12 +372,23 @@ export function ExplorePage() {
     setSearchError(null);
     setSearchPage(1);
     setActiveKeyword(trimmed);
-    pendingScrollRef.current = { mode: "search", y: 0 };
+    pendingPositionRef.current = {
+      kind: "restore",
+      mode: "search",
+      y: 0,
+      focusSearch: false,
+    };
   };
   const exitSearch = () => {
-    pendingScrollRef.current = {
+    // The exit button disappears with search mode: when the saved browse
+    // page is really back (a cache hit immediately, an evicted context
+    // after its own re-read), restore its position and hand focus to the
+    // search entry that survives, without scrolling the restored place away.
+    pendingPositionRef.current = {
+      kind: "restore",
       mode: "browse",
       y: savedBrowseScrollRef.current,
+      focusSearch: true,
     };
     setActiveKeyword(null);
   };
@@ -446,7 +511,7 @@ export function ExplorePage() {
 
   return (
     <section className="mf-explore" aria-labelledby="explore-page-title">
-      <h1 id="explore-page-title" tabIndex={-1}>
+      <h1 id="explore-page-title" tabIndex={-1} ref={pageTitleRef}>
         探索
       </h1>
       <div className="mf-explore-toolbar">
@@ -687,6 +752,7 @@ export function ExplorePage() {
             </p>
           ) : null}
           <ExplorePosterGrid
+            resultsRef={resultsRef}
             items={items}
             loading={loading}
             displayedPage={displayedPage}

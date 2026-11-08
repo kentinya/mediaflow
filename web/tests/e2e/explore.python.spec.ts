@@ -918,6 +918,166 @@ test("a slow target page names actual and target; a failed one recovers alone", 
   await setFailure(page, "none");
 });
 
+test("a selected page starts at its readable first row only after it lands", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // The real entry: park the viewport on the pager, exactly where an
+  // operator who scrolled to page the works stands before pressing 下一页.
+  const nextPage = page.getByRole("button", { name: "下一页" });
+  await nextPage.scrollIntoViewIfNeeded();
+
+  // Slow target page: the retained page keeps its position — nothing moves
+  // before the selected page really arrives.
+  await setFailure(page, "slow_page_2");
+  await nextPage.click();
+  // The status line renders an ellipsis character (U+2026), not three dots.
+  await expect(
+    page.getByText("正在读取第 2 页(当前显示第 1 页)…"),
+  ).toBeVisible();
+  const duringSlow = await page.evaluate(() => window.scrollY);
+  expect(duringSlow).toBeGreaterThan(1000);
+  const firstDuringSlow = await page
+    .locator(".mf-explore-card")
+    .first()
+    .evaluate((element) => element.getBoundingClientRect().top);
+  expect(firstDuringSlow).toBeLessThan(0);
+
+  // Arrival: the new page starts at its first row, right below the sticky
+  // topbar and inside the first screen.
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  const firstCard = page.locator(".mf-explore-card").first();
+  await expect(firstCard).toBeFocused();
+  const box = await firstCard.boundingBox();
+  if (box === null) throw new Error("first card has no visible box");
+  expect(box.y).toBeGreaterThanOrEqual(58);
+  expect(box.y + box.height).toBeLessThan(844);
+  // The keyboard continues into the new results.
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".mf-explore-card").nth(1)).toBeFocused();
+  await page.screenshot({
+    path: `${EVIDENCE}/mobile-page2-at-start.png`,
+    fullPage: false,
+  });
+
+  // A failed target page keeps the landed page and its place; the explicit
+  // retry is the selection that finally gets positioned.
+  await setFailure(page, "page_500");
+  await nextPage.scrollIntoViewIfNeeded();
+  const beforeFailure = await page.evaluate(() => window.scrollY);
+  await nextPage.click();
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("第 3 页读取失败");
+  await expect(alert).toContainText("当前仍显示第 2 页内容");
+  // The retained page keeps its place: the failure banner appended at the
+  // pager may nudge the layout by its own height, but the view never jumps
+  // to the start of the results or anywhere else.
+  const afterFailure = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(afterFailure - beforeFailure)).toBeLessThanOrEqual(64);
+  expect(afterFailure).toBeGreaterThan(2500);
+  // The unread page never receives focus while its read failed. (The pager's
+  // own 下一页 control disables for the unreachable target, which drops focus
+  // to the document — the normal fate of a disabled control.)
+  await expect(page.locator(".mf-explore-card").first()).not.toBeFocused();
+  await expect(page.locator(".mf-explore-card").nth(1)).not.toBeFocused();
+  await setFailure(page, "none");
+  await alert.getByRole("button", { name: "重试第 3 页" }).click();
+  await expect(page.getByText(/第 3 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(firstCard).toBeFocused();
+  const retryBox = await firstCard.boundingBox();
+  if (retryBox === null) throw new Error("first card has no visible box");
+  expect(retryBox.y).toBeGreaterThanOrEqual(58);
+  expect(retryBox.y + retryBox.height).toBeLessThan(844);
+  await page.screenshot({
+    path: `${EVIDENCE}/mobile-page3-after-retry.png`,
+    fullPage: false,
+  });
+
+  // Cleanup so this harness mode can never leak into a later test.
+  await setFailure(page, "none");
+});
+
+test("search exit restores the exact position and focus, even after its anchor page was evicted", async ({
+  page,
+}) => {
+  const browseReads: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("explore/browse?")) browseReads.push(url);
+  });
+  await connect(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // Browse anchor: page two at a real, deep scroll position.
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await page.locator(".mf-explore-pager").scrollIntoViewIfNeeded();
+  const anchor = await page.evaluate(() => window.scrollY);
+  expect(anchor).toBeGreaterThan(1000);
+
+  // Enter search from that deep position: fill (which scrolls the input
+  // into view), re-park on the anchor, then submit from the focused input so
+  // no click scroll can change the position this round trip must restore.
+  await page.getByLabel("作品名搜索").fill("深空回声");
+  await page.locator(".mf-explore-pager").scrollIntoViewIfNeeded();
+  const saved = await page.evaluate(() => window.scrollY);
+  expect(saved).toBeGreaterThan(1000);
+  await page.keyboard.press("Enter");
+  await expect(page.getByText(/搜索模式/)).toBeVisible();
+  await expect(page.getByText(/搜索「深空回声」/)).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 60));
+
+  const readsBeforeExit = browseReads.length;
+  await page.getByRole("button", { name: "退出搜索" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(saved);
+  await expect(page.getByLabel("作品名搜索")).toBeFocused();
+  // Cached round trip: the anchor context was never dropped here.
+  expect(browseReads.length).toBe(readsBeforeExit);
+
+  // Re-enter search and push distinct search contexts through the bounded
+  // Explore cache (type switches included) until the anchored browse page
+  // really is evicted — the same journey, not a cache helper.
+  await page.getByLabel("作品名搜索").fill("星风");
+  await page.locator(".mf-explore-pager").scrollIntoViewIfNeeded();
+  const anchor2 = await page.evaluate(() => window.scrollY);
+  expect(anchor2).toBeGreaterThan(1000);
+  await page.keyboard.press("Enter");
+  await expect(page.getByText(/搜索模式/)).toBeVisible();
+  for (let index = 1; index <= 9; index += 1) {
+    await page.getByLabel("作品名搜索").fill(`星云${index}`);
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    await expect(
+      page.getByText(new RegExp(`当前关键词「星云${index}」`)),
+    ).toBeVisible();
+    const type = index % 2 === 1 ? "剧集" : "电影";
+    await page.getByRole("button", { name: type }).click();
+    await expect(page.getByRole("button", { name: type })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  }
+
+  const readsBeforeEvictedExit = browseReads.length;
+  await page.getByRole("button", { name: "退出搜索" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  // Eviction proof: the same target page had to be read again on exit.
+  await expect
+    .poll(() => browseReads.length)
+    .toBeGreaterThan(readsBeforeEvictedExit);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(anchor2);
+  await expect(page.getByLabel("作品名搜索")).toBeFocused();
+  await expect(page.locator(".mf-explore-card").first()).toBeVisible();
+  await page.screenshot({
+    path: `${EVIDENCE}/search-exit-restored-focus.png`,
+    fullPage: false,
+  });
+});
+
 test("the detail body really scrolls to its end while the background stays still", async ({
   page,
 }) => {
