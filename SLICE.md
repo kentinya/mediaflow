@@ -10,7 +10,7 @@ Implementation Head: f5409da41191c6e4bbf238bb7def601229fc59dc
 Working Branch: main
 Development Authorization: USER-AUTHORIZED TASK52.1–52.3 IMPLEMENTATION COMPLETED; B PASS; A FINAL REVIEW PASS
 Risk: Medium
-Planned Test Level: T3; reassess if implementation changes T4 boundaries
+Accepted Test Level: T3; no T4 boundary changed
 Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
@@ -21,7 +21,7 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 刷新文案只是具体表现。用户随后明确授权“代替B规划第一个Task”；按工作流先激活本 Slice
 并 checkpoint，再由 A 代 B 规划 Task52.1。角色例外仅限这一次规划，后续 B 独立 Task
 验收及 A 独立终审保持。该次规划不授权产品实施；用户后续分别授权 Task52.1–52.3
-实施，具体授权与 B 独立验收保留于各 Task checkpoint。未授权推送、发布或部署。
+实施，具体授权与 B 独立验收保留于各 Task checkpoint。关闭时未授权推送、发布或部署。
 
 Base 固定为调查及规划前的接受基线 `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`；
 后续规划／激活提交不重设 Base。Slice51 原 Base、已审实现、终审及全部限制保留于
@@ -41,7 +41,7 @@ Slice50 和其他已关闭 Slice／独立修正的身份、延期与历史同样
 新页读取／内容接入的完整过程都不产生突兀闪烁或非预期抖动；两种库的刷新提示单独纳入修正。
 自动化列表保留现有有效管理入口，退出与编辑卡重复的旧“打开”功能。
 
-| Required Outcome | 用户原问题 | 稳定 TARGET 需求 |
+| Required Outcome | 用户原问题 | 稳定 CURRENT 需求 |
 |---|---|---|
 | RO-1 探索布局与完整详情 | 探索 1 双标题；2 不协调／搜索错位；3 详情不全／不能滚动 | `V2-EXPLORE-012–014` |
 | RO-2 页面长度可控的浏览与返回 | 探索 4 加载更多使页面过长 | `V2-EXPLORE-015` |
@@ -59,22 +59,10 @@ checked publication／执行记录／非重放语义保持，不扩大 V1、API�
 
 ## Investigation and evidence limits
 
-代码调查基于 Base；现有页面核对了重复可见标题和追加列表。下列是定位及规划依据，
-不是已完成修复或原生验收证明：
-
-- `AppShell.tsx` 输出 `mf-page-context`，探索页另有 h1，形成重复“探索”。
-- 搜索沿用 `mf-field` 上下16px margin，flex底部对齐未消除间距；探索顶部还显示只读
-  文件搜索占位，工具区、类型与筛选缺少统一布局。
-- `ExploreDetailCard` 未接入可滚动正文，公共 `mf-modal-body` 为 `overflow: hidden`；
-  图片／长简介超过可用卡高时缺少滚动区。
-- `explore-query.ts` 使用 infinite query，页面合并全部已读页；每次20项、上限500页
-  不能避免当前文档增长。现有 API 已支持按页读取，无需新增接口。
-- Shell 从0.2透明度用200ms恢复，两种库内容另有170ms淡入，叠加存在闪烁风险。
-  最终节奏仍须检查真实中间过程，不能以 CSS 时长证明通过。
-- 两种库将 `isFetching` 直接渲染为正文刷新提示，缓存重读也会插入／移除该行。
-- `AutomationInventory` 的名称及“打开”都走旧 definition 路由，关联 editor 后继草稿
-  编辑／复制；`AutomationOccurrencesPage` 也有旧详情返回链接。不能只隐藏按钮。
-  相关管理 API 具有共享用途，不能机械删除。
+首次调查与定位基于真实 Base，从现有探索、侧栏及自动化入口确认用户问题；完整调查、
+方案与当时证据限制保留于[激活合同](https://github.com/kentinya/mediaflow/blob/c7913f6a751ee980db2b82ffaefec40d3d43528c/SLICE.md#investigation-and-evidence-limits)。
+该调查只构成规划依据，不能代替产品验收；本合同末尾的独立 A 终审记录已交付结果、
+最终实现范围、实际验证、历史失败及未验证边界。
 
 ## RO-1 — Coordinated Explore layout and readable detail
 

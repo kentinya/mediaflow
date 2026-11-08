@@ -18,18 +18,19 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review) is PASS / CLOSED. Its original Base is
-`214b69b1e64b24fc22068c2e1760cd1b0c6ac787`, with accepted implementation
-`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`; [Progress](progress.md) retains prior closures,
-unchanged deferrals and evidence limits. Explore replaces the homepage with bounded movie/TV
-browse/filter/search/detail/return and independent read recovery. Dashboard Web/API/CLI and dedicated
-backend/consumers are removed without compatibility; shared reads and durable history remain.
+[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) is the latest accepted development Slice, **PASS / CLOSED** on 2026-11-08.
+Its original Base is `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`, with reviewed implementation
+`f5409da41191c6e4bbf238bb7def601229fc59dc`. It refines Explore layout/detail/pagination and
+all nine main-page read transitions, including both library refresh cases, and retires the old
+Automation Open Web journey. Current create/edit/Copy/Run once, shared API/CLI and history remain.
+[Progress](progress.md) retains original acceptance identities, deferrals and fixed A/B reports;
+those reports disclose actual failures, reuse and local-only evidence rather than a whole-suite claim.
 
-Slice51's read-only Provider/API/Web and retirement validation does not establish a new package,
-container, external-service or production release. Current adapter changes are not validated by the
-old wheel; full/current packaging and release gates must run for an actual release. Accepted Slice50
-presentation/loading/cards, Slice49 confined Automation intent and Slice48 independent Task flow/file
-outcomes remain. Exact tests, prior failures and evidence reuse are in the fixed A/B reports.
+Accepted Slice51 Explore/Dashboard retirement, Slice50 presentation/loading/cards, Slice49 confined
+Automation intent and Slice48 independent Task flow/file outcomes remain. Slice52's Web presentation
+and existing read-API validation do not establish a new package, container, external-service or
+production release. The old wheel does not validate the later Slice51 adapter changes or current
+source; exact current packaging and release gates must run for an actual release.
 
 This is development acceptance, not a V2 release. Current support is fresh initialization
 → submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job

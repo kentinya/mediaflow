@@ -8,7 +8,7 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice52](../SLICE.md#closure-packet-and-a-final-review) is **PASS / CLOSED** after independent A
+[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) is **PASS / CLOSED** after independent A
 Final Review on 2026-11-08, unchanged Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation
 `f5409da41191c6e4bbf238bb7def601229fc59dc`. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK.
 Next Action: A SELECTS THE NEXT LARGE SLICE. No new Slice or implementation is authorized here.
@@ -16,39 +16,18 @@ Original Slice51/50 and earlier identities, deferrals and evidence limits remain
 
 ## Latest accepted closure — Slice52
 
-Delivered coordinated whole-page Explore layout and complete scrollable details; bounded ordinary
-pagination with retained successful-page recovery, exact search/detail return and input ownership;
-comfortable transitions/read feedback/content handoff across all nine sidebar main pages, including
-both library refresh cases; old Automation Open/definition/editor Web pages/routes/exclusive client
-dependencies retired while current cards, commands, shared APIs/CLI and history remain.
+Delivered coordinated Explore layout and complete scrollable details, bounded ordinary pagination
+with accurate return/recovery, all nine main-page transitions/read handoff including both library
+refresh cases, and old Automation Open Web retirement while preserving current cards/commands/history.
 `V2-EXPLORE-012–015`, `V2-UX-014/015` and `V2-AUTO-016` are CURRENT.
 
-A reviewed the complete 58-file Base..Head and B's packet `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md`.
-A's final production-build browser runs: **20 navigation/Automation + 18 real-Python Explore passed**;
-six desktop/390px settings entry frame journeys confirm fast/slow handoff. Final B Web unit/static
-checks passed; raw Node **112 passed/1 failed**, Automation Python merged **49 passed/3 failed**,
-Explore **18 passed**, Files **28 passed**. Settings reuse retains **12 passed/3 failed** and matching
-input evidence. Baseline 403/old technical-message selectors, legacy Files capacity selectors and
-combined Draft fixture contamination remain disclosed with Base/isolated checks; no whole-E2E green
-claim or proof of the unexecuted capacity assertions. Original failures/fixes/limits remain in Git.
-Local evidence is under `.git/validation-evidence/f5409da41191c6e4bbf238bb7def601229fc59dc/a52-final/`,
-B's matching directories and prior52.1/52.2 directories named in the Contract; not promised remotely
-accessible. No full release matrix, production services/media, push, release or deployment claimed.
-
-## Latest accepted closure — Slice51
-
-原始 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` 至实现
-`30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`，于 2026-11-07 独立 A 终审 PASS / CLOSED。
-交付 TMDB 探索首页、电影／剧集有界浏览／筛选／搜索、准确详情与返回、真实空态和独立
-恢复；Dashboard Web／API／CLI 及专属实现／消费者完整退出，无兼容，共享读取与历史保留。
-`V2-EXPLORE-001–011` 及相关需求／旅程／架构／指引为 CURRENT，全部延期与执行安全保持。
-
-[固定 A 终审／关闭报告](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md#final-validation-closure-packet-and-a-final-review)保留完整范围、实际运行、复用与限制；
-B 最终包 `e26b399c:TASK.md`，首次 A 退回 `58a74866:SLICE.md`。A51-01 在原 Task51.1
-修正后独立复核通过；A 159 Python／142 Web／11 原生，B 更新后 159／67／11 全部通过。
-原测试／夹具／构建／探针失败与 Base 对照不改写为全仓通过；旧 wheel 不作当前包证明。
-未声称全发布矩阵、真实 TMDB／用户媒体、生产部署或跨版本验证。本地原始材料仅在
-`.git/validation-evidence/30c99f1b/a51-final/` 及 B 目录，不随 GitHub 同步承诺可访问。
+The [fixed A Final Review](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) and
+[B Closure Packet](https://github.com/kentinya/mediaflow/blob/5615f932203d7a56467e5563efc3b3a1b1ed4334/TASK.md)
+retain the full reviewed range, actual commands/results, previous fix rounds, baseline selector failures,
+combined Draft fixture limitation and settings evidence reuse. The unexecuted capacity assertions and
+local-only evidence remain explicit limits; there is no all-E2E-green or production-release claim.
+Older Slice acceptance identities, original evidence limits and deferrals remain in the fixed reports
+and ledger below, without repeating their development history here.
 
 ## Prior acceptance references
 
@@ -59,6 +38,7 @@ rewrite older acceptance. Detailed prior closure/validation pointers remain at
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
+| 52 | `19a458eb6c1a6afb8693d2757755487a58213a4f:SLICE.md` | `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md` |
 | 51 | `c0a02875e53f249f1ac7d22b9b667c6a453c87b9:SLICE.md` | `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` |
 | 50 | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787:SLICE.md` | `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md` |
 | 49 | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0:SLICE.md` | `edef2b9dfb3726f8aca6b4d7c4a7ae233f900d2c:TASK.md` |
@@ -107,7 +87,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 | 22.3 — Local Storage + Library configuration | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `e28a24aff99c073c67b52351a82cb4a29e163de0` | Legacy combined audit PASS — 2026-08-25 | Guided Local managed configuration, checks, activation and immutable pin | Remote setup/capability checks |
 | 22.4 — Recognition configuration | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `d95ea2b64a6fce559341d7eb5824977e07794dff` | Legacy combined audit PASS — 2026-08-26 | Managed recognition, Strategy Test, explanation and activation | Later policy journeys |
 | 22.5 — Metadata configuration and correction | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | Legacy final audit PASS — 2026-08-27 | Managed MetadataPolicy through bounded one-item DryRun continuation | Provider switching, generic Task resume, wider per-item recovery |
-| 22.6 — Naming / Classification / Organize configuration | PASS / CLOSED | `7339a8b21b244e57bdb8067f688df91c7dc03280` | `89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d` | A Final Review PASS — 2026-08-29 | Managed policy editing, exact-revision preview, Local read-only destination precheck and checked activation | See `SLICE.md` Explicitly Deferred |
+| 22.6 — Naming / Classification / Organize configuration | PASS / CLOSED | `7339a8b21b244e57bdb8067f688df91c7dc03280` | `89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d` | A Final Review PASS — 2026-08-29 | Managed policy editing, exact-revision preview, Local read-only destination precheck and checked activation | See [original Contract deferrals](https://github.com/kentinya/mediaflow/blob/2b8da5d2aab3c3d3699da912f6f0172839c83da6/SLICE.md#explicitly-deferred) |
 | 23 — Stage-aware per-item recovery | PASS / CLOSED | `b3083c417849e744b1b9c4629ce9ef312dd194ff` | `26c0450054e4b3d65d6fbf3641d61e022e9561fd` | A Final Review PASS — 2026-08-30 | Durable checkpoints, exact-version admission and independent DryRun single/batch continuation | Manual organization, Provider switching, uncertain/crash replay and unattended execution |
 | 24 — Files / Media detail and manual organize | PASS / CLOSED | `4ff5479d9f4a81906ee52a9f784931b65cd9ab90` | `d2e399803078317f2092d895eae627327998de2f` | A Final Review PASS — 2026-09-01 | Bounded detail/history, exact manual Preview and execution, per-item results and recovery across API/Web | Provider switching, unattended real organization, automatic uncertain/crash replay, universal rollback and remote setup/probing |
 | 25 — Scheduled automation and unattended organization | PASS / CLOSED | `2cee7cc756b90618f14d5d7b112f974fb445a580` | `d4da92879b99f1c44ddd717fba1a26e4b0a73493` | A Final Review PASS / CLOSED — 2026-09-02 | Managed Automation Task Definition, exact Preview, scheduled occurrences, persistent unattended authority, existing-pipeline execution and per-item recovery | Provider switching, remote guided setup/prechecks, scheduled cache/log cleanup, uncertain-effect replay, universal compensation and historical rollback |

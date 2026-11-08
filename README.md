@@ -60,7 +60,7 @@ The user-authorized B planning substitutions remain disclosed in that fixed Cont
 acceptance and A Final Review were independent. Development acceptance is distinct from a release
 or deployment.
 
-[Slice52](SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED after independent A Final Review
+[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED after independent A Final Review
 on 2026-11-08: coordinated whole-page Explore layout, complete scrollable details, bounded ordinary
 pagination with accurate return, smooth transitions/read feedback/content handoff across all nine
 main pages including both library refresh cases, and old Automation Open Web retirement. Original

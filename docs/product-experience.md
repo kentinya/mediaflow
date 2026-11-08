@@ -25,7 +25,7 @@ progress and four business recovery types; Automation owns saved-definition sche
 
 ## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
-[Slice52](../SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
+[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
 **PASS / CLOSED**，原 Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` 至实现
 `f5409da41191c6e4bbf238bb7def601229fc59dc`。以下为七项体验修整的 CURRENT 旅程，
 稳定要求为 `V2-EXPLORE-012–015`、`V2-UX-014/015`、`V2-AUTO-016`。

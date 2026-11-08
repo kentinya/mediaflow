@@ -27,7 +27,7 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 
 ## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
-[Slice52](../SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
+[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 经独立 A 终审
 **PASS / CLOSED**，真实 Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` 至实现
 `f5409da41191c6e4bbf238bb7def601229fc59dc`。下表为 CURRENT，旧 Slice 接受身份保持。
 `V2-EXPLORE-015` 以普通分页替换 `004/006` 中追加加载／返回已加载列表的表示；

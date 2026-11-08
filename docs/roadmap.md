@@ -53,7 +53,7 @@ remain; development closure is distinct from Git push, release or deployment.
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice52 Contract/A review](../SLICE.md#closure-packet-and-a-final-review).
+Latest acceptance: [Slice52 Contract/A review](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release
