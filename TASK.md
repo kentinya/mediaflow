@@ -4,14 +4,14 @@
 Task ID: PATCH-20261109-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
 Difficulty: Medium
 Test Level: T4
 Planner / Reviewer: B
 ```
 
-用户已明确激活本 Task。实现范围、验收标准、测试分工和非目标如下；实施候选完成后进入 READY FOR B REVIEW。
+用户已明确激活本 Task。B 已独立审查候选，结论为 FIX REQUIRED；修正继续留在本 Task，固定 Base 和授权范围不变。
 
 Authority：用户本轮明确的五点最小修正方案；按 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs) 处理已有 Rules／Files／Task 恢复旅程的独立缺陷，不创建或重开 Slice。
 
@@ -64,14 +64,14 @@ TMDB MetadataPolicy 只用“查询类型”决定允许的查询和身份类型
 在现有测试加入查询类型矩阵、历史无类型、同号不同类型、确认后不重建 review／不重复 Provider 查询，以及前后端完整候选保存断言。Python 使用本地假 Provider、临时 SQLite 和临时 Storage，断言实际调用类型、保存内容、review 数和零 mutation：
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -p '\''test_metadata*.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_strategy*.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_manual_organize*.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_runtime_strategy_configuration.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_configuration_objects.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_v2_rules*.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_v2_manual_organize.py'\''
-.venv/bin/python -m unittest discover -s tests -p '\''test_processing_recovery_admission.py'\''
+.venv/bin/python -m unittest discover -s tests -p 'test_metadata*.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_strategy*.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_manual_organize*.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_runtime_strategy_configuration.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_configuration_objects.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_rules*.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_manual_organize.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_processing_recovery_admission.py'
 python3 scripts/check_governance.py
 git diff --check
 ```
@@ -105,7 +105,7 @@ npm run test:e2e -- tests/e2e/manual-organize.spec.ts tests/e2e/rules-identity.s
 
 ### Non-goals
 
-不改数据库结构、不新增迁移／批量补型、不重写旧配置／Result／review／Task 历史；不删除 MediaCandidate／MediaIdentity／命名／分类中的电影／电视剧类型。不引入新 Provider、搜索算法、自由身份注入、候选搜索页、恢复类型、队列／执行引擎或自动执行；不增加双搜／预算／阈值设置。不改变规则绑定、Storage 变更权限、显式整理确认、未知效果不重放或 Slice52 等已关闭边界。不读用户私有配置／运行数据库／用户媒体，不实施产品代码、不推送、不发布／部署。
+不改数据库结构、不新增迁移／批量补型、不重写旧配置／Result／review／Task 历史；不删除 MediaCandidate／MediaIdentity／命名／分类中的电影／电视剧类型。不引入新 Provider、搜索算法、自由身份注入、候选搜索页、恢复类型、队列／执行引擎或自动执行；不增加双搜／预算／阈值设置。不改变规则绑定、Storage 变更权限、显式整理确认、未知效果不重放或 Slice52 等已关闭边界。不读用户私有配置／运行数据库／用户媒体，不推送、不发布／部署。
 
 ### Developer Completion Report
 
@@ -171,7 +171,108 @@ Status: READY FOR B REVIEW
 
 ### B Review Result
 
-PENDING — Developer 已提交源码检查点与交接报告；当前没有 B 验收结论。
+```text
+Decision: FIX REQUIRED
+Reviewed Base: 233f6a25769856087d10cb4483c0f1a621a76546
+Reviewed Head: 79e2b2d8f0185dadfdffdd4adc8f9fd54ab40714
+Implementation Head: 74d3823282549e3b1090cd32a2ed4d361bc16683
+Reviewer: B
+Review Date: 2026-11-09
+Product blockers: R1
+Required regression: Web E2E has one stale expectation; remaining acceptance gates pending
+Next: Developer corrects this same Task, then returns READY FOR B REVIEW
+```
+
+独立审查覆盖整个固定 Base..Head 的 34 个变更文件。当前为独立 bug Task；
+Slice52 仍是 PASS / CLOSED，不重开 Slice，不修改 Roadmap／Progress。
+
+**R1 — 已完成的人工整理结果没有复用其执行计划中的媒体类型（P1，AC-3 未完成）。**
+
+真实操作：Auto 查询策略下，从 Files 整理 `ReviewShow.2024.S01E01.mkv` →
+初次识别出现两个电视剧候选 → 在整理意图页选择 `tmdb/702 · tv` 并保存 →
+刷新仍保留选择 → 生成 TV／Season 01／S01E01 摘要 → 明确确认复制整理 →
+真实 Worker 完成，Result 为 SUCCESS，来源保留 → 再从 Files 整理同一来源版本。
+
+实际第二次意图的 `choice.metadata` 为 null，Worker 又执行 `search_tv`、
+读取 701／702 两个候选，重新出现歧义，不能直接得到就绪摘要。
+该历史并非“只有编号”：Result `9a6b067d-2390-477c-8fdb-77ceeb085430`
+通过执行条目的 `result_id`、`task_item_id` 精确关联到已完成执行，执行条目的
+固定 `choice.metadata` 和 `plan.mediaIdentity` 均为 `tmdb/702 · tv`，
+来源 occurrence／fingerprint 与本次文件相同。
+
+原因定位：`manual_organize.py:_choice_for_type` 新增调用 `_result_media_type`；
+后者只读 Result 所在 TaskItem 的 `pipeline_evidence`。真实人工整理的类型存放于
+已保存的执行条目／计划，这个 Result TaskItem 没有单独的 PipelineEvidence，
+因此现有读取遗漏了自身已保存的类型。新增单测通过手工为 Result 同一个 item_id
+追加 evidence，覆盖了 evidence 分支，未覆盖真实人工执行的存储形态。
+本次实现 `74d3823282549e3b1090cd32a2ed4d361bc16683`
+（2026-11-09 01:58:47 +08:00）引入此读取分支；原先从策略补型的缺陷尚未完整修复。
+本次实际没有调用 `get_movie`，不能声称已复现“查错电影接口”；已证实的是
+有明确 TV 执行身份的历史仍被当成无类型历史，重复识别并阻断摘要。
+
+**开发指导 — 本次修正的具体做法**
+
+1. 在现有历史身份读取处，补读该 Result 精确关联的已保存人工执行条目／计划。
+   仓库已有 `list_manual_executions_for_task_item(task_id, task_item_id)`；
+   从其中与 `result_id` 对应的执行条目取得完整 Provider＋编号＋类型，
+   核对该条目保存的来源版本。保留现有 PipelineEvidence 路径。
+   不从候选列表、当前策略或同号记录推断类型；真正没有类型事实的历史继续重新识别。
+   使用已有表与仓库读取，不增加 schema，不回写旧 Result 或执行记录。
+2. 在已有原生旅程中加入“首次候选选择 → COPY 成功 → Files 再整理同一来源”的回归。
+   通过真实 API／Worker 产生 Result 和执行条目，不为测试额外给 Result 追加 evidence。
+   验证第二次沿用所选 tv 编号、读取 TV 详情、不重新搜索／要求选择，并使用剧集命名分类。
+   继续覆盖同号 movie／tv 以及真正只有编号的历史；这些用现有局部夹具完成。
+3. 同步本次 UI 修改直接影响的浏览器断言：
+   `web/tests/e2e/rules-readiness.spec.ts:491` 仍期望“元数据服务与媒体类型”，
+   全量 E2E 实际在这里失败；应验证新的“元数据服务与查询类型”及不再出现策略媒体类型输入。
+   `operations-inventory.python.spec.ts:1562` 附近的现有歧义旅程还写着
+   `tmdb/111`／`tmdb/911`，而页面值现为带 `/movie` 的完整身份；同步这两个
+   断言与选择值，继续保留完整保存、摘要、显式执行断言。后一处是静态确认的旧选择器，
+   本轮没有将其计为已运行失败。
+4. Developer 只运行修改及直接受影响的测试和静态检查；提交修正候选及实际结果。
+   B 负责复核新候选的完整 Base..Head、原生历史复用／确认后摘要和剩余 T4 验收。
+   不增加新的执行入口、流程工具或产品范围。
+
+**已经核对的交付结果**
+
+- 查询类型成为策略控制、旧键兼容、新保存去掉旧键：代码与自动化覆盖已核对；
+  没有数据库结构／迁移／历史批量改写。
+- 现有真实 Python 浏览器的 Metadata 候选确认、元数据修正两条旅程通过：
+  同一 Task 继续到摘要／实际整理，摘要阶段不重复访问 Provider。
+- 新 TV 夹具从现有 Files discovery 入口产生真实候选；构建后 Web 的整理意图页可选择
+  702、保存完整 tv 身份、刷新读回并重新分析得到 TV 摘要。桌面与 390px 截图已检查。
+  保存及分析期间来源与目标文件保持；只有明确确认后才由 Worker 执行 COPY。
+- AC-3 因 R1 未通过。AC-4 的 TV Task Center 确认分支、AC-1–6 的最终整体验收
+  及完整打包门禁保留 pending，不能以当前部分成功宣告 Task PASS。
+
+**B 实际运行与结果**
+
+| 命令／入口 | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest discover -s tests` | 2669 tests，OK，7 skipped；285.01 秒 |
+| `web: npm run test -- run` | 98 files／1469 tests PASS；131.92 秒 |
+| `web: npm run test:e2e` | 267 PASS，1 FAIL；192.77 秒；失败为上述 Rules 旧 section 断言 |
+| `web: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'native Metadata'` | 2 PASS；3.72 秒；真实 Python／API／SQLite／Worker |
+| 构建后 Web＋同一现有 harness 的局部 TV 夹具 | 意图页候选保存／刷新／TV 摘要成功；COPY 后重新整理复现 R1 |
+| `web: npm run build`、`npm run typecheck`、`npm run lint`、`npm run format:check` | PASS |
+| `.venv/bin/python scripts/check_governance.py`、compileall、pip check、两份示例 config validate、`git diff --check` | PASS |
+| `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` | 无匹配（exit 1） |
+| `.venv/bin/ruff format --check .`／`ruff check .` | 被审查前已有的未跟踪 `.explore_adapter_block.py` 语法错误阻断；该文件未改动 |
+| 对 `git ls-files -- '*.py'` 的全部 354 个已跟踪 Python 文件执行 ruff format/check | PASS；完整受版本管理源码已检查 |
+| `.venv/bin/python -m pip wheel . --no-deps -w dist` | PASS；wheel SHA256 `dc1ca9a6f84eb534d53b6370ddeef021d6f3356c2cce3aa8867a7decf10061b0` |
+
+发现 R1 后未追加完整测试矩阵；wheel smoke、计划中的完整 source-history 原生旅程及
+最终安全／持久化验收仍待修正候选。现有 7 个 Python skips 原样保留；未删断言、加重试或改超时。
+
+可复查的本地证据（忽略目录，不声称远程可访问）：
+`.git/validation-evidence/79e2b2d8/b-query-type-review/`。
+其中 `tv-history-provenance.json` 保存 Result→执行条目→typed plan 的精确关联；
+`tv-reorganize-result.json` 保存第二次选择、摘要和 Provider 调用；
+`tv-after-analysis.json`、`intent-tv-saved-desktop.png` 和
+`intent-tv-summary-desktop.png` 保存首次选择与成功摘要；
+`reorganize-tv-blocked-desktop.png` 保存再次歧义的可见结果。
+全量原始日志、结果 JSON 和纯测试夹具数据库 `tv-fixture.sqlite3` 同目录。B 仅修改本 Task 交接；既有 dirty/untracked 文件保留，
+没有修改产品源码、推送或部署。
 
 
 ---
