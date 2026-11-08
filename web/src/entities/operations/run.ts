@@ -265,6 +265,10 @@ export interface RunSummary {
    * continued its remaining scope. Only the single-run overview read publishes
    * it; inventory rows carry `null`. */
   readonly continuation: RunContinuation | null;
+  /** The exact Files preparation this run's Task durably owns, or `null` when
+   * it was not started from a Files selection. Only the single-run overview
+   * read publishes it; inventory rows carry `null`. */
+  readonly filesPreparation: RunFilesPreparation | null;
   /**
    * Whether this run's *current* overall state is Completed because an exact
    * persisted recovery really finished every necessary item, and the flow
@@ -302,6 +306,18 @@ export interface RunContinuation {
   readonly executionId: string | null;
   readonly nextAction: string;
   readonly sideEffects: string;
+}
+
+/**
+ * The bounded identity of the Files preparation this run's Task owns.
+ *
+ * It carries no scope, plan, claim or authority: the preparation page re-reads
+ * the same durable discovery and still requires its own explicit confirmation
+ * before any execution.
+ */
+export interface RunFilesPreparation {
+  readonly discoveryId: string;
+  readonly resourceLibraryId: string;
 }
 
 export interface RunInventoryPage {
@@ -640,6 +656,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const taskId = optionalText(source, "task_id");
   const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId);
   const continuation = normalizeRunContinuation(source["continuation"]);
+  const filesPreparation = normalizeRunFilesPreparation(
+    source["filesPreparation"],
+    taskId,
+  );
   return {
     runId: text(source, "run_id"),
     runKind: text(source, "run_kind"),
@@ -679,6 +699,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         : normalizeRunProgress(source["progress"]),
     lifecycle,
     continuation,
+    filesPreparation,
     recoveredCompletion:
       // A48-01: the durable flow status is authoritative in the browser too.
       // A recovery facet beside a failed/cancelled/running status is a
@@ -818,6 +839,33 @@ function normalizeRunContinuation(value: unknown): RunContinuation | null {
       sideEffects: normalizeBoundedText(
         source["sideEffects"],
         "run.continuation.sideEffects",
+      ),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeRunFilesPreparation(
+  value: unknown,
+  taskId: string | null,
+): RunFilesPreparation | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  // A preparation is the exact Files Task's own record, so a projection on a
+  // run without that identity is a contradiction rather than an extra link.
+  if (taskId === null) fail();
+  try {
+    const source = readRecord(value, "run.filesPreparation");
+    return {
+      discoveryId: normalizeBoundedText(
+        source["discoveryId"],
+        "run.filesPreparation.discoveryId",
+      ),
+      resourceLibraryId: normalizeBoundedText(
+        source["resourceLibraryId"],
+        "run.filesPreparation.resourceLibraryId",
       ),
     };
   } catch {

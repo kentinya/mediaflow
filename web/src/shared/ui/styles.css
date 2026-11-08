@@ -4824,11 +4824,19 @@ tr[aria-selected="true"] {
   color: #8a4b0f;
   font-weight: 600;
 }
-.mf-run-fact-continuation h4 {
+.mf-run-fact-continuation h4,
+.mf-run-fact-preparation h4 {
   margin: 0 0 4px;
 }
-.mf-run-fact-continuation p {
+.mf-run-fact-continuation p,
+.mf-run-fact-preparation p {
   margin: 0 0 4px;
+}
+.mf-run-fact-preparation {
+  padding: 10px 14px;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  background: #f8fafd;
 }
 .mf-run-fact-diagnostics {
   border: 1px dashed var(--line, #e2e7ef);

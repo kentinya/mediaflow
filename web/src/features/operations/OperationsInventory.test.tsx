@@ -713,6 +713,55 @@ describe("Operations run inventory landing", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
+  it("reopens the exact Files preparation from the selected run detail", async () => {
+    const user = userEvent.setup();
+    const requested: { url: string; method: string }[] = [];
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      requested.push({ url, method: init?.method ?? "GET" });
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(
+          runDocument({
+            filesPreparation: {
+              discoveryId: "discovery-1",
+              resourceLibraryId: "source",
+            },
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const link = await within(detail).findByRole("link", { name: "继续整理" });
+    expect(link.getAttribute("href")).toContain("discoveryId=discovery-1");
+    expect(link.getAttribute("href")).toContain("resourceLibraryId=source");
+
+    await user.click(link);
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations/organize/new"),
+    );
+    const params = new URLSearchParams(router.history.location.search);
+    expect(params.get("discoveryId")).toBe("discovery-1");
+    expect(params.get("resourceLibraryId")).toBe("source");
+    // The exact Task Center context returns to this run's detail after the
+    // preparation's own explicit confirmation.
+    const returnOps = params.get("returnOps") ?? "";
+    expect(returnOps).toContain("run=task-001");
+    // Reading/opening the preparation link submits nothing.
+    expect(requested.filter((entry) => entry.method !== "GET")).toEqual([]);
+  });
+
   it("opens a supported deep link to the selected run and keeps list context", async () => {
     const requested: string[] = [];
     stubFetch(async (input) => {

@@ -826,3 +826,67 @@ describe("run lifecycle projection normalization", () => {
     ).toThrow(RunNormalizationError);
   });
 });
+
+describe("run Files preparation link normalization", () => {
+  it("normalizes the exact preparation identity of this Task", () => {
+    const run = normalizeRunSummary(
+      runDocument({
+        task_id: "task-1",
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+        },
+      }),
+    );
+    expect(run.filesPreparation).toEqual({
+      discoveryId: "discovery-1",
+      resourceLibraryId: "source",
+    });
+  });
+
+  it("normalizes an absent or explicit null preparation to null", () => {
+    expect(normalizeRunSummary(runDocument()).filesPreparation).toBeNull();
+    expect(
+      normalizeRunSummary(runDocument({ filesPreparation: null }))
+        .filesPreparation,
+    ).toBeNull();
+    // Inventory rows carry only the run identity, never a preparation link.
+    const page = normalizeRunInventoryPage(pageDocument());
+    expect(page.items[0]?.filesPreparation).toBeNull();
+  });
+
+  it("rejects a preparation on a run without the exact Task identity", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: null,
+          filesPreparation: {
+            discoveryId: "discovery-1",
+            resourceLibraryId: "source",
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects a malformed preparation instead of rendering a guessed link", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ filesPreparation: { discoveryId: "discovery-1" } }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          filesPreparation: {
+            discoveryId: "",
+            resourceLibraryId: "source",
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(runDocument({ filesPreparation: "discovery-1" })),
+    ).toThrow(RunNormalizationError);
+  });
+});

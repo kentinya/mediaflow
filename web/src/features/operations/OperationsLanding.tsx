@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch, Link } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
@@ -974,6 +974,10 @@ export function OperationsLanding() {
                     })
                   }
                   onSelectRun={selectRun}
+                  preparationReturnOps={operationsReturnContextFromSearch({
+                    ...listSearch(selectedId),
+                    ...runDetailStateSearch(detailState),
+                  })}
                 />
               )}
             </>
@@ -1406,6 +1410,7 @@ function RunDetailPanel({
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
+  preparationReturnOps,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
@@ -1424,6 +1429,8 @@ function RunDetailPanel({
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
+  /** The exact Task Center context a reopened Files preparation returns to. */
+  readonly preparationReturnOps: string;
 }) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
@@ -2062,7 +2069,13 @@ function RunDetailPanel({
                   uncertain: run.uncertainEffectItems,
                   missingResult: run.missingResultItems,
                 }}
-                facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
+                facts={
+                  <RunDetailFacts
+                    run={run}
+                    onSelectRun={onSelectRun}
+                    preparationReturnOps={preparationReturnOps}
+                  />
+                }
                 actions={
                   run.lifecycle === null ? null : (
                     <RunLifecycleControls
@@ -2240,9 +2253,12 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
 function RunDetailFacts({
   run,
   onSelectRun,
+  preparationReturnOps,
 }: {
   readonly run: RunSummary;
   readonly onSelectRun: (runId: string) => void;
+  /** The exact Task Center context a reopened Files preparation returns to. */
+  readonly preparationReturnOps: string;
 }) {
   const hasDiagnostics =
     run.workerId !== null || run.configurationSnapshotId !== null;
@@ -2304,6 +2320,27 @@ function RunDetailFacts({
           ) : run.continuation.recoveryPreviewId === null ? (
             <p>{run.continuation.nextAction}</p>
           ) : null}
+        </section>
+      )}
+      {run.filesPreparation !== null && (
+        <section className="mf-run-fact-preparation" aria-label="文件整理准备">
+          <h4>文件整理准备</h4>
+          <p>
+            此运行由文件页的整理选择发起。可返回同一份计划摘要核对条目；仍需在准备页明确确认后才会执行。
+          </p>
+          <div className="mf-actions">
+            <Link
+              className="mf-button mf-button-secondary"
+              to="/operations/organize/new"
+              search={{
+                discoveryId: run.filesPreparation.discoveryId,
+                resourceLibraryId: run.filesPreparation.resourceLibraryId,
+                returnOps: preparationReturnOps,
+              }}
+            >
+              继续整理
+            </Link>
+          </div>
         </section>
       )}
       {hasDiagnostics && (

@@ -13682,7 +13682,36 @@ class MediaFlowApi:
         # that really owns that scope, so the operator never has to guess an
         # internal identifier and never repeats finished work.
         document["continuation"] = self._operations_run_continuation(overview)
+        # The selected run's own Files preparation, when this Task really owns
+        # one.  The bounded identity lets Task Center reopen the same existing
+        # summary/preparation instead of keeping a second record list.
+        document["filesPreparation"] = self._operations_run_files_preparation(overview)
         return self._response(start_response, 200, document)
+
+    def _operations_run_files_preparation(self, overview) -> dict[str, object] | None:
+        """The selected run's own Files preparation identity, or ``None``.
+
+        Only the discovery durably linked to this exact organizing Task (its
+        persisted ``organize_task_id``) is published.  It is a bounded read-only
+        identity: no scope, plan, claim or authority travels here, and a Task
+        without that exact relationship exposes no entry instead of a guessed
+        recent record.
+        """
+
+        repository = self._repository
+        task_id = getattr(overview, "task_id", None)
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        reader = getattr(repository, "get_media_discovery_for_task", None)
+        if not callable(reader):
+            return None
+        discovery = reader(task_id)
+        if discovery is None or discovery.organize_task_id != task_id:
+            return None
+        return {
+            "discoveryId": discovery.discovery_id,
+            "resourceLibraryId": discovery.resource_library_id,
+        }
 
     def _operations_run_continuation(self, overview) -> dict[str, object] | None:
         """Remaining-scope continuations were retired with Job support.

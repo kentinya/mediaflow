@@ -495,7 +495,8 @@ through one Task identity; historical Job-based acceptance remains in Git.
   or explain unavailability/denial; they never start work or require an old-Job mapping layer.
   Restart grants no new authority and never automatically replays an uncertain file operation.
 - **Existing surfaces:** Task Center retains eight organizing views and the four-type Attention
-  union; Files retains initial confirmation and exact task/preparation readback. Both library
+  union; Files retains initial confirmation and the admitted Task Center detail reopens the same
+  task/preparation readback. Both library
   kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
   records/metrics; System Settings owns the three runtime fields. Scoped logs/export, API/CLI and health retain
   their capabilities through Tasks. No Job management page/API/CLI command remains. Capacity is
@@ -831,8 +832,9 @@ V1's explicit one-shot token remains an administration/API-automation/support me
 replacement for the normal V2 journey. Source preparation cannot accept browser-provided raw Storage
 paths, fingerprints, occurrences or IDs as execution authority. In-context summary/confirmation
 belongs to the admitted task and its exact preparation; no independent Preview product remains.
-Files keeps bounded task/preparation history and exact unknown-request reconciliation after close/
-reload/reconnect, without the former center discovery list or guessed request/library. Generic new
+Files starts the bounded task/preparation and keeps exact unknown-request reconciliation after close/
+reload/reconnect; the admitted Task Center task detail reopens that same preparation/summary,
+without the former center discovery list or guessed request/library. Generic new
 URLs guide to Files without work; valid prepared-work links keep their legitimate exact context.
 Browsing/separate analysis creates no organizing task or execute intent; admission/decision Save
 does not authorize media effects. Four business blockers stay native to the admitted task.

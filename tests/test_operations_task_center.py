@@ -649,6 +649,101 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         self.assertEqual(401, code)
 
 
+class FilesPreparationLinkTests(_TaskCenterTestCase):
+    """The selected run's own Files preparation identity (PATCH-20261109-1).
+
+    The preparation link is a read-only identity, not a second record list:
+    only the discovery whose persisted ``organize_task_id`` is this exact Task
+    is published, an unlinked Task exposes no entry, and the ordinary READ
+    boundary still decides whether the run detail can be read at all.
+    """
+
+    def _link_preparation(
+        self,
+        task_id: str,
+        *,
+        discovery_id: str,
+        actor: str = "viewer",
+        resource_library_id: str = "source",
+    ) -> None:
+        self.repository._connection.execute(
+            "INSERT INTO media_discoveries (discovery_id, actor, resource_library_id,"
+            " storage_id, configuration_snapshot_id, configuration_snapshot_digest,"
+            " status, version, budgets_json, progress_json, sources_json,"
+            " attempts, pause_requested, cancel_requested, created_at, updated_at,"
+            " organize_task_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                discovery_id,
+                actor,
+                resource_library_id,
+                "source-storage",
+                "snap-1",
+                "digest-1",
+                "completed",
+                1,
+                "{}",
+                "{}",
+                "[]",
+                0,
+                0,
+                0,
+                NOW.isoformat(),
+                NOW.isoformat(),
+                task_id,
+            ),
+        )
+        self.repository._connection.commit()
+
+    def test_run_detail_publishes_only_this_tasks_files_preparation(self) -> None:
+        prepared = self._task("manual_organize", scope="Movies/files-prepared")
+        self._link_preparation(prepared.task_id, discovery_id="prep_linked")
+        sibling = self._task("manual_organize", scope="Movies/files-sibling")
+        self._link_preparation(sibling.task_id, discovery_id="prep_sibling")
+        unlinked = self._task("manual_organize", scope="Movies/files-unlinked")
+
+        # The exact Task's own durable preparation identity is published.
+        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{prepared.task_id}")
+        self.assertEqual(200, code)
+        self.assertEqual(
+            {"discoveryId": "prep_linked", "resourceLibraryId": "source"},
+            body["filesPreparation"],
+        )
+        # A sibling Task's preparation is never borrowed.
+        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{sibling.task_id}")
+        self.assertEqual(200, code)
+        self.assertEqual("prep_sibling", body["filesPreparation"]["discoveryId"])
+        # A Task that owns no Files preparation exposes no entry at all.
+        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{unlinked.task_id}")
+        self.assertEqual(200, code)
+        self.assertIsNone(body["filesPreparation"])
+        # Inventory rows carry no preparation projection: the list never loads
+        # a whole preparation per row.
+        page = self._page()
+        for item in page["items"]:
+            self.assertNotIn("filesPreparation", item)
+
+    def test_preparation_link_keeps_the_existing_read_boundary(self) -> None:
+        prepared = self._task("manual_organize", scope="Movies/files-read")
+        self._link_preparation(prepared.task_id, discovery_id="prep_read")
+        before = len(self.repository.list_media_discoveries(limit=10))
+        # The ordinary READ principal can read the exact link...
+        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{prepared.task_id}")
+        self.assertEqual(200, code)
+        self.assertEqual("prep_read", body["filesPreparation"]["discoveryId"])
+        # ...and the same run detail read is still refused without a principal.
+        code, _body = request(
+            self.api,
+            "GET",
+            f"/api/v1/operations/runs/{prepared.task_id}",
+            token="denied",
+        )
+        self.assertEqual(401, code)
+        # Reading the link is side-effect free: no discovery is created or
+        # changed by opening the Task Center detail.
+        self.assertEqual(before, len(self.repository.list_media_discoveries(limit=10)))
+
+
 class RecoveryListTests(_TaskCenterTestCase):
     def test_one_task_per_type_with_accurate_file_counts(self) -> None:
         # One Task carrying two recognition files and one classification

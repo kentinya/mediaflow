@@ -3751,3 +3751,174 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   ).toBe(true);
   expect(intercepted).toBeGreaterThan(0);
 });
+
+test("initial manual preparation remains reachable from Task Center", async ({
+  page,
+  request,
+}) => {
+  // PATCH-20261109-1 AC-3: the Files page no longer keeps an organizing
+  // record list, so the admitted Task Center detail must reopen the exact
+  // preparation the operator left.  The real Files selection, resident
+  // discovery Worker, exact confirmation and manual execution Worker are the
+  // same supported fixtures the other Files journeys use.
+  const api = recordApiCalls(page);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+  await openOrganizingSource(page);
+
+  await page.getByRole("checkbox", { name: "选择 Two.2002.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/discoveryId=/);
+  const discoveryId = new URL(page.url()).searchParams.get("discoveryId");
+  expect(discoveryId).toBeTruthy();
+
+  // Drive the real resident bounded-discovery Worker to its exact summary.
+  // This is the durable preparation state the Task Center must reopen.
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  // Deliberately leave the preparation unconfirmed.
+  await expect(
+    page.getByRole("button", { name: "确认整理 1 项" }),
+  ).toBeVisible();
+
+  // The real API proves which organizing Task this exact preparation owns;
+  // the browser journey below then finds that same Task through its normal
+  // Task Center detail rather than through a guessed record.
+  const discoveryResponse = await request.get(
+    `${BASE}/api/v1/operations/organize/discoveries/${discoveryId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(discoveryResponse.ok()).toBeTruthy();
+  const discovery = (await discoveryResponse.json()) as {
+    readonly organizeTaskId?: string | null;
+  };
+  expect(discovery.organizeTaskId).toBeTruthy();
+  const taskId = discovery.organizeTaskId as string;
+
+  // Leave through the preparation page's ordinary return entry.
+  await page.getByRole("link", { name: "返回任务中心" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  // The just-admitted Task is the newest run in the real inventory.
+  await page
+    .getByRole("table")
+    .getByRole("row")
+    .nth(1)
+    .getByRole("button")
+    .first()
+    .click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+
+  // A reload and auth continuation keep the exact selected run and its
+  // durable preparation entry; the browser carries no preparation memory.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const continueLink = detail.getByRole("link", { name: "继续整理" });
+  await expect(continueLink).toBeVisible();
+  const continueHref = await continueLink.getAttribute("href");
+  expect(continueHref).toBeTruthy();
+  expect(
+    new URL(continueHref as string, BASE).searchParams.get("discoveryId"),
+  ).toBe(discoveryId);
+
+  // Opening the durable link is a read-only navigation to the same summary.
+  const beforeNavigationPosts = api.filter(
+    (entry) => entry.method === "POST",
+  ).length;
+  await continueLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/organize/new\\?.*discoveryId=${discoveryId}`),
+  );
+  expect(api.filter((entry) => entry.method === "POST").length).toBe(
+    beforeNavigationPosts,
+  );
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // Confirm that same review exactly once.  The preserved Task Center origin
+  // returns to the same run detail instead of an unrelated list.
+  const executePosts = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    );
+  const executeResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  expect((await executeResponse).ok()).toBeTruthy();
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  expect(executePosts()).toHaveLength(1);
+
+  // The real Worker completes the one admitted execution under that Task.
+  const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(workerRun.ok()).toBeTruthy();
+  expect(await workerRun.json()).toMatchObject({
+    completed: true,
+    taskId,
+    status: "completed",
+    itemCount: 1,
+  });
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Two.2002.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({ sourceExists: false });
+
+  // The same durable entry still reopens the exact preparation after the
+  // execution finished, where the independent existing execution is visible.
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
+  const completedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(completedDetail.getByText("已完成").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await completedDetail.getByRole("link", { name: "继续整理" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("已有受理的兄弟项")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole("link", { name: /查看已有执行/ }).click();
+  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
+    { timeout: 15_000 },
+  );
+  // Reopening and viewing the admitted result submitted nothing.
+  expect(executePosts()).toHaveLength(1);
+});
