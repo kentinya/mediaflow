@@ -101,22 +101,29 @@ Implementation Authorization: NOT YET AUTHORIZED
 1. **先看完整切换，再动实现。** 在现有 Node fake-server 和 Python 隔离夹具中，使用侧栏
    保存桌面1536×1024、390×844的代表性改前过程；核对每个主页面快读／慢读时，标题、
    工具区、等待区和内容何时出现。复用现有采样／trace，仅补实际缺的读取与内容接入观察。
-2. **协调一层主页面过渡和内容接入。** 调校起始透明度、缓动与节奏，消除重复淡入的明暗
-   突变；保留 persistent ShellPageSurface，不给业务子树按页面 key 重挂载。按最终实际
+2. **协调主页面过渡和内容接入。** 可调校起始透明度、缓动与节奏，或减少重复淡入；
+   具体方案以完整切换过程舒缓、无突兀明暗变化为准，不指定动画层数。保留 persistent
+   ShellPageSurface，不给业务子树按页面 key 重挂载。按最终实际
    主页面身份触发一次，同页标签／分页／目录／弹卡／轮询不重播。已有弹卡覆盖规则、
    未保存阻止退出及 reduced-motion 保持；正常目标页几何差异允许。
 3. **逐页接上真实等待。** 对照上表检查九页，不止检查 Shell。快读／缓存可直接呈现，
-   以稳定布局和必要的短暂反馈延后显示避免提示闪出又消失；延后的是呈现反馈，不是请求、
-   错误、授权判断或已就绪内容。确有等待时反馈应稳定可辨，真实内容接入协调；不新增
+   通过稳定布局、协调占位或必要时延后显示短暂忙碌提示等方式改善接入，具体方案按各页
+   实际状态选择，不强制增加定时器。若延后反馈，只延后呈现，不延后请求、错误、授权
+   判断或已就绪内容。确有等待时反馈应稳定可辨，真实内容接入协调；不新增
    强制播放时间，不为动画串行原本独立的读取。保留已有请求启用条件、查询身份／缓存
    隔离、自动刷新节奏及真实错误分支。无需重做业务表单／布局。
 4. **完整处理两库刷新。** 区分首次库信息、首次目录和同条件后台重读；没有成功数据时
    不显示假空目录，有同条件内容时保持可读。将忙碌反馈与现有工具区／内容区域协调，
-   避免插入／移除正文行；仅搬位置仍短暂闪现不算完成。快速刷新不闪，慢刷新仍可辨，
+   消除瞬时提示插入／移除造成的突兀推挤与闪灭，正常稳定反馈及平顺替换可用；仅搬位置
+   仍突兀闪现不算完成。快速刷新不闪，慢刷新仍可辨，
    手动刷新／普通操作后更新走同一呈现规则。换库／路径使用自身等待与结果；错误仍走
    原有安全恢复，不延长旧权限或让旧目录冒充目标目录。
-5. **沿真实操作补覆盖并交接。** 扩展既有 page-transition、两库及各改动页测试，验证
-   快读／缓存／慢读／失败／快切及真实内容接入。保留52.1分页、详情滚动／返回与输入
+5. **沿真实操作补覆盖并交接。** 调整并扩展既有 page-transition、两库及各改动页测试。
+   原导航测试的固定280ms采样结束、必须降低透明度及必须使用 `mf-content-settle` 动画
+   等实现断言，随本次合法呈现方案改为读取状态、目标内容可用、过渡完成及中间过程的
+   行为检查；不要求保留指定淡入或动画名称，也不靠统一延长等待掩盖闪烁。保留主页面
+   归属、容器生命周期、同页不重播、弹卡覆盖与真实等待／失败等原有行为保障。
+   验证快读／缓存／慢读／失败／快切及真实内容接入。保留52.1分页、详情滚动／返回与输入
    不被迟到读取抢焦的结果。普通操作后的验证通过已有临时库控件执行一次已支持的命令，
    确认刷新不重发该命令。仅调整本 Task 必需文档事实；交出精确 checkpoint 及实际结果。
 
@@ -139,7 +146,8 @@ Implementation Authorization: NOT YET AUTHORIZED
   导航／内容一致；两库快换库／路径的迟到读取不串结果。真实失败可以通过现有入口恢复，
   不将等待当空态、不无限占位、不隐藏失败。共享鉴权语义保持。
 - [ ] **TAC-5 同页与弹卡：** 同页分页／筛选／标签、切库／路径、刷新及弹卡开关不重播
-  整页入场；任务／存储／库／自动化卡仍覆盖完整视口、内部可滚、背景及焦点正确恢复。
+  整页入场；任务／存储／库／自动化卡的遮罩覆盖完整视口，卡片内容与操作完整可用，
+  长内容可在卡内滚动，背景及焦点正确恢复。简短卡片不要求铺满视口或出现滚动条。
   未保存选择保留原输入和URL；reduced-motion静态清楚可操作。
 - [ ] **TAC-6 已交付及安全：** Task52.1 的浏览位置、分页、详情及慢读时继续搜索输入
   保持；纯探索／导航零任务准入／配置发布／媒体 mutation。普通文件命令只由用户原入口
@@ -164,8 +172,15 @@ Implementation Authorization: NOT YET AUTHORIZED
 ```sh
 npm run typecheck
 npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx
-npm run test:e2e -- tests/e2e/page-transition.spec.ts tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts
+npm run test:e2e -- tests/e2e/page-transition.spec.ts
+npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts --grep 'Task52[.]2|directory navigation, breadcrumb return, refresh and selection reset|library selection, lazy navigation, breadcrumbs, search and refresh|empty and recoverable failure states preserve the Files context|missing directory, stale cursor and unavailable Storage offer scoped recovery'
 ```
+
+page-transition 的六个既有用例直接覆盖共享过渡、读取接入、弹卡、未保存退出及认证续转，
+由 Developer 运行。两库只运行新增／修改用例及上列已有目录刷新／空态／失败恢复用例；
+新增／修改的两库E2E标题含 `Task52.2`，其余实际受影响用例按完整标题追加到命令并记录
+原因。不因本次呈现变化默认要求 Developer 整跑配置发布、整理准入或文件命令业务矩阵；
+B 的对应回归范围仍按下文执行。
 
 追加实际改动页对应的 `ExplorePage.test.tsx`、`StorageManagementPage.test.tsx`、
 `RulesWorkspacePage.test.tsx`、`OperationsInventory.test.tsx`、`AutomationRouter.test.tsx`、
