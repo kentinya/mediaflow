@@ -1,7 +1,7 @@
 # Task PATCH-20261108-2 — 探索页边界与详情首屏阅读修正
 
 用户于2026-11-08明确要求“激活Task”，此前草案现为正式活动Task。
-Developer可按下方固定范围实施；本轮仅完成激活，尚未开始产品实现。
+Developer已完成下方固定范围实施，候选交 B 独立验收；本轮未推送或发布。
 
 上一项独立修正 `PATCH-20261108-1` 已由 B 独立验收 PASS：
 Base `aa752cc3bc194707808a1af79afd8978ce4aef44`，
@@ -19,8 +19,9 @@ Authority: 用户本轮明确提出的三项探索页呈现修正及其后的规
 Task ID: PATCH-20261108-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 37c3287ece5cd7060a887b42fcd84c6b0fc49e7e
+Implementation Head: 79bcc866f32b69ea8266491c77ec995f8b0e578c
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -42,7 +43,7 @@ Development Authorization: USER-AUTHORIZED TASK ACTIVATION; DEVELOPER MAY IMPLEM
 共享呈现／读取边界见 [Architecture](docs/architecture.md#current--v2-explore-homepage-slice51-pass--closed)。
 用户新要求明确调整 `V2-EXPLORE-012` 的“一个可见标题”呈现及旅程中“先看图片”的顺序；
 未来按实际交付协调 CURRENT 文字，保留旧 Slice 的接受事实，不把旧合同追改为新要求。
-本轮仅激活本Task，产品实现和必要CURRENT文字协调按下方步骤进行。
+产品实现和必要CURRENT文字协调已按下方步骤完成，交B独立验收。
 
 ### Observed entry, behavior and causes
 
@@ -124,7 +125,8 @@ Task 可写。预存已跟踪修改为 `mediaflow/.DS_Store`；未跟踪系统�
 ### Required Tests
 
 遵循 [test levels and ownership](docs/development-workflow.md#6-test-levels)。
-所有运行使用本地夹具／临时根和数据库。下列产品测试是未来实施／验收计划，本轮未执行。
+所有运行使用本地夹具／临时根和数据库。下列产品测试按 Developer／B 分工执行；
+Developer affected 计划已完成，B acceptance 仍待独立执行。
 
 #### Developer — affected tests
 
@@ -195,8 +197,64 @@ Storage、schema或执行引擎；不修无关既有测试失败、不改旧Slic
 
 ### Developer Completion Report
 
-PENDING — Task已激活，尚未开始实施。Developer完成后记录完整checkpoint、受影响测试实际结果、
-必要视觉证据和风险，状态交到 READY FOR B REVIEW；不自评PASS。
+Status: READY FOR B REVIEW — 2026-11-08
+Task Base: `37c3287ece5cd7060a887b42fcd84c6b0fc49e7e`
+Implementation Head: `79bcc866f32b69ea8266491c77ec995f8b0e578c`
+Working Branch: `main`
+
+**交付内容**
+
+- `ExplorePage` 移除主内容可见“探索”标题及空占位；`section` 以 `aria-label="探索"`
+  保留可访问区域身份，成为空态／失败／翻页及详情深链关闭的确定焦点目标。详情返回仍优先
+  回到原海报，原海报失效或深链打开时回到探索区域，不使用旧标题 ID 或不可见节点。
+- Explore 专属消除 Shell 的第二层 `4vw` 左右内边距，页面以 `23px` 桌面／`14px` 窄屏
+  内容起点与文件、规则、自动化、任务中心对齐；390px 保持两列海报且无页面横向溢出。
+- `ExploreDetailCard` 将真实 `backdropPath`（w780）移入卡片级装饰背景层，背景不占正文
+  行、不拦截指针；海报缩小并置于事实左侧，评分／类型前置，标题、关闭、主要信息和简介
+  开头在未滚动首屏可读。背景加载失败／迟到只保留稳定底色，不改变正文起点。Explore
+  详情卡按内容自适应高度、受原卡片最大高度约束，长内容继续在卡内滚动。
+- `ModalCardShell` 增加可选 `layerBackground`，仅 Explore 详情传入；其他弹卡的关闭、焦点、
+  滚动锁定和固定几何不变。当前 `V2-EXPLORE-012/014`、Product Experience 与 Architecture
+  中标题／详情呈现文字已按实际交付最小协调，旧 Slice 接受身份未改写。
+- 迁移依赖可见探索标题的 Entry／Shell／业务入口就绪断言到可访问探索区域；Explore
+  浏览器旅程新增四视口首屏、1920／1440 对齐、390px、长名称／长简介、明暗／高反差、
+  缺图／迟到背景和对比度验证。
+
+**实际执行的 affected tests（cwd `web/` 除注明）**
+
+| 命令 | 结果 |
+|---|---|
+| `python3 scripts/check_governance.py`（仓库根） | PASS |
+| `git diff --check`（仓库根） | PASS |
+| `npm run typecheck` | PASS |
+| `npx eslint <changed source/test paths>` | PASS |
+| `npx prettier --check <changed source/style/test paths>` | PASS |
+| `npm run test -- run src/features/explore/ExplorePage.test.tsx src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx src/features/entry/EntryPage.test.tsx src/routes/router.test.tsx` | 5 files / 74 tests passed（10.15s） |
+| `npm run build` | PASS（Vite 296 modules；仅既有 >500kB chunk warning） |
+| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --output=test-results/explore-python-run` | 25 passed（33.1s） |
+| `npm run test:e2e -- tests/e2e/page-transition.spec.ts --output=test-results/page-transition-run` | 10 passed（39.7s） |
+
+单测覆盖：可见标题退出与区域可访问名称、详情深链关闭回焦、详情失败重读、缺图背景层保留、
+TV／电影字段、分页空结果确定焦点以及既有搜索／分页／缓存旅程。E2E 使用真实 Python
+Explore harness、临时 SQLite、假 TMDB 传输和本地拦截图片；既有零 Storage／零业务写入断言
+继续通过。
+
+**视觉证据**
+
+本地忽略目录 `web/test-results/explore-harness-evidence/` 下已保存并实际查看：
+`PATCH-20261108-2-desktop-aligned.png`、`PATCH-20261108-2-mobile-390-aligned.png`、
+四视口电影／剧集详情首屏、`PATCH-20261108-2-mobile-long-title-first.png`、
+`PATCH-20261108-2-mobile-long-overview-first.png`、长内容末尾、缺图／迟到背景及
+明亮／暗色／高反差背景截图。证据为本机材料，不承诺随 Git 同步。
+
+**未执行、限制与剩余风险**
+
+- B 的完整 Web 单测、默认 Node E2E、全 Python／发布矩阵未在本轮执行；这些仍由 B 独立验收。
+- 既有 `deep-link.spec.ts` 403 重复提示 strict 失败本轮未重跑；仅迁移了其探索就绪定位，
+  未删除或放松该断言。
+- 明暗／高反差图片使用本地 SVG fixture，并在代码中按白／黑两个极端核对实际合成对比度
+  ≥4.5:1；真实 TMDB 照片仍需 B 在独立验收中按实际合成背景核对。
+- 未使用真实外部服务、用户运行数据库／配置／媒体；未推送、发布或部署。
 
 ### B Review Result
 
