@@ -4,13 +4,14 @@
 Task ID: PATCH-20261109-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 45674526b04d3366f533b86e864b3c8d179736ed
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED IMPLEMENTATION OF B'S COMMITTED DRAFT
 Candidate Checkpoint: cc6ffbb1496685d440e731421c0f45ee44953995
+B Reviewed Head: a3094876dd98cdd6b1d5601155da6fa0b0e426da
 ```
 
 用户于 2026-11-09 根据截图调查要求规划 Task，随后明确提出删除“整理记录”，并授权
@@ -30,6 +31,10 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
 当前 `fetchFilesOrganizeWork` 同时供提交响应丢失后的准确 `requestId` 核对使用。
 该共享调用与界面记录列表的生命周期分别处理。
 
+B 独立复核发现：原规划将任务中心的“查看状态／证据”当成了返回初次摘要的入口，
+实际并不存在。AC-3 保留；本次修正允许补齐同一任务到既有准备页的只读关联和导航。
+这是删除原唯一入口所需的旅程接续，不新建摘要或确认机制。
+
 适用 `REQ-WEB-003/005`、`UX-001/002/007`、`V2-UX-012/015`；完整旅程见
 [Real Storage Files](docs/product-experience.md#real-storage-files)、
 [Manual organize](docs/product-experience.md#manual-organize) 和
@@ -48,7 +53,10 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
 3. 修正整理提交错误中“在资源库文件页的整理记录中继续处理”等悬空提示，
    指向已有任务中心查看已受理工作。保留按准确 requestId 核对并进入对应摘要的路径。
    核对失败时明确受理尚未确认、可去任务中心核查；提示和导航均不重复提交。
-4. 验证从任务中心查看本次手动整理任务、打开其当前摘要并明确确认的完整旅程，
+4. 在任务中心该手动整理 Task 的详情中提供“继续整理”入口，返回该 Task 已有的
+   `/operations/organize/new?discoveryId=…` 准备页。后端详情读取提供准确持久关联，
+   前端解析该关联并导航；复用既有准备页的读取、分析、摘要、确认和执行情况。
+5. 验证从任务中心查看本次手动整理任务、打开其当前摘要并明确确认的完整旅程，
    包括目录离开／返回、刷新／重认证和提交响应丢失的场景。
    更新直接受影响测试，新增精确浏览器场景可集中到
    `web/tests/e2e/files-read-handoff.spec.ts`。
@@ -63,12 +71,35 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
   等待和就绪接入平顺，键盘可用、长路径可读、无水平溢出；reduced-motion 反馈清楚。
 - [ ] AC-3：文件整理成功受理后进入准确准备／摘要；用户离开后从任务中心仍能找到
   同一任务、查看摘要、明确确认及查看独立结果。刷新／重认证后该入口继续可达。
-  **BLOCKED（见 Developer Completion Report）：现有任务中心对普通初次待确认的手动整理
-  只提供状态／取消／证据读取，不提供该准备的摘要与确认入口；本轮未新增后端或任务中心入口。**
+  B 已复现当前候选没有返回初次摘要的入口；按下方开发指导补齐后复核。
 - [x] AC-4：提交响应丢失时，仍按原 requestId 核对并定位对应工作；核对暂不可用时
   提示准确且任务中心可供核查。界面没有指向已删除区域的指引；核对及查看不重发提交。
 - [x] AC-5：媒体库浏览、文件页普通操作状态、无 Active／无库／无效路径和401／403
   保持原行为。浏览／刷新／返回只读；整理仍由现有明确确认触发。
+
+## Developer guidance — 本次修正
+
+1. 从 `mediaflow/interfaces/service_api.py::_operations_run_overview` 的准确 Task 身份出发，
+   使用已有 `get_media_discovery_for_task(task_id)` 读取其持久准备关联；在详情响应中添加
+   一个小型可选关联（例如 `filesPreparation`，包含 `discoveryId/resourceLibraryId`）。
+   沿用现有读取权限和准备所属关系；没有关联时不提供入口。不要从文件名、最近记录、
+   当前 Active 或浏览器记忆推算关联，也不要在列表逐项加载整份准备。
+2. 在 `web/src/entities/operations/run.ts` 接入该详情字段；在
+   `web/src/features/operations/OperationsLanding.tsx::RunDetailPanel` 放置可读的
+   “继续整理”链接。复用 Router 已注册的准备路由及现有返回上下文，点击后读取原准备。
+   覆盖尚在分析和已等待初次确认的真实工作，刷新／重认证后仍从持久关联进入。
+3. 保持 `manual_recovery_continuation.py::_files_native_summary` 的四类恢复职责。
+   此处补的是初次准备的返回入口；不要为显示链接把普通 WaitingConfirm 标成冲突／Attention，
+   也不要改已有确认服务。已确认工作的返回由原准备页展示已受理状态／执行情况。
+4. 从 Files 实际选文件创建工作，记录原 Task／准备身份，离开到任务中心并点击新入口；
+   进入同一摘要后明确确认一次，驱动本地 Worker，核对原 Task 的结果。
+   同时做刷新／重新连接及未知提交核对场景。导航、刷新和重新连接只读取。
+5. 按下面受影响测试交检查点，报告实际修改及结果。文档只协调本 Task 的呈现变化：
+   原“Files 保留记录列表”的现行说明改为“Files 发起、任务中心返回同一准备”；
+   不改 Slice52 的历史合同／接受身份、Roadmap 或 Progress。
+
+测试等级保持 **T3**：本轮修正增加详情只读投影及既有路由入口，执行与权限规则不变。
+风险集中在读取与导航整合，按该实际范围验收。
 
 ## Required Tests
 
@@ -78,10 +109,25 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
 
 ```sh
 npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx
+npm run test -- run src/entities/operations/run.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/OrganizeCreationPage.test.tsx
 npm run typecheck
 npm run build
 npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable from Task Center"
 ```
+
+在现有 `operations-inventory.python.spec.ts` 添加上面标题的原生场景；复用现有
+Files 选择、注册 Worker 和推进分析／执行的夹具，不构造不存在的用户入口。
+后端在 `tests/test_operations_task_center.py` 加入对应 Task 到准备的读取断言，并运行：
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p test_operations_task_center.py
+.venv/bin/ruff check mediaflow/interfaces/service_api.py tests/test_operations_task_center.py
+.venv/bin/ruff format --check mediaflow/interfaces/service_api.py tests/test_operations_task_center.py
+```
+
+覆盖准确关联／无关联、原读取权限及读取不准入；前端覆盖链接、刷新／认证续转、
+返回同一准备、明确确认一次及确认后独立结果。
 
 修改文件另跑精确路径 `npx eslint <changed-ts-tsx-paths>` 和
 `npx prettier --check <changed-web-paths>`；根目录运行
@@ -98,7 +144,9 @@ npm run format:check
 npm run build
 npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx
 npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/page-transition.spec.ts
+npm run test -- run src/entities/operations/run.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/OrganizeCreationPage.test.tsx
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts tests/e2e/organize-source-history.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable from Task Center"
 ```
 
 覆盖两库目录接入、普通操作入口、真实 Python live list 的只读／错误恢复及整理摘要确认。
@@ -106,13 +154,14 @@ B 补验文件页受理后离开、任务中心找到同一任务并确认摘要
 以及响应丢失后准确核对与核对失败指引；新增断言复用现有本地夹具。
 逐阶段检查桌面／窄屏画面和实际操作，原始结果保存到
 `.git/validation-evidence/<candidate>/patch-20261109-1/`。
-T3 验收范围为文件页呈现、记录入口退出及直接依赖。
+B 另执行上面的后端 Task Center 模块测试。T3 验收范围为文件页呈现、记录入口退出、
+Task 到既有准备的只读接续及直接依赖。
 
 ## Non-goals
 
-后端记录／查询 API、任务数据和历史保留；任务中心沿用现有入口及摘要确认。
-本 Task 不涉及后端／权限／Active／schema／Storage／执行引擎变更，
-共享动画／等待门限和其他页面业务功能保持。
+不恢复文件页记录列表；不新增任务中心创建入口、摘要产品或恢复类型。
+保留后端记录查询 API、任务数据、历史及现有执行／权限／Active／schema／Storage／引擎。
+允许修改现有详情读取和任务中心导航以满足 AC-3；共享动画门限及其他页面业务保持。
 Slice52、Roadmap、Progress 和既有接受身份保持。
 
 ## Developer Completion Report
@@ -159,49 +208,55 @@ Role exception:        用户直接授权 Developer 实施 B 的已提交草案�
 改为 `**/api/v1/resource-libraries/*/files` 后 4 例全部通过。组件测试首轮
 `tsc` 报 `release?.()` 控制流收窄错误，改为显式 gate 对象后通过。
 
-### AC-3 blocker（必须由 B／用户决定）
+### 未完成项
 
-以真实 Python 栈（`scripts/operations_inventory_harness.py`，生产构建 + 真实 API/SQLite/
-Worker）实际复现：
-
-1. Files 选择 `Three.2003.mkv` → 受理并生成计划摘要，页面仍在
-   `/operations/organize/new?discoveryId=…`，摘要页有确认入口。
-2. 经侧栏进入任务中心：该工作显示为“手动整理 / 进行中”，条目为
-   “等待确认 / waiting_confirm”；详情只有 `取消运行`、`导出结果 JSON`、`查看证据`。
-3. 打开条目证据：显示“审核与恢复 — 此文件没有待处理操作”，没有计划摘要或确认按钮。
-
-代码佐证：
-`mediaflow/application/manual_recovery_continuation.py::_files_native_summary` 对
-“普通初次待确认、无四类问题、无已受理执行”的条目显式返回 `None`；
-`web/src/features/operations/RunDetailTabs.tsx` / `TaskItemRecoveryPanel.tsx` 仅在
-`manualRecoveryPreparation` 存在时渲染摘要确认；Web 侧没有任何
-Task/run → `/operations/organize/new?discoveryId=…` 的入口（该入口此前仅由被删除的
-Files 面板提供）。
-
-因此本候选移除面板后，**已受理但尚未确认的手动整理准备没有重新进入摘要的入口**：
-任务中心可看状态、取消、导出与证据，但不能查看摘要或确认。这与 AC-3 及已接受契约
-“Files retains initial confirmation and exact task/preparation readback”冲突。
-
-**本轮没有做的事（按 Non-goals 与不扩范围要求）**：未新增后端读取字段、未在任务中心
-构造新入口、未用 mock/自造路由证明不存在的旅程。请 B／用户选择：
-
-- 方案 A（推荐，跨层）：任务中心为该 Task 暴露精确准备身份并链接回同一准备／摘要；
-  需要后端读取与 Task Center UI 变更，超出本 Task Non-goals，需重新定级（T4）。
-- 方案 B（保留删除）：接受“离开准备页后无法回到未确认摘要”，并明确修改已接受旅程与
-  AC-3；属于产品行为变更，需 A 或 user 明确决定。
-- 方案 C：保留文件页唯一一个“继续未确认整理”入口（不是原记录列表），以满足可达性；
-  同样需要 B／用户确认，因为与“删除整理记录”的呈现约定相邻。
-
-若不选择 A/C 而按现状验收，本候选会让未确认准备孤立；Developer 不将 AC-3 标为通过。
-
-### Remaining risks
-
-- AC-3 未满足，见上；提示文案“请在任务中心查看是否已有该资源库的整理任务”对状态／结果
-  真实，但不能替代摘要确认入口。
-- 未运行 B 的完整 lint/format/全量 E2E/Python 验收；未截图逐一核对桌面／窄屏视觉，
-  仅以真实浏览器场景断言无水平溢出与无记录区。
-- 本机 Python harness 进程已停止；临时探针脚本已删除，未纳入检查点。
+Developer 已报告 AC-3：普通初次待确认任务在任务中心只有状态／证据，没有摘要确认入口。
+B 已独立复现并决定沿用同一 Task 补齐到已有准备页的只读返回入口，见上方开发指导。
+原始报告与方案讨论保留在 `a3094876:TASK.md`；不再等待用户在 A/B/C 方案中选择。
 
 ## B Review Result
 
-待独立审查。请先决定 AC-3 blocker 的处理方向，再按上面的 B acceptance 计划执行。
+```text
+Reviewed Base: 45674526b04d3366f533b86e864b3c8d179736ed
+Reviewed Head: a3094876dd98cdd6b1d5601155da6fa0b0e426da
+Implementation: cc6ffbb1496685d440e731421c0f45ee44953995
+Decision: FIX REQUIRED
+Blocker: AC-3 — 离开初次准备后无法从任务中心返回同一摘要确认
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 独立审查完整 Base..Head 的全部 5 个变更文件，包括产品删除、共享查询消费者、
+全部新增／修改测试和 Task 说明；实现后至 Reviewed Head 只有 Task 报告变化。
+代码删除及目录接入符合本次呈现目标，准确 requestId 核对调用仍保留。
+
+**实际用户复现：** 使用生产 Web 构建和现有真实 Python/API/SQLite/Worker 本地夹具，
+从 Files 选择 `Two.2002.mkv`，产生计划摘要及“确认整理 1 项”；不确认，经侧栏进入任务中心，
+打开该文件的手动整理任务。详情显示“等待确认”，只有取消／导出／查看证据，
+无返回准备的链接；证据显示“此文件没有待处理操作”，确认按钮为 0。
+该次任务中心读取／导航的产品 POST 为 0。`Three.2003.mkv` 的独立初次准备亦保持未确认。
+
+根因是原记录列表包含准确 `discoveryId` 链接，而普通初次 WaitingConfirm 不属于
+`_files_native_summary` 发布的四类恢复摘要。删除链接后没有等价入口。
+这是既有 AC-3 的实现缺口，按本次指导修正，不恢复原列表、不新建 Task。
+
+| B 本轮验证 | 实际结果 |
+|---|---|
+| `python3 scripts/check_governance.py`（根目录） | PASS |
+| `git diff --check 45674526..a3094876`、工作区 `git diff --check` | PASS |
+| `npm run build`（web） | PASS；现有大 chunk 提示保留 |
+| `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts`（web） | 4 passed，3.3s |
+| 真实 Files → 原准备摘要 → 侧栏任务中心 → 原任务详情／证据 | 复现 AC-3 不满足 |
+| 1536×1024／390×844 文件页实图 | 已检查，库上下文后为目录，无整理记录区 |
+
+先确认阻塞，依 workflow §6 提前返回 FIX REQUIRED；其余 B 静态／组件／集成验收待修正候选，
+未宣称全部 AC 通过。上方勾选为 Developer 的交付报告，不替代 B 最终验收。
+本轮测试及浏览器验证用时少于总用时的 50%。
+原始截图、请求台账、复现脚本和 `center-result.log` 在本机
+`.git/validation-evidence/a3094876dd98cdd6b1d5601155da6fa0b0e426da/patch-20261109-1/`；
+仅本机可达，不含用户运行数据。现有 Python harness 已停止。
+
+起点为 main / Reviewed Head，Git 与工作区可写；预存 `mediaflow/.DS_Store` 变更，
+未跟踪 `.DS_Store`、`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、
+`docs/`、`output/`、`testdata/`、`web/` 下原有材料保持，不纳入本次文档检查点。
+本轮仅修改本 Task；Slice52 已关闭，不重开、不替 A 再终审，也不规划下一项。
