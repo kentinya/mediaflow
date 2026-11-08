@@ -67,19 +67,22 @@ class _OpenListServer:
                     "is_dir": False,
                     "modified": "2020-01-01T00:00:00Z",
                 }
+                movies = {
+                    "name": "Movies",
+                    "size": 0,
+                    "is_dir": True,
+                    "modified": "2020-01-01T00:00:00Z",
+                }
                 if self.path == "/api/fs/get":
-                    # ``stat`` of the selected directory must resolve to a real
-                    # directory, exactly like the provider's own metadata.
-                    if str(body.get("path", "")).rstrip("/") == "/Movies":
-                        entry = {
-                            "name": "Movies",
-                            "size": 0,
-                            "is_dir": True,
-                            "modified": "2020-01-01T00:00:00Z",
-                        }
-                    data: object = entry
+                    data: object = movies
                 elif self.path == "/api/fs/list":
-                    data = {"content": [entry], "total": server._total}
+                    # Metadata ``stat`` of the selected directory lists its
+                    # parent; the directory's own pages keep the repeated
+                    # non-atomic filename this case reproduces.
+                    if str(body.get("path", "")).rstrip("/") in {"", "/"}:
+                        data = {"content": [movies], "total": 1}
+                    else:
+                        data = {"content": [entry], "total": server._total}
                 else:  # pragma: no cover - the discovery stage calls only these
                     self.send_error(404)
                     return
@@ -211,8 +214,8 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 intent = value.repository.get_manual_intent(frozen["intentId"])
                 self.assertEqual(["Movies/A.2001.mkv"], [item.source.path for item in intent.items])
                 # The production HTTP client was really exercised.
-                endpoints = [call["endpoint"] for call in server.calls]
-                self.assertIn("/api/fs/list", endpoints)
+                endpoints = {call["endpoint"] for call in server.calls}
+                self.assertEqual({"/api/fs/list"}, endpoints)
 
     def test_unsafe_basename_publishes_a_durable_refusal(self) -> None:
         """B's current production reproduction: a traversal basename."""

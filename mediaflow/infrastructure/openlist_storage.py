@@ -507,6 +507,8 @@ class HttpOpenListClient:
             raise RuntimeError("install mediaflow[openlist] to use OpenListStorage") from error
         self._httpx = httpx
         self._base_url = config.base_url.rstrip("/")
+        self._root_path = OpenListStorage._normalize_root(config.root_path)
+        self._page_size = config.page_size
         self._client = httpx.Client(
             headers={"Authorization": config.token},
             timeout=httpx.Timeout(config.request_timeout, connect=config.connect_timeout),
@@ -539,12 +541,44 @@ class HttpOpenListClient:
         return OpenListPage(entries, total)
 
     def stat(self, path: str) -> OpenListClientEntry:
+        target = PurePosixPath(path)
+        if target == PurePosixPath(self._root_path) or not target.name:
+            self.list_page(str(target), 1, 1)
+            return OpenListClientEntry(
+                target.name,
+                str(target),
+                True,
+                0,
+                datetime(1970, 1, 1, tzinfo=UTC),
+            )
+        parent = str(target.parent)
+        scanned = 0
+        page = 1
+        while True:
+            listing = self.list_page(parent, page, self._page_size)
+            if len(listing.entries) > self._page_size or listing.total < scanned + len(
+                listing.entries
+            ):
+                raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+            for item in listing.entries:
+                if item.name == target.name:
+                    return item
+            scanned += len(listing.entries)
+            if not listing.entries:
+                if scanned < listing.total:
+                    raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+                raise OpenListClientError(OpenListClientErrorKind.NOT_FOUND)
+            if scanned >= listing.total:
+                raise OpenListClientError(OpenListClientErrorKind.NOT_FOUND)
+            page += 1
+
+    def _get_entry(self, path: str) -> OpenListClientEntry:
         return self._entry(
             self._json("POST", "/api/fs/get", {"path": path}), str(PurePosixPath(path).parent)
         )
 
     def open_read(self, path: str) -> BinaryIO:
-        item = self.stat(path)
+        item = self._get_entry(path)
         if not item.raw_url:
             raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
         try:

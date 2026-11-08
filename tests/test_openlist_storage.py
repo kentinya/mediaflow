@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import io
+import json
+import threading
 import unittest
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote
 
 from mediaflow.domain.storage import StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.infrastructure.openlist_storage import (
@@ -485,3 +489,435 @@ class HttpOpenListClientContractTests(unittest.TestCase):
                 self.client._json = lambda *_args, data=data, **_kwargs: data
                 self.client.list_page("/empty", 1, 100)
             self.assertEqual(OpenListClientErrorKind.INVALID_RESPONSE, raised.exception.kind)
+
+
+class _OpenListHttpServer:
+    """Bounded OpenList v4 HTTP fixture that records every request."""
+
+    def __init__(self, entries: dict[str, tuple[bool, bytes]], *, get_mode: str) -> None:
+        self.entries = dict(entries)
+        self.get_mode = get_mode
+        self.calls: list[tuple[str, str, dict[str, object] | None]] = []
+        self.raw: dict[str, bytes] = {}
+        self.list_failures: dict[int, str] = {}
+        self._lock = threading.Lock()
+        state = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: object) -> None:
+                return
+
+            def _reply(self, status: int, document: dict[str, object] | None = None) -> None:
+                body = b"" if document is None else json.dumps(document).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _business(self, code: int, message: str = "failure") -> None:
+                self._reply(200, {"code": code, "message": message, "data": None})
+
+            def _envelope(self, data: object) -> None:
+                self._reply(200, {"code": 200, "message": "success", "data": data})
+
+            def _record(self, method: str, body: dict[str, object] | None = None) -> None:
+                with state._lock:
+                    state.calls.append((method, self.path, body))
+
+            def do_GET(self) -> None:  # noqa: N802
+                self._record("GET")
+                if self.path == "/ping":
+                    self._reply(200)
+                    return
+                payload = state.raw.get(self.path)
+                if payload is None:
+                    self._reply(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_POST(self) -> None:  # noqa: N802
+                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                body = json.loads(raw or b"{}")
+                self._record("POST", body)
+                with state._lock:
+                    if self.path == "/api/fs/list":
+                        self._list(body)
+                    elif self.path == "/api/fs/get":
+                        self._get(body)
+                    elif self.path == "/api/fs/move":
+                        state._move(body)
+                        self._envelope(None)
+                    elif self.path == "/api/fs/rename":
+                        state._rename(body)
+                        self._envelope(None)
+                    elif self.path == "/api/fs/remove":
+                        state._remove(body)
+                        self._envelope(None)
+                    else:
+                        self._business(405, "method not allowed")
+
+            def _list(self, body: dict[str, object]) -> None:
+                path = str(body.get("path", ""))
+                page = body.get("page")
+                per_page = body.get("per_page")
+                if body.get("refresh") is not False:
+                    self._business(400, "refresh must be false")
+                    return
+                if type(page) is not int or type(per_page) is not int or page < 1 or per_page < 1:
+                    self._business(400, "invalid pagination")
+                    return
+                mode = state.list_failures.get(page)
+                if mode == "http_500":
+                    self._reply(500)
+                    return
+                if mode == "business_500":
+                    self._business(500)
+                    return
+                if mode == "business_403":
+                    self._business(403, "permission denied")
+                    return
+                if mode == "invalid":
+                    self._envelope({"content": {}, "total": 0})
+                    return
+                if mode == "empty_total_9":
+                    self._envelope({"content": [], "total": 9})
+                    return
+                value = state.entries.get(path)
+                if value is None:
+                    self._business(404, "not found")
+                    return
+                if not value[0]:
+                    self._business(400, "not a directory")
+                    return
+                prefix = path.rstrip("/") + "/"
+                children = [
+                    key
+                    for key in sorted(state.entries)
+                    if key.startswith(prefix) and "/" not in key[len(prefix) :]
+                ]
+                start = (page - 1) * per_page
+                selected = children[start : start + per_page]
+                self._envelope(
+                    {
+                        "content": [state._document(key) for key in selected],
+                        "total": len(children),
+                    }
+                )
+
+            def _get(self, body: dict[str, object]) -> None:
+                path = str(body.get("path", ""))
+                value = state.entries.get(path)
+                if value is None:
+                    self._business(404, "not found")
+                    return
+                if state.get_mode == "http_405":
+                    self._reply(405)
+                    return
+                if state.get_mode == "business_405":
+                    self._business(405, "method not allowed")
+                    return
+                document = state._document(path)
+                if not value[0]:
+                    raw_path = f"/raw/{quote(path)}"
+                    state.raw[raw_path] = value[1]
+                    document["raw_url"] = f"{state.base_url}{raw_path}"
+                self._reply(200, {"code": 200, "message": "success", "data": document})
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_port}"
+
+    def start(self) -> _OpenListHttpServer:
+        self._thread.start()
+        return self
+
+    def close(self) -> None:
+        self._server.server_close()
+
+    def shutdown(self) -> None:
+        self._server.shutdown()
+
+    def _document(self, path: str) -> dict[str, object]:
+        directory, payload = self.entries[path]
+        return {
+            "name": path.rsplit("/", 1)[-1],
+            "size": 0 if directory else len(payload),
+            "is_dir": directory,
+            "modified": "2026-01-01T00:00:00Z",
+        }
+
+    def _relocate(self, source: str, target: str) -> None:
+        for key in tuple(self.entries):
+            if key == source:
+                self.entries[target] = self.entries.pop(key)
+            elif key.startswith(source + "/"):
+                self.entries[target + key[len(source) :]] = self.entries.pop(key)
+
+    def _move(self, body: dict[str, object]) -> None:
+        source_dir = str(body["src_dir"]).rstrip("/")
+        target_dir = str(body["dst_dir"]).rstrip("/")
+        overwrite = bool(body.get("overwrite"))
+        names = body["names"]
+        if not isinstance(names, list) or len(names) != 1:
+            raise AssertionError("fixture expects one moved name")
+        source = f"{source_dir}/{names[0]}"
+        target = f"{target_dir}/{names[0]}"
+        if source not in self.entries:
+            raise AssertionError(f"move source missing: {source}")
+        if target in self.entries and not overwrite:
+            raise AssertionError(f"move conflict: {target}")
+        self._relocate(source, target)
+
+    def _rename(self, body: dict[str, object]) -> None:
+        source = str(body["path"])
+        target = f"{source.rsplit('/', 1)[0]}/{body['name']}"
+        overwrite = bool(body.get("overwrite"))
+        if source not in self.entries:
+            raise AssertionError(f"rename source missing: {source}")
+        if target in self.entries and not overwrite:
+            raise AssertionError(f"rename conflict: {target}")
+        self._relocate(source, target)
+
+    def _remove(self, body: dict[str, object]) -> None:
+        directory = str(body["dir"]).rstrip("/")
+        names = body["names"]
+        if not isinstance(names, list):
+            raise AssertionError("fixture expects a name list")
+        for name in names:
+            path = f"{directory}/{name}"
+            if not self.entries.get(path, (False, b""))[0]:
+                raise AssertionError(f"remove expects a directory: {path}")
+            if any(key.startswith(path + "/") for key in self.entries):
+                raise AssertionError(f"remove expects an empty directory: {path}")
+            del self.entries[path]
+
+
+class HttpOpenListStorageTests(unittest.TestCase):
+    def _start(self, entries: dict[str, tuple[bool, bytes]], *, get_mode: str = "http_405"):
+        server = _OpenListHttpServer(entries, get_mode=get_mode).start()
+        self.addCleanup(server._thread.join, 5)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.close)
+        return server
+
+    def _storage(
+        self,
+        server: _OpenListHttpServer,
+        *,
+        root_path: str = "/Downloads",
+        page_size: int = 100,
+    ) -> OpenListStorage:
+        return OpenListStorage(
+            OpenListStorageConfig(
+                "openlist",
+                "OpenList",
+                server.base_url,
+                "secret",
+                root_path=root_path,
+                page_size=page_size,
+                max_retries=0,
+            )
+        )
+
+    def assert_code(self, code: StorageErrorCode, call) -> StorageError:
+        with self.assertRaises(StorageError) as raised:
+            call()
+        self.assertEqual(code, raised.exception.code)
+        return raised.exception
+
+    def assert_metadata_only(self, server: _OpenListHttpServer) -> None:
+        posts = [call for call in server.calls if call[0] == "POST"]
+        self.assertEqual({"/api/fs/list"}, {path for _method, path, _body in posts})
+        for _method, _path, body in posts:
+            self.assertIs(False, body["refresh"])
+        self.assertFalse(any(path == "/api/fs/get" for _method, path, _body in server.calls))
+
+    def test_http_metadata_queries_list_only_without_fs_get(self) -> None:
+        server = self._start(
+            {
+                "/Downloads": (True, b""),
+                "/Downloads/a.mkv": (False, b"aaaa"),
+                "/Downloads/b.mkv": (False, b"bb"),
+                "/Downloads/电影": (True, b""),
+                "/Downloads/ 影片 c d.mkv ": (False, b"media"),
+                "/Downloads/影片 c d.mkv": (False, b"other"),
+            }
+        )
+        storage = self._storage(server, page_size=2)
+        self.addCleanup(storage.close)
+
+        spaced = storage.stat(" 影片 c d.mkv ")
+        self.assertEqual(" 影片 c d.mkv ", spaced.path)
+        self.assertEqual(5, spaced.size)
+        directory = storage.stat("电影")
+        self.assertEqual(StorageEntryType.DIRECTORY, directory.entry_type)
+        second_page = storage.stat("影片 c d.mkv")
+        self.assertEqual(5, second_page.size)
+        self.assertTrue(storage.exists("a.mkv"))
+        self.assertFalse(storage.exists("missing"))
+        root = storage.stat("")
+        self.assertEqual(StorageEntryType.DIRECTORY, root.entry_type)
+        self.assertEqual(0, root.size)
+        self.assertEqual(datetime(1970, 1, 1, tzinfo=UTC), root.modified_at)
+        self.assert_code(StorageErrorCode.NOT_FOUND, lambda: storage.stat("missing"))
+        self.assert_metadata_only(server)
+
+    def test_virtual_root_verifies_itself_without_listing_a_parent(self) -> None:
+        server = self._start({"/": (True, b""), "/one.mkv": (False, b"one")}, get_mode="http_405")
+        storage = self._storage(server, root_path="")
+        self.addCleanup(storage.close)
+        root = storage.stat("")
+        self.assertEqual(StorageEntryType.DIRECTORY, root.entry_type)
+        self.assertEqual(datetime(1970, 1, 1, tzinfo=UTC), root.modified_at)
+        self.assertEqual(3, storage.stat("one.mkv").size)
+        metadata = [
+            body
+            for method, path, body in server.calls
+            if method == "POST" and path == "/api/fs/list"
+        ]
+        self.assertEqual("/", metadata[0]["path"])
+        self.assertIs(False, metadata[0]["refresh"])
+
+    def test_root_listing_failures_are_not_hidden_by_synthesis(self) -> None:
+        cases = (
+            ({"/": (True, b"")}, "/Missing", "http_404", StorageErrorCode.NOT_FOUND),
+            ({"/Downloads": (False, b"file")}, "/Downloads", None, StorageErrorCode.INVALID_PATH),
+            (
+                {"/Downloads": (True, b"")},
+                "/Downloads",
+                "business_403",
+                StorageErrorCode.PERMISSION_DENIED,
+            ),
+            ({"/Downloads": (True, b"")}, "/Downloads", "invalid", StorageErrorCode.IO_ERROR),
+        )
+        for entries, root_path, failure, code in cases:
+            with self.subTest(root_path=root_path, failure=failure):
+                server = self._start(entries)
+                if failure is not None:
+                    server.list_failures[1] = failure
+                storage = self._storage(server, root_path=root_path)
+                self.addCleanup(storage.close)
+                self.assert_code(code, lambda: storage.stat(""))
+                self.assert_metadata_only(server)
+
+    def test_incomplete_or_failed_traversal_is_never_reported_as_absent(self) -> None:
+        entries = {
+            "/Downloads": (True, b""),
+            **{f"/Downloads/item-{index}.mkv": (False, b"x") for index in range(5)},
+        }
+        cases = (
+            ("http_500", StorageErrorCode.CONNECTION_LOST),
+            ("business_403", StorageErrorCode.PERMISSION_DENIED),
+            ("invalid", StorageErrorCode.IO_ERROR),
+            ("empty_total_9", StorageErrorCode.IO_ERROR),
+        )
+        for mode, code in cases:
+            with self.subTest(mode=mode):
+                server = self._start(entries)
+                server.list_failures[2] = mode
+                storage = self._storage(server, page_size=2)
+                self.addCleanup(storage.close)
+                self.assert_code(code, lambda: storage.stat("missing"))
+                self.assert_metadata_only(server)
+                self.assertGreaterEqual(
+                    len([call for call in server.calls if call[1] == "/api/fs/list"]), 1
+                )
+
+    def test_read_still_requests_the_download_link_and_streams_content(self) -> None:
+        server = self._start(
+            {"/Downloads": (True, b""), "/Downloads/a.mkv": (False, b"abcdef")},
+            get_mode="success",
+        )
+        storage = self._storage(server)
+        self.addCleanup(storage.close)
+        with storage.read("a.mkv") as stream:
+            self.assertEqual(b"abc", stream.read(3))
+        self.assertTrue(any(path == "/api/fs/get" for _method, path, _body in server.calls))
+        self.assertTrue(
+            any(method == "GET" and path.startswith("/raw/") for method, path, _ in server.calls)
+        )
+
+    def test_read_fails_when_the_download_link_is_unavailable(self) -> None:
+        for mode in ("http_405", "business_405"):
+            with self.subTest(mode=mode):
+                server = self._start(
+                    {"/Downloads": (True, b""), "/Downloads/a.mkv": (False, b"abcdef")},
+                    get_mode=mode,
+                )
+                storage = self._storage(server)
+                self.addCleanup(storage.close)
+                self.assert_code(StorageErrorCode.UNKNOWN, lambda: storage.read("a.mkv"))
+                self.assertTrue(any(path == "/api/fs/get" for _method, path, _body in server.calls))
+                self.assertFalse(
+                    any(
+                        method == "GET" and path.startswith("/raw/")
+                        for method, path, _ in server.calls
+                    )
+                )
+
+    def test_native_move_and_rename_variants_verify_without_fs_get(self) -> None:
+        server = self._start(
+            {
+                "/Downloads": (True, b""),
+                "/Downloads/A": (True, b""),
+                "/Downloads/B": (True, b""),
+                "/Downloads/root.mkv": (False, b"root"),
+                "/Downloads/A/rename.mkv": (False, b"rename"),
+                "/Downloads/B/combined.mkv": (False, b"combined"),
+            }
+        )
+        storage = self._storage(server)
+        self.addCleanup(storage.close)
+        storage.move("root.mkv", "A/root.mkv")
+        storage.move("A/rename.mkv", "A/renamed.mkv")
+        storage.move("B/combined.mkv", "A/combined-final.mkv")
+        self.assertFalse(storage.exists("root.mkv"))
+        self.assertEqual(4, storage.stat("A/root.mkv").size)
+        self.assertEqual(6, storage.stat("A/renamed.mkv").size)
+        self.assertEqual(8, storage.stat("A/combined-final.mkv").size)
+        mutation_paths = [
+            path
+            for method, path, _body in server.calls
+            if method == "POST" and path != "/api/fs/list"
+        ]
+        self.assertEqual(
+            ["/api/fs/move", "/api/fs/rename", "/api/fs/move", "/api/fs/rename"],
+            mutation_paths,
+        )
+        metadata = [
+            call for call in server.calls if call[0] == "POST" and call[1] == "/api/fs/list"
+        ]
+        for _method, _path, body in metadata:
+            self.assertIs(False, body["refresh"])
+        self.assertFalse(any(path == "/api/fs/get" for _method, path, _body in server.calls))
+
+    def test_delete_uses_directory_listing_for_its_type_check(self) -> None:
+        server = self._start(
+            {
+                "/Downloads": (True, b""),
+                "/Downloads/empty": (True, b""),
+                "/Downloads/full": (True, b""),
+                "/Downloads/full/a.mkv": (False, b"a"),
+            }
+        )
+        storage = self._storage(server)
+        self.addCleanup(storage.close)
+        storage.delete("empty")
+        self.assert_code(StorageErrorCode.ALREADY_EXISTS, lambda: storage.delete("full"))
+        self.assertTrue(storage.exists("full"))
+        self.assertFalse(storage.exists("empty"))
+        posts = [call for call in server.calls if call[0] == "POST"]
+        self.assertEqual(
+            {"/api/fs/list", "/api/fs/remove"}, {path for _method, path, _body in posts}
+        )
+        for _method, path, body in posts:
+            if path == "/api/fs/list":
+                self.assertIs(False, body["refresh"])
+        self.assertFalse(any(path == "/api/fs/get" for _method, path, _body in server.calls))

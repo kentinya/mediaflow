@@ -1234,6 +1234,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertTrue(any(path == "/api/fs/rename" for _method, path in calls))
             self.assertGreaterEqual(sum(path == "/api/fs/remove" for _method, path in calls), 2)
             self.assertFalse(any(path == "/api/fs/put" for _method, path in calls))
+            self.assertFalse(any(path == "/api/fs/get" for _method, path in calls))
 
     def test_fingerprintless_delete_uses_complete_metadata_observation(self) -> None:
         """Delete is available without a provider fingerprint and fences metadata."""

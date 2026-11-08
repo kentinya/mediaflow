@@ -1,12 +1,22 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261108-3 — OpenList 元数据查询与下载链接解耦
 
-上一独立修正 **PATCH-20261108-2** 已经 B 独立验收 PASS；固定接受记录见
-[`6db3647c:TASK.md`](https://github.com/kentinya/mediaflow/blob/6db3647c7e77d54f3a49b6725c804f0794fc7fbb/TASK.md)。
-Slice52 保持 PASS / CLOSED，原接受 Base、Head、失败及验证限制不变。
+Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目录、仅真正读取内容时
+获取 115 链接，并以取链接接口恒定 405、仅目录列表及原生移动／重命名成功验证完整文件页
+整理链路；先只读调查，随后授权规划本独立修正，并进一步明确授权按该草案实施。
+用户进一步明确：复用 OpenList 自带缓存，不允许强制更新存储；目录查询保持 `refresh: false`。
+[Development Workflow](docs/development-workflow.md) §3.1、§5–8 管理生命周期、测试与提交。
 
-以下是用户于 2026-11-08 授权“规划 Task”的**规划草案**。本轮只授权 TASK.md 规划及本地
-checkpoint，不授权产品实施、其他代理、推送或部署。得到实施授权后，先重跑治理检查并将
-本草案提升为正式活动 Task，保持同一 Task ID、Base、Goal 和 Scope；不得静默重设 Base。
+```text
+Task ID: PATCH-20261108-3
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Status: READY FOR B REVIEW
+Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
+Difficulty: Medium
+Test Level: T4
+Planner / Reviewer: B
+Development Authorization: USER-AUTHORIZED IMPLEMENTATION COMPLETED
+```
 
 ## Task PATCH-20261108-3 — OpenList 元数据查询与下载链接解耦
 
@@ -217,11 +227,81 @@ OpenList 与本地元数据夹具和真实 Worker；请求台账覆盖启动／�
 
 ### Developer completion report
 
-尚未实施。授权实施并完成受影响验证后，填写真实 checkpoint／READY FOR B REVIEW、
-修改与关键决定、实际测试／已知失败／风险；完整验收由 B 完成，不能自批 PASS。
+状态：**READY FOR B REVIEW**。候选为本 Task 的唯一实现 checkpoint（提交后由 B 固定
+Base..Head）；未自签 PASS、未推送或发布。
+
+修改与关键决定：
+
+- `mediaflow/infrastructure/openlist_storage.py`：`HttpOpenListClient.stat()` 只以
+  `refresh: false` 的 `/api/fs/list` 定位父目录中的精确 basename，按配置页长跨页扫描，
+  UTF-8／空格／边界空白不作改写；完整遍历才确认 NOT_FOUND，页失败、非法 DTO、返回数量
+  大于声明总数、仍有余量却空页均失败而非误报缺失。配置根／`/` 列自身验证可访问并合成
+  size=0、固定 UTC epoch mtime 的目录项；服务端缺失、非目录、无权、格式错误不合成。
+  `open_read()` 改走独立 `_get_entry()` 调用 `/api/fs/get` 解码 raw_url；元数据 stat／
+  exists 不再经过该端点。未新增目录缓存、权限、强制刷新或 fs/get 回退。
+- `tests/test_openlist_storage.py`：新增真实 `HttpOpenListClient`＋`OpenListStorage`＋
+  有界 HTTP fixture 的覆盖，记录端点／请求体并固定 `/api/fs/get` 为 HTTP 405 或业务
+  code 405；覆盖文件、目录、根、跨页、完整缺失、分页失败／非法 DTO、读取仍取链接、
+  三种 native move／rename 形态和 Delete 类型检查。全部目录请求断言 `refresh: false`。
+- `tests/test_media_discovery_provider_manifest.py`：目录存在改由真实 list 语义提供，
+  并把生产 HTTP discovery 断言收紧为只访问 `/api/fs/list`。
+- `tests/test_direct_file_operations.py`：既有生产 OpenList HTTP 重命名／删除旅程增加
+  `fs/get` 零请求断言。
+- `scripts/operations_inventory_harness.py`：仅新增可选 `document_mutator` 测试夹具入口，
+  默认行为不变。
+- `scripts/openlist_metadata_browser_harness.py`、`web/playwright.openlist-metadata.python.config.ts`、
+  `web/tests/e2e/openlist-metadata.python.spec.ts`：新增真实文件页入口的 405 核心旅程。
+  同一 Storage ID、预置完整目标目录、Hash=none、无 NFO、关闭源目录清理；fs/get 恒定
+  405，Media 端只放行 list／move／rename 与 health ping，其他内容／上传／复制／删除／
+  建目录端点记录后拒绝。落实例实际显示 One.2001.mkv、Two.2002.mkv，浏览器有界多选、
+  完整分析、精确摘要、显式确认，真实 Worker 完成两项“换目录并改名”的原生 Move＋Rename；
+  刷新执行页并读回持久 Result。
+
+实际验证（仓库根目录，除非注明）：
+
+```sh
+.venv/bin/python -m unittest tests.test_openlist_storage
+# Ran 32 tests, OK
+.venv/bin/python -m unittest tests.test_media_discovery_provider_manifest
+# Ran 2 tests, OK
+.venv/bin/python -m unittest tests.test_storage_browser tests.test_storage_setup_check tests.test_runtime_storage_configuration tests.test_scanner
+# Ran 48 tests, OK
+.venv/bin/python -m unittest tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_organizer tests.test_attachments
+# Ran 136 tests, OK
+.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers
+# Ran 165 tests, OK
+.venv/bin/python -m unittest tests.test_source_directory_cleanup
+# Ran 15 tests, OK
+.venv/bin/ruff check <changed Python files>            # All checks passed
+.venv/bin/ruff format --check <changed Python files>   # 6 files already formatted
+python3 scripts/check_governance.py                    # PASS
+git diff --check                                       # clean
+```
+
+浏览器 405 核心旅程（`web/` 目录）：
+
+```sh
+npm run build
+npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tests/e2e/openlist-metadata.python.spec.ts
+# 1 passed
+```
+
+脱敏证据写入 `.git/validation-evidence/<candidate>/openlist-metadata/`；
+`openlist-metadata.json` 记录 62 次 list（全部 `refresh: false`）、4 次 move/rename、
+0 次 fs/get／内容端点、2 项 Result 均为 SUCCESS／verified_complete；截图同目录。
+证据不写入用户配置或凭据。
+
+已知限制／剩余风险：
+
+- 未连接真实 115 或真实 OpenList 做外部验证；405 核心场景使用真实适配器＋有界本地
+  HTTP fixture，B 仍需独立重现并执行 T4 全量门禁、Docker resident 消费链。
+- B 需判定上游 list 分页在 live 目录变化下的实际表现；本实现只保证所消费响应的完整性，
+  不识别不可观察的陈旧缓存。
+- 浏览器证明使用临时配置／SQLite、本地确定性元数据夹具和内置 Worker 路由；未改变产品
+  业务路径。
 
 ### B review result
 
-尚未提交实现候选；无产品验收结论。B 独立审查后记录固定 Base..Head、PASS／FIX REQUIRED、
+尚未审查实现候选；无产品验收结论。B 独立审查后记录固定 Base..Head、PASS／FIX REQUIRED、
 实际门禁结果和 Authorized bug acceptance complete。接受后恢复紧凑
 `# NO ACTIVE IMPLEMENTATION TASK`，不新增 Slice 关闭记录或下一项工作。

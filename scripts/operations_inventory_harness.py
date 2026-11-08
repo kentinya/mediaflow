@@ -89,6 +89,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from datetime import time as datetime_time
 from pathlib import Path
@@ -337,6 +338,7 @@ def build_managed_fixture(
     *,
     include_cross_storage_destinations: bool = False,
     storage_adapters: dict[str, object] | None = None,
+    document_mutator: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[
     SQLiteTaskRepository,
     ManagedHarnessContext,
@@ -669,6 +671,8 @@ def build_managed_fixture(
         },
     ]
 
+    if document_mutator is not None:
+        document_mutator(document)
     configuration_repository = SQLiteConfigurationRepository(database)
     configuration_service = ManagedConfigurationService(
         configuration_repository,
