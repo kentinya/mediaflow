@@ -122,12 +122,28 @@ V1 security headers remain. Public images receive no API/Provider token. There i
 proxy, image cache or object URL lifecycle. Missing/broken images render placeholders and preserve
 text/detail access. TMDB source and attribution are visible.
 
+**Accepted Explore presentation correction:** the
+[standalone B review](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
+records PATCH-20261108-1 without changing the original Slice51/52 acceptance identities.
+`ExplorePage` renders labelled type/sort/genre/language chip rows and a rating slider/vote-count
+draft with explicit Apply; year remains in More filters. Existing Query identities, backend filters,
+search separation and ordinary pagination retain their ownership. `ExploreDetailCard` ends with
+one exact-work TMDB logo/link action. The old Explore attribution component and list banner are removed.
+`AppShell` mounts the static `features/about` card from its sidebar entry, using shared ModalCard
+focus/scroll/exit behavior. About owns the approved same-origin logo reference, full notice and
+TMDB home link; Shell does not depend on Explore. Opening/closing About adds no route, API request
+or Provider read, and preserves the page position and focus.
+
 **Routes/presentation:** `/ui-v2/explore` is the default connected homepage and sidebar identity;
 other supported intended routes keep their authentication continuation. A Chinese filter/search
 page renders a 2:3 grid (two columns at 390px), bounded manual paging and an exact-work centered
 `ModalCard`. Close/Escape/browser Back preserve list conditions/current page/scroll/invoker focus and do
-not replay a Shell transition. The bounded `detail` parameter supports in-page navigation; independent
-detail deep links and refresh/re-authentication session restoration are not promised. Loading,
+not replay a Shell transition. The bounded `detail` parameter supports in-page navigation.
+Detail navigation explicitly uses `resetScroll: false` when opening a work or replacing a detail
+entry on close. Browser Back/Forward keep the existing Router history behavior; the list stays
+at its non-zero position throughout loading, failure, recovery and dismissal. Global page-navigation
+scroll behavior and the shared scroll lock are unchanged. Independent detail deep links and
+refresh/re-authentication session restoration are not promised. Loading,
 empty, first-page/pagination/detail/image failure and recovery stay separate. 401/disconnect clears
 authority-related query state; 403 does not masquerade as empty data.
 

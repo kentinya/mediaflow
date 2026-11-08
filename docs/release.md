@@ -26,6 +26,14 @@ Automation Open Web journey. Current create/edit/Copy/Run once, shared API/CLI a
 [Progress](progress.md) retains original acceptance identities, deferrals and fixed A/B reports;
 those reports disclose actual failures, reuse and local-only evidence rather than a whole-suite claim.
 
+The subsequent [standalone Explore correction](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
+passed B review at implementation `e2bb72d8c191d34586a90ff49577680107b0295c`: labelled filters,
+compact TMDB detail action, centralized attribution and stable detail background position.
+Its fixed review records 1455 passing Web unit tests, 20 passing real-Python Explore browser tests,
+and 24 passing navigation/deep-link tests with one existing 403 locator failure reproduced at its
+original Base. These are development acceptance results with local-only raw evidence; Slice52's
+original closure, release version and packaging validation remain unchanged.
+
 Accepted Slice51 Explore/Dashboard retirement, Slice50 presentation/loading/cards, Slice49 confined
 Automation intent and Slice48 independent Task flow/file outcomes remain. Slice52's Web presentation
 and existing read-API validation do not establish a new package, container, external-service or
