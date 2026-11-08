@@ -2640,6 +2640,13 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
       ),
     ).toBe(true);
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    // The reading block below the engine region is already up with the
+    // workspace while the engine read is still outstanding, and it stays up
+    // when the form takes over — the read-driven handoff may not remove it
+    // or replace it (B52.2-02 continuity).
+    expect(
+      screen.getByRole("heading", { name: "整理规则就绪状态" }),
+    ).toBeTruthy();
     // The read completes inside the window: the ready form takes over
     // directly and the wait line never entered the screen at all.
     heldRead.release();
@@ -2648,6 +2655,9 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     });
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "整理规则就绪状态" }),
+    ).toBeTruthy();
     expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
       0,
     );
@@ -2668,6 +2678,11 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(screen.getByText("正在读取引擎设置")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "系统运行设置" })).toBeNull();
+    // The reading block below the engine region was retained through the
+    // whole wait stretch (B52.2-02 continuity).
+    expect(
+      screen.getByRole("heading", { name: "整理规则就绪状态" }),
+    ).toBeTruthy();
     // The slow read completes: the ready form takes over and the wait line is
     // gone for good — it is not re-armed by the handoff itself.
     heldRead.release();
@@ -2676,6 +2691,9 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     });
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "整理规则就绪状态" }),
+    ).toBeTruthy();
     expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
       0,
     );

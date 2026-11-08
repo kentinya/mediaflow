@@ -906,6 +906,46 @@ interface SettingsFrame {
   readonly workspace: boolean;
   /** The engine read's bounded failure banner is on screen. */
   readonly error: boolean;
+  /** The rule-readiness block below the engine region is rendered. */
+  readonly readiness: boolean;
+  /** Its document-absolute top, or null while the block is not rendered. */
+  readonly readinessTop: number | null;
+}
+
+/**
+ * B52.2-02 (fix loop): the reading block below the engine region must be up
+ * as soon as the page's own status is, stay up through every handoff of the
+ * engine region, and — when its position does adapt to the region's changing
+ * height — move gradually across frames. A single frame carrying (most of)
+ * the whole displacement is exactly the sudden kick the engine form used to
+ * give it; equal coordinates in every frame are deliberately not required.
+ */
+function expectReadinessKeptThroughHandoff(
+  frames: readonly SettingsFrame[],
+): void {
+  expect(frames.length).toBeGreaterThan(10);
+  // The block is rendered with the workspace and never vanishes afterwards.
+  expect(frames.some((frame) => frame.workspace && frame.readiness)).toBe(true);
+  const firstShown = frames.findIndex((frame) => frame.readiness);
+  expect(firstShown).toBeGreaterThan(-1);
+  expect(frames.slice(firstShown).some((frame) => !frame.readiness)).toBe(
+    false,
+  );
+  const positions = frames
+    .map((frame) => frame.readinessTop)
+    .filter((top): top is number => top !== null);
+  expect(positions.length).toBeGreaterThan(10);
+  const movement = Math.max(...positions) - Math.min(...positions);
+  let biggestStep = 0;
+  for (let index = 1; index < positions.length; index += 1) {
+    biggestStep = Math.max(
+      biggestStep,
+      Math.abs(positions[index] - positions[index - 1]),
+    );
+  }
+  // Gradual adaptation across frames passes; one frame taking the whole move
+  // (the reported 442.5 → 1146.2 kick) fails.
+  expect(biggestStep).toBeLessThanOrEqual(Math.max(movement * 0.5, 2));
 }
 
 /**
@@ -921,12 +961,22 @@ async function startSettingsProbe(page: Page, windowMs = 2_400): Promise<void> {
     let stopped = false;
     const tick = () => {
       const text = document.body.innerText;
+      const readiness = document.querySelector(
+        '[aria-label="整理规则就绪状态"]',
+      );
       frames.push({
         at: performance.now() - started,
         banner: text.includes("正在读取引擎设置"),
         form: document.querySelector('[aria-label="系统运行设置"]') !== null,
         workspace: text.includes("Active revision"),
         error: text.includes("引擎设置暂不可用"),
+        readiness: readiness !== null,
+        readinessTop:
+          readiness === null
+            ? null
+            : Math.round(
+                readiness.getBoundingClientRect().top + window.scrollY,
+              ),
       });
       if (!stopped && performance.now() - started < sampleWindowMs) {
         requestAnimationFrame(tick);
@@ -1015,6 +1065,7 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   expect(frames.some((frame) => frame.workspace && !frame.form)).toBe(true);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
   expect(frames.at(-1)?.form).toBe(true);
+  expectReadinessKeptThroughHandoff(frames);
 
   // Cached re-entry through the same sidebar: the engine query already holds
   // data, so the form is there again with no wait line in any frame.
@@ -1029,6 +1080,26 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   expect(frames.some((frame) => frame.form)).toBe(true);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
   expect(frames.at(-1)?.form).toBe(true);
+  expectReadinessKeptThroughHandoff(frames);
+
+  // The same fast handoff at 390px through the same real sidebar entry: the
+  // narrow layout makes the engine region taller, so the reading block below
+  // had the farthest to move when the form attached.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSidebarLink(page, "Explore");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await startSettingsProbe(page);
+  await openSidebarLink(page, "Configuration");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect(form).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "整理规则就绪状态" }),
+  ).toBeVisible();
+  await page.waitForTimeout(250);
+  frames = await stopSettingsProbe(page);
+  expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
+  expect(frames.at(-1)?.form).toBe(true);
+  expectReadinessKeptThroughHandoff(frames);
 
   // Handoff and reads only: no command was ever submitted.
   expect(writes).toEqual([]);
@@ -1076,6 +1147,9 @@ test("a slow engine read shows one stable waiting state before the form takes ov
   }
   expect(frames.at(-1)?.banner).toBe(false);
   expect(frames.at(-1)?.form).toBe(true);
+  // The reading block below was retained for the whole slow handoff —
+  // through the wait line appearing and the form taking over (B52.2-02).
+  expectReadinessKeptThroughHandoff(frames);
   await expect(page.getByText("正在读取引擎设置")).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
 });
@@ -1118,5 +1192,8 @@ test("a failed engine read lands on the existing recovery without a wait flash",
   expect(frames.some((frame) => frame.workspace)).toBe(true);
   // The waiting line played no part in the failure path.
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
+  // The failure branch landing next to the workspace keeps the same block
+  // steady: the error path never kicks it away either.
+  expectReadinessKeptThroughHandoff(frames);
   expect(writes).toEqual([]);
 });

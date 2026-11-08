@@ -25,7 +25,14 @@
  * unresolved submission survives a real reload, principal-scoped.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -57,6 +64,7 @@ import {
   writePendingSubmission,
   type PendingEngineSettingsSubmission,
 } from "./automation-settings-session";
+import { prefersReducedMotion } from "./automation-card-shell";
 import {
   planRecovery,
   sameTypedValue,
@@ -104,6 +112,88 @@ interface EditState {
   /** The published values editing started from; `null` for an older context. */
   readonly baselineValues: FormState | null;
   readonly input: FormState;
+}
+
+/** Presentation length of one engine-region height handoff (B52.2-02). */
+const ENGINE_HANDOFF_MS = 300;
+
+/**
+ * Keep one read-driven stage change from kicking the content below away
+ * (Slice52 RO-3 / B52.2-02).
+ *
+ * On System Settings this region sits in normal flow *above* a reading block
+ * (the rule-readiness panel) that is already on screen while the region's own
+ * first read is still answering. Every visual stage the read passes through
+ * that changes this region's height — waiting line in, waiting line out,
+ * ready form, no-publish state, failure/refetch branches — would otherwise
+ * push that already-read block in a single frame. The hook keeps the region's
+ * real rendered height per commit and, only when the stage itself changed,
+ * interpolates the old height to the new one with one short Web Animations
+ * run, so the layout below adapts gradually instead of jumping.
+ *
+ * Only presentation moves: nothing here delays the request, an error, an
+ * authorization branch or ready content, a stage change that keeps its height
+ * does not animate, ordinary re-renders never interrupt a running handoff,
+ * and reduced-motion goes straight to the new height.
+ */
+function useReadStageHandoff(stage: string): RefObject<HTMLDivElement | null> {
+  const regionRef = useRef<HTMLDivElement | null>(null);
+  // Last committed visual height: the current stage's natural height, or the
+  // running handoff's in-flight height while one plays.
+  const visualHeightRef = useRef<number | null>(null);
+  const stageRef = useRef<string | null>(null);
+  const glideRef = useRef<Animation | null>(null);
+  // No dependency array: this must observe every commit so an ordinary
+  // same-stage re-render only re-tracks height, while a stage change gets its
+  // handoff from the height actually on screen at that moment.
+  useLayoutEffect(() => {
+    const region = regionRef.current;
+    if (region === null) return;
+    const previousStage = stageRef.current;
+    const stageChanged = previousStage !== null && previousStage !== stage;
+    stageRef.current = stage;
+    const glide = glideRef.current;
+    if (glide !== null) {
+      const inFlight = region.getBoundingClientRect().height;
+      if (!stageChanged) {
+        visualHeightRef.current = inFlight;
+        return;
+      }
+      // The next handoff starts from the height actually on screen now.
+      visualHeightRef.current = inFlight;
+      glide.cancel();
+      glideRef.current = null;
+      region.style.overflow = "";
+    }
+    const start = visualHeightRef.current;
+    const end = region.getBoundingClientRect().height;
+    visualHeightRef.current = end;
+    if (previousStage === null || !stageChanged) return;
+    if (start === null || Math.abs(end - start) < 1) return;
+    if (prefersReducedMotion()) return;
+    // During the handoff the new stage's content is taller/shorter than the
+    // animated box; clip to it so the block below is pushed frame by frame
+    // instead of being overlapped by overflowing content.
+    region.style.overflow = "hidden";
+    const handoff = region.animate(
+      [{ height: `${start}px` }, { height: `${end}px` }],
+      { duration: ENGINE_HANDOFF_MS, easing: "ease-out" },
+    );
+    glideRef.current = handoff;
+    handoff.addEventListener("finish", () => {
+      if (glideRef.current !== handoff) return;
+      glideRef.current = null;
+      region.style.overflow = "";
+    });
+  });
+  useEffect(
+    () => () => {
+      glideRef.current?.cancel();
+      glideRef.current = null;
+    },
+    [],
+  );
+  return regionRef;
 }
 
 function publishValues(target: PublishedTargetView): FormState {
@@ -383,6 +473,21 @@ export function AutomationSettingsPanel() {
   const showEngineReadWait = useReadReveal(
     query.data === undefined && !query.isError,
   );
+  // The exact visual stage this region's read is in (B52.2-02): each stage
+  // that changes the region's height participates in one continuous layout
+  // handoff with the reading block below it.
+  const readStage = query.isPending
+    ? showEngineReadWait
+      ? "reading-with-wait"
+      : "reading"
+    : query.isError
+      ? "read-failed"
+      : model === null
+        ? "engine-unreadable"
+        : model.target === null
+          ? "no-published-settings"
+          : "engine-ready";
+  const regionRef = useReadStageHandoff(readStage);
   // `null` means "no edits": the form then reads the current published target.
   // Once edited, the input *and the identity it was written against* are kept,
   // so a background readback can never silently re-arm old input for a newer
@@ -830,324 +935,338 @@ export function AutomationSettingsPanel() {
   };
 
   return (
-    <AuthorizedReadBoundary query={query} unavailableTitle="系统运行设置不可用">
-      {({ isFetching, refresh }) => {
-        if (query.isPending) {
-          return showEngineReadWait ? (
-            <StatusBanner variant="info" title="正在读取引擎设置">
-              <p>
-                读取已发布目标与各常驻进程的采用情况;这不会创建 Draft
-                或启动工作。
-              </p>
-            </StatusBanner>
-          ) : null;
-        }
-        if (model === null) {
-          return (
-            <StatusBanner variant="error" title="引擎设置暂不可用">
-              <p>
-                后端没有返回可理解的设置文档。请刷新;此页面不会猜测任何发布值。
-              </p>
-            </StatusBanner>
-          );
-        }
-        if (model.target === null) {
-          return (
-            <section className="mf-panel mf-content-settle">
-              <h2>系统运行设置</h2>
-              <StatusBanner variant="info" title="尚无已发布的设置">
+    <div className="mf-engine-read-region" ref={regionRef}>
+      <AuthorizedReadBoundary
+        query={query}
+        unavailableTitle="系统运行设置不可用"
+      >
+        {({ isFetching, refresh }) => {
+          if (query.isPending) {
+            return showEngineReadWait ? (
+              <StatusBanner variant="info" title="正在读取引擎设置">
                 <p>
-                  {model.unavailable?.nextAction ??
-                    "需要先完成首次设置并激活配置,才能发布引擎设置。"}
+                  读取已发布目标与各常驻进程的采用情况;这不会创建 Draft
+                  或启动工作。
                 </p>
               </StatusBanner>
-              <div className="mf-actions">
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-              </div>
-            </section>
-          );
-        }
-        const target = model.target;
-        return (
-          // The ready model takes over from the read's waiting region with the
-          // shared first-render settle, so the handoff eases in once instead of
-          // popping in; an ancestor class change (entry window closing, a card
-          // layer opening or closing) never replays or dims it again.
-          <div className="mf-automation-settings mf-content-settle">
-            <div className="mf-automation-settings-grid">
-              <section className="mf-panel" aria-label="系统运行设置">
-                <header className="mf-panel-header">
-                  <div>
-                    <h2>系统运行设置</h2>
-                  </div>
-                  <span className="mf-automation-settings-refresh">
-                    <RefreshControl
-                      label="刷新"
-                      refreshingLabel="刷新中…"
-                      onRefresh={refresh}
-                      refreshing={isFetching}
-                    />
-                  </span>
-                </header>
-                {!model.canManage && (
-                  <StatusBanner variant="info" title="只读">
-                    <p>当前账号没有管理配置的权限,只能查看发布值与采用情况。</p>
-                  </StatusBanner>
-                )}
-                {(pendingSubmission !== null ||
-                  reloadedSubmission !== null) && (
-                  <StatusBanner variant="error" title="上一次保存结果未知">
-                    <p>
-                      请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;
-                      请先核实该次提交的持久化结果,再决定下一步。
-                    </p>
-                    <div className="mf-actions">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={submitting || principalId === null}
-                        onClick={() => void reconcile()}
-                      >
-                        核实上次提交
-                      </Button>
+            ) : null;
+          }
+          if (model === null) {
+            return (
+              <StatusBanner variant="error" title="引擎设置暂不可用">
+                <p>
+                  后端没有返回可理解的设置文档。请刷新;此页面不会猜测任何发布值。
+                </p>
+              </StatusBanner>
+            );
+          }
+          if (model.target === null) {
+            return (
+              <section className="mf-panel mf-content-settle">
+                <h2>系统运行设置</h2>
+                <StatusBanner variant="info" title="尚无已发布的设置">
+                  <p>
+                    {model.unavailable?.nextAction ??
+                      "需要先完成首次设置并激活配置,才能发布引擎设置。"}
+                  </p>
+                </StatusBanner>
+                <div className="mf-actions">
+                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                </div>
+              </section>
+            );
+          }
+          const target = model.target;
+          return (
+            // The ready model takes over from the read's waiting region with the
+            // shared first-render settle, so the handoff eases in once instead of
+            // popping in; an ancestor class change (entry window closing, a card
+            // layer opening or closing) never replays or dims it again.
+            <div className="mf-automation-settings mf-content-settle">
+              <div className="mf-automation-settings-grid">
+                <section className="mf-panel" aria-label="系统运行设置">
+                  <header className="mf-panel-header">
+                    <div>
+                      <h2>系统运行设置</h2>
                     </div>
-                  </StatusBanner>
-                )}
-                <form
-                  className="mf-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void submit();
-                  }}
-                >
-                  {model.fields.map((field) => (
-                    <div className="mf-form-field" key={field.fieldPath}>
-                      <label htmlFor={`automation-setting-${field.fieldPath}`}>
-                        {field.label}
-                        {field.unit ? `(${field.unit})` : ""}
-                      </label>
-                      <div className="mf-form-control">
-                        <input
-                          id={`automation-setting-${field.fieldPath}`}
-                          name={field.fieldPath}
-                          inputMode="decimal"
-                          value={
-                            submitInput[field.fieldPath] ??
-                            publishedValues[field.fieldPath] ??
-                            ""
-                          }
-                          disabled={
-                            !model.canManage ||
-                            pendingSubmission !== null ||
-                            submitting
-                          }
-                          aria-invalid={
-                            recovery?.conflicts.includes(field.fieldPath)
-                              ? true
-                              : undefined
-                          }
-                          onChange={(event) => {
-                            const base = edit ?? {
-                              baseline: baselineOf(target),
-                              baselineValues: publishValues(target),
-                              input: publishedValues,
-                            };
-                            const input = {
-                              ...(recovery !== null ? submitInput : base.input),
-                              [field.fieldPath]: event.target.value,
-                            };
-                            applyEdit({ ...base, input });
-                            // Only this field's previous conflict decision is
-                            // dropped (its typed value just changed); other
-                            // fields keep the choice the operator already made.
-                            setResolutions((previous) => {
-                              const next = { ...previous };
-                              delete next[field.fieldPath];
-                              return next;
-                            });
-                            setMessage(null);
-                          }}
-                        />
-                        <span className="mf-form-unit">{field.unit}</span>
-                      </div>
-                      {recovery?.conflicts.includes(field.fieldPath) ? (
-                        <div className="mf-field-conflict" role="group">
-                          <p className="mf-field-help">
-                            当前发布值为
-                            {publishedValues[field.fieldPath] ?? "—"}
-                            {field.unit ? ` ${field.unit}` : ""},你输入的值是
-                            {submitInput[field.fieldPath] ?? "—"}
-                            {field.unit ? ` ${field.unit}` : ""}。请选择:
-                          </p>
-                          <div className="mf-actions">
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={() =>
-                                setResolutions((previous) => ({
-                                  ...previous,
-                                  [field.fieldPath]: {
-                                    choice: "current",
-                                    // Bind the decision to the value it reviewed:
-                                    // a later change to this field is a new
-                                    // conflict, not an inherited choice.
-                                    current:
-                                      publishedValues[field.fieldPath] ?? "",
-                                  },
-                                }))
-                              }
-                            >
-                              采用当前值
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={() =>
-                                setResolutions((previous) => ({
-                                  ...previous,
-                                  [field.fieldPath]: {
-                                    choice: "mine",
-                                    current:
-                                      publishedValues[field.fieldPath] ?? "",
-                                  },
-                                }))
-                              }
-                            >
-                              保留我的修改
-                            </Button>
-                          </div>
-                        </div>
-                      ) : null}
-                      <p className="mf-field-help">
-                        {FIELD_SUMMARIES[field.fieldPath]}
-                        {field.minimum !== null && field.maximum !== null
-                          ? ` 允许范围 ${field.minimum}–${field.maximum}。`
-                          : " 必须是有限正数。"}
+                    <span className="mf-automation-settings-refresh">
+                      <RefreshControl
+                        label="刷新"
+                        refreshingLabel="刷新中…"
+                        onRefresh={refresh}
+                        refreshing={isFetching}
+                      />
+                    </span>
+                  </header>
+                  {!model.canManage && (
+                    <StatusBanner variant="info" title="只读">
+                      <p>
+                        当前账号没有管理配置的权限,只能查看发布值与采用情况。
                       </p>
-                    </div>
-                  ))}
-                  <div className="mf-actions">
-                    <Button type="submit" disabled={!canSave}>
-                      {submitting ? "保存中…" : "保存设置"}
-                    </Button>
-                    {edit !== null &&
-                      !submitting &&
-                      pendingSubmission === null && (
+                    </StatusBanner>
+                  )}
+                  {(pendingSubmission !== null ||
+                    reloadedSubmission !== null) && (
+                    <StatusBanner variant="error" title="上一次保存结果未知">
+                      <p>
+                        请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;
+                        请先核实该次提交的持久化结果,再决定下一步。
+                      </p>
+                      <div className="mf-actions">
                         <Button
                           type="button"
                           variant="secondary"
-                          onClick={() => {
-                            applyEdit(null);
-                            setResolutions({});
-                            setMessage(null);
-                            setFailure(null);
-                          }}
+                          disabled={submitting || principalId === null}
+                          onClick={() => void reconcile()}
                         >
-                          {staleBaseline
-                            ? "放弃修改并采用最新发布值"
-                            : "放弃修改"}
+                          核实上次提交
                         </Button>
-                      )}
-                  </div>
-                </form>
-                {visibleMessage !== null && (
-                  <p className="mf-dashboard-meta" role="status">
-                    {visibleMessage}
-                  </p>
-                )}
-                {recovery !== null && recovery.notes.length > 0 && (
-                  <ul className="mf-dashboard-meta" role="list">
-                    {recovery.notes.map((note) => (
-                      <li key={note}>{note}</li>
+                      </div>
+                    </StatusBanner>
+                  )}
+                  <form
+                    className="mf-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void submit();
+                    }}
+                  >
+                    {model.fields.map((field) => (
+                      <div className="mf-form-field" key={field.fieldPath}>
+                        <label
+                          htmlFor={`automation-setting-${field.fieldPath}`}
+                        >
+                          {field.label}
+                          {field.unit ? `(${field.unit})` : ""}
+                        </label>
+                        <div className="mf-form-control">
+                          <input
+                            id={`automation-setting-${field.fieldPath}`}
+                            name={field.fieldPath}
+                            inputMode="decimal"
+                            value={
+                              submitInput[field.fieldPath] ??
+                              publishedValues[field.fieldPath] ??
+                              ""
+                            }
+                            disabled={
+                              !model.canManage ||
+                              pendingSubmission !== null ||
+                              submitting
+                            }
+                            aria-invalid={
+                              recovery?.conflicts.includes(field.fieldPath)
+                                ? true
+                                : undefined
+                            }
+                            onChange={(event) => {
+                              const base = edit ?? {
+                                baseline: baselineOf(target),
+                                baselineValues: publishValues(target),
+                                input: publishedValues,
+                              };
+                              const input = {
+                                ...(recovery !== null
+                                  ? submitInput
+                                  : base.input),
+                                [field.fieldPath]: event.target.value,
+                              };
+                              applyEdit({ ...base, input });
+                              // Only this field's previous conflict decision is
+                              // dropped (its typed value just changed); other
+                              // fields keep the choice the operator already made.
+                              setResolutions((previous) => {
+                                const next = { ...previous };
+                                delete next[field.fieldPath];
+                                return next;
+                              });
+                              setMessage(null);
+                            }}
+                          />
+                          <span className="mf-form-unit">{field.unit}</span>
+                        </div>
+                        {recovery?.conflicts.includes(field.fieldPath) ? (
+                          <div className="mf-field-conflict" role="group">
+                            <p className="mf-field-help">
+                              当前发布值为
+                              {publishedValues[field.fieldPath] ?? "—"}
+                              {field.unit ? ` ${field.unit}` : ""},你输入的值是
+                              {submitInput[field.fieldPath] ?? "—"}
+                              {field.unit ? ` ${field.unit}` : ""}。请选择:
+                            </p>
+                            <div className="mf-actions">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  setResolutions((previous) => ({
+                                    ...previous,
+                                    [field.fieldPath]: {
+                                      choice: "current",
+                                      // Bind the decision to the value it reviewed:
+                                      // a later change to this field is a new
+                                      // conflict, not an inherited choice.
+                                      current:
+                                        publishedValues[field.fieldPath] ?? "",
+                                    },
+                                  }))
+                                }
+                              >
+                                采用当前值
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  setResolutions((previous) => ({
+                                    ...previous,
+                                    [field.fieldPath]: {
+                                      choice: "mine",
+                                      current:
+                                        publishedValues[field.fieldPath] ?? "",
+                                    },
+                                  }))
+                                }
+                              >
+                                保留我的修改
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        <p className="mf-field-help">
+                          {FIELD_SUMMARIES[field.fieldPath]}
+                          {field.minimum !== null && field.maximum !== null
+                            ? ` 允许范围 ${field.minimum}–${field.maximum}。`
+                            : " 必须是有限正数。"}
+                        </p>
+                      </div>
                     ))}
-                  </ul>
-                )}
-                {failure !== null && (
-                  <StatusBanner variant="error" title="保存未生效">
-                    {failure.fieldError !== null ? (
-                      <p>
-                        字段错误:{failure.fieldError}。Active
-                        未改变,本次请求没有发布。
-                      </p>
-                    ) : (
-                      <p>
-                        失败阶段:{failure.stage || "未知"};持久化状态:
-                        {failure.durableState || "上一份 Active 保持不变"}。
-                      </p>
-                    )}
-                    <p>下一步:{failure.nextAction}</p>
-                  </StatusBanner>
-                )}
-                <dl className="mf-detail-grid mf-automation-settings-target">
-                  <div>
-                    <dt>已发布目标</dt>
-                    <dd>版本 {target.revisionVersion ?? "—"} · Active</dd>
-                  </div>
-                  <div>
-                    <dt>读取时间</dt>
-                    <dd>
-                      {model.asOf === null ? (
-                        "—"
+                    <div className="mf-actions">
+                      <Button type="submit" disabled={!canSave}>
+                        {submitting ? "保存中…" : "保存设置"}
+                      </Button>
+                      {edit !== null &&
+                        !submitting &&
+                        pendingSubmission === null && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              applyEdit(null);
+                              setResolutions({});
+                              setMessage(null);
+                              setFailure(null);
+                            }}
+                          >
+                            {staleBaseline
+                              ? "放弃修改并采用最新发布值"
+                              : "放弃修改"}
+                          </Button>
+                        )}
+                    </div>
+                  </form>
+                  {visibleMessage !== null && (
+                    <p className="mf-dashboard-meta" role="status">
+                      {visibleMessage}
+                    </p>
+                  )}
+                  {recovery !== null && recovery.notes.length > 0 && (
+                    <ul className="mf-dashboard-meta" role="list">
+                      {recovery.notes.map((note) => (
+                        <li key={note}>{note}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {failure !== null && (
+                    <StatusBanner variant="error" title="保存未生效">
+                      {failure.fieldError !== null ? (
+                        <p>
+                          字段错误:{failure.fieldError}。Active
+                          未改变,本次请求没有发布。
+                        </p>
                       ) : (
-                        <AutomationTime value={model.asOf} />
+                        <p>
+                          失败阶段:{failure.stage || "未知"};持久化状态:
+                          {failure.durableState || "上一份 Active 保持不变"}。
+                        </p>
                       )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>部署整体采用</dt>
-                    <dd>
-                      {model.adoption.allAdopted
-                        ? "全部相关常驻进程都已采用当前发布值"
-                        : "尚未整体采用;下方逐进程显示真实状态"}
-                    </dd>
-                  </div>
-                  {lastPublished !== null && (
+                      <p>下一步:{failure.nextAction}</p>
+                    </StatusBanner>
+                  )}
+                  <dl className="mf-detail-grid mf-automation-settings-target">
                     <div>
-                      <dt>最近一次成功发布</dt>
+                      <dt>已发布目标</dt>
+                      <dd>版本 {target.revisionVersion ?? "—"} · Active</dd>
+                    </div>
+                    <div>
+                      <dt>读取时间</dt>
                       <dd>
-                        版本 {lastPublished.revisionVersion ?? "—"} · 已发布
+                        {model.asOf === null ? (
+                          "—"
+                        ) : (
+                          <AutomationTime value={model.asOf} />
+                        )}
                       </dd>
                     </div>
-                  )}
-                </dl>
-                {/* Diagnostic identities stay folded: they are for diagnosis,
-                    not the primary content of an operator decision. */}
-                <details className="mf-automation-settings-diagnostics">
-                  <summary>诊断标识</summary>
-                  <dl>
-                    <dt>精确读取时间</dt>
-                    <dd>{model.asOf ?? "—"}</dd>
-                    <dt>配置复检上限</dt>
-                    <dd>{model.configRecheckSeconds} 秒</dd>
-                    <dt>Active 修订</dt>
-                    <dd>
-                      <code>{target.revisionId}</code>
-                    </dd>
-                    <dt>Active 摘要</dt>
-                    <dd>
-                      <code>{target.digest}</code>
-                    </dd>
+                    <div>
+                      <dt>部署整体采用</dt>
+                      <dd>
+                        {model.adoption.allAdopted
+                          ? "全部相关常驻进程都已采用当前发布值"
+                          : "尚未整体采用;下方逐进程显示真实状态"}
+                      </dd>
+                    </div>
                     {lastPublished !== null && (
-                      <>
-                        <dt>最近一次成功发布的修订</dt>
+                      <div>
+                        <dt>最近一次成功发布</dt>
                         <dd>
-                          <code>{lastPublished.revisionId}</code>
+                          版本 {lastPublished.revisionVersion ?? "—"} · 已发布
                         </dd>
-                      </>
+                      </div>
                     )}
                   </dl>
-                </details>
-              </section>
+                  {/* Diagnostic identities stay folded: they are for diagnosis,
+                    not the primary content of an operator decision. */}
+                  <details className="mf-automation-settings-diagnostics">
+                    <summary>诊断标识</summary>
+                    <dl>
+                      <dt>精确读取时间</dt>
+                      <dd>{model.asOf ?? "—"}</dd>
+                      <dt>配置复检上限</dt>
+                      <dd>{model.configRecheckSeconds} 秒</dd>
+                      <dt>Active 修订</dt>
+                      <dd>
+                        <code>{target.revisionId}</code>
+                      </dd>
+                      <dt>Active 摘要</dt>
+                      <dd>
+                        <code>{target.digest}</code>
+                      </dd>
+                      {lastPublished !== null && (
+                        <>
+                          <dt>最近一次成功发布的修订</dt>
+                          <dd>
+                            <code>{lastPublished.revisionId}</code>
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+                  </details>
+                </section>
+              </div>
+              <div className="mf-automation-consumers">
+                {model.consumers.map((consumer) => (
+                  <ConsumerAdoption
+                    key={consumer.service}
+                    consumer={consumer}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="mf-automation-consumers">
-              {model.consumers.map((consumer) => (
-                <ConsumerAdoption key={consumer.service} consumer={consumer} />
-              ))}
-            </div>
-          </div>
-        );
-      }}
-    </AuthorizedReadBoundary>
+          );
+        }}
+      </AuthorizedReadBoundary>
+    </div>
   );
 }
 
