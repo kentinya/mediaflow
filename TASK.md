@@ -1,9 +1,7 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task52.3 — 自动化旧“打开”与后继 Draft Web 链路退出
 
-Task52.2 已由独立 B 复核 PASS。本轮基于真实代码规划 Task52.3；以下为 **PLANNING ONLY**
-草案，不授权实施。Slice52 仍 ACTIVE，剩余 RO-4 尚未交付。
-
-# Task52.3 — 自动化旧“打开”与后继 Draft Web 链路退出（规划草案）
+用户于 2026-11-08 明确要求“激活Task”，Task52.3 成为正式活动实施 Task，实施已授权。
+Task52.2 的独立 B PASS 保持；Slice52 仍 ACTIVE，RO-4 待本 Task 交付及独立验收。
 
 Authority: committed [Slice52 Contract](SLICE.md)（合同 checkpoint
 `c7913f6a751ee980db2b82ffaefec40d3d43528c`）的 RO-4、AC-7/8；生命周期和测试分工遵循
@@ -20,7 +18,7 @@ Task Base: f4279b95a1ee05095fa940247f2fa26f15cbf042
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: AUTHORIZED BY USER 2026-11-08 — 激活Task
 ```
 
 ## Planning checkpoint and accepted delivery
@@ -30,6 +28,10 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
 未跟踪 `.DS_Store`、`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、
 `docs/`／`docs/pics/`／`output/`／`testdata/`／`web/` 元数据和 output 下既有调查／预览
 材料均保留，不纳入提交。本轮仅维护根 TASK.md，不读取用户运行数据库、私有配置或媒体。
+
+激活起点：`main` / `03e2a0445ff04d2a78025628e544a8ec968c32b2`。治理检查 PASS，
+暂存区为空，TASK.md／Git 可写；上述预存文件保持。仅提交本 Task 激活信息，原 Task Base、
+目标、范围、验收及测试分工不变；实施由 Developer 执行，完成后交 B 独立复核。
 
 先核对已交付结果：
 
@@ -47,7 +49,7 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
 
 旧报告中的 403 文案重复定位、三条设置容量脚本使用旧 Files“目录”入口的实际失败及
 Base 对照事实保留，不宣称旧 E2E 全绿。Slice/Roadmap/Progress 早期“首次规划”措辞及
-CURRENT/TARGET 的最终协调留给 A；本草案不改合同或旧接受事实。
+CURRENT/TARGET 的最终协调留给 A；本 Task 不改合同或旧接受事实。
 
 ## Goal and complete journey
 
@@ -140,8 +142,8 @@ records payload 的 `handoff.definitionSettings` 在当前 `AutomationInventory`
 
 ## Required Tests
 
-按[工作流测试分工](docs/development-workflow.md#6-test-levels)。本轮仅规划，以下为未来
-候选上的执行计划；未执行产品测试，未给新实现 PASS。
+按[工作流测试分工](docs/development-workflow.md#6-test-levels)。以下为实施候选上的执行
+计划；本轮激活仅做文档／治理检查，未执行产品测试，未给新实现 PASS。
 
 **时间约束：** 每轮实施／B 复核，测试耗时必须小于该轮总耗时50%；记录起止和测试时段，
 并行测试按区间并集计。先审实际代码和完整用户旅程，复现已知阻塞后再跑昂贵门禁；不以
@@ -218,12 +220,12 @@ schema、引擎、恢复或媒体操作，不清理历史，不重开旧 Slice�
 
 ## Developer Completion Report
 
-待实施授权及完整 checkpoint 后填写：准确 SHA／READY FOR B REVIEW、变化／关键决策、
+待 Developer 完成完整 checkpoint 后填写：准确 SHA／READY FOR B REVIEW、变化／关键决策、
 受影响测试实际命令／结果／耗时、已知失败和剩余风险。完整验收由 B负责。
 
 ## B Review Result
 
-尚无 Task52.3 实现候选；当前仅规划，未作产品 PASS／FIX REQUIRED 判断。
+Task52.3 已激活，尚无实现候选；待 Developer 实施交接，未作产品 PASS／FIX REQUIRED 判断。
 实施后独立审查完整 Task Base..Head；PASS后重评全部 Slice结果。全部满足则停止规划、
 完成 Slice-final验证并交 `SLICE READY FOR A REVIEW`，不由 B关闭 Slice；有真实阻塞留在
 同 Task修正，并以用户的完整操作旅程说明失败阶段、原因和可执行修正。
