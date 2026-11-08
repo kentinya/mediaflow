@@ -349,11 +349,15 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
+  // The same bounded permission explanation can also appear in the filter
+  // options error after an independent failed read. Scope the auth assertion
+  // to the forbidden banner that owns the identity recovery action.
+  const forbiddenBanner = page
+    .getByRole("alert")
+    .filter({ has: page.getByRole("heading", { name: "没有读取权限" }) });
+  await expect(forbiddenBanner).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "没有读取权限" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("当前 API 主令牌没有读取探索的权限。"),
+    forbiddenBanner.getByText("当前 API 主令牌没有读取探索的权限。"),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "身份被拒绝" })).toHaveCount(
     0,
@@ -366,7 +370,7 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
 
   // The smallest recovery action leads to the entry where the operator can
   // explicitly disconnect and connect a permitted principal.
-  await page
+  await forbiddenBanner
     .getByRole("link", { name: "Connect a principal with read permission" })
     .click();
   await expect(page).toHaveURL(/\/ui-v2\/$/);

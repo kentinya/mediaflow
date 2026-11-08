@@ -32,6 +32,7 @@ export function RowActionMenu({
   readonly children: ReactNode;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const openedAtRef = useRef(0);
   const [position, setPosition] = useState<{
     readonly top: number;
     readonly left: number;
@@ -56,6 +57,10 @@ export function RowActionMenu({
   };
 
   useLayoutEffect(() => {
+    // A focus scroll can already be queued before the menu opens; its event
+    // may arrive after mount with the viewport already at its final position.
+    // Only a viewport change after this menu measured can invalidate its anchor.
+    openedAtRef.current = performance.now();
     measure();
     // The menu has no size on the very first paint; measure once more after it
     // mounts so flipping and clamping use the real box.
@@ -69,7 +74,7 @@ export function RowActionMenu({
     const focusFirst = () => {
       const first =
         menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
-      first?.focus();
+      first?.focus({ preventScroll: true });
     };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -100,6 +105,7 @@ export function RowActionMenu({
       }
     };
     const handleViewportChange = (event: Event) => {
+      if (event.timeStamp < openedAtRef.current) return;
       // Scrolling inside the menu keeps it; any other scroll (the Files pane,
       // the page or the table viewport) closes it so the menu can never
       // anchor to a row that has moved away.

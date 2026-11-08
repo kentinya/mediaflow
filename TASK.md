@@ -14,13 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
 Reviewed Head: f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c
+Correction Candidate: PENDING-IMPLEMENTATION-CHECKPOINT
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER HANDOFF PENDING
+Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER CORRECTION HANDOFF READY
 ```
 
 ## Goal and observed gap
@@ -430,3 +431,91 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 预存 tracked `mediaflow/.DS_Store` 与全部 untracked 调查／日志／output／系统元数据
 原样保留。仅 checkpoint TASK.md；下一步为同一 Task 的 Developer 修正交接，随后 B
 完整独立验收及独立小修收尾。不推送或发布，不改 SLICE／Roadmap／Progress。
+
+### Developer correction report — 2026-11-08
+
+**Status: READY FOR B REVIEW. Authorized bug acceptance remains B’s; no self-approval.**
+
+修正范围仅限本 Task 已授权的现有失败与直接受影响回归；不重开 Slice52，不改
+SLICE／Roadmap／Progress，不新增产品能力、schema、权限或恢复类型。预存
+`mediaflow/.DS_Store` 及全部未跟踪调查／日志／output／系统元数据原样保留，未纳入提交。
+
+修改与根因：
+
+- `web/playwright.config.ts`：默认 Node 假服务配置按既有 Python spec 约定排除
+  `openlist-metadata.python.spec.ts`；专用 OpenList 配置仍独立执行该真实适配器旅程。
+  当前默认发现清单为 264 项／18 文件，Python spec 与 OpenList spec 均为 0。
+- `web/tests/e2e/deep-link.spec.ts`：403 权限说明会同时出现在筛选选项错误区；把标题、
+  权限文案和恢复链接限定到承载换身份入口的 forbidden alert，保留 401 区别、已认证
+  principal、token 不泄露及“Disconnect → 允许读取身份 → 探索可见”完整恢复。
+- `web/src/features/library/RowActionMenu.tsx`：真实根因是 `row.focus()` 已排队的页面
+  滚动事件在菜单挂载后才派发，菜单按“任何外部滚动即关闭”规则错误卸载；不是数据未读完。
+  用菜单自身测量时间过滤早于挂载的视口事件，并把首个菜单项聚焦改为
+  `preventScroll`。菜单在真正挂载后的滚动／resize／Escape／外部 pointer 关闭及焦点返回
+  语义不变；初次 Files 键盘菜单现在稳定可操作。
+- `web/tests/e2e/operations.spec.ts`：以当前详情直接验证精确 run 身份（`run=job-005`）、
+  `失败` 流程状态、`自动化` 触发方式、文件结果及操作记录区的真实空流；保留关闭和浏览器
+  返回后的 view／日期／任务上下文，不再等待已退役的“在任务中心查看该运行的详情”文案。
+- `web/tests/e2e/operations-principal-identity.python.spec.ts`：移除已退役 Job 批次续跑；
+  改用现有 Unicode 配置与独立临时 fixture 的真实旅程：中文身份经 auth/principal 核对，
+  文件页选择、真实分析、C 识别选择、精确摘要、显式确认；真实 API 受理后丢失浏览器响应，
+  核对唯一 admission／执行，刷新并重连同一中文身份，Worker 完成并读回逐项 Result 证据。
+  断言 Execute POST 仅一次、重连／读回不重放、源消失且目标存在，token 不进入持久存储或 DOM。
+- TASK 文档的两个 `###` 测试责任标题已由 B 规划修正，本轮未改测试断言。
+
+实际验证（仓库根目录，除注明外）：
+
+```sh
+.venv/bin/python -m unittest tests.test_release_security
+# Ran 8 tests, OK
+.venv/bin/python scripts/check_governance.py
+# governance check: PASS
+.venv/bin/ruff check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py
+# All checks passed
+.venv/bin/ruff format --check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py
+# 2 files already formatted
+git diff --check
+# clean
+```
+
+Web（`web/`）：
+
+```sh
+npm run build
+# passed
+npx playwright test tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/operations.spec.ts \
+  --grep "403 is visibly distinct from 401|Files row admits one eligible file|inventory count card applies"
+# 3 passed (2.2s)
+npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts \
+  tests/e2e/operations-principal-identity.python.spec.ts
+# 1 passed (6.6s)
+npm run test:e2e -- --list
+# Total: 264 tests in 18 files; 0 Python/OpenList specs in the default Node entry
+npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx
+# 2 files passed, 74 tests passed
+npm run typecheck
+# passed
+npx eslint src/features/library/RowActionMenu.tsx tests/e2e/deep-link.spec.ts \
+  tests/e2e/manual-operations.spec.ts tests/e2e/operations.spec.ts \
+  tests/e2e/operations-principal-identity.python.spec.ts playwright.config.ts
+# no findings
+npx prettier --check src/features/library/RowActionMenu.tsx tests/e2e/deep-link.spec.ts \
+  tests/e2e/manual-operations.spec.ts tests/e2e/operations.spec.ts \
+  tests/e2e/operations-principal-identity.python.spec.ts playwright.config.ts
+# All matched files use Prettier code style
+```
+
+测试执行时间低于本轮有效开发时间的 30%，未用重复运行、sleep、skip、放宽超时或 force
+click 取得结果。
+
+剩余风险／待 B 独立验收：
+
+- Developer 未运行 Python 全量、默认 E2E 全量、16 份原生 Python specs、wheel／外部安装
+  smoke、Docker resident OpenList 消费链或真实 115；这些按本 Task 仍由 B 在固定候选上
+  执行，当前不声明全部绿色或 PASS。
+- OpenList 核心实现本轮未改，沿用既有真实 HTTP 适配器证据；B 仍须在最终候选重跑 405
+  核心、故障反例与 T4 全量。
+- RowActionMenu 为共享组件；已跑两个文件页 Web unit 和键盘菜单浏览器用例，B 的完整
+  E2E／原生 Files 回归还需覆盖其他菜单消费者。
+- 七项专用真实 OpenList／SMB／S3 与耐久环境 skip、Docker 不可用和全部未执行门禁仍为
+  pending；未伪造环境或以离线绿色替代。

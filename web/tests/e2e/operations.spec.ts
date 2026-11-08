@@ -547,11 +547,36 @@ test("inventory count card applies its server filter and the run overview opens 
     .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
-  await expect(detail.getByText(/失败/).first()).toBeVisible();
+  // The selected run keeps its exact durable identity and own facts; the
+  // retired self-link into the former mixed Task collection is gone.
+  await expect(page).toHaveURL(/run=job-005/);
+  await expect(
+    detail.getByRole("heading", { name: "整理", exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail
+      .getByRole("region", { name: "状态与流程" })
+      .getByText("失败", { exact: true }),
+  ).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
-  // Deeper evidence stays inside the center's own exact run context: the
-  // retired mixed Task collection is closed (B46.4-04).
-  await expect(detail.getByText("在任务中心查看该运行的详情")).toBeVisible();
+  await expect(detail.getByText("自动化", { exact: true })).toBeVisible();
+  await expect(
+    detail
+      .getByRole("region", { name: "文件结果" })
+      .getByText("失败", { exact: true }),
+  ).toBeVisible();
+  await expect(detail.getByText("在任务中心查看该运行的详情")).toHaveCount(0);
+  // The current detail directly owns its operation-record stream. This exact
+  // durable run has no result, evidence, log or audit rows.
+  await detail.getByRole("button", { name: "操作记录", exact: true }).click();
+  await expect(
+    detail.getByRole("region", { name: "操作记录", exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText("匹配 0 条记录 · 结果 0 · 证据 0 · 日志 0 · 审计 0"),
+  ).toBeVisible();
+  await detail.getByRole("button", { name: "任务详情", exact: true }).click();
+  await expect(detail.getByText("流程状态", { exact: true })).toBeVisible();
 
   // Closing the detail returns to the same filtered list context.
   await detail.getByRole("button", { name: "关闭详情" }).click();
