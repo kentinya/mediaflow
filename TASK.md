@@ -1,10 +1,9 @@
 # Task52.2 — 九个主页面切换、读取接入与两库刷新体验
 
 用户于 2026-11-08 明确要求“激活TASK”，Task52.2 成为正式活动实施 Task，实施已授权。
-状态为 **PLANNED**,待 Developer 开工时转为 IN PROGRESS;Task ID/Base/Goal/Scope、
-验收及修订后的测试计划保持。Developer 实施完毕后已按元数据转为
-**READY FOR B REVIEW**,见下方 Developer Completion Report。本次激活不授权推送、
-发布或部署。
+当前状态为 **FIX REQUIRED**：B 独立复核发现切页结束后正文再次变淡，须在同一 Task
+修正。Task ID/Base/Goal/Scope、验收及修订后的测试计划保持；Developer 修正后提交新的
+READY FOR B REVIEW checkpoint。本次激活不授权推送、发布或部署。
 
 Task52.1 已由独立 B 复核 **PASS**，原始 Base
 `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 已审实现
@@ -31,7 +30,7 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.2
 Task Type: SLICE
 Parent Slice: 52
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
@@ -335,6 +334,74 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts
 
 ## B Review Result
 
-Task52.2 已激活，尚无实现候选；B验收待 Developer 提交 READY FOR B REVIEW 后执行。
-实施后按工作流独立审完整 Base..Head，明确阻塞及用户操作例子；PASS后重新核对全部
-Slice结果，已满足就交A，不为可选清理继续规划。
+```text
+Reviewed Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
+Implementation candidate: e8a65644733a0cca7efe5b2e7e16cdc069a02764
+Report successor: 6be90666c7467e8a0f5e907fc0475ca7decdc528 (TASK.md only)
+Decision: FIX REQUIRED
+Task blockers: B52.2-01 (P1)
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+2026-11-08 独立 B 审查完整原始 Base..candidate 的24个文件，包含规划／激活与全部
+产品／测试变化；报告后继只改TASK.md。复核起点 main / 6be90666，预存跟踪变更
+mediaflow/.DS_Store 及上述全部未跟踪文件保留，B只提交本Task报告。
+
+### B52.2-01 — 切页已完成后正文再次变淡（P1，阻塞TAC-1/2及Slice AC-5）
+
+**用户旅程：** 在入口连接后进入探索，通过现有侧栏点击“存储管理”；标题、存储清单与
+按钮已经清晰显示，随后整块正文突然变浅，再恢复清晰。继续点击“文件”“媒体库”也会
+出现同一次额外变化。纯侧栏导航、正常快响应即可触发，无需异常输入或额外接口。
+
+**实际原因：** 本实现新增 ShellPageSurface 的 entryActive 时间窗口和CSS
+`.mf-page-surface-entry-active .mf-content-settle { animation: none }`。窗口结束移除类时，
+已经显示的正文重新取得 mf-content-settle 动画，浏览器此时从动画起点再播放一次。
+这把“跳过叠加淡入”变成了“稍后补播淡入”。原生逐帧记录三页均为 Shell 已到1、正文
+已到1后，正文重新降到0.7并恢复；存储约340→357ms、文件348→365ms、媒体库346→362ms。
+时间和数值仅解释根因；实际浏览器帧中标题、表格和按钮整块变浅的可见突变是阻塞依据。
+
+**Developer 修正指导（保持本 Task/Base）：**
+
+1. 区分“这次内容接入已由主页面过渡呈现”和“读取稍后才完成”。已呈现的那次内容不能
+   因主页面过渡窗口结束而补播入场；晚到内容仍可按自身读取状态平顺接入。具体状态／
+   样式做法由实现选择，不用延长窗口或推迟请求／就绪内容来掩盖第二次变化。
+2. 沿同一侧栏旅程补回归，观察存储与两库正文以及Shell的完整呈现过程，覆盖快读、缓存
+   返回与慢读取接入。采样需覆盖正文后续变化；检查实际内容平顺接入及同次已显示内容
+   不再次突兀变淡，不只在Shell首次透明度恢复或等待文案消失时结束。保持同页不重播、
+   弹卡层级及 reduced-motion，不要求某个动画名称、固定毫秒数或固定动画层数。
+3. 跑新增／修改及直接受影响的Shell／反馈逻辑／两库测试和 page-transition 原生用例，
+   按原计划交新checkpoint与真实结果。全Web及剩余B验收仍由B执行，不转交Developer。
+
+### B实际运行与证据
+
+生产构建→现有Node fake-server→真实V2路由／侧栏→Chromium；未修改DOM／CSS、未人为
+延迟本次复现的请求。未访问用户数据库、媒体或真实外部服务。证据位于本机
+`.git/validation-evidence/e8a65644/b52-2-review/`，不承诺随Git同步可访问。
+
+- web/ `npm run build`：PASS，build.log；保留原大chunk警告。
+- 根目录 `node .git/validation-evidence/e8a65644/b52-2-review/entry-probe.mjs`：
+  三页全部复现已显示正文的第二次透明度下降；entry-probe.json/log记录完整帧序列。
+- 根目录同目录 `entry-capture.mjs`：独立重复上述三页旅程，保存94帧原生浏览器画面与
+  entry-capture.json。人审存储约299ms与367ms帧可见清晰正文再次变浅；原图为
+  Storage-management-frames/017.png、020.png；两库各自frames目录保留同段过程。
+- web/ `npm run test:e2e -- tests/e2e/page-transition.spec.ts`：**6 passed (14.6s)**，
+  page-transition.log；命令耗时14.89s，见page-transition-run.json。测试通过与上述
+  原生缺陷同时成立：当前采样只核对Shell属性／几何与最终等待文案，没有正文第二次
+  变化的判据。这项绿色结果不能证明TAC-1/2通过。
+- 根目录治理检查及完整Base..candidate `git diff --check`通过；画面检查直接使用原始PNG。
+- 已确认P1，按工作流提前FIX REQUIRED。全Web单元／lint／format、其余原生／Python
+  验收尚未执行；未将Developer结果冒充本轮B验收，也未把它们的缺失作为产品阻塞。
+  T3及原测试分工保持，未跑全Python／wheel／Docker／发布矩阵。
+
+本轮截至复核记录约5分钟，构建、两次原生浏览器复现、导航E2E及文档检查累计不足1分钟，
+低于本轮总耗时50%；时间记录见review-timing.json。未因时间约束省略已声明通过的验收，
+其余门禁因已证实P1而暂缓。
+
+### 全Slice重评与边界
+
+RO-1／RO-2：Task52.1既有PASS保持，本文不重签其验收。
+RO-3：本候选已接入九页延后等待反馈及两库刷新预留位置，但完整切页仍有B52.2-01，
+尚未交付；其余TAC待修正后的B验收。RO-4：旧自动化打开链路仍在，按合同留待后续Task。
+因此保持Slice52 ACTIVE，修正留在Task52.2，不规划下一Task、不提交Closure Packet，
+不改变Slice／Roadmap／Progress或已接受Slice身份。
