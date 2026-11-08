@@ -14,14 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
-Reviewed Head: f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c
+Reviewed Head: fff1a8ddc0226730e0d919b8e212682a3f9dce8e
 Correction Candidate: 763da6da53c971ee4b661c654e54d75626747ddf (implementation checkpoint)
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER CORRECTION HANDOFF READY
+Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; B FIX REQUIRED
 ```
 
 ## Goal and observed gap
@@ -149,6 +149,20 @@ Move／Rename 路径不因下载链接不可用而在提交、分析、执行前
    `###` 测试责任标题；原 Task 使用粗体标题。本次 B 规划直接纠正文档，不改测试断言。
    Developer 后续更新 Task 时保持这两个标题。
 
+7. **本次 B 原生任务清单复核的两项旧断言。**
+   `operations-inventory.python.spec.ts:1371` 在整理成功、SQLite/API 重启、同一身份重连并
+   恢复同一任务证据后，直接要求默认折叠诊断中的“持久审核计划(已捕获)”可见。按用户
+   真实操作先展开该条目“技术诊断（计划、日志与审计…）”，再检查已捕获计划、C 识别
+   使用 A 命名／分类、原完成步骤；保留重启后的同一任务、成功效果和 Execute 仅一次。
+   `:2232` 混合任务技术失败项仍等待已替换文案“技术失败条目”。改验当前“处理失败”
+   及上方“目标存储拒绝操作”的事实，同时保留技术失败／成功／不确定兄弟项不可选择恢复、
+   无通用继续按钮／修复邀请、真实 Recognition／Conflict Attention 及 API 类型断言。
+   不恢复旧展示、不默认展开诊断、不删除持久计划／身份／非重放验证，不改共享种子以绕过。
+   先跑完整 `operations-inventory.python.spec.ts`（同一 harness 有累计旅程，不能只 grep
+   第 11 项而缺少前序任务），其他实际失败同样在本 Task 修正。Developer 只负责这份修改
+   spec 及直接受影响检查；修正后仍由 B 负责剩余全量门禁。各 Playwright 进程使用独立
+   `--output`，同端口 harness 串行；这是 B 的执行安排，不新增产品或过程工具。
+
 关联合同补充：`V2-AUTH-001–003`、`V2-SAFE-001`、`V2-OPS-001/004/005/007/008/012/014–017`；
 完整 Task／结果／四类恢复旅程见 [Tasks, results and per-item recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)。
 无新状态、权限、恢复类型或 schema；技术历史、已完成与不确定效果仍按当前合同处理。
@@ -241,6 +255,7 @@ npm run test:e2e -- --list
 npm run test:e2e -- tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/operations.spec.ts
 npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
 npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts tests/e2e/openlist-metadata.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=test-results/inventory-correction
 ```
 
 若修改共享文件菜单，再运行
@@ -393,44 +408,55 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 
 **FIX REQUIRED — 2026-11-08。Authorized bug acceptance complete: NO。**
 
-原完整产品审查范围为固定
-`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c`。
-本次调查候选 `ebcbe1e5ab296fd041c120f6123f32ae8ebbf646` 相比该 Head 只改变 Task 报告，
-产品／测试输入未变。本次只扩大同一 Task 授权和修正文档；Developer 修正 checkpoint
-之后，B 仍须独立审查整个原 Base..新候选并执行最终验收。Slice52 所有关闭结果及边界
-不变；本 Task 不能因原核心正常旅程通过就结束。
+完整审查范围：`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..fff1a8ddc0226730e0d919b8e212682a3f9dce8e`，
+含实现 `29e37245`、修正 `763da6da` 及全部文档差异。Slice52 四项已接受结果保持，本轮是
+独立 bug；不新建 Task，不改 Slice／Roadmap／Progress。原 B 失败及交接历史保留在 Git。
 
-原 B 已独立验证 405 核心正常旅程：生产文件页选择两文件 → 真实分析和精确摘要 →
-明确确认 → Worker 两次移动及两次重命名 → 两项持久 Result 均为
-`SUCCESS / verified_complete`，Task flow 独立 `completed`；62 次 list 全部
-`refresh: false`，零 fs/get／内容请求。刷新不增加修改，截图已查看。
-仍需完成原验收规定的再次 Worker poll、任务详情／返回文件页及故障证明和完整 T4。
-既有受影响 Python 模块 398 项、Web unit 97 files／1459 项及 Web 静态／构建已通过；
-源／测试／夹具发生变化的部分必须在最终候选重新验收。
+**阻塞：当前真实原生旅程的两项测试仍失败，未达到用户要求的全部现有测试变绿。**
+从文件页选择 Three → 分析并确认 → 丢失受理响应后核对 → Worker 整理成功 → 重启并重连
+同一任务后，测试尚未展开诊断便等待内部计划可见（`:1371`）。混合任务打开技术失败文件
+证据后，测试等待已替换的“技术失败条目”文案（`:2232`）；实际可见“处理失败”和
+“目标存储拒绝操作”。这两项是测试与现有合法界面操作不一致，本轮未发现据此需要改变
+产品行为。开发指导已写在上方第 7 项，保留原完整旅程和安全断言。
 
-本次从已有完整测试入口得到的失败清单：
+首项差异来自 `a1b591db5b46f9e5f9bdf8cfa2ddfaef38c34b5e`（2026-11-07 12:02 +08）将
+计划移入默认折叠诊断；第二项来自 `0232364073401aebd126c2ed7f6e68d3ec31d85a`
+（同日 12:42 +08）以业务结果说明替代旧技术文案。两者均在原 Task Base 之前；用户本 Task
+已授权修复现有失败，不能因此豁免，也不重开已接受 Slice。
 
-| 运行 | 实际结果 | 当前处理 |
-|---|---|---|
-| `.venv/bin/python -m unittest discover -s tests -v` | 2656 项，2648 passed、1 failed、7 skipped；309.466s | 唯一失败为 Task 缺少模板测试责任标题，本次 B 已修改；`tests.test_release_security` 定向复验 8 passed（0.023s），治理／diff 检查通过 |
-| `web/`：`npm run test:e2e -- --reporter=line,json` | 261 passed、4 failed、0 skipped、0 flaky；232.190s | 403 严格定位、Files 菜单、误入默认配置的 OpenList spec、任务详情旧断言，全部纳入上方修正指导 |
-| Unicode 专用配置＋`operations-principal-identity.python.spec.ts` | 1 failed；11.605s | 旧 Job 批次旅程与当前退役合同不符，按现有整理确认／核对旅程替换 |
+本次固定候选在干净 checkout `/tmp/mediaflow-b-review-fff1a8dd` 独立验证；复用工作区
+依赖（Python 3.13.14），原工作区所有预存修改／未跟踪文件原样保留。原始日志、trace、
+截图和 provider 台账：`.git/validation-evidence/fff1a8dd/b-review/`，仅本机保存。
 
-七项 Python skip 均为缺少专用真实 OpenList／SMB／S3 环境及 Local／OpenList／SMB／S3
-耐久环境。Docker daemon 当前不可用（socket 不存在），两项必需 Docker smoke 未执行；
-全部原生 specs 和最终 wheel 门禁也尚未在本轮完整运行。这些是未完成验证，不是已通过。
-已有失败全部留在本 Task 修复；后续新发现失败同样不豁免。当前不作全部绿色或 PASS 声明。
+实际结果：
 
-本次原始日志／JSON／失败 traces：
-`.git/validation-evidence/ebcbe1e5/scope-expansion/`。
-此前核心证据及完整原 B 报告保留在提交 `ebcbe1e5` 和
-`.git/validation-evidence/f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c/b-review/`；
-证据仅在本机，不承诺远程可访问。
+- OpenList 专用完整文件页 spec：1 passed（5.2s），截图已查看。两个文件完成精确确认、
+  Worker 原生 Move／Rename，持久 Result 均 `SUCCESS / verified_complete`，Task flow
+  `completed`；62 次 list 全部 `refresh: false`，4 次 Move／Rename，零取链接／内容请求，
+  重复刷新不增加 mutation。再次 Worker poll、关联任务／返回文件页及真实 HTTP 故障
+  补充验收仍 pending，不能以该正常旅程代替。
+- Unicode 专用完整 spec 独立输出复验：1 passed（6.3s），真实受理失响应→核对→重连→
+  Worker→结果证据通过，Execute 仅一次。
+- Python 全量：2656 项，2649 passed、7 skipped、0 failures（315.344s），命令为
+  `.venv/bin/python -m unittest discover -s tests`；七项专用环境 skip 未新增。
+- Web unit：97 files／1459 tests passed（136.67s）；typecheck／lint／format:check／
+  build 通过。Python Ruff format（382 files）／lint、compileall、pip check、两个示例
+  config validate、禁用依赖扫描及 Base..Head diff whitespace 检查通过。
+- 默认 E2E：263 passed、1 runner error（3.1m）。该错误为 B 并行 Playwright 共用输出
+  目录导致 trace ENOENT，不是删除资源库断言失败；中文身份最初报告也受同一原因影响。
+  删除被引用资源库旅程在独立输出下复验 1 passed（1.0s）。完整默认套件仍须在修正候选
+  独立输出重跑，不能记为 264 passed；此问题由 B 纠正，不交 Developer 改产品／测试。
+- 原生 inventory 完整入口发现上述 2 failed，17 passed；发现阻塞后主动中止，1 interrupted、
+  24 did not run。中止项不是新增失败。另一次 action-readability 启动因 B 未串行同端口
+  harness 被拒，未执行用例，不算产品失败。剩余原生 specs／wheel／外部安装及 Python
+  3.11／3.12 矩阵未完成，保留 pending。
+- Docker daemon socket 不存在，Docker 镜像／两项 smoke 未执行。此项是 B 环境门禁
+  阻塞，非 Developer 缺陷；不以离线证明代替。专用真实外部／耐久环境的既有七项 skip
+  继续如实保留，不伪造配置或凭据。
 
-本次起点 `main / ebcbe1e5ab296fd041c120f6123f32ae8ebbf646`，暂存区为空，治理 PASS；
-预存 tracked `mediaflow/.DS_Store` 与全部 untracked 调查／日志／output／系统元数据
-原样保留。仅 checkpoint TASK.md；下一步为同一 Task 的 Developer 修正交接，随后 B
-完整独立验收及独立小修收尾。不推送或发布，不改 SLICE／Roadmap／Progress。
+已发现真实阻塞后不继续启动昂贵验收；修正在同一 Task 内，Developer 交新 checkpoint
+后 B 对原 Base..新候选完整复核并继续必需门禁。
+本轮仅 checkpoint TASK.md，不推送／发布，不修改产品。
 
 ### Developer correction report — 2026-11-08
 
