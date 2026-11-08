@@ -1,263 +1,98 @@
-# Task PATCH-20261108-2 — 探索页边界与详情首屏阅读修正
+# NO ACTIVE IMPLEMENTATION TASK
 
-用户于2026-11-08明确要求“激活Task”，此前草案现为正式活动Task。
-Developer已完成下方固定范围实施，候选交 B 独立验收；本轮未推送或发布。
-
-上一项独立修正 `PATCH-20261108-1` 已由 B 独立验收 PASS：
-Base `aa752cc3bc194707808a1af79afd8978ce4aef44`，
-Reviewed Head `931d8de688e8777c155ca7163475d3d793c14415`，
-Implementation Head `e2bb72d8c191d34586a90ff49577680107b0295c`；
-完整结果、既有失败及证据限制保留于 `6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134:TASK.md`。
-Slice52 保持 PASS / CLOSED，其 Base、验收和 Roadmap／Progress 不变。
-
-Authority: 用户本轮明确提出的三项探索页呈现修正及其后的规划请求；
-[Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 管理独立修正生命周期。
-遵循 [B experience](docs/agent-experience/task-planner-reviewer.md) 和
-[Developer experience](docs/agent-experience/developer-implementation-role.md)。
+独立修正 **PATCH-20261108-2 — 探索页边界与详情首屏阅读修正**
+已于 2026-11-08 经 B 独立审查 **PASS**，用户授权的三项修正完成。
+原规划、Developer 开发指导和交接保留于 `14347d23:TASK.md`。
 
 ```text
 Task ID: PATCH-20261108-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 37c3287ece5cd7060a887b42fcd84c6b0fc49e7e
+Reviewed Head: 14347d23b91c4a0f0a50642f91942661f6544edf
 Implementation Head: 79bcc866f32b69ea8266491c77ec995f8b0e578c
+Reviewer: B
 Difficulty: Medium
 Test Level: T3
-Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED TASK ACTIVATION; DEVELOPER MAY IMPLEMENT THIS TASK
+Task blockers: NONE
+Authorized bug acceptance complete: YES
+Next Action: NO FURTHER TASK WITHIN THIS AUTHORIZED CORRECTION
 ```
 
-### Goal and authorized boundary
+B 独立审查完整固定 Base..Reviewed Head 的 25 个文件；Implementation Head 之后仅有
+TASK.md 交接记录变化。全部验收使用该候选的源码、测试、依赖及重新生成的生产构建。
+本轮只记录验收；Slice52 保持原 PASS / CLOSED，SLICE、Roadmap、Progress 不变。
+上一独立修正 PATCH-20261108-1 的接受身份、结果和限制保留于 `37c3287e:TASK.md`。
 
-一个完整的现有探索旅程修正：用户进入探索直接使用搜索／筛选，内容边界与文件、媒体库、
-规则、自动化、任务中心协调；从可见海报打开电影／剧集时，第一眼即可阅读作品信息和
-简介开头，横幅只作背景，阅读不受图片干扰；长内容仍可在卡内读完并准确返回。
+## Delivered journey and acceptance
 
-用户授权的呈现意图为：删除主内容左上角可见“探索”标题；纠正探索距左边栏的距离；
-将详情上方横幅转为背景、以下方详情为主体并保证可读性。它们仅调整既有页面呈现，
-不新增业务能力、架构／安全边界或重开旧 Slice。
+用户从现有认证／侧栏入口进入探索，选择电影或剧集、搜索／筛选并浏览海报，再打开详情：
 
-适用现行要求为 `V2-EXPLORE-003–007/009/010/013–015`；完整旅程见
-[Product Experience](docs/product-experience.md#current--v2-explore-homepage-slice51-pass--closed)，
-共享呈现／读取边界见 [Architecture](docs/architecture.md#current--v2-explore-homepage-slice51-pass--closed)。
-用户新要求明确调整 `V2-EXPLORE-012` 的“一个可见标题”呈现及旅程中“先看图片”的顺序；
-未来按实际交付协调 CURRENT 文字，保留旧 Slice 的接受事实，不把旧合同追改为新要求。
-产品实现和必要CURRENT文字协调已按下方步骤完成，交B独立验收。
+- 主内容的可见“探索”标题与占位已删除，侧栏入口保留。探索区域有可访问名称，搜索、
+  空结果、读取失败、分页和详情退出仍有可用入口与确定焦点；代码中无旧标题 ID 引用。
+- 1440px／1920px 桌面，搜索、筛选和网格距侧栏均为 23px，右侧均留 18px；同视口与
+  文件、媒体库、规则、自动化、任务中心的实际边界一致。固定 Base 原间距分别为
+  57.6px／76.8px。390px 保持两列海报、14px 收边和无页面横向溢出，整页已实际查看。
+- 四个约定视口 1440×900、1440×720、390×844、390×600 的电影／剧集详情，未滚动时
+  名称、关闭、评分、类型和简介第一行均实际可读；完整基本信息和准确作品 TMDB 外链保留。
+  Base 的 390×600 信息从约 902px 开始；候选该视口电影／剧集简介首行底部分别约为
+  341px／354px，处于卡内可见区域。长标题也能直接开始阅读，短内容没有大图造成的额外滚动。
+- 横幅为不占正文高度的装饰背景，标题区使用深色遮罩，正文使用稳定浅色底。明亮、暗色、
+  高反差、缺图／失败和迟到图片的截图及实际几何均已核对。当前构建对白／黑两个像素极端
+  合成后的最小对比度：标题 6.32、辅助文字 5.66、关闭 6.04；正文 15.10、字段标签 5.51。
+- 390×600 触摸上下文从可见海报打开长简介，5 次上滑抵达末尾与外链；背景始终保持
+  497px，关闭后回到原海报焦点和 497px。滚轮／键盘、失败重读、非顶部打开、Escape、
+  后退／前进、搜索退出和缓存淘汰后的返回由原生浏览器旅程覆盖，列表上下文与位置保留。
+- 搜索校验、筛选草稿／清除、真空态、普通分页、迟到响应隔离、Provider／身份恢复、
+  零 Storage 调用／零业务写入、关于与鸣谢、九页导航和其他弹卡均有对应回归覆盖。
+  API、Provider、权限、Storage、schema 和执行引擎未修改；T3 范围成立。
 
-### Observed entry, behavior and causes
+三项授权结果及全部 Task 验收条件满足，没有本 Task 的 P0/P1 阻塞，不规划额外工作。
 
-调查基线即 Task Base。使用已有生产构建、本地 Explore Python harness／Node fake server，
-以临时数据库、假 Provider 和拦截图片核对，未使用生产配置、真实 TMDB 或用户媒体。
+## Actual validation and retained failures
 
-- `ExplorePage.tsx` 自身渲染可见 h1；同时以该节点命名 section，作为分页空结果与详情
-  退出的兜底焦点。删除标题必须同时修正语义／焦点，不能只移除 DOM 或隐藏空白。
-- Explore 沿用 `styles.css` 的 Shell `28px 4vw 64px` 内边距。1440px／1920px 宽时，
-  内容距侧栏分别为 57.6px／76.8px；上述五个页面均为 23px。探索没有单独的居中限宽问题。
-- `ExploreDetailCard.tsx` 将 `DetailBackdrop` 放在网格首行，横跨两列；16:9 横幅先占
-  高度，桌面下方才出现 220px 海报与信息，720px 以下又排成横幅、全宽 2:3 海报、信息。
-  1440×720 时横幅约381px，占正文可见高度545px的大部分；390×844／390×600 时，
-  信息约从屏幕902px处开始，首屏全被图片占用。
-- 已有详情内滚动能读到末尾，但该能力不能证明首屏已呈现主体；现有部分 `toBeVisible`
-  断言也不能代替 `toBeInViewport`／实际可见区域核对。
+`web/` 实际执行；完整参数、cwd、退出码、耗时和原始日志见下方证据目录。
 
-规划前治理检查 PASS；工作分支 `main`，HEAD 为上述完整 Task Base，暂存区为空且 Git／
-Task 可写。预存已跟踪修改为 `mediaflow/.DS_Store`；未跟踪系统元数据、
-`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15` 及既有 output 材料均保留，
-不读取私有配置、不纳入本次 checkpoint。
+| 命令／原计划入口                                                                                                                    | 结果                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `npm run typecheck` / `npm run lint` / `npm run format:check` / `npm run build`                                                     | 全部通过；构建保留既有大 chunk 提示                       |
+| `npm run test -- run`                                                                                                               | 97 files / 1459 tests passed                              |
+| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --workers=1`                     | 25 passed，33.5s                                          |
+| `npm run test:e2e`                                                                                                                  | 261 passed / 3 failed，3.7m；九主页面切换的 10 项全部通过 |
+| 原 Task 指定的 Python inventory／visual／source-history 有界入口命令                                                                | 4 passed，12.7s                                           |
+| `npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts` | 1 failed，10.5s；已通过探索入口后停于既有恢复条目定位     |
 
-激活前HEAD为 `f025acccd1ac9a2c034eedf719a2df10a321e5c4`；相对固定Task Base仅有
-`TASK.md`规划提交，产品源码、测试和依赖未变，原调查及计划继续适用，不重设Base。
-激活前治理检查PASS，暂存区为空，上述预存工作区变更保持且不纳入激活提交。
+**四项失败均从本 Task 固定 Base 导出原源码，以相同依赖重新构建并运行原用例复现：**
 
-### Implementation Scope and steps
+- `deep-link.spec.ts`：无读取权限的用户进入探索，列表和筛选分别显示同句说明，脚本用
+  一个文本定位匹配两个节点而失败。B 另从实际“连接有读取权限的身份”入口断开并连接，
+  已能正常返回探索；没有把重复提示或失败断言删除。
+- `manual-operations.spec.ts`：脚本在文件页刚进入时立即打开键盘菜单，菜单在
+  点击前消失。Base 同样超时；候选待页面停稳后从现有文件行按 Shift+F10、选择“整理”，
+  正常进入精确计划摘要。此脚本原失败保留，未增加重试或修改等待。
+- `operations.spec.ts`：用户点已结束统计、打开实际运行详情后，脚本仍等待旧教程文字
+  “在任务中心查看该运行的详情”；现有卡片已直接展示任务详情与操作记录，Base 同样失败。
+- `operations-principal-identity.python.spec.ts`：Unicode 身份已通过认证、进入探索和任务中心、
+  打开 Batch；夹具提供的是纯技术失败历史，当前界面按既有规则只供查看证据，脚本仍期待
+  “进行单项分析恢复”的选择框而失败。Base 同样失败，该脚本后半的批次重连／重发断言
+  本轮未获得证明。
 
-主要实现位于 `web/src/features/explore/ExplorePage.tsx`、`ExploreDetailCard.tsx` 和
-`web/src/shared/ui/styles.css` 的 Explore 专属规则；相关组件／入口测试、E2E 就绪定位及
-本地夹具可作直接必要调整。优先复用 `ModalCardShell` 的关闭、焦点、内滚动和背景锁定，
-不改变全局 Shell／其他弹卡的几何或生命周期。
+这些失败不由本次探索呈现引入，也不影响已完成的三项修正；保留其原始失败和未覆盖范围，
+不称全套 E2E 全绿。未运行无影响的全 Python、wheel／Docker 或发布矩阵。
 
-1. **建立同视口基线并移除可见标题。** 从正常侧栏／认证后入口保存改前探索与详情截图。
-   删除主内容的可见标题及占位，以可访问名称保留探索区域身份；把旧标题的 section 标注、
-   ref 和详情兜底焦点迁到合理的可用区域／控件。空结果、失败和翻页后仍有确定焦点，
-   正常关闭优先回到原海报；不聚焦不可见节点或导致列表跳顶。
-2. **对齐探索内容边界。** Explore 专属地消除 Shell 的第二层宽内边距，按现有紧凑页面的
-   桌面左右边界布置搜索、筛选、结果网格和分页。窄屏合理收边，保留390px两列海报、
-   长筛选行内部横向浏览及错误提示；不借此统一重设计其他页。
-3. **让详情成为首屏主体。** 把真实 `backdropPath` 对应图片移为卡片内装饰背景层，
-   不再作为独占16:9正文行；保留可信图片路径／尺寸和原作品身份。桌面采用紧凑海报＋
-   正文，手机采用小海报与紧凑信息布局，避免全宽海报再次把正文挤出首屏。
-   标题／关闭稳定可达，评分、类型等基本信息和简介开头直接可见；长简介／长原名可换行
-   并继续滚动，不能用截断、隐藏信息或只显示摘要替代完整阅读。
-4. **保证所有图片下可读并保留恢复。** 使用与现有浅色主题协调的遮罩／渐变和稳定的
-   文本底色，不能只在一张偏暗背景下调透明度。正文与关闭／重读控件不受图片加载、
-   亮度或裁切影响，背景不拦截指针或键盘。缺图／图片失败直接使用稳定底色，信息位置
-   不因图片迟到而下移；详情加载、失败、重读和返回路径保留。
-5. **更新直接消费者并验证交付。** 增加首屏、可读性和边界测试，迁移依赖“可见探索标题”
-   的入口测试。使用真实页面身份／搜索区域等稳定就绪条件，继续断言成功落到探索及无
-   可见标题，不能删除等待或放松断言。仅调整直接依赖的 connect／landing 定位，
-   不顺带重构各业务测试。实施时按实际结果最小协调 V2 Requirements、
-   Product Experience、Architecture 中标题和详情呈现的现行描述；交候选时不得自称验收PASS。
+## Evidence and checkpoint boundary
 
-### Acceptance Criteria
+本机证据根：`.git/validation-evidence/79bcc866/b-review-20261108-2014/`。
+`gates.json`、`e2e-gates.json`、`base-gates.json`、`base-operations-gate.json` 保存准确命令与结果；
+原日志和 trace、Base／候选同视口截图、`first-screen-metrics.json`、`compact-page-edges.json`、
+`contrast-metrics.json`、`touch-metrics.json` 及 `suite-visuals/` 保留于同目录，不承诺随 Git 同步。
+B 的浏览检查使用原 Python harness 的隔离 4197 实例，Base 为 4196，Node 假服务为 4198；
+均从已有认证、侧栏和可见作品／文件入口操作。图片使用本地夹具，未调用真实 TMDB，
+未读取用户运行数据库、配置或媒体。
 
-- [ ] 探索主内容没有可见“探索”标题及其空占位；侧栏入口正常。区域可访问名称、搜索、
-      空态／失败／分页焦点和详情退出兜底可用，没有失效 ID 或不可见焦点。
-- [ ] 1440px和1920px桌面，探索搜索／筛选／海报网格的左右边界与既有紧凑页面协调，
-      距侧栏不随4vw继续扩大；390px无横向页面溢出，仍为两列海报。对齐验收使用同视口
-      实际页面／几何和整页视觉，不能只检查某个CSS数值。
-- [ ] 1440×900、1440×720、390×844、390×600，在详情成功稳定后且未滚动卡片时，
-      名称、关闭、TMDB评分／类型等主要信息及至少一行简介正文实际处于卡内可见区域。
-      电影／剧集均成立，片长／季集等其余信息保留可达。长名称场景保证主体仍可开始阅读，
-      全文通过卡内滚动可达；短简介不为大图产生无意义滚动。
-- [ ] 横幅真实作为背景呈现、不独占正文高度；海报辅助识别。明亮、暗色和高反差图片下，
-      正文／辅助文字／关闭控件均清楚；普通文字对实际合成背景的对比度至少4.5:1。
-      缺图、加载失败／迟到不遮字、不改正文起点、不留下大块图片空位。
-- [ ] 长简介能用滚轮、触摸和键盘读到末尾并访问准确作品的TMDB外链；标题／关闭可达，
-      图片层不吞交互。正常／较长名称、缺项、详情错误与显式重读均有可用布局。
-- [ ] 从列表非顶部进入，加载／失败／重读、卡内滚动、关闭／Escape／浏览器后退前进均
-      保持原列表背景位置；返回保留类型、筛选／搜索、成功页和合法入口焦点，宽度不抖动。
-      详情开关不重播整页切换，reduced-motion保持可用。
-- [ ] 搜索非法输入纠正、筛选待应用／清除、真空态、普通分页、迟到响应隔离及身份／Provider
-      错误恢复保持；探索零媒体Storage调用、零业务写入。其他页、其他弹卡、关于与鸣谢
-      和必要来源入口不受探索专属样式影响。
-
-### Required Tests
-
-遵循 [test levels and ownership](docs/development-workflow.md#6-test-levels)。
-所有运行使用本地夹具／临时根和数据库。下列产品测试按 Developer／B 分工执行；
-Developer affected 计划已完成，B acceptance 仍待独立执行。
-
-#### Developer — affected tests
-
-根目录：`python3 scripts/check_governance.py`、`git diff --check`。
-`web/`：
-
-```sh
-npm run typecheck
-npm run test -- run src/features/explore/ExplorePage.test.tsx src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx src/features/entry/EntryPage.test.tsx src/routes/router.test.tsx
-npm run build
-npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts
-npm run test:e2e -- tests/e2e/page-transition.spec.ts
-```
-
-对实际新改的TS／TSX运行 `npx eslint <changed-paths>`，对实际新改源码／样式／Task运行
-`npx prettier --check <changed-paths>`；从 `web/` 引用根Task使用 `../TASK.md`。
-仅有改动涉及新的测试文件时，把它加入直接受影响列表，不把全仓门禁转给Developer。
-
-测试需覆盖可见标题退出与语义／回焦、空态／错误／翻页、背景缺失／失败、真作品字段和
-外链、列表状态不串、背景位置不变。扩充现有Explore浏览器旅程，加入四个指定视口的
-**未滚动首屏**断言、两种作品类型、长名称／简介、明亮／暗色／高反差图片和缺图。
-使用可见区域断言／包围盒与真实滚动，避免只测DOM存在或能滚到底。
-开发交接保存同视口改前／改后整页、详情首屏和必要失败态截图，并实际查看。
-
-#### B — independent acceptance and regression
-
-审查完整固定 Task Base..候选，复现原首屏／边距问题并对比候选。`web/`执行：
-
-```sh
-npm run typecheck
-npm run lint
-npm run format:check
-npm run test -- run
-npm run build
-npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts
-npm run test:e2e
-```
-
-B负责完整Web单测及默认Node E2E，依据是入口标题就绪断言横跨Entry／Shell与多个
-业务测试，且同一共享样式文件承载页面／弹卡；Developer只跑上述直接受影响计划。
-默认E2E涵盖九主页面、其他弹卡、认证续转和原有浏览入口，防止遗漏直接消费者。
-
-对标题定位迁移直接涉及的其他Python旅程，B另做有界入口验证；使用原配置、顺序执行：
-
-```sh
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/organize-source-history.python.spec.ts --workers=1 --grep 'the inventory renders real producer runs|capture the|a recorded partial history'
-npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
-```
-
-这些入口验证不授权改变整理流程。若实际选择保留可访问的标题语义而使部分消费者无需
-修改，B依据最终差异缩减对应迁移验证，并记录理由；其他未变Python／发布全矩阵不列为
-本Task门禁。若实施触及通用弹层行为或安全边界，先按工作流重评影响和等级。
-
-B实际核对四个指定视口、1920px对齐和390px触摸，检查文字清晰、图层遮罩、首屏主体、
-完整长内容、失败恢复及非顶部返回。对比度依据合成后的实际背景核对，不凭遮罩透明度
-推断；快速图片／慢图片／图片失败均不得推挤内容。测试和视觉材料保留于忽略证据目录。
-
-既有默认E2E `deep-link.spec.ts` 的403重复提示严格定位失败，历史已由B在前Task Base
-复现，详细证据见上方接受记录；这是背景信息，不是本候选的自动豁免。若本轮仍失败，
-B用本Task固定Base复现并报告，不能顺带删断言／隐藏失败，也不宣称全E2E全绿。
-
-### Non-goals
-
-不新增详情字段、独立详情深链／持久会话、Provider／图片代理／图片库、主题设置、推荐／
-下载／播放；不改筛选或分页语义、全站布局／动画、其他页业务、API／CLI、权限、Active、
-Storage、schema或执行引擎；不修无关既有测试失败、不改旧Slice／Roadmap／Progress，
-不添加依赖，不推送、发布或部署。
-
-### Developer Completion Report
-
-Status: READY FOR B REVIEW — 2026-11-08
-Task Base: `37c3287ece5cd7060a887b42fcd84c6b0fc49e7e`
-Implementation Head: `79bcc866f32b69ea8266491c77ec995f8b0e578c`
-Working Branch: `main`
-
-**交付内容**
-
-- `ExplorePage` 移除主内容可见“探索”标题及空占位；`section` 以 `aria-label="探索"`
-  保留可访问区域身份，成为空态／失败／翻页及详情深链关闭的确定焦点目标。详情返回仍优先
-  回到原海报，原海报失效或深链打开时回到探索区域，不使用旧标题 ID 或不可见节点。
-- Explore 专属消除 Shell 的第二层 `4vw` 左右内边距，页面以 `23px` 桌面／`14px` 窄屏
-  内容起点与文件、规则、自动化、任务中心对齐；390px 保持两列海报且无页面横向溢出。
-- `ExploreDetailCard` 将真实 `backdropPath`（w780）移入卡片级装饰背景层，背景不占正文
-  行、不拦截指针；海报缩小并置于事实左侧，评分／类型前置，标题、关闭、主要信息和简介
-  开头在未滚动首屏可读。背景加载失败／迟到只保留稳定底色，不改变正文起点。Explore
-  详情卡按内容自适应高度、受原卡片最大高度约束，长内容继续在卡内滚动。
-- `ModalCardShell` 增加可选 `layerBackground`，仅 Explore 详情传入；其他弹卡的关闭、焦点、
-  滚动锁定和固定几何不变。当前 `V2-EXPLORE-012/014`、Product Experience 与 Architecture
-  中标题／详情呈现文字已按实际交付最小协调，旧 Slice 接受身份未改写。
-- 迁移依赖可见探索标题的 Entry／Shell／业务入口就绪断言到可访问探索区域；Explore
-  浏览器旅程新增四视口首屏、1920／1440 对齐、390px、长名称／长简介、明暗／高反差、
-  缺图／迟到背景和对比度验证。
-
-**实际执行的 affected tests（cwd `web/` 除注明）**
-
-| 命令 | 结果 |
-|---|---|
-| `python3 scripts/check_governance.py`（仓库根） | PASS |
-| `git diff --check`（仓库根） | PASS |
-| `npm run typecheck` | PASS |
-| `npx eslint <changed source/test paths>` | PASS |
-| `npx prettier --check <changed source/style/test paths>` | PASS |
-| `npm run test -- run src/features/explore/ExplorePage.test.tsx src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx src/features/entry/EntryPage.test.tsx src/routes/router.test.tsx` | 5 files / 74 tests passed（10.15s） |
-| `npm run build` | PASS（Vite 296 modules；仅既有 >500kB chunk warning） |
-| `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --output=test-results/explore-python-run` | 25 passed（33.1s） |
-| `npm run test:e2e -- tests/e2e/page-transition.spec.ts --output=test-results/page-transition-run` | 10 passed（39.7s） |
-
-单测覆盖：可见标题退出与区域可访问名称、详情深链关闭回焦、详情失败重读、缺图背景层保留、
-TV／电影字段、分页空结果确定焦点以及既有搜索／分页／缓存旅程。E2E 使用真实 Python
-Explore harness、临时 SQLite、假 TMDB 传输和本地拦截图片；既有零 Storage／零业务写入断言
-继续通过。
-
-**视觉证据**
-
-本地忽略目录 `web/test-results/explore-harness-evidence/` 下已保存并实际查看：
-`PATCH-20261108-2-desktop-aligned.png`、`PATCH-20261108-2-mobile-390-aligned.png`、
-四视口电影／剧集详情首屏、`PATCH-20261108-2-mobile-long-title-first.png`、
-`PATCH-20261108-2-mobile-long-overview-first.png`、长内容末尾、缺图／迟到背景及
-明亮／暗色／高反差背景截图。证据为本机材料，不承诺随 Git 同步。
-
-**未执行、限制与剩余风险**
-
-- B 的完整 Web 单测、默认 Node E2E、全 Python／发布矩阵未在本轮执行；这些仍由 B 独立验收。
-- 既有 `deep-link.spec.ts` 403 重复提示 strict 失败本轮未重跑；仅迁移了其探索就绪定位，
-  未删除或放松该断言。
-- 明暗／高反差图片使用本地 SVG fixture，并在代码中按白／黑两个极端核对实际合成对比度
-  ≥4.5:1；真实 TMDB 照片仍需 B 在独立验收中按实际合成背景核对。
-- 未使用真实外部服务、用户运行数据库／配置／媒体；未推送、发布或部署。
-
-### B Review Result
-
-PENDING — 对精确候选独立验收后填写 Reviewed Base..Head、实际结果、限制及
-PASS／FIX REQUIRED。通过后恢复紧凑 NO ACTIVE IMPLEMENTATION TASK；
-本独立修正不需要A关闭Slice，也不规划下一项。
+治理检查、完整 Base..Head 与工作区的 whitespace 检查、验收记录格式检查均通过。
+本轮测试命令累计约 8 分 20 秒，低于本轮复核时间的 50%。
+验收起点为 main／上述 Reviewed Head，暂存区为空；预存 mediaflow/.DS_Store 修改及
+未跟踪日志、系统元数据、调查材料和 output 均保留，不纳入提交。
+本轮仅 checkpoint TASK.md，未推送、发布或部署。
