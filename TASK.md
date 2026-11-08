@@ -10,8 +10,9 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
+Reviewed Head: f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c
 Difficulty: Medium
 Test Level: T4
 Planner / Reviewer: B
@@ -282,6 +283,73 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 
 ### B review result
 
-尚未审查实现候选；无产品验收结论。B 独立审查后记录固定 Base..Head、PASS／FIX REQUIRED、
-实际门禁结果和 Authorized bug acceptance complete。接受后恢复紧凑
-`# NO ACTIVE IMPLEMENTATION TASK`，不新增 Slice 关闭记录或下一项工作。
+**FIX REQUIRED — 2026-11-08。Authorized bug acceptance complete: NO。**
+
+B 独立审查完整固定
+`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c`
+的全部 9 个文件。唯一生产改动为 OpenList HTTP 适配器；业务服务、Storage port、权限、
+schema、缓存刷新策略及 Slice52 接受边界未改变。修正在本 Task 内，Base 不变。
+
+**本轮已确认的用户结果：** 从生产构建文件页选择 One／Two 两个主文件，进入真实分析和
+精确摘要，确认前无媒体修改；确认后真实 Worker 完成两次移动及两次重命名。两项源消失，
+目标类型／大小／fixture 内容摘要正确，SQLite Result 均为 `SUCCESS / verified_complete`，
+Task flow 独立为 `completed`。两次执行页 Refresh 后仍显示“已验证完成 2”，无新增修改。
+台账共 62 次 list，全部 `refresh: false`，0 次 fs/get／内容端点；最终结果页截图已实际查看。
+这证明正常核心旅程；再次 Worker poll、任务详情／返回文件页的额外读回及其余 T4 证明
+尚未在本轮全部完成，不以正常成功案例替代故障／非重放覆盖。
+
+#### B-01 — 新增真实 Python 用例误入默认 Node E2E（必须修正）
+
+`web/tests/e2e/openlist-metadata.python.spec.ts` 只能在新增 Python harness 下运行，
+但 `web/playwright.config.ts` 的既有 `testIgnore` 未排除它。默认 `npm run test:e2e`
+会发现该用例并启动 Node 假服务；文件页没有 Python fixture 的 One／Two，测试在
+`openFiles()` 等待 `One.2001.mkv` 时超时。B 从既有默认入口定向复现 **1 failed**；
+同一用例在专用配置下 **1 passed**。这是本 Task 新增用例的接线错误，不是目录查询失败，
+也不是用户应处理的文件整理恢复步骤。
+
+**Developer 修正指导：**
+
+1. 沿用默认配置已有的真实 Python 用例排除方式，将本用例排除；保留专用配置的真实
+   Python／HTTP adapter／Worker 证明。无需新增测试平台、修改生产代码或放宽断言。
+2. 在 `web/` 运行 `npm run test:e2e -- --list`，确认默认发现清单不含本用例；运行
+   `npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts tests/e2e/openlist-metadata.python.spec.ts`
+   确认专用入口仍实际通过，并执行变更文件的 Prettier／ESLint、治理及 diff 检查。
+3. 沿用同一 Task checkpoint／交接。全套 Python／Web／Docker／wheel 门禁仍由 B 执行，
+   不交给 Developer。按用户本轮要求，测试用时少于该轮总用时的 50%；先审查已有入口和
+   实际变化，再执行必要验证，不为可选证明扩建过程工具。
+
+#### Actual validation and remaining B gates
+
+以下均为 B 本轮实际运行；没有把 Developer 报告当成独立验收结果。
+
+| 命令／范围 | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_openlist_storage` | 32 passed，7.689s；真实 HTTP 405、分页／根／缺失／失败、read 和三种原生移动形态 |
+| `tests.test_media_discovery_provider_manifest tests.test_storage_browser tests.test_storage_setup_check tests.test_runtime_storage_configuration tests.test_scanner`（`python -m unittest`） | 50 passed，1.819s |
+| `tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_organizer tests.test_attachments`（同上） | 136 passed，5.718s |
+| `tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_source_directory_cleanup`（同上） | 180 passed，66.009s |
+| `.venv/bin/ruff check .`／`.venv/bin/ruff format --check .` | 被预存未跟踪 `.explore_adapter_block.py:8` 语法错误拦住；该文件不在候选 diff 中，未修改或排除仓库规则 |
+| 对 `git ls-files -- '*.py'` 返回的完整 353 个已跟踪 Python 文件执行相同 ruff 检查 | check、format 全通过 |
+| `python3 scripts/check_governance.py`；`git diff --check Base..Head`；compileall；pip check；两份原计划 example config validate；禁用依赖搜索 | 全部通过／禁用依赖无匹配 |
+| `web/`：`npm run typecheck`／`lint`／`format:check`／`build` | 全通过；保留大 chunk 构建提示 |
+| `web/`：`npm run test -- run` | 97 files / 1459 tests passed，125.05s；保留 jsdom scrollTo 提示 |
+| 专用 OpenList browser proof（上述准确命令） | 1 passed，3.8s；请求台账和截图见下方证据 |
+| 默认配置定向执行 `npm run test:e2e -- tests/e2e/openlist-metadata.python.spec.ts` | 1 failed，10.5s；B-01 |
+| `.venv/bin/python -m unittest discover -s tests` | 已启动，发现 B-01 后中止，exit 130；中止前出现一处 `F` 和 skip，未输出完整失败总结，未定位原因；不称通过或 Base 已有失败 |
+| `docker info --format '{{.ServerVersion}}'` | Docker socket 不存在，daemon 不可用；未构建镜像或运行两项必需 Docker smoke |
+
+已出现 Task 阻塞，按工作流 §6 不继续昂贵门禁。B-01 修正后，B 仍需在新候选完成完整
+Python 回归并查清失败、默认全量 E2E、wheel／外部安装 smoke、适用安全及 Docker resident／
+release-security 证明；Docker 环境限制仍为 pending，不转交成产品修复。既有 E2E 失败也
+未在本轮重新归因，不能引用旧 PASS 代替本候选结果。
+
+本机证据：
+`.git/validation-evidence/f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c/b-review/`。
+`native.log`、`native/openlist-metadata.json`／PNG、`default-e2e.log`、失败 trace、
+`tracked-ruff.log`、`tracked-format.log` 和 `review-results.json` 保留本轮命令／结果。
+未写入日志文件的早期全量命令仅保留终端结果，Python 中止运行不作可复用验收证据；
+本机证据不承诺随 Git 同步。生产构建资产身份记录在 `review-results.json`。
+
+本轮起点 `main / f49458009aeb8f7ed96f4bd7c1b8d1292a37b12c`，暂存区为空；预存
+`mediaflow/.DS_Store` 及未跟踪调查／日志／output／系统元数据全部保留。仅更新 TASK.md，
+不实现修正、不推送、不发布，不修改 SLICE／Roadmap／Progress。
