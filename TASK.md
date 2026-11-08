@@ -14,14 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
 Reviewed Head: cf680df6e24725ba40ada378e158d6a0e44710e5
 Correction Candidate: cf680df6e24725ba40ada378e158d6a0e44710e5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; B FIX REQUIRED
+Development Authorization: IMPLEMENTATION COMPLETE; B REVIEW; NO TEST-TOOL DEVELOPMENT
 ```
 
 ## Goal and observed gap
@@ -206,28 +206,11 @@ Move／Rename 路径不因下载链接不可用而在提交、分析、执行前
     路由区分后完整安全 smoke 通过；正式脚本仍失败，Developer 修正并用固定候选镜像
     跑原脚本。原生传输 lifecycle smoke 已独立通过，无需为它改产品或放宽夹具。
 
-12. **本轮完整自动化生命周期暴露的两项间歇性脚本竞态，统一修正。**
-    `automation-lifecycle.python.spec.ts` 完整 21 项运行得到 19 passed／2 failed；同一候选
-    两项独立新 harness 复验 2 passed，上轮同文件完整 21 passed。保留这些原始事实，
-    修正时序后跑完整原入口，不能用复验通过替代本轮完整失败。
-    - `:857` 用户第一次复制成功后，脚本仅等成功提示／读取持久状态，便立即再次复制。
-      失败现场第一次发布后的列表与 form-authority 尚未配成同一版本；第二次没有 Copy
-      POST，页面显示“列表显示的任务配置与当前保存配置不一致，本次复制未发送”。脚本
-      却等待丢响应后的“待核对”，因而超时。先通过现有列表和 form-authority 的后续读取
-      确认第一份副本已在当前列表、同次发布的源行与授权已同步，再发第二次明确 Copy；
-      用 await 管理 fetch→abort 拦截，确实让第二次请求被真实 API 受理后丢失响应。
-      保留两次独立 Copy、两份不同副本、第二次自己的核对提示、两个精确版本及不重放
-      断言；不把合法拒绝改成“复制已受理”，不删 readCopyBaseline 的一致性检查。
-    - `:1343` “启用保存→立即重开→慢读中仅改名保存→正常重开”在完整运行中，`:1409`
-      延迟回调对已经处理的 route 再次 continue，测试因此结束；独立运行正常。把延迟
-      GET 的开始／释放／完成纳入可控夹具，在卸载路由及进入后续编辑前完成回调收尾；
-      对真实取消的请求验证其结束并只结算一次，不继续已结束的请求，也不吞异常。
-      保留“读取未返回时用户就保存”的场景，三次保存的 enabled=true、itemLimit=7、
-      逐次精确版本、正常读与慢读都必须验证；不能改成等慢读结束再保存来回避原回归。
-    Developer 仅修改真实触发问题的 spec／必要局部夹具，运行完整该文件与 ESLint／
-    Prettier／typecheck（沿既有 automation 专用配置，独立输出）。B 仍负责最终全量。
-    当前没有证据表明本轮四项修正破坏了产品数据；若独立定位得到真实产品缺陷，须给出
-    同一现有入口的证据并在本 Task 最小修正，不扩大功能或更改权限／版本／非重放规则。
+第 12 项测试返工安排已撤销。用户明确禁止开发测试工具，并要求以实际产品旅程判断
+阻塞。当前两项运行失败未显示产品旅程受损：复制被既有版本一致性检查拒绝并显示刷新
+提示；慢读编辑的已保存值检查通过，错误来自测试 route 回调。它们不作为 Developer
+产品返工项，不新增夹具、拦截器或测试工具。完整失败和独立通过的记录均保留；先前
+“全部测试变绿”的要求不被改写为已经满足。
 
 关联合同补充：`V2-AUTH-001–003`、`V2-SAFE-001`、`V2-OPS-001/004/005/007/008/012/014–017`；
 完整 Task／结果／四类恢复旅程见 [Tasks, results and per-item recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)。
@@ -323,7 +306,6 @@ npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests
 npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts tests/e2e/openlist-metadata.python.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=test-results/inventory-correction
 npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --output=test-results/settings-correction
-npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts --output=test-results/lifecycle-correction
 ```
 
 若修改共享文件菜单，再运行
@@ -475,7 +457,7 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 
 ### B review result
 
-**FIX REQUIRED — 2026-11-08。四类上轮修正通过；完整生命周期运行出现两项间歇性脚本失败。**
+**复核结论更正 — 2026-11-08：四类修正通过，未确认产品阻塞；撤回此前依据两项脚本失败作出的产品 FIX REQUIRED 及第 12 项返工安排。**
 
 完整复核 `6db3647c7e77d54f3a49b6725c804f0794fc7fbb..cf680df6e24725ba40ada378e158d6a0e44710e5`，
 含原 OpenList／共享菜单交付及本轮默认值、CSP、浏览器测试修正。所有剩余门禁已继续跑完，
@@ -483,21 +465,20 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 `/tmp/mediaflow-b-review-cf680df6`；原工作区 `.DS_Store`、未跟踪／私有材料保持。
 本轮仅改 TASK，不改 SLICE／Roadmap／Progress、不推送或发布。
 
-**阻塞及用户操作：**
+**两项测试失败对应的实际操作：**
 
 - 第一次复制显示成功后立即再次复制：完整运行中源行与配置授权还未同步到同一发布，
   产品明确拒绝且没有第二次 Copy POST；`:857` 脚本却期待已经发送并丢失响应。
-  台账与可见拒绝均已核对。脚本需等待既有后续读取真正同步后执行所要验证的第二次
-  丢响应旅程；保留产品安全拒绝，不要求新增可见版本操作。
+  台账与可见拒绝均已核对，产品走的是既有拒绝与刷新提示，没有第二次复制效果。
 - 启用保存后立刻重开编辑，在慢读尚未返回时只改名保存，再正常重开：`:1343` 的延迟
   route 回调在 `:1409` 继续一个已处理请求，报告 Route is already handled 并提前结束。
-  需要明确管理挂起请求和卸载／下一段交互的先后；当前未证明已保存值或权限被产品改错。
+  已保存的启用状态与处理上限检查通过；该错误不构成产品值或权限错误。
 
 完整 `automation-lifecycle` **19 passed／2 failed（1.4m）**；同一候选对两项用独立新
 harness 定向复验 **2 passed（7.1s）**。前次 `34be1d96` 完整 21 passed 的事实保持；
 这次是新时序暴露的间歇失败，不是上轮没运行该文件。不能用复验或自动 retry 抹掉失败。
 对应测试分别来自 `7fac98cb5`（2026-11-05 22:02 +08）和 `9d6b78147`
-（同日 19:04 +08），本轮未改该文件。具体统一修正指导见第 12 项，同一 Task 返工。
+（同日 19:04 +08），本轮未改该文件。第 12 项返工指导已撤销，失败保留为测试记录。
 
 **本轮完整验收结果（未复用旧完整套件冒充当前结果）：**
 
@@ -544,9 +525,9 @@ Python／原生每个完整入口均实际完成；七项专用真实服务／�
 profile 和已挂载临时根；结束已停止 VM，默认 context 未改。两个正式镜像 ID 保存在
 `image-ids.txt`。B 临时补充 spec 已移除，未提交产品或过程工具。
 
-满足已有安全与用户结果的部分不追加任务；本次只有两项完整测试失败阻止“全部绿色”。
-修正留在本 Task；Developer 交新 checkpoint 后 B 继续独立接受，不把全量门禁交回
-Developer。Slice52 关闭身份和所有此前通过／失败／验证限制保持于 Git。
+本轮没有已确认的产品返工项；不开发测试工具，不向 Developer 分派未定位的问题。
+两项测试失败如实保留，不宣称全部绿色。Task 返回 B 复核状态；Slice52 关闭身份和
+所有此前通过／失败记录保持于 Git。
 
 ### Developer correction report — 2026-11-08
 
