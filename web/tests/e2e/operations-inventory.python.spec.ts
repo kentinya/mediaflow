@@ -3760,8 +3760,15 @@ test("initial manual preparation remains reachable from Task Center", async ({
   // record list, so the admitted Task Center detail must reopen the exact
   // preparation the operator left.  The real Files selection, resident
   // discovery Worker, exact confirmation and manual execution Worker are the
-  // same supported fixtures the other Files journeys use.
+  // same supported fixtures the other Files journeys use.  This appended
+  // sequential journey restores the deterministic synthetic sources and the
+  // known earlier outputs first, so an earlier MOVE of the same movie can
+  // never turn the reviewed target into an unrelated destination conflict.
   const api = recordApiCalls(page);
+  const restored = await request.post(
+    `${BASE}/__harness__/restore-source-media`,
+  );
+  expect(restored.ok()).toBeTruthy();
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page, ADMIN_TOKEN);
   await openOrganizingSource(page);
