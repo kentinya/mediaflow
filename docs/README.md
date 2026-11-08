@@ -9,9 +9,12 @@ Slice51／50及更早接受身份、延期保持；开发关闭不等于推送�
 
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
 开发过程留在 Git。`docs/history/` 是 LEGACY / READ ONLY，不作为当前指令，也不继续追加归档。
-最近的[独立探索修正](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)已由 B 验收 PASS：带标签的筛选行、紧凑 TMDB 详情外链、
-侧栏集中鸣谢，以及从列表非顶部打开详情全过程保持背景原位。验收结果与既有测试定位失败
-见固定记录；现行要求、旅程和架构已同步。
+两次独立探索修正已于 2026-11-08 经 B 验收 PASS：
+[PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
+交付带标签的筛选行、紧凑 TMDB 详情外链、侧栏集中鸣谢及详情全过程背景原位；
+[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
+删除可见页面标题、统一内容边界，并将横幅作为装饰背景，使详情主要信息与简介开头首屏可读。
+验收结果、在各自 Base 复现的既有测试失败与证据限制见固定记录；现行要求、旅程和架构已同步。
 此前的[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已由 B 验收 PASS：任务状态/进度/文件结果分层、文件处理经过可读、切页加载衔接和自动化
 页头刷新删除。现行行为见完整旅程及页面规范；原 Slice 接受身份保留。
 

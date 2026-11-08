@@ -70,11 +70,15 @@ define the delivered boundary and the Contract retains failures/evidence limits.
 planning role exception and independent B review remain disclosed. [TASK.md](TASK.md) has no active
 implementation Task; A selects the next large Slice separately. No release or deployment is claimed.
 
-The subsequent [Explore correction](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
-passed independent B review on 2026-11-08: MoviePilot-style labelled filter rows, a compact TMDB
-detail action, attribution in the sidebar's 关于与鸣谢 card, and preserved background position when
-opening and returning from details. The fixed review records validation and the existing 403 test
-locator failure reproduced at its Base. It is a standalone correction; Slice52's closure stays unchanged.
+Two subsequent standalone Explore corrections passed independent B review on 2026-11-08.
+[PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
+delivered MoviePilot-style labelled filter rows, a compact TMDB detail action, sidebar attribution
+and preserved background position when opening and returning from details.
+[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
+removed the visible Explore title, aligned its content edges with the compact workspaces, and made
+the detail backdrop decorative so the main facts and overview start are readable before scrolling.
+The fixed reviews retain validation results, existing test failures reproduced at their respective
+Bases and evidence limits. Slice51/52 acceptance identities stay unchanged.
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,

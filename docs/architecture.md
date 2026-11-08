@@ -35,9 +35,11 @@ and remove its read-only Files search placeholder.
 Validate the whole page's visual hierarchy, density, proportions, spacing and typography/colour
 consistency through same-viewport before/after views and actual browsing, beyond individual alignment.
 The Explore modal body opts into bounded internal vertical scrolling while retaining shared
-background lock/gutter/focus and accessible dismissal; detail content must reach its end at desktop, 390px and short viewport heights. The real backdrop is one non-interactive card background layer, not a 16:9 body row:
-header text uses a stable dark scrim, the facts/overview start on the first screen at the required
-viewports, and missing/late art never changes the reading start.
+background lock/gutter/focus and accessible dismissal; detail content must reach its end at desktop,
+390px and short viewport heights. The real backdrop is one non-interactive card background layer.
+Header text uses a stable dark scrim and the body has an opaque light surface; the facts/overview
+start on the first screen at desktop, 390px and short viewports, and missing/late art preserves the
+reading start.
 
 **All main-page transitions and content handoff:** Router/AuthBoundary/Query retain lifecycle and
 authority ownership. Cover all nine existing sidebar destinations from transition through actual
@@ -126,16 +128,20 @@ V1 security headers remain. Public images receive no API/Provider token. There i
 proxy, image cache or object URL lifecycle. Missing/broken images render placeholders and preserve
 text/detail access. TMDB source and attribution are visible.
 
-**Accepted Explore presentation correction:** the
-[standalone B review](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
-records PATCH-20261108-1 without changing the original Slice51/52 acceptance identities.
-`ExplorePage` renders one labelled workspace region (no visible page heading) with labelled type/sort/genre/language chip rows
-and a rating slider/vote-count draft with explicit Apply; year remains in More filters. Existing Query identities,
-backend filters, search separation and ordinary pagination retain their ownership. `ExploreDetailCard` renders the
-real w780 backdrop as a decorative card layer behind a stable navy header; poster, rating/genres and
-the overview start are visible without scrolling at the required viewports, while the bounded body
-reaches every remaining fact and the single exact-work TMDB logo/link action. The old Explore
-attribution component and list banner are removed.
+**Accepted Explore presentation corrections:** independent B reviews record
+[PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
+for filters, attribution and detail return, and
+[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
+for the workspace boundary and detail reading. Original Slice51/52 acceptance identities remain.
+`ExplorePage` renders one labelled workspace region (no visible page heading) with labelled
+type/sort/genre/language chip rows and a rating slider/vote-count draft with explicit Apply; year
+remains in More filters. Search, filters and grid share the compact content edges used by Files,
+MediaLibrary, Rules, Automation and Task Center. Existing Query identities, backend filters, search
+separation and ordinary pagination retain their ownership. `ExploreDetailCard` renders the real
+w780 backdrop as a decorative card layer behind a stable navy header and opaque light body;
+poster, rating/genres and the overview start are visible without scrolling at desktop, 390px and
+short viewports, while the bounded body reaches every remaining fact and the single exact-work
+TMDB logo/link action. The old Explore attribution component and list banner are removed.
 `AppShell` mounts the static `features/about` card from its sidebar entry, using shared ModalCard
 focus/scroll/exit behavior. About owns the approved same-origin logo reference, full notice and
 TMDB home link; Shell does not depend on Explore. Opening/closing About adds no route, API request
