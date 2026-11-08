@@ -1390,8 +1390,14 @@ Source ownership is independent of short-lived execution leases:
   cancellation or lease loss cannot restore the rejected source through a fallback publication.
 
 `GET /api/v1/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
-history and exact `requestId` reconciliation. Prepared-work links retain their own pin/context;
-generic new-organize routes guide to Files without another picker or work. Ordinary initial summary
+history and exact `requestId` reconciliation. Files uses the exact-request read for unknown admission;
+ordinary directory browsing has no organizing-history panel or history polling. The selected Task
+Center run read exposes optional `filesPreparation {discoveryId, resourceLibraryId}` from the
+discovery durably linked to that exact Task. Its `继续整理` link opens the existing
+`/operations/organize/new` preparation with `discoveryId`, `resourceLibraryId` and validated `returnOps`.
+This read-only association carries no execution authority; the original preparation retains its
+pin/context, summary, explicit confirmation and execution readback after reload/re-authentication.
+Generic new-organize routes guide to Files without another picker or work. Ordinary initial summary
 confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
 population and four-type lineage described above.
 

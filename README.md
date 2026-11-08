@@ -47,6 +47,14 @@ originating library page; Task Center handles organizing. Live Job, Pause/resume
 runtime settings live in System Settings. Five-state Task flow stays independent of file outcomes;
 completion neither proves file success nor grants replay.
 
+Files opens directly into the selected library's directory loading, listing or read error; its
+former organizing-history panel is removed. Select files → prepare the exact summary → leave →
+open the original Task in Task Center → `继续整理` returns to that same summary, including after
+reload/re-authentication. Explicit confirmation still starts execution only once; the original Task
+keeps its results. [PATCH-20261109-1 B acceptance](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
+records the accepted implementation and T3 validation; [Release validation](docs/release.md#current-v2-validation-boundary)
+distinguishes this acceptance from earlier full regression and packaging evidence.
+
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.

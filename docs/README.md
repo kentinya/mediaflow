@@ -9,18 +9,16 @@ Slice51／50及更早接受身份、延期保持；开发关闭不等于推送�
 
 现行文档说明当前规则、用户旅程和架构；验收事实在关闭账本与对应 Git checkpoint，详细
 开发过程留在 Git。`docs/history/` 是 LEGACY / READ ONLY，不作为当前指令，也不继续追加归档。
-两次独立探索修正已于 2026-11-08 经 B 验收 PASS：
-[PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
-交付带标签的筛选行、紧凑 TMDB 详情外链、侧栏集中鸣谢及详情全过程背景原位；
-[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
-删除可见页面标题、统一内容边界，并将横幅作为装饰背景，使详情主要信息与简介开头首屏可读。
-验收结果、在各自 Base 复现的既有测试失败与证据限制见固定记录；现行要求、旅程和架构已同步。
-[PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) 于 2026-11-08 经 B 产品验收 PASS：
-OpenList 属性查询改用目录列表，实际内容读取单独获取下载链接；文件页完成原生移动／
-重命名及逐项核验，并修复 Python 3.11 启动。实现为 `cf680df6`，当前无活动实施 Task。
-完整验证结果见 [Release](release.md#current-v2-validation-boundary)。
-此前的[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已由 B 验收 PASS：任务状态/进度/文件结果分层、文件处理经过可读、切页加载衔接和自动化
-页头刷新删除。现行行为见完整旅程及页面规范；原 Slice 接受身份保留。
+
+最近的独立修正已由 B 验收 PASS。固定记录保留完整审查范围、实际验证、既有失败与证据限制；
+不改写原 Slice 接受身份。发布验证范围统一见 [Release](release.md#current-v2-validation-boundary)。
+
+| 已接受修正 | 当前结果与固定验收 |
+|---|---|
+| 文件页与原整理摘要 | [PATCH-20261109-1](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)：文件页直接呈现目录读取／列表／错误；选择文件生成摘要后离开，可从任务中心原任务“继续整理”返回同一摘要，刷新／重认证后仍可继续，确认后查看原任务结果 |
+| OpenList 属性与原生操作 | [PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md)：属性使用缓存目录列表，内容单独获取下载链接；原生移动／重命名及逐项核验，Python 3.11 启动修正 |
+| 探索筛选与详情 | [PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)：带标签筛选行、紧凑 TMDB 外链、集中鸣谢、详情背景原位；[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)：删除页面标题、统一内容边界、详情主要信息与简介开头首屏可读 |
+| 可读性与导航 | [独立修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)：任务流程／进度／文件结果分层、处理经过可读、切页加载衔接、自动化页头刷新删除 |
 
 | 需要了解 | 入口与职责 |
 |---|---|

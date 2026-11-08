@@ -1,6 +1,7 @@
 # Files Page Visual Specification
 
-Status: CURRENT — accepted50 cards/tree removal/loading; retained37/38/46 business and shell rules.
+Status: CURRENT — accepted50 cards/tree removal/loading and standalone Files preparation return;
+retained37/38/46 business and shell rules.
 Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
 Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
 [separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
@@ -38,7 +39,7 @@ Do not edit/regenerate/compress/recolor/replace the user's reference image.
 不只检查 CSS/截图。以用户八项结果和自动化基准验收，不增加固定像素/动画时长门槛。
 下方历史图形锚点仅解释原参考；与本节冲突的树/抽屉几何不再要求，业务与安全规则保留。
 
-## Current Presentation Boundary — 2026-09-22
+## Current Presentation Boundary
 
 The current table presents selection, exact name, type, size and modification time, with applicable
 commands in the controlled accessible context menu. No recognition-result/organize-status feedback,
@@ -50,6 +51,16 @@ Refresh reconciles the live listing and selection against Storage so externally 
 directories disappear; no page-local directory tree remains. Keep the selected library/path when valid, or the bounded read-failure and
 recovery state when absent. Explicit Files organizing admits its durable task before business
 readiness; exact analysis/summary and selected confirmation still precede media mutation.
+
+The Files page has no organizing-history panel in loading, ready or error states. After the header,
+banner and library cards/context, the workarea presents directory waiting, live entries or the
+directory read error directly. Ordinary browsing does not query/poll organizing history. An unknown
+organizing submission still reconciles its exact request before returning to the admitted preparation.
+After selecting files and generating a summary, the operator may leave and reopen the original
+Task from Task Center's Running/All views. Its `继续整理` action returns to the same preparation/
+summary after reload or re-authentication; explicit confirmation and original execution/results remain
+there. [B acceptance](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
+records this standalone correction. Ordinary-operation status retains its separate local modal.
 
 ## Shared Library Selector Presentation — 2026-09-24 A Revision
 

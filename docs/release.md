@@ -45,7 +45,7 @@ This is development acceptance, not a V2 release. Current support is fresh initi
 migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are
 excluded. Readable immutable configuration containing retired fields does not add an upgrade promise.
 
-The latest standalone [OpenList correction](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) was accepted by B on 2026-11-08,
+The standalone [OpenList correction](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) was accepted by B on 2026-11-08,
 from Base `6db3647c7e77d54f3a49b6725c804f0794fc7fbb` through implementation
 `cf680df6e24725ba40ada378e158d6a0e44710e5`. Its final candidate validation is:
 
@@ -64,6 +64,21 @@ saved values; their full-run failures remain in the fixed review. The seven skip
 external-service or endurance environments. The OpenList 405 proof used local HTTP fixtures and
 verified native Move／Rename, zero download-link/content requests and `refresh: false` throughout.
 Raw evidence is stored locally at `.git/validation-evidence/cf680df6/b-final/`.
+
+The latest [Files preparation-return correction](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
+passed independent B review on 2026-11-09, from Base
+`45674526b04d3366f533b86e864b3c8d179736ed` through reviewed Head
+`df565d058acaaf8078ddcb7b20ffa7c89079ac76`, with accepted implementation
+`c1ff542f071dce6829ed497dfe9911df8ad0c3a2`. Files no longer displays organizing history;
+the original Task detail reopens its exact preparation/summary after leaving or re-authentication.
+T3 acceptance passed: 175 component tests, 26 Python Task Center tests, 77 default browser cases,
+6 real-Python Files/history cases and the real-Python Task Center preparation-return case, plus
+Web quality/build and affected Python checks. Independent real-stack browsing confirmed one execute
+submission, zero history reads during ordinary browsing, source removal, target presence and the
+original Task's result. Desktop/narrow loading, ready and continuation views were inspected.
+The fixed report retains exact commands and local evidence location. These local temporary-Storage/
+fake-Provider checks do not extend the earlier OpenList full regression, wheel or Docker results to
+this later source. No production external-service or full release matrix was run for this correction.
 
 Use [Deployment](deployment.md) for current executable startup, health, backup and same-version
 recovery. Earlier V1 upgrade acceptance below remains historical; it is not a current `main` gate
