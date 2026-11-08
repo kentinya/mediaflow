@@ -14,14 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
-Reviewed Head: fff1a8ddc0226730e0d919b8e212682a3f9dce8e
-Correction Candidate: PENDING-IMPLEMENTATION-CHECKPOINT
+Reviewed Head: 34be1d962b4387011b756575b88b306c11bb4491
+Correction Candidate: 34be1d962b4387011b756575b88b306c11bb4491
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER CORRECTION HANDOFF READY
+Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; B FIX REQUIRED
 ```
 
 ## Goal and observed gap
@@ -163,6 +163,21 @@ Move／Rename 路径不因下载链接不可用而在提交、分析、执行前
    spec 及直接受影响检查；修正后仍由 B 负责剩余全量门禁。各 Playwright 进程使用独立
    `--output`，同端口 harness 串行；这是 B 的执行安排，不新增产品或过程工具。
 
+8. **设置容量旅程仍等待已删除的目录树。** B 在当前候选完整运行
+   `automation-settings.python.spec.ts`：12 passed、3 failed（第 13–15 项）。三个失败分别
+   停于 `:996`（共用 helper）、`:1088`、`:1168` 的 `getByLabel("目录")`；同一文件
+   `:1197` 也保留该已失效等待，须一起更新。现有 Files 已显示正确 source 根目录、表格及
+   Three／Four／Two 文件复选框；用当前所选库／根路径和目标文件可见可操作状态衔接，
+   复用该 spec 的选择与既有 Files 整理旅程，不恢复目录树，不增加测试专用产品入口。
+   必须完成并保留原三项结果：保存 1025 与 10000 后各自完整整理、真实 Worker 移动并
+   读回目标；容量 1 被自动化占用时 Files 明确拒绝且零媒体效果，释放后由用户明确再次
+   提交并成功；高容量下的原精确摘要在降为 1 且槽位占用后确认被拒，原文件与摘要／
+   确认权限保持，拒绝不产生新执行或自动续跑。不能只把等待删掉就认定后三段通过。
+   真实后续失败仍按同一 Task 纠正，不改全局共享 seed、放宽容量／权限或删减结果证明。
+   Developer 跑完整该 spec（独立 harness、无 grep；前后旅程共享已发布设置）及变更文件
+   ESLint／Prettier／typecheck，命令见下方；其余完整门禁仍由 B 执行。本次是既有测试
+   旅程修正，无新增产品能力、状态、并发机制或架构调整。
+
 关联合同补充：`V2-AUTH-001–003`、`V2-SAFE-001`、`V2-OPS-001/004/005/007/008/012/014–017`；
 完整 Task／结果／四类恢复旅程见 [Tasks, results and per-item recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)。
 无新状态、权限、恢复类型或 schema；技术历史、已完成与不确定效果仍按当前合同处理。
@@ -256,6 +271,7 @@ npm run test:e2e -- tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec
 npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
 npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts tests/e2e/openlist-metadata.python.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=test-results/inventory-correction
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --output=test-results/settings-correction
 ```
 
 若修改共享文件菜单，再运行
@@ -406,57 +422,57 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 
 ### B review result
 
-**FIX REQUIRED — 2026-11-08。Authorized bug acceptance complete: NO。**
+**FIX REQUIRED — 2026-11-08。本 Task 尚未全部验收通过。**
 
-完整审查范围：`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..fff1a8ddc0226730e0d919b8e212682a3f9dce8e`，
-含实现 `29e37245`、修正 `763da6da` 及全部文档差异。Slice52 四项已接受结果保持，本轮是
-独立 bug；不新建 Task，不改 Slice／Roadmap／Progress。原 B 失败及交接历史保留在 Git。
+完整审查范围：`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..34be1d962b4387011b756575b88b306c11bb4491`。
+核对原全部产品／测试交付及新差异；相比上轮已审候选 `fff1a8dd`，本轮仅 TASK 和两份
+原生 specs 变化，无产品、Python、共享 harness、依赖或构建配置变化。Slice52 四项
+关闭结果与原 Base／接受 Head 保持，不重开 Slice、不新建 Task。本轮独立验收只更新
+TASK；预存 `.DS_Store`、全部未跟踪调查／日志／output／私有文件保持。
 
-**阻塞：当前真实原生旅程的两项测试仍失败，未达到用户要求的全部现有测试变绿。**
-从文件页选择 Three → 分析并确认 → 丢失受理响应后核对 → Worker 整理成功 → 重启并重连
-同一任务后，测试尚未展开诊断便等待内部计划可见（`:1371`）。混合任务打开技术失败文件
-证据后，测试等待已替换的“技术失败条目”文案（`:2232`）；实际可见“处理失败”和
-“目标存储拒绝操作”。这两项是测试与现有合法界面操作不一致，本轮未发现据此需要改变
-产品行为。开发指导已写在上方第 7 项，保留原完整旅程和安全断言。
+**上轮修正已通过，剩余阻塞是设置容量的三个既有脚本仍等待已移除的目录侧栏。**
 
-首项差异来自 `a1b591db5b46f9e5f9bdf8cfa2ddfaef38c34b5e`（2026-11-07 12:02 +08）将
-计划移入默认折叠诊断；第二项来自 `0232364073401aebd126c2ed7f6e68d3ec31d85a`
-（同日 12:42 +08）以业务结果说明替代旧技术文案。两者均在原 Task Base 之前；用户本 Task
-已授权修复现有失败，不能因此豁免，也不重开已接受 Slice。
+用户从系统设置保存容量 → 进入文件页选择 source → 选择文件整理。失败现场已显示
+正确根路径、表格和 Three／Four／Two 文件，脚本却等待“目录”侧栏可见，分别在
+`:996/:1088/:1168` 超时，尚未触及三项容量结果。根因是 Task50.3 提交
+`07e6b89fea020d0cf5242c70f1380c14eec59368`（2026-11-06 20:25 +08）删除了页面目录树，
+这份专用 spec 未随当前导航更新。不是本轮产品恢复目录树的需求，也不能以历史失败豁免
+用户“全部现有测试变绿”的授权。开发指导第 8 项已给出当前入口、四处待改等待及三项
+完整验收；后半尚未执行，不推断容量引擎成功或失败。
 
-本次固定候选在干净 checkout `/tmp/mediaflow-b-review-fff1a8dd` 独立验证；复用工作区
-依赖（Python 3.13.14），原工作区所有预存修改／未跟踪文件原样保留。原始日志、trace、
-截图和 provider 台账：`.git/validation-evidence/fff1a8dd/b-review/`，仅本机保存。
+独立运行来自固定候选干净 checkout `/tmp/mediaflow-b-review-34be1d96`，复用同一依赖，
+重新 `npm run build`，所有 Playwright 使用独立输出目录、同端口 harness 串行。
+证据根：`.git/validation-evidence/34be1d96/b-review/`（本机），含构建日志、三个完整
+spec 日志、设置失败的原始 trace／error-context。实际结果：
 
-实际结果：
+| 验证 | 本轮实际结果 |
+|---|---|
+| `playwright.python.config.ts`＋完整 `operations-inventory.python.spec.ts` | **44 passed（1.3m）**；重启后展开持久计划、C→A 身份、成功步骤、未知受理核对／非重放、混合技术历史与四类恢复均通过 |
+| `playwright.python.automation.config.ts`＋完整 `automation-workspace.python.spec.ts` | **9 passed（14.9s）**；两处修正及独立文件结果／记录读回通过 |
+| 同自动化配置＋完整 `automation-settings.python.spec.ts` | **12 passed、3 failed（44.4s）**；失败均为上述已删除目录树等待，没有 skip／retry |
+| Web typecheck／lint／format:check／build | 全部通过 |
+| 文档消费 `tests.test_release_security` | **8 passed**；治理与完整 Base..Head whitespace 检查通过 |
 
-- OpenList 专用完整文件页 spec：1 passed（5.2s），截图已查看。两个文件完成精确确认、
-  Worker 原生 Move／Rename，持久 Result 均 `SUCCESS / verified_complete`，Task flow
-  `completed`；62 次 list 全部 `refresh: false`，4 次 Move／Rename，零取链接／内容请求，
-  重复刷新不增加 mutation。再次 Worker poll、关联任务／返回文件页及真实 HTTP 故障
-  补充验收仍 pending，不能以该正常旅程代替。
-- Unicode 专用完整 spec 独立输出复验：1 passed（6.3s），真实受理失响应→核对→重连→
-  Worker→结果证据通过，Execute 仅一次。
-- Python 全量：2656 项，2649 passed、7 skipped、0 failures（315.344s），命令为
-  `.venv/bin/python -m unittest discover -s tests`；七项专用环境 skip 未新增。
-- Web unit：97 files／1459 tests passed（136.67s）；typecheck／lint／format:check／
-  build 通过。Python Ruff format（382 files）／lint、compileall、pip check、两个示例
-  config validate、禁用依赖扫描及 Base..Head diff whitespace 检查通过。
-- 默认 E2E：263 passed、1 runner error（3.1m）。该错误为 B 并行 Playwright 共用输出
-  目录导致 trace ENOENT，不是删除资源库断言失败；中文身份最初报告也受同一原因影响。
-  删除被引用资源库旅程在独立输出下复验 1 passed（1.0s）。完整默认套件仍须在修正候选
-  独立输出重跑，不能记为 264 passed；此问题由 B 纠正，不交 Developer 改产品／测试。
-- 原生 inventory 完整入口发现上述 2 failed，17 passed；发现阻塞后主动中止，1 interrupted、
-  24 did not run。中止项不是新增失败。另一次 action-readability 启动因 B 未串行同端口
-  harness 被拒，未执行用例，不算产品失败。剩余原生 specs／wheel／外部安装及 Python
-  3.11／3.12 矩阵未完成，保留 pending。
-- Docker daemon socket 不存在，Docker 镜像／两项 smoke 未执行。此项是 B 环境门禁
-  阻塞，非 Developer 缺陷；不以离线证明代替。专用真实外部／耐久环境的既有七项 skip
-  继续如实保留，不伪造配置或凭据。
+上轮 B 的 Python 全量 **2656 项、2649 passed／7 skipped（315.344s）**、Web unit
+**97 files／1459 passed（136.67s）**、Python 质量／依赖／示例检查、405 原生完整旅程
+**1 passed** 和 Unicode 恢复 **1 passed** 可复用未变输入：已用
+`git diff --quiet fff1a8dd..34be1d96 -- mediaflow scripts tests web/src web/package.json web/package-lock.json web/playwright.config.ts`
+确认相同，其他专用配置也未变化；新旧 `web/dist` 的 5 个文件逐项 SHA-256 相同，
+本轮产物清单保存为证据目录内 `build-manifest.json`。旧结果／截图／provider 请求台账仍在
+`.git/validation-evidence/fff1a8dd/b-review/`；该 405 核心为 62 次 list 全部
+`refresh: false`、4 次 Move／Rename、零取链接／内容请求、2 项持久
+`SUCCESS / verified_complete`，Task flow `completed`。这些复用不代表改动的两份 specs
+已由旧运行覆盖；两份均已如上独立完整复跑。
 
-已发现真实阻塞后不继续启动昂贵验收；修正在同一 Task 内，Developer 交新 checkpoint
-后 B 对原 Base..新候选完整复核并继续必需门禁。
-本轮仅 checkpoint TASK.md，不推送／发布，不修改产品。
+原默认 E2E 的 263 passed＋1 runner ENOENT 仍不能记为全绿，完整独立输出重跑 pending；
+其余原生 specs、405 再次 Worker poll／关联任务／返回文件页与 HTTP 故障补充、wheel／
+外部安装、Python 3.11／3.12 矩阵均尚未完成。Docker 本轮再次查询仍无 daemon socket，
+镜像／两个 smoke pending；七项专用真实服务／耐久环境 skip 的事实及原因保留，不伪造
+环境或凭据。所有门禁筹备属于 B；本次仅已实测的设置 spec 缺陷交 Developer。
+
+发现本轮实质阻塞后停止新增昂贵测试；同一 Task 修正并提交新 checkpoint 后 B 继续
+原 Base..新候选复核和剩余必需门禁。原上轮失败与报告保留在 `8875e987:TASK.md`。
+未推送、发布或修改产品。
 
 ### Developer correction report — 2026-11-08
 
