@@ -37,7 +37,7 @@ interface NavigationFrame {
  * Failure banners and honest empty states are deliberately not listed.
  */
 const WAITING_READ_MARKERS =
-  /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录)|正在加载(运行清单|存储管理)|读取运行清单|Loading Notification definitions/;
+  /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录|引擎设置)|正在加载(运行清单|存储管理)|读取运行清单|Loading Notification definitions/;
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
@@ -894,4 +894,229 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
   await sampleSlowHandoff("storage", "正在加载存储管理");
   await sampleSlowHandoff("files", "正在读取文件");
   await sampleSlowHandoff("library", "正在读取文件");
+});
+
+interface SettingsFrame {
+  readonly at: number;
+  /** The engine-settings waiting line is on screen in this frame. */
+  readonly banner: boolean;
+  /** The ready engine form region exists in this frame. */
+  readonly form: boolean;
+  /** The page's own configuration-status section is on screen. */
+  readonly workspace: boolean;
+  /** The engine read's bounded failure banner is on screen. */
+  readonly error: boolean;
+}
+
+/**
+ * B52.2-02: observe the System Settings handoff itself — status section,
+ * engine waiting line and ready form — frame by frame, so the proof covers the
+ * middle of the journey rather than only the first heading or the final
+ * settled page.
+ */
+async function startSettingsProbe(page: Page, windowMs = 2_400): Promise<void> {
+  await page.evaluate((sampleWindowMs) => {
+    const frames: SettingsFrame[] = [];
+    const started = performance.now();
+    let stopped = false;
+    const tick = () => {
+      const text = document.body.innerText;
+      frames.push({
+        at: performance.now() - started,
+        banner: text.includes("正在读取引擎设置"),
+        form: document.querySelector('[aria-label="系统运行设置"]') !== null,
+        workspace: text.includes("Active revision"),
+        error: text.includes("引擎设置暂不可用"),
+      });
+      if (!stopped && performance.now() - started < sampleWindowMs) {
+        requestAnimationFrame(tick);
+      }
+    };
+    requestAnimationFrame(tick);
+    (
+      window as unknown as {
+        __settingsProbe: {
+          frames: SettingsFrame[];
+          stop: () => void;
+          windowMs: number;
+        };
+      }
+    ).__settingsProbe = {
+      frames,
+      stop: () => {
+        stopped = true;
+      },
+      windowMs: sampleWindowMs,
+    };
+  }, windowMs);
+}
+
+async function stopSettingsProbe(page: Page): Promise<SettingsFrame[]> {
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        __settingsProbe: { stop: () => void };
+      }
+    ).__settingsProbe.stop();
+  });
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __settingsProbe: { frames: SettingsFrame[] };
+        }
+      ).__settingsProbe.frames,
+  );
+}
+
+test("settings handoff keeps the engine wait hidden through a fast read and a cached re-entry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.url().includes("/api/") &&
+      request.method() !== "GET" &&
+      request.method() !== "HEAD"
+    ) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  // Only the engine-settings read this page really issues is delayed, by less
+  // than a genuine-wait threshold: the configuration status answers first and
+  // the engine read lands a moment later — the observed B52.2-02 handoff.
+  const engineDelayMs = 220;
+  await page.route(
+    "**/api/v1/operations/automation/settings*",
+    async (route) => {
+      const response = await route.fetch();
+      if (engineDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
+      }
+      await route.fulfill({ response });
+    },
+  );
+
+  await startSettingsProbe(page);
+  await openSidebarLink(page, "Configuration");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  const form = page.getByRole("region", { name: "系统运行设置" });
+  await expect(form).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "整理规则就绪状态" }),
+  ).toBeVisible();
+  await page.waitForTimeout(200);
+  let frames = await stopSettingsProbe(page);
+  expect(frames.length).toBeGreaterThan(10);
+  // The status section was on screen before the form arrived, and the wait
+  // line never appeared in any frame of this handoff.
+  expect(frames.some((frame) => frame.workspace && !frame.form)).toBe(true);
+  expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
+  expect(frames.at(-1)?.form).toBe(true);
+
+  // Cached re-entry through the same sidebar: the engine query already holds
+  // data, so the form is there again with no wait line in any frame.
+  await openSidebarLink(page, "Explore");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await startSettingsProbe(page);
+  await openSidebarLink(page, "Configuration");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect(form).toBeVisible();
+  await page.waitForTimeout(200);
+  frames = await stopSettingsProbe(page);
+  expect(frames.some((frame) => frame.form)).toBe(true);
+  expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
+  expect(frames.at(-1)?.form).toBe(true);
+
+  // Handoff and reads only: no command was ever submitted.
+  expect(writes).toEqual([]);
+});
+
+test("a slow engine read shows one stable waiting state before the form takes over", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  // The same real engine-settings read, genuinely slow through the same entry.
+  const engineDelayMs = 1_500;
+  await page.route(
+    "**/api/v1/operations/automation/settings*",
+    async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
+      await route.fulfill({ response });
+    },
+  );
+
+  await startSettingsProbe(page, 3_600);
+  await openSidebarLink(page, "Configuration");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect(page.getByText("正在读取引擎设置")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "系统运行设置" }),
+  ).toBeVisible();
+  await page.waitForTimeout(200);
+  const frames = await stopSettingsProbe(page);
+  // The status section answered first, without the wait line.
+  expect(
+    frames.some((frame) => frame.workspace && !frame.banner && !frame.form),
+  ).toBe(true);
+  // Then exactly one unbroken stretch of the waiting state, handed over
+  // directly to the form: no frame with both, no gap of removed banner before
+  // the form arrives, and no second flash after it.
+  const firstBanner = frames.findIndex((frame) => frame.banner);
+  const firstForm = frames.findIndex((frame) => frame.form);
+  expect(firstBanner).toBeGreaterThan(-1);
+  expect(firstForm).toBeGreaterThan(firstBanner);
+  for (const frame of frames.slice(firstBanner, firstForm)) {
+    expect(frame.banner).toBe(true);
+    expect(frame.form).toBe(false);
+  }
+  expect(frames.at(-1)?.banner).toBe(false);
+  expect(frames.at(-1)?.form).toBe(true);
+  await expect(page.getByText("正在读取引擎设置")).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+});
+
+test("a failed engine read lands on the existing recovery without a wait flash", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.url().includes("/api/") &&
+      request.method() !== "GET" &&
+      request.method() !== "HEAD"
+    ) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  // The child read fails through the same entry; only this read behaves as a
+  // failure, every other request keeps the fake API's real answer.
+  await page.route("**/api/v1/operations/automation/settings*", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "internal_error" } }),
+    }),
+  );
+
+  await startSettingsProbe(page);
+  await openSidebarLink(page, "Configuration");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  // The failure reaches the operator on its own terms with its existing
+  // recovery copy, while the page's own status section stays in place.
+  await expect(page.getByText("引擎设置暂不可用")).toBeVisible();
+  await expect(page.getByText(/此页面不会猜测任何发布值/)).toBeVisible();
+  await page.waitForTimeout(200);
+  const frames = await stopSettingsProbe(page);
+  expect(frames.some((frame) => frame.error)).toBe(true);
+  expect(frames.some((frame) => frame.workspace)).toBe(true);
+  // The waiting line played no part in the failure path.
+  expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
+  expect(writes).toEqual([]);
 });

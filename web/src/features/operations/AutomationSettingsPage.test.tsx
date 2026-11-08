@@ -243,6 +243,51 @@ async function connect(pagePath: string) {
   renderApp(pagePath);
 }
 
+/**
+ * Hold the engine-settings GET so the journey owns the read's actual duration
+ * (Slice52 RO-3 / B52.2-02). The page's own configuration-status read answers
+ * immediately while the child read stays outstanding until `release` is
+ * called, which is exactly the observed fast-handoff ordering on System
+ * Settings. Everything else serves the same fixed answers `recordingFetch`
+ * uses.
+ */
+function heldSettingsRead(): {
+  readonly release: () => void;
+  readonly calls: Call[];
+} {
+  let releaseRead = () => {};
+  const held = new Promise<void>((resolve) => {
+    releaseRead = () => resolve();
+  });
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call: Call = {
+        url: String(input),
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : null,
+      };
+      calls.push(call);
+      if (
+        call.url.includes("/operations/automation/settings") &&
+        call.method === "GET"
+      ) {
+        await held;
+        return jsonResponse(settingsDocument());
+      }
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: TOKEN });
+      }
+      if (call.url === "/api/v1/configuration/status") {
+        return jsonResponse(configurationStatus());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    }),
+  );
+  return { release: () => releaseRead(), calls };
+}
+
 describe("Automation engine settings surface", () => {
   it("redirects the retired Automation settings tab to System Settings without a write", async () => {
     const { calls } = recordingFetch((call) => {
@@ -2575,5 +2620,84 @@ describe("Automation engine settings surface", () => {
       name: "保存设置",
     }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
+  });
+});
+
+describe("engine settings read handoff on System Settings (Slice52 RO-3)", () => {
+  it("never flashes the engine wait line during a fast handoff", async () => {
+    const heldRead = heldSettingsRead();
+    await connect("/ui-v2/configuration");
+    // The page's own configuration status has resolved, so the workspace and
+    // the embedded engine read are both on screen while that read is still
+    // inside its fast window. The observed defect (B52.2-02) was this wait
+    // line appearing immediately and being replaced a moment later.
+    expect(
+      await screen.findByRole("heading", { name: "Active 已激活" }),
+    ).toBeTruthy();
+    expect(
+      heldRead.calls.some((call) =>
+        call.url.includes("/operations/automation/settings"),
+      ),
+    ).toBe(true);
+    expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    // The read completes inside the window: the ready form takes over
+    // directly and the wait line never entered the screen at all.
+    heldRead.release();
+    const panel = await screen.findByRole("region", {
+      name: "系统运行设置",
+    });
+    expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
+    expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
+      0,
+    );
+  });
+
+  it("shows one stable engine wait state once the read is genuinely slow", async () => {
+    const heldRead = heldSettingsRead();
+    await connect("/ui-v2/configuration");
+    expect(
+      await screen.findByRole("heading", { name: "Active 已激活" }),
+    ).toBeTruthy();
+    // Past the shared reveal window the waiting line appears — one stable,
+    // perceivable state while the read is outstanding, not a flicker.
+    const banner = await screen.findByText("正在读取引擎设置", undefined, {
+      timeout: 2_500,
+    });
+    expect(banner).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(screen.getByText("正在读取引擎设置")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "系统运行设置" })).toBeNull();
+    // The slow read completes: the ready form takes over and the wait line is
+    // gone for good — it is not re-armed by the handoff itself.
+    heldRead.release();
+    const panel = await screen.findByRole("region", {
+      name: "系统运行设置",
+    });
+    expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
+    expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
+      0,
+    );
+  });
+
+  it("reaches the existing engine read failure without the wait line", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse({ error: { code: "internal_error" } }, 500);
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/configuration");
+    expect(
+      await screen.findByRole("heading", { name: "Active 已激活" }),
+    ).toBeTruthy();
+    // The failed read is a direct answer on the existing bounded recovery,
+    // never delayed behind a waiting presentation, and it stays read-only.
+    expect(await screen.findByText("引擎设置暂不可用")).toBeTruthy();
+    expect(await screen.findByText(/此页面不会猜测任何发布值/)).toBeTruthy();
+    expect(screen.queryByText("正在读取引擎设置")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Active 已激活" })).toBeTruthy();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 });

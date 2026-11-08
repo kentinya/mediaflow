@@ -33,6 +33,7 @@ import { Button } from "../../shared/ui/Button";
 import { AutomationTime } from "./AutomationInventory";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   fetchAutomationSettings,
   fetchAuthenticatedPrincipal,
@@ -371,6 +372,17 @@ export function AutomationSettingsPanel() {
   });
   const principalId = principalQuery.data?.principalId ?? null;
   const model = query.data?.ok === true ? query.data.model : null;
+  // Slice52 RO-3 (B52.2-02): on System Settings this panel mounts only after
+  // the page's own configuration status has resolved, so its first engine read
+  // always starts inside an already-visible workspace. The waiting banner is
+  // revealed only when that read is genuinely slow: a fast or cached return
+  // shows the form directly instead of flashing one line the form then
+  // replaces, while a slow read keeps one stable, perceivable state. Only the
+  // presentation is gated — the request, the shared auth/read boundary,
+  // failures and ready content are untouched.
+  const showEngineReadWait = useReadReveal(
+    query.data === undefined && !query.isError,
+  );
   // `null` means "no edits": the form then reads the current published target.
   // Once edited, the input *and the identity it was written against* are kept,
   // so a background readback can never silently re-arm old input for a newer
@@ -821,14 +833,14 @@ export function AutomationSettingsPanel() {
     <AuthorizedReadBoundary query={query} unavailableTitle="系统运行设置不可用">
       {({ isFetching, refresh }) => {
         if (query.isPending) {
-          return (
+          return showEngineReadWait ? (
             <StatusBanner variant="info" title="正在读取引擎设置">
               <p>
                 读取已发布目标与各常驻进程的采用情况;这不会创建 Draft
                 或启动工作。
               </p>
             </StatusBanner>
-          );
+          ) : null;
         }
         if (model === null) {
           return (
@@ -841,7 +853,7 @@ export function AutomationSettingsPanel() {
         }
         if (model.target === null) {
           return (
-            <section className="mf-panel">
+            <section className="mf-panel mf-content-settle">
               <h2>系统运行设置</h2>
               <StatusBanner variant="info" title="尚无已发布的设置">
                 <p>
@@ -857,7 +869,11 @@ export function AutomationSettingsPanel() {
         }
         const target = model.target;
         return (
-          <div className="mf-automation-settings">
+          // The ready model takes over from the read's waiting region with the
+          // shared first-render settle, so the handoff eases in once instead of
+          // popping in; an ancestor class change (entry window closing, a card
+          // layer opening or closing) never replays or dims it again.
+          <div className="mf-automation-settings mf-content-settle">
             <div className="mf-automation-settings-grid">
               <section className="mf-panel" aria-label="系统运行设置">
                 <header className="mf-panel-header">
