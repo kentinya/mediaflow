@@ -10,7 +10,7 @@ Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED IMPLEMENTATION OF B'S COMMITTED DRAFT
-Candidate Checkpoint: 9f6f2f301d4908e02750055366d8c24759772807
+Candidate Checkpoint: c1ff542f071dce6829ed497dfe9911df8ad0c3a2
 B Reviewed Head: a3094876dd98cdd6b1d5601155da6fa0b0e426da
 ```
 
@@ -168,6 +168,8 @@ Slice52、Roadmap、Progress 和既有接受身份保持。
 
 ```text
 Implementation commit: 9f6f2f301d4908e02750055366d8c24759772807
+Test fixture commit:   c1ff542f071dce6829ed497dfe9911df8ad0c3a2
+Candidate checkpoint:  c1ff542f071dce6829ed497dfe9911df8ad0c3a2
 Base:                  45674526b04d3366f533b86e864b3c8d179736ed
 Branch:                main
 Role exception:        用户直接授权 Developer 实施 B 的已提交草案并完成 FIX REQUIRED 修正；未自签 PASS
@@ -192,10 +194,11 @@ Role exception:        用户直接授权 Developer 实施 B 的已提交草案�
   覆盖真实链接、准备身份、刷新式重新读取、返回同一准备上下文与畸形／无关联拒绝。
 - `web/src/shared/ui/styles.css`：仅新增该准备事实块的本地可读样式。
 - `web/tests/e2e/operations-inventory.python.spec.ts`：新增原生场景
-  “initial manual preparation remains reachable from Task Center”：真实 Files 选择、
-  真实 discovery Worker 生成摘要、不确认即离开到任务中心、打开同一运行、刷新／重认证后
-  仍见“继续整理”，返回同一摘要明确确认一次，真实 manual Worker 完成并核对源文件移动；
-  再次从该入口查看已受理执行，全程无重复 POST。
+  “initial manual preparation remains reachable from Task Center”：先使用既有
+  `restore-source-media` 夹具恢复确定性源和已知输出（避免此前后顺序旅程的 MOVE 目标冲突），
+  再真实 Files 选择、真实 discovery Worker 生成摘要、不确认即离开到任务中心、打开同一运行、
+  刷新／重认证后仍见“继续整理”，返回同一摘要明确确认一次，真实 manual Worker 完成并核对
+  源文件移动；再次从该入口查看已受理执行，全程无重复 POST。
 - `docs/product-experience.md`、`docs/v2-requirements.md`：仅协调“Files 发起、任务中心
   返回同一准备”的现行呈现，不改 Slice52 合同、Roadmap、Progress 或既有接受身份。
 
@@ -211,7 +214,7 @@ Role exception:        用户直接授权 Developer 实施 B 的已提交草案�
 | `npm run typecheck`（cwd `web/`） | PASS |
 | `npm run build`（cwd `web/`） | PASS；保留现有大 chunk 提示 |
 | `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts`（cwd `web/`） | 4 passed |
-| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable from Task Center"`（cwd `web/`） | 1 passed，8.3s |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable from Task Center"`（cwd `web/`） | 1 passed，8.6s（夹具恢复后最终重跑） |
 | `npx eslint <changed web paths>` | PASS |
 | `npx prettier --check <changed web paths>` | PASS |
 | `python3 scripts/check_governance.py` | PASS |
