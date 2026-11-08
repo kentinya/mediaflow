@@ -13,8 +13,9 @@ Authority: committed [Slice52 Contract](SLICE.md)（合同 checkpoint
 Task ID: 52.3
 Task Type: SLICE
 Parent Slice: 52
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: f4279b95a1ee05095fa940247f2fa26f15cbf042
+Implementation Candidate: f5409da41191c6e4bbf238bb7def601229fc59dc
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -220,8 +221,81 @@ schema、引擎、恢复或媒体操作，不清理历史，不重开旧 Slice�
 
 ## Developer Completion Report
 
-待 Developer 完成完整 checkpoint 后填写：准确 SHA／READY FOR B REVIEW、变化／关键决策、
-受影响测试实际命令／结果／耗时、已知失败和剩余风险。完整验收由 B负责。
+**READY FOR B REVIEW** — Task Base `f4279b95a1ee05095fa940247f2fa26f15cbf042`
+→ 实现候选 `f5409da41191c6e4bbf238bb7def601229fc59dc`（源码、测试与 fake 清理）。
+工作区：分支 `main`，实施前及提交前治理检查 PASS；预存跟踪变更仅
+`mediaflow/.DS_Store`，全部未跟踪日志／元数据／output 材料保留未动。未推送、未发布、
+未部署，未自签产品 PASS。
+
+### 变化与关键决策
+
+- `AutomationDefinitionRow` 删除名称按钮和“打开”按钮，名称改普通文本；逐层删除
+  `DefinitionsTab` 的 `onOpen` 与列表 `openDefinition`。保留编辑、复制、运行一次、
+  行高亮、复制／运行一次独立反馈与权限判定。
+- 删除 `AutomationDetailPage.tsx`、`AutomationEditorPage.tsx` 及 Router 注册；
+  destination-model 移除两个旧 destination／dynamicPrefix，并让旧 definition／editor
+  路径不再获得 automation shell 身份。旧地址仍走现有普通 not-found，无别名／重定向／
+  说明页；未保留旧登录续转身份。
+- `AutomationOccurrencesPage` 成功与失败分支的返回链接改到合法列表：默认
+  `tab=records` 并带该 definition 的 `rdefinition` 筛选；已有合法 definitions／records
+  返回条件保留，其他值退化为默认记录页。分页、Run once 历史与准确 Task 链接不变。
+- 清理仅服务旧链路的客户端依赖：definition／draft 查询、detail／draft 读取包装、
+  旧 successor／save／copy／activation 包装及 draft／activation DTO；保留
+  `normalizeAutomationDefinition`、actions／draftState、列表 focused Copy、
+  `validateAutomationDraft`（通知编辑器仍使用）和共享管理 API。
+- `automation.spec.ts`、`AutomationRouter.test.tsx`、`automation-lifecycle.python.spec.ts`
+  的旧 detail／Draft 专属断言随能力退役迁移：补旧地址普通未找到、列表名称无交互、
+  记录页返回筛选与删除后 occurrence 证据；历史事实改在 occurrences／lifecycle 核对。
+  fake-server 仅删除旧 detail／draft／successor／save／copy／activate 分支；保留列表、
+  创建卡片、通知 Draft 校验及此前已退役 Preview／grant 分支。
+- 未改后端 API／CLI、schema、权限、执行引擎、Storage、Active／pins／fences。
+
+### 实际验证结果（cwd `web/`，最终候选上）
+
+```text
+python3 scripts/check_governance.py                          → PASS(实施前及提交前)
+npm run typecheck                                            → PASS(最终候选)
+npx eslint <15 个改动 TS/TSX>                                → PASS(0 问题)
+npx prettier --check <改动 TS/TSX/MJS>                       → PASS(先 --write 修 4 个测试文件后复核)
+npm run test -- run <Task 指定 9 个文件>                      → 9 files / 134 tests passed(14.23s)
+npm run test -- run <共享 API/模型/通知 3 个文件>             → 3 files / 60 tests passed(2.94s)
+npm run test -- run AutomationRouter+ListCopy+destination     → 3 files / 50 tests passed(3.61s;最终候选)
+npm run test -- run AutomationRouter                         → 1 file / 11 tests passed(1.97s;最终候选)
+npm run build                                                → PASS
+npm run test:e2e -- automation.spec.ts automation-presentation.spec.ts
+                                                             → 13 passed(5.8s)
+npm run test:e2e -- automation.spec.ts --grep retired/occurrence
+                                                             → 2 passed(1.2s;最终候选)
+npm run test:e2e -- --config=playwright.python.automation.config.ts
+  automation-lifecycle.python.spec.ts                        → 21 passed(41.4s)
+same spec file --grep retained occurrence|retained history|corrupt
+                                                             → 3 passed(7.4s;最终候选)
+git diff --check                                             → clean
+```
+
+首次迁移后的 Python 全量有 6 个真实失败：5 个 Copy 恢复用例仍按已删除的名称按钮
+定位行，1 个 corrupt 用例在无 occurrence 的定义上错误要求 “Pinned revision”。均已
+改到当前真实入口（普通名称文本／Active revision 或 occurrence 历史）后重跑 21/21；
+首次单测亦有 3 个失败（名称按钮选择器、records URL 断言、旧路径 shell 身份断言），
+已按当前真实列表、请求 URL 与目的地模型更新。没有删除断言、隐藏跳过、
+加重试或放宽超时来掩盖失败。旧地址 E2E 以未认证直达覆盖普通 not-found 且零业务请求；
+认证态旧地址由单测覆盖。首轮 Python 全量失败运行计入下方测试耗时。
+
+### 已知限制与剩余风险
+
+- 完整 Web 单测、lint／format 全量、其余 E2E、Python 全量、打包／Docker 及 Slice-final
+  人工桌面／390px 复核按分工归 B；本报告不宣称 Slice 关闭或全绿。
+- occurrences 不再由旧 detail 页面进入，保持既有直接路由可达；按 Task 未在记录详情中
+  新增导航或执行控件，也未另建旧详情替代页。B 可按 TAC-4 复核该入口范围。
+- records payload 的 `handoff.definitionSettings` 字符串仍保留为共享后端投影／夹具，
+  UI 不渲染为链接；未为清掉字符串修改服务端契约。
+- 此前 Slice 已退役的 standalone Preview／grant fake 分支不属于本 Task，保持原状。
+- 预存 `mediaflow/.DS_Store` 修改及全部未跟踪文件未纳入提交。
+
+**时间约束：** 本轮总耗时约 22 分钟（16:36–16:58），实际测试执行累计约 4.4 分钟
+（含一次失败的 Python 全量 2.9 分钟、多次单测与 E2E，按各命令实测耗时相加）；
+约占总耗时 20%，低于 30% 上限。typecheck／build／eslint／prettier 等静态门禁
+未计入该测试比例。
 
 ## B Review Result
 
