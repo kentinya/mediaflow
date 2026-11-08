@@ -361,6 +361,52 @@ function listDocument(
   };
 }
 
+/** One bounded definition occurrence history read. */
+function occurrencesDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    definitionId: "auto-task",
+    activeConfiguration: {
+      revisionId: ACTIVE_REVISION,
+      version: 3,
+      revisionSequence: 2,
+      status: "active",
+    },
+    items: [],
+    limit: 20,
+    truncated: false,
+    next_cursor: null,
+    previous_cursor: null,
+    ...overrides,
+  };
+}
+
+/** One empty but valid execution records page. */
+function recordsDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    items: [],
+    limit: 20,
+    definition: "auto-task",
+    trigger: null,
+    status: null,
+    outcome: null,
+    from: null,
+    to: null,
+    total: 0,
+    truncated: false,
+    population:
+      "admitted Automation runs deduplicated by explicit task linkage",
+    historyBasis:
+      "definition/name/scope/version from the durable admission, never backfilled from the current Active configuration",
+    next_cursor: null,
+    previous_cursor: null,
+    ...overrides,
+  };
+}
+
 /**
  * A definition that lives only inside the open successor Draft (newly
  * created or copied): draft-only state, empty occurrence history, no grant
@@ -487,73 +533,6 @@ function draftOnlyDefinitionDocument(
         requiresConfirmation: false,
         durableOutcome: "a successor Draft is stored",
         nextAction: "create or open the successor Draft",
-      }),
-    },
-    ...overrides,
-  };
-}
-
-function draftDocument(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    definitionId: "auto-task",
-    activeConfiguration: {
-      revisionId: ACTIVE_REVISION,
-      version: 3,
-      revisionSequence: 2,
-      status: "active",
-    },
-    draft: {
-      revisionId: DRAFT_REVISION,
-      revisionVersion: 2,
-      revisionStatus: "draft",
-      baseActiveRevisionId: ACTIVE_REVISION,
-      updatedAt: "2026-01-01T00:00:00+00:00",
-      validatedAt: null,
-      validationErrors: [],
-      definition: {
-        id: "auto-task",
-        name: "Nightly automation",
-        enabled: true,
-        resourceLibraryId: "source",
-        mode: "automatic-organization",
-        itemLimit: 12,
-        sourceScope: null,
-        intervalSeconds: 3600,
-        cron: null,
-        timezone: null,
-      },
-    },
-    resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
-    actions: {
-      createDraft: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
-        requiresConfirmation: false,
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create the successor Draft",
-      }),
-      save: action({
-        method: "PUT",
-        path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task`,
-        requiresConfirmation: false,
-        durableOutcome: "the bounded form is stored in the Draft",
-        nextAction: "save the bounded form, then validate and activate",
-      }),
-      validate: action({
-        method: "POST",
-        path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/validate`,
-        requiresConfirmation: false,
-        durableOutcome: "the Draft is validated with zero mutation",
-        nextAction: "validate the Draft",
-      }),
-      activate: action({
-        method: "POST",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/activate-draft",
-        requiresConfirmation: true,
-        durableOutcome:
-          "the exact Draft becomes the immutable Active configuration",
-        nextAction: "confirm one explicit activation of the validated Draft",
       }),
     },
     ...overrides,
@@ -719,330 +698,123 @@ describe("V2 Automation journey", () => {
     expect(screen.queryByRole("link", { name: "新建自动化任务" })).toBeNull();
   });
 
-  it("reads execution readiness without exposing independent grant controls", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/automation/task-definitions/auto-task"
-      ) {
-        const value = definitionDocument();
-        delete value.unattendedExecutionGrant;
-        delete value.grantEligibility;
-        return jsonResponse({ definition: value });
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/definition/auto-task");
-    await screen.findByRole("heading", { name: /Automation definition/ });
-    expect(
-      screen.getByRole("heading", { name: "Execution readiness" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Edit saved definition" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByLabelText("Confirm unattended execution grant"),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Grant unattended authority" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: "Revoke grant" })).toBeNull();
-    expect(calls.every((call) => call.method === "GET")).toBe(true);
-    expect(calls.some((call) => call.url.includes("grant"))).toBe(false);
-  });
-
-  it("saves the bounded Draft form and never submits a digest", async () => {
-    const user = userEvent.setup();
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url.endsWith(
-          "/operations/automation/task-definitions/auto-task/draft",
-        )
-      ) {
-        return jsonResponse(draftDocument());
-      }
+  it("renders the definition name as plain text and keeps the supported row actions", async () => {
+    recordingFetch((call) => {
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task`
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
       ) {
-        return jsonResponse({ version: 3 }, 200);
+        return jsonResponse(listDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/editor/auto-task");
+    renderApp("/ui-v2/operations/automation");
 
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    expect(screen.getByText(/revision-draft-1/)).toBeVisible();
-    const nameInput = screen.getByLabelText("Name") as HTMLInputElement;
-    expect(nameInput.value).toBe("Nightly automation");
-    await user.clear(nameInput);
-    await user.type(nameInput, "Renamed automation");
-    await user.click(screen.getByRole("button", { name: "Save into Draft" }));
+    const row = await screen.findByRole("row", {
+      name: /Nightly automation/,
+    });
+    expect(within(row).getByText("Nightly automation")).toBeVisible();
+    expect(
+      within(row).queryByRole("button", { name: "Nightly automation" }),
+    ).toBeNull();
+    expect(within(row).queryByRole("button", { name: "打开" })).toBeNull();
+    expect(within(row).getByRole("button", { name: "编辑" })).toBeVisible();
+    expect(within(row).getByRole("button", { name: "运行一次" })).toBeVisible();
+  });
 
-    await waitFor(() =>
+  it.each([
+    "/ui-v2/operations/automation/definition/auto-task?returnTab=definitions",
+    "/ui-v2/operations/automation/editor/auto-task?returnTab=definitions",
+  ])(
+    "answers the retired Automation address %s with the ordinary not-found page",
+    async (path) => {
+      const { calls } = recordingFetch(() => undefined);
+      authStore.setToken(TOKEN);
+      renderApp(path);
+
       expect(
-        calls.some(
-          (item) =>
-            item.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task` &&
-            item.method === "PUT",
-        ),
-      ).toBe(true),
-    );
-    const save = calls.find((item) => item.method === "PUT");
-    expect(save?.body).toMatchObject({
-      expectedVersion: 2,
-      object: { name: "Renamed automation", id: "auto-task" },
-    });
-    expect(JSON.stringify(save?.body)).not.toMatch(/digest|fingerprint/i);
-  });
-
-  it("activates the checked Draft only after explicit confirmation and without a digest", async () => {
-    const user = userEvent.setup();
-    const validated = draftDocument({
-      draft: {
-        revisionId: DRAFT_REVISION,
-        revisionVersion: 3,
-        revisionStatus: "validated",
-        baseActiveRevisionId: ACTIVE_REVISION,
-        updatedAt: "2026-01-01T00:00:00+00:00",
-        validatedAt: "2026-01-01T00:10:00+00:00",
-        validationErrors: [],
-        definition: {
-          id: "auto-task",
-          name: "Nightly automation",
-          enabled: true,
-          resourceLibraryId: "source",
-          mode: "automatic-organization",
-          itemLimit: 12,
-          sourceScope: null,
-          intervalSeconds: 3600,
-          cron: null,
-          timezone: null,
-        },
-      },
-    });
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url.endsWith(
-          "/operations/automation/task-definitions/auto-task/draft",
-        )
-      ) {
-        return jsonResponse(validated);
-      }
-      if (
-        call.url ===
-        "/api/v1/operations/automation/task-definitions/auto-task/activate-draft"
-      ) {
-        return jsonResponse({
-          activatedRevisionId: "revision-active-2",
-          activatedVersion: 4,
-          revisionSequence: 3,
-          activeConfiguration: {
-            revisionId: "revision-active-2",
-            version: 4,
-            revisionSequence: 3,
-            status: "active",
-          },
-          definition: null,
-        });
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/editor/auto-task");
-
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    const confirm = screen.getByLabelText("Confirm checked activation");
-    const activateButton = screen.getByRole("button", {
-      name: "Activate checked Draft",
-    });
-    expect(activateButton).toBeDisabled();
-    await user.click(confirm);
-    await user.click(activateButton);
-
-    await waitFor(() =>
+        await screen.findByRole("heading", { name: "Route not found" }),
+      ).toBeVisible();
       expect(
-        calls.some(
-          (item) =>
-            item.url ===
-              "/api/v1/operations/automation/task-definitions/auto-task/activate-draft" &&
-            item.method === "POST",
-        ),
-      ).toBe(true),
-    );
-    const activation = calls.find((item) =>
-      item.url.endsWith("/activate-draft"),
-    );
-    expect(activation?.body).toMatchObject({
-      expectedRevisionId: DRAFT_REVISION,
-      expectedVersion: 3,
-    });
-    expect(JSON.stringify(activation?.body)).not.toMatch(
-      /digest|fingerprint|expectedDigest/i,
-    );
-  });
+        screen.queryByRole("heading", { name: /Automation definition/ }),
+      ).toBeNull();
+      expect(screen.queryByText("Back to the definition")).toBeNull();
+      expect(calls).toEqual([]);
+    },
+  );
 
-  it("edits every owned definition field and stores exactly one schedule form", async () => {
+  it("returns from occurrence history to the definition-filtered execution records", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (
-        call.url.endsWith(
-          "/operations/automation/task-definitions/auto-task/draft",
-        )
-      ) {
-        return jsonResponse(
-          draftDocument({
-            resourceLibraryOptions: [
-              { id: "source", name: "Source", enabled: true },
-              { id: "target-library", name: "Target", enabled: true },
-            ],
-          }),
-        );
-      }
-      if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task`
+        "/api/v1/operations/automation/task-definitions/auto-task/occurrences?limit=20"
       ) {
-        return jsonResponse({ version: 3 }, 200);
+        return jsonResponse(occurrencesDocument());
+      }
+      if (call.url.startsWith("/api/v1/operations/automation/records?")) {
+        return jsonResponse(recordsDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/editor/auto-task");
-
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    await user.selectOptions(
-      screen.getByLabelText("ResourceLibrary"),
-      "target-library",
+    const { router } = renderApp(
+      "/ui-v2/operations/automation/occurrences/auto-task",
     );
-    // Automatic organization is the only retained mode: the editor has no mode
-    // selector, so no removed mode can ever be chosen.
-    expect(screen.queryByLabelText("Run mode")).toBeNull();
-    expect(document.querySelector("#automation-edit-mode")).toBeNull();
-    expect(
-      screen.getByTestId("automation-edit-mode-intent").textContent,
-    ).toContain("automatic-organization");
-    await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
-    await user.clear(screen.getByLabelText("Cron expression"));
-    await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
-    await user.clear(screen.getByLabelText("Timezone"));
-    await user.type(screen.getByLabelText("Timezone"), "Asia/Shanghai");
-    await user.click(screen.getByRole("button", { name: "Save into Draft" }));
 
+    await screen.findByRole("heading", { name: "Automation occurrences" });
+    await user.click(
+      screen.getByRole("link", { name: "Back to execution records" }),
+    );
     await waitFor(() =>
-      expect(
-        calls.some(
-          (item) =>
-            item.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task` &&
-            item.method === "PUT",
-        ),
-      ).toBe(true),
+      expect(router.state.location.pathname).toBe("/operations/automation"),
     );
-    const save = calls.find((item) => item.method === "PUT");
-    expect(save?.body).toMatchObject({
-      expectedVersion: 2,
-      object: {
-        id: "auto-task",
-        resourceLibraryId: "target-library",
-        mode: "automatic-organization",
-        intervalSeconds: null,
-        cron: "0 8 * * *",
-        timezone: "Asia/Shanghai",
-      },
+    expect(router.state.location.search).toMatchObject({
+      tab: "records",
+      rdefinition: "auto-task",
     });
+    await screen.findByRole("region", { name: "自动化执行记录" });
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.url.startsWith("/api/v1/operations/automation/records?") &&
+          call.url.includes("definition=auto-task"),
+      ),
+    ).toBe(true);
   });
 
-  it("refuses an unsupported Draft mode without conversion or mutation", async () => {
-    // A historical Draft may still carry a removed mode. It stays visible as
-    // unsupported history, is never silently rewritten, and no Save is offered
-    // until the operator explicitly confirms the correction to the retained
-    // mode. There is no mode selector to choose from.
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url.endsWith(
-          "/operations/automation/task-definitions/auto-task/draft",
-        )
-      ) {
-        return jsonResponse(
-          draftDocument({
-            draft: {
-              revisionId: DRAFT_REVISION,
-              revisionVersion: 2,
-              revisionStatus: "draft",
-              baseActiveRevisionId: ACTIVE_REVISION,
-              updatedAt: "2026-01-01T00:00:00+00:00",
-              validatedAt: null,
-              validationErrors: [],
-              definition: {
-                id: "auto-task",
-                name: "Nightly automation",
-                enabled: true,
-                resourceLibraryId: "source",
-                mode: "scan-and-plan",
-                itemLimit: 12,
-                sourceScope: null,
-                intervalSeconds: 3600,
-                cron: null,
-                timezone: null,
-              },
-            },
-          }),
-        );
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/editor/auto-task");
-
-    await screen.findByRole("heading", {
-      name: "Automation Draft unavailable",
-    });
-    expect(
-      screen.queryByRole("button", { name: "Save into Draft" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("checkbox", { name: /Publish this Draft/ }),
-    ).toBeNull();
-    expect(calls.some((item) => item.method !== "GET")).toBe(false);
-  });
-
-  it("reports a stale Draft save without replaying the mutation", async () => {
+  it("returns from a failed occurrence read to the same legal records route", async () => {
     const user = userEvent.setup();
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url.endsWith(
-          "/operations/automation/task-definitions/auto-task/draft",
-        )
-      ) {
-        return jsonResponse(draftDocument());
-      }
+    recordingFetch((call) => {
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/auto-task`
+        "/api/v1/operations/automation/task-definitions/auto-task/occurrences?limit=20"
       ) {
-        return jsonResponse(
-          { error: { code: "configuration_version_conflict" } },
-          409,
-        );
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      if (call.url.startsWith("/api/v1/operations/automation/records?")) {
+        return jsonResponse(recordsDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/editor/auto-task");
+    const { router } = renderApp(
+      "/ui-v2/operations/automation/occurrences/auto-task",
+    );
 
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    const nameInput = screen.getByLabelText("Name") as HTMLInputElement;
-    await user.clear(nameInput);
-    await user.type(nameInput, "Renamed automation");
-    await user.click(screen.getByRole("button", { name: "Save into Draft" }));
-
-    await screen.findByText(/The Draft changed before the save was applied/);
-    const saves = calls.filter((item) => item.method === "PUT");
-    // The rejected save is never retried automatically.
-    expect(saves).toHaveLength(1);
+    await screen.findByRole("heading", { name: "Operations unavailable" });
+    await user.click(
+      screen.getByRole("link", { name: "Back to execution records" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations/automation"),
+    );
+    expect(router.state.location.search).toMatchObject({
+      tab: "records",
+      rdefinition: "auto-task",
+    });
   });
 
   it("opens the same create dialog from the legacy create deep link", async () => {

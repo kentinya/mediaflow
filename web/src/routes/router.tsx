@@ -29,8 +29,6 @@ import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryP
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
-import { AutomationDetailPage } from "../features/operations/AutomationDetailPage";
-import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
 import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
 import { AutomationRunOncePage } from "../features/operations/AutomationRunOncePage";
@@ -208,18 +206,6 @@ const automationNewRoute = createRoute({
   component: () => <AutomationListPage createDialogOpen />,
 });
 
-const automationDefinitionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/automation/definition/$definitionId",
-  component: AutomationDetailPage,
-});
-
-const automationEditorRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/automation/editor/$definitionId",
-  component: AutomationEditorPage,
-});
-
 const automationLifecycleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/lifecycle/$definitionId",
@@ -332,8 +318,6 @@ const routeTree = rootRoute.addChildren([
   organizeExecutionRoute,
   automationListRoute,
   automationNewRoute,
-  automationDefinitionRoute,
-  automationEditorRoute,
   automationLifecycleRoute,
   automationLifecycleNewRoute,
   automationOccurrencesRoute,

@@ -205,26 +205,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/automation/lifecycle/" as const,
   },
   {
-    id: "operations-automation-definition",
-    label: "Automation definition",
-    path: "/operations/automation/definition/$definitionId",
-    title: "Automation definition | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Active and Draft identity, schedule state, grant authority and actions.",
-    dynamicPrefix: "/operations/automation/definition/" as const,
-  },
-  {
-    id: "operations-automation-editor",
-    label: "Automation Draft editor",
-    path: "/operations/automation/editor/$definitionId",
-    title: "Automation Draft editor | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Bounded Draft form, explicit validation and checked activation.",
-    dynamicPrefix: "/operations/automation/editor/" as const,
-  },
-  {
     id: "operations-automation-occurrences",
     label: "Automation occurrences",
     path: "/operations/automation/occurrences/$definitionId",
@@ -466,6 +446,13 @@ export function shellPageForPath(pathname: string): ShellPageId | undefined {
   if (path === "/storage") return "storage";
   if (path === "/configuration") return "settings";
   if (path === "/rules" || path.startsWith("/rules/edit/")) return "rules";
+  // The retired definition/editor addresses keep no navigation identity.
+  if (
+    path.startsWith("/operations/automation/definition/") ||
+    path.startsWith("/operations/automation/editor/")
+  ) {
+    return undefined;
+  }
   if (
     path === "/operations/automation" ||
     path.startsWith("/operations/automation/")
@@ -886,14 +873,14 @@ export function allowlistedDestinationSearch(
   }
   if (path === "/operations/automation") {
     // The Automation workspace carries only its own bounded list state, so a
-    // reload/reconnect and a definition or Task Center round trip restore the
+    // reload/reconnect and an edit-card or Task Center round trip restore the
     // exact tab, filters, time window and server page the operator left.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setAutomationListTokens(allowed, current);
-    // A definition/lifecycle page returns to this list through `returnTab` and
-    // the same bounded list state; only the closed tab token is replayed as a
-    // return hint.
+    // The lifecycle/occurrence pages return to this list through `returnTab`
+    // and the same bounded list state; only the closed tab token is replayed
+    // as a return hint.
     setFilterToken(
       allowed,
       "returnTab",
@@ -1079,15 +1066,13 @@ export function allowlistedDestinationSearch(
     path === "/operations/automation/new" ||
     path === "/operations/automation/lifecycle" ||
     path === "/operations/automation/lifecycle/$definitionId" ||
-    path === "/operations/automation/definition/$definitionId" ||
-    path === "/operations/automation/editor/$definitionId" ||
     path === "/operations/automation/occurrences/$definitionId" ||
     path === "/operations/notifications/webhooks/new" ||
     path === "/operations/notifications/webhooks/$webhookId" ||
     path === "/operations/notifications/editor/$webhookId" ||
     path === "/operations/notifications/deliveries/$deliveryId"
   ) {
-    // The Automation definition/lifecycle pages carry exactly the bounded
+    // The Automation lifecycle/occurrence pages carry exactly the bounded
     // workspace list state they must return to, and nothing else: a tampered
     // or credential-like value is dropped by the same grammars above.
     if (path.startsWith("/operations/automation/")) {

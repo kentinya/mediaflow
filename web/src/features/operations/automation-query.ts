@@ -9,8 +9,6 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import {
-  fetchAutomationDefinition,
-  fetchAutomationDefinitionDraft,
   fetchAutomationDefinitions,
   fetchAutomationMetrics,
   fetchAutomationOccurrences,
@@ -102,43 +100,6 @@ export function automationRecordsQueryOptions(
     ],
     queryFn: () => fetchAutomationRecords(token, options),
     enabled: token !== null && enabled,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 5_000,
-  });
-}
-
-export const automationDefinitionQueryKey =
-  "operations.automation-definition" as const;
-
-export function automationDefinitionQueryOptions(
-  token: string | null,
-  definitionId: string,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey: [automationDefinitionQueryKey, definitionId],
-    queryFn: () => fetchAutomationDefinition(token, definitionId),
-    enabled: token !== null && definitionId.length > 0 && enabled,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 5_000,
-  });
-}
-
-export const automationDraftQueryKey = "operations.automation-draft" as const;
-
-export function automationDraftQueryOptions(
-  token: string | null,
-  definitionId: string,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey: [automationDraftQueryKey, definitionId],
-    queryFn: () => fetchAutomationDefinitionDraft(token, definitionId),
-    enabled: token !== null && definitionId.length > 0 && enabled,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

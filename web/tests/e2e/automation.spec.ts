@@ -9,19 +9,17 @@ import { expect, test, type Page } from "@playwright/test";
  * tests/test_v2_automation_operations.py and
  * tests/test_automation_workspace_read_model.py): the reference-aligned
  * `任务列表` table with its full-population cards, query echo and page cursors,
- * Draft/Active distinction, explicit validation and checked activation, the
- * definition-bound Run once entry (the retired standalone Preview product is
- * gone), Enabled execution readiness, pinned occurrences with linked work, the
- * read-only `执行记录` tab and fail-closed malformed documents. Captured evidence
- * excludes Bearer values, grant secrets, digests, fingerprints and raw plans.
+ * the row actions, the definition-bound Run once entry (the retired standalone
+ * Preview product is gone), pinned occurrences with linked work, the read-only
+ * `执行记录` tab and fail-closed malformed documents. The retired definition and
+ * editor addresses are ordinary not-found pages. Captured evidence excludes
+ * Bearer values, grant secrets, digests, fingerprints and raw plans.
  */
 
 const VIEWER_TOKEN = "e2e-viewer-token";
-const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 const DEFINITION_ID = "automation-def-e2e-001";
 const ACTIVE_REVISION = "automation-active-rev-e2e-001";
-const DRAFT_REVISION = "automation-draft-rev-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/ui-v2/");
@@ -128,19 +126,19 @@ test("the Operations landing links the Automation workspace with cards, tabs and
     /\/ui-v2\/operations\/automation\/lifecycle\?(.*&)?tab=definitions(&|$)/,
   );
 
-  // The row opens the exact durable detail route, carrying this list's
-  // bounded return context (tab/filters/page) rather than resetting it.
-  await row.getByRole("button", { name: "打开" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/ui-v2/operations/automation/definition/${DEFINITION_ID}\\?.*returnTab=definitions`,
-    ),
-  );
-  // The detail publishes the exact immutable Active identity the list read
-  // resolved, so a definition row can never be read as a Draft.
+  // The name is ordinary readable text: there is no "打开" button and no
+  // name control that can enter the retired definition detail.
   await expect(
-    page.getByText(new RegExp(`Active revision ${ACTIVE_REVISION}`)),
+    row.getByText("Nightly automation", { exact: true }),
   ).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: "Nightly automation" }),
+  ).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "打开" })).toHaveCount(0);
+  // The supported row entries remain available.
+  await expect(row.getByRole("button", { name: "编辑" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "复制" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "运行一次" })).toBeVisible();
 });
 
 test("the read-only execution records tab reads an honest empty history", async ({
@@ -250,120 +248,6 @@ test("a fractional integer is sent as-is and rejected without coercion", async (
   await expect(jobs).toHaveValue("3.5");
 });
 
-test("the definition detail offers the backend-advertised actions only", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await expect(
-    page.getByRole("heading", { name: /Automation definition/ }),
-  ).toBeVisible();
-  // The saved Enabled state is readable without an independent grant.
-  await expect(
-    page.getByRole("heading", { name: "Execution readiness" }),
-  ).toBeVisible();
-  await expect(page.getByText(/The saved schedule is enabled/)).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: /Grant unattended authority|Revoke grant/,
-    }),
-  ).toHaveCount(0);
-  // The independent Preview product is retired: no such control exists.
-  await expect(
-    page.getByRole("button", { name: "Create exact Preview" }),
-  ).toHaveCount(0);
-  // Copy requires an open successor Draft, exactly as the backend advertises.
-  await expect(
-    page.getByRole("button", { name: "Copy into Draft" }),
-  ).toBeDisabled();
-  await expect(
-    screenText(
-      page,
-      /an open successor Draft is required to copy this definition/,
-    ),
-  ).toBeVisible();
-});
-
-test("the Draft journey composes successor Draft, bounded save, validation and checked activation", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
-  await page
-    .getByRole("link", { name: "Edit successor Draft" })
-    .first()
-    .click();
-  await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/automation/editor/${DEFINITION_ID}$`),
-  );
-  await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
-  ).toBeVisible();
-  await expect(page.getByText(new RegExp(DRAFT_REVISION))).toBeVisible();
-
-  const name = page.getByLabel("Name");
-  await name.fill("Renamed nightly automation");
-  // Every owned definition field is editable: the intent is fixed (no mode
-  // selector exists) and the exact schedule form transitions to Cron/timezone.
-  await expect(page.getByLabel("Run mode")).toHaveCount(0);
-  await page.getByLabel("Schedule type").selectOption("cron");
-  await page.getByLabel("Cron expression").fill("0 8 * * *");
-  await page.getByLabel("Timezone").fill("Asia/Shanghai");
-  await page.getByRole("button", { name: "Save into Draft" }).click();
-  await expect(page.getByText(/Draft validation findings/)).toBeHidden();
-
-  await page.getByRole("button", { name: "Validate Draft" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Draft validated" }),
-  ).toBeVisible();
-
-  const activate = page.getByRole("button", { name: "Activate checked Draft" });
-  await expect(activate).toBeDisabled();
-  await page.getByLabel("Confirm checked activation").check();
-  await activate.click();
-  await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/automation/definition/${DEFINITION_ID}$`),
-  );
-  await expect(
-    page.getByText(/automation-draft-rev-e2e-001/).first(),
-  ).toBeVisible();
-
-  const evidence = await automationEvidence(page);
-  const save = evidence.items.find(
-    (item) =>
-      item.method === "PUT" &&
-      item.path.includes("/objects/automationTaskDefinitions/"),
-  );
-  expect(save?.body).toMatchObject({
-    expectedVersion: 2,
-    object: {
-      name: "Renamed nightly automation",
-      id: DEFINITION_ID,
-      mode: "automatic-organization",
-      intervalSeconds: null,
-      cron: "0 8 * * *",
-      timezone: "Asia/Shanghai",
-    },
-  });
-  const activations = evidence.items.filter(
-    (item) => item.method === "POST" && item.path.endsWith("/activate-draft"),
-  );
-  expect(activations).toHaveLength(1);
-  expect(activations[0]?.body).toMatchObject({
-    expectedRevisionId: DRAFT_REVISION,
-    expectedVersion: 3,
-  });
-  expect(JSON.stringify(evidence.items)).not.toMatch(
-    /expectedDigest|"digest"/i,
-  );
-});
-
 test("the legacy create deep link opens the same list-overlay create card", async ({
   page,
 }) => {
@@ -400,29 +284,6 @@ test("the legacy create deep link opens the same list-overlay create card", asyn
   ).toBeVisible();
 });
 
-test("copy completes into a reachable draft-only definition", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
-  await page.getByRole("button", { name: "Copy into Draft" }).click();
-
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/definition\/automation-def-e2e-copy$/,
-  );
-  await expect(
-    page.getByRole("heading", {
-      name: "Automation definition Nightly automation copy",
-    }),
-  ).toBeVisible();
-  await expect(page.getByText(/draft-only/).first()).toBeVisible();
-  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
-});
-
 test("occurrence history links the exact Task without emitting work", async ({
   page,
 }) => {
@@ -435,7 +296,7 @@ test("occurrence history links the exact Task without emitting work", async ({
   ).toBeVisible();
   await expect(page.getByText(/completed/i).first()).toBeVisible();
   await expect(
-    page.getByText(/automation-active-rev-e2e-001/).first(),
+    page.getByText(new RegExp(ACTIVE_REVISION)).first(),
   ).toBeVisible();
 
   // The retired Job collection is closed. The occurrence links its own Task
@@ -461,90 +322,91 @@ test("occurrence history links the exact Task without emitting work", async ({
   ).toBe(false);
 });
 
-test("a read-only principal is offered no executable Automation control", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-    READ_ONLY_TOKEN,
-  );
-  await expect(
-    page.getByRole("heading", { name: /Automation definition/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Create exact Preview" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Start successor Draft" }),
-  ).toBeDisabled();
-});
-
-test("malformed execution readiness renders the bounded malformed state and submits nothing", async ({
-  page,
-}) => {
-  // Malformed current readiness must fail the whole read closed, rather than
-  // accepting old grant evidence or exposing arbitrary payload text/controls.
-  const variant = await page.request.post(
-    "/__test__/automation-readiness-variant?variant=hostile",
-  );
-  expect(variant.status()).toBe(200);
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await expect(
-    page.getByText(/could not be understood as the expected contract/),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Grant unattended authority" }),
-  ).toHaveCount(0);
-  await expect(page.getByText(/hidden-token|private\/media/)).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Start successor Draft" }),
-  ).toHaveCount(0);
-  const evidence = await automationEvidence(page);
-  expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
-    0,
-  );
-});
-
-test("the Automation journey is keyboard operable and responsive at narrow and wide viewports", async ({
+test("the definition row stays keyboard-safe and responsive without a retired Open entry", async ({
   page,
 }) => {
   await connect(page);
   await openAutomation(page);
 
-  // Keyboard: reach the definition row without a pointer and open it. The
-  // inventory row's name is the real navigation control of the table.
   const table = page.getByRole("table", { name: "自动化任务" });
   const row = table.getByRole("row", { name: /Nightly automation/ });
-  await row.getByRole("button", { name: "Nightly automation" }).focus();
-  await page.keyboard.press("Enter");
+  // The name is not a keyboard target and there is no "打开" entry.
   await expect(
-    page.getByRole("heading", { name: /Automation definition/ }),
-  ).toBeVisible();
-  // The keyboard journey reaches the definition's occurrence history, which is
-  // the durable evidence for every Run once this definition emitted.
-  const occurrences = page.getByRole("link", { name: "Occurrence history" });
-  await occurrences.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
-  ).toBeVisible();
+    row.getByRole("button", { name: "Nightly automation" }),
+  ).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "打开" })).toHaveCount(0);
+  // A supported row action is still reachable by keyboard.
+  const runOnce = row.getByRole("button", { name: "运行一次" });
+  await runOnce.focus();
+  await expect(runOnce).toBeFocused();
 
-  await page.setViewportSize({ width: 375, height: 720 });
-  await expect(
-    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
-  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeVisible();
+  await expect(row).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+    ),
+  ).toBe(true);
 
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(
-    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
-  ).toBeVisible();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await expect(table).toBeVisible();
+  await expect(row).toBeVisible();
 });
 
-function screenText(page: Page, pattern: RegExp) {
-  // Local helper: the matched text must exist in the rendered document.
-  return page.getByText(pattern).first();
-}
+test("the retired definition and editor addresses are ordinary not-found pages", async ({
+  page,
+}) => {
+  for (const path of [
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}?returnTab=definitions`,
+    `/ui-v2/operations/automation/editor/${DEFINITION_ID}?returnTab=definitions`,
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Automation definition|Edit Automation definition/),
+    ).toHaveCount(0);
+    await expect(page.getByText("Back to the definition")).toHaveCount(0);
+    // A retired, unsupported address is not an authentication continuation
+    // target; it shows the ordinary not-found page directly.
+    await expect(page.getByLabel("API token")).toHaveCount(0);
+  }
+  // Viewing an old address issues no retired detail/Draft read, configuration
+  // command or work admission.
+  const evidence = await automationEvidence(page);
+  expect(
+    evidence.items.filter(
+      (item) =>
+        item.method !== "GET" ||
+        item.path.includes("/automation/task-definitions/") ||
+        item.path.includes("/draft"),
+    ),
+  ).toHaveLength(0);
+});
+
+test("occurrence history returns to the definition-filtered execution records", async ({
+  page,
+}) => {
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Automation occurrences" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Back to execution records" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?/);
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("tab"))
+    .toBe("records");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("rdefinition"))
+    .toBe(DEFINITION_ID);
+  await expect(
+    page.getByRole("navigation", { name: "自动化分区" }).getByRole("button", {
+      name: "执行记录",
+    }),
+  ).toHaveAttribute("aria-current", "page");
+});

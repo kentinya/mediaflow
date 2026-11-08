@@ -252,7 +252,6 @@ export type AutomationCopyRowFeedback =
 export function AutomationDefinitionRow({
   definition,
   latestRun,
-  onOpen,
   onEdit,
   onCopy,
   onRunOnce,
@@ -267,7 +266,6 @@ export function AutomationDefinitionRow({
 }: {
   readonly definition: AutomationDefinitionModel;
   readonly latestRun: AutomationLatestRunModel | null;
-  readonly onOpen: () => void;
   readonly onEdit: (() => void) | null;
   readonly onCopy: (() => void) | null;
   readonly onRunOnce: (() => void) | null;
@@ -299,9 +297,7 @@ export function AutomationDefinitionRow({
       data-copy-state={copyFeedback?.state ?? "idle"}
     >
       <td>
-        <button type="button" className="mf-link-button" onClick={onOpen}>
-          {definition.document.name}
-        </button>
+        <span>{definition.document.name}</span>
         {highlighted && (
           <span className="mf-automation-created-badge">
             {highlightedLabel}
@@ -340,13 +336,6 @@ export function AutomationDefinitionRow({
       </td>
       <td>
         <div className="mf-actions">
-          <button
-            type="button"
-            className="mf-button mf-button-secondary"
-            onClick={onOpen}
-          >
-            打开
-          </button>
           {onEdit !== null && (
             <button
               type="button"

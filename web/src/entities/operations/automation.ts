@@ -3,12 +3,11 @@
  *
  * The Python contract exposes the V2 Automation journey as digest-free
  * operator documents under ``/api/v1/operations/automation/``: a definitions
- * page with the exact immutable Active identity and open-Draft state, a
- * definition detail with occurrence/grant/eligibility evidence, a Draft
- * editor document, an exact zero-mutation Preview and its paged items, and a
- * bounded occurrence history with linked-work transports. Mutations always
- * reuse the existing backend routes whose optimistic versions and permission
- * checks remain authoritative.
+ * page with the exact immutable Active identity and open-Draft state, the
+ * focused definition form projections, an exact zero-mutation Preview and its
+ * paged items, and a bounded occurrence history with linked-work transports.
+ * Mutations always reuse the existing backend routes whose optimistic versions
+ * and permission checks remain authoritative.
  *
  * Normalization is deliberately fail-closed: unknown status values, a coerced
  * boolean, a missing required identity or a contradictory block make the whole
@@ -49,8 +48,6 @@ export type AutomationDocumentRunMode = AutomationRunMode;
 export function describeAutomationRunMode(value: string): string {
   return value;
 }
-
-export const AUTOMATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
 
 /**
  * Where the definition durably lives: in the immutable Active configuration,
@@ -1409,109 +1406,6 @@ function normalizeResourceLibraryOption(
   };
 }
 
-export interface AutomationDraftDocumentModel {
-  readonly definitionId: string;
-  readonly activeConfiguration: AutomationActiveConfigurationModel | null;
-  readonly draft: {
-    readonly revisionId: string;
-    readonly revisionVersion: number;
-    readonly revisionStatus: string;
-    readonly baseActiveRevisionId: string | null;
-    readonly updatedAt: string | null;
-    readonly validatedAt: string | null;
-    readonly validationErrors: readonly string[];
-    readonly definition: AutomationDefinitionDocumentModel;
-  } | null;
-  readonly resourceLibraryOptions: readonly AutomationResourceLibraryOptionModel[];
-  readonly actions: {
-    readonly createDraft: AutomationActionModel;
-    readonly save: AutomationActionModel;
-    readonly validate: AutomationActionModel;
-    readonly activate: AutomationActionModel;
-  };
-}
-
-export function normalizeAutomationDraftDocument(
-  payload: unknown,
-): AutomationDraftDocumentModel {
-  const source = readRecord(payload, "automation_definition_draft");
-  const definitionId = text(source, "definitionId");
-  const activeConfiguration = normalizeAutomationActiveConfiguration(
-    source["activeConfiguration"],
-  );
-  const rawDraft = optionalRecord(source["draft"], "draft");
-  let draft: AutomationDraftDocumentModel["draft"] = null;
-  if (rawDraft !== null) {
-    const rawDefinition = optionalRecord(
-      rawDraft["definition"],
-      "draft.definition",
-    );
-    if (rawDefinition === null) {
-      return fail("draft.definition");
-    }
-    draft = {
-      revisionId: text(rawDraft, "revisionId"),
-      revisionVersion: count(rawDraft, "revisionVersion"),
-      revisionStatus: enumOrFail(
-        rawDraft["revisionStatus"],
-        "draft.revisionStatus",
-        AUTOMATION_OPEN_DRAFT_STATUSES,
-      ),
-      baseActiveRevisionId: optionalText(rawDraft, "baseActiveRevisionId"),
-      updatedAt: optionalText(rawDraft, "updatedAt"),
-      validatedAt: optionalText(rawDraft, "validatedAt"),
-      validationErrors: stringList(rawDraft, "validationErrors"),
-      definition: normalizeAutomationDefinitionDocument(
-        rawDefinition,
-        "draft.definition",
-      ),
-    };
-  }
-  const rawOptions = source["resourceLibraryOptions"] ?? [];
-  if (!Array.isArray(rawOptions) || rawOptions.length > 100) {
-    return fail("resourceLibraryOptions");
-  }
-  const actions = readRecord(source["actions"], "actions");
-  return {
-    definitionId,
-    activeConfiguration,
-    draft,
-    resourceLibraryOptions: rawOptions.map((option, index) =>
-      normalizeResourceLibraryOption(
-        option,
-        `resourceLibraryOptions[${index}]`,
-      ),
-    ),
-    actions: {
-      createDraft: normalizeAutomationAction(
-        actions["createDraft"],
-        "actions.createDraft",
-        "draft-create",
-        activeConfiguration?.revisionId ?? null,
-      ),
-      save: normalizeAutomationAction(
-        actions["save"],
-        "actions.save",
-        "draft-save",
-        draft?.revisionId ?? null,
-        draft?.definition.id ?? null,
-      ),
-      validate: normalizeAutomationAction(
-        actions["validate"],
-        "actions.validate",
-        "draft-validate",
-        draft?.revisionId ?? null,
-      ),
-      activate: normalizeAutomationAction(
-        actions["activate"],
-        "actions.activate",
-        "draft-activate",
-        definitionId,
-      ),
-    },
-  };
-}
-
 /**
  * The full-population definition aggregates the inventory cards publish.
  *
@@ -2299,32 +2193,5 @@ export function normalizeAutomationRecordsPage(
     historyBasis: text(source, "historyBasis"),
     nextCursor: optionalText(source, "next_cursor"),
     previousCursor: optionalText(source, "previous_cursor"),
-  };
-}
-
-export interface AutomationActivationModel {
-  readonly activatedRevisionId: string;
-  readonly activatedVersion: number;
-  readonly revisionSequence: number;
-  readonly activeConfiguration: AutomationActiveConfigurationModel | null;
-  readonly definition: AutomationDefinitionDocumentModel | null;
-}
-
-export function normalizeAutomationActivation(
-  payload: unknown,
-): AutomationActivationModel {
-  const source = readRecord(payload, "automation_activation");
-  const rawDefinition = optionalRecord(source["definition"], "definition");
-  return {
-    activatedRevisionId: text(source, "activatedRevisionId"),
-    activatedVersion: count(source, "activatedVersion"),
-    revisionSequence: count(source, "revisionSequence"),
-    activeConfiguration: normalizeAutomationActiveConfiguration(
-      source["activeConfiguration"],
-    ),
-    definition:
-      rawDefinition === null
-        ? null
-        : normalizeAutomationDefinitionDocument(rawDefinition, "definition"),
   };
 }

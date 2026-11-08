@@ -471,7 +471,7 @@ describe("Automation list Copy", () => {
     ).toBeVisible();
     // The list refreshed its real rows and marked the new copy.
     const copyRow = table
-      .getByRole("button", { name: "Nightly automation copy" })
+      .getByText("Nightly automation copy", { exact: true })
       .closest("tr") as HTMLElement;
     expect(within(copyRow).getByText("刚刚复制")).toBeVisible();
     // The copy is a new disabled definition: its edit entry is the row button.
@@ -765,9 +765,7 @@ describe("Automation list Copy", () => {
     expect(await screen.findByText("未能复制")).toBeVisible();
     // The refreshed list shows the concurrent definition, not only the
     // rejection text.
-    expect(
-      await screen.findByRole("button", { name: "Another automation" }),
-    ).toBeVisible();
+    expect(await screen.findByText("Another automation")).toBeVisible();
     const refreshedTable = within(
       screen.getByRole("table", { name: "自动化任务" }),
     );
@@ -970,7 +968,7 @@ describe("Automation list Copy", () => {
     ).toBeNull();
     expect(router.state.location.pathname).toBe("/operations/automation");
     expect(
-      table.getByRole("button", { name: "Nightly automation copy" }),
+      table.getByText("Nightly automation copy", { exact: true }),
     ).toBeVisible();
   });
 

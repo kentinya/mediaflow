@@ -37,8 +37,6 @@ describe("destination model", () => {
       "Create Automation definition",
       "New Automation definition",
       "Automation lifecycle",
-      "Automation definition",
-      "Automation Draft editor",
       "Automation occurrences",
       "Automation Run once",
       "Notifications",
@@ -60,12 +58,24 @@ describe("destination model", () => {
     expect(destinationForPath("/library/files")).toBeUndefined();
     expect(destinationForPath("/library/file-index")).toBeUndefined();
     expect(destinationForPath("/unknown")).toBeUndefined();
+    expect(
+      destinationForPath("/operations/automation/definition/def-1"),
+    ).toBeUndefined();
+    expect(
+      destinationForPath("/operations/automation/editor/def-1"),
+    ).toBeUndefined();
   });
 
   it("rejects retired FileIndex routes while preserving dynamic detail routes", () => {
     expect(destinationForPath("/library/file-index/file-123")).toBeUndefined();
     expect(destinationForPath("/library/file-index/$fileId")).toBeUndefined();
     expect(isDestinationPath("/library/file-index/file-123")).toBe(false);
+    expect(isDestinationPath("/operations/automation/definition/def-1")).toBe(
+      false,
+    );
+    expect(isDestinationPath("/operations/automation/editor/def-1")).toBe(
+      false,
+    );
     expect(
       destinationForPath("/operations/automation/preview/def-1/preview-1"),
     ).toBeUndefined();
@@ -83,7 +93,6 @@ describe("destination model", () => {
       ["/operations/automation", "automation"],
       ["/operations/automation/new", "automation"],
       ["/operations/automation/lifecycle/nightly", "automation"],
-      ["/operations/automation/definition/def-1", "automation"],
       ["/operations/automation/occurrences/def-1", "automation"],
       ["/operations/automation/run-once/discovery-1", "automation"],
       ["/operations", "operations"],
@@ -109,6 +118,8 @@ describe("destination model", () => {
       "/review",
       "/library",
       "/library/files",
+      "/operations/automation/definition/def-1",
+      "/operations/automation/editor/def-1",
       "/unknown",
     ]) {
       expect(shellPageForPath(path), path).toBeUndefined();

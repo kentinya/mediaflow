@@ -8,13 +8,14 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { automationOccurrencesQueryOptions } from "./automation-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { describeAutomationRunMode } from "../../entities/operations/automation";
+import { readAutomationListReturn } from "../../shared/navigation/automation-list-return";
 
 function displayEnum(value: string): string {
   return value
@@ -28,8 +29,29 @@ export function AutomationOccurrencesPage() {
     from: "/operations/automation/occurrences/$definitionId",
   });
   const token = useAuthToken();
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const [cursor, setCursor] = useState<string | null>(null);
   const [direction, setDirection] = useState<"previous" | "next">("next");
+  // The old definition detail page used to own this entry. The bounded list
+  // return context it carried is still honoured, but the ordinary exit is the
+  // execution records tab filtered to this exact definition.
+  const retainedReturn = readAutomationListReturn(searchParams).search;
+  // A definitions-tab return is preserved as-is. A records-tab return keeps
+  // its own filters but always carries this definition when it omitted one;
+  // any other value degrades to the ordinary definition-filtered records tab.
+  const backSearch: Record<string, string> =
+    retainedReturn?.tab === "definitions"
+      ? retainedReturn
+      : retainedReturn?.tab === "records"
+        ? {
+            ...retainedReturn,
+            rdefinition: retainedReturn["rdefinition"] ?? definitionId,
+          }
+        : { tab: "records", rdefinition: definitionId };
+  const backLabel =
+    backSearch["tab"] === "definitions"
+      ? "Back to the Automation list"
+      : "Back to execution records";
 
   const occurrencesQuery = useQuery(
     automationOccurrencesQueryOptions(token, definitionId, cursor, direction),
@@ -55,10 +77,10 @@ export function AutomationOccurrencesPage() {
               <div className="mf-actions">
                 <Link
                   className="mf-button mf-button-secondary"
-                  to="/operations/automation/definition/$definitionId"
-                  params={{ definitionId }}
+                  to="/operations/automation"
+                  search={backSearch}
                 >
-                  Back to the definition
+                  {backLabel}
                 </Link>
                 <RefreshControl onRefresh={refresh} refreshing={isFetching} />
               </div>
@@ -199,10 +221,10 @@ export function AutomationOccurrencesPage() {
               )}
               <Link
                 className="mf-button mf-button-secondary"
-                to="/operations/automation/definition/$definitionId"
-                params={{ definitionId }}
+                to="/operations/automation"
+                search={backSearch}
               >
-                Back to the definition
+                {backLabel}
               </Link>
             </div>
           </div>

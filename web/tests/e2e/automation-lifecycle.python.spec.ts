@@ -175,7 +175,9 @@ async function copyDefinitionFromList(
 ): Promise<string> {
   const before = (await harnessState(page)).definitions.map((item) => item.id);
   await connectOn(page, "/ui-v2/operations/automation");
-  const sourceRow = page.getByRole("row").filter({ hasText: sourceName });
+  const sourceRow = page
+    .getByRole("row")
+    .filter({ has: page.getByText(sourceName, { exact: true }) });
   await sourceRow.getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
   const after = (await harnessState(page)).definitions.map((item) => item.id);
@@ -231,26 +233,15 @@ test("one checked Save publishes the definition and a reload confirms durable tr
   expect(state.definitions[0]?.enabled).toBe(false);
   expect(state.definitions[0]?.resourceLibraryId).toBe("source");
 
-  // The ordinary detail route consumes the real Python contract while disabled.
+  // The ordinary list consumes the real Python contract while disabled.
   // Reading does not depend on an independent grant or start work.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await expect(
-    page.getByRole("heading", { name: /Automation definition Harness/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Execution readiness" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "The saved schedule is disabled; it emits no new scheduled work.",
-    ),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Grant unattended authority" }),
-  ).toHaveCount(0);
+  await connectOn(page, "/ui-v2/operations/automation");
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByText("Harness automation", { exact: true }) });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("停用", { exact: true })).toBeVisible();
+  await expect(row.getByRole("button", { name: "打开" })).toHaveCount(0);
   expect((await harnessState(page)).occurrenceTotal).toBe(0);
 
   // The published definition is durable across a real runtime restart, and the
@@ -512,12 +503,12 @@ test("removal stops the enabled definition, revokes historical authority and ret
   expect(tickBody.occurrenceTotal).toBe(occurrencesBefore);
 });
 
-test("retained history stays readable after removal through the detail route", async ({
+test("retained occurrence history stays readable after removal", async ({
   page,
 }) => {
-  // P1-3 regression: the operator's existing definition detail route
-  // resolves a removed definition from durable evidence, truthfully
-  // labelled historical, and never presents it as Active authority.
+  // P1-3 regression: the operator's occurrence history resolves a removed
+  // definition from durable pinned evidence and leaves through the supported
+  // execution-records list, never through a retired definition page.
   await publishNewDefinition(page);
 
   // A real Scheduler tick emits one due occurrence for the published,
@@ -562,16 +553,17 @@ test("retained history stays readable after removal through the detail route", a
     page.getByRole("heading", { name: /occurrences/i }),
   ).toBeVisible();
 
-  // The removed definition's detail route renders the retained history,
-  // labelled historical and never as Active authority.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
+  // The removed definition's retained occurrence history still resolves the
+  // exact pinned evidence and leaves through the supported records list.
+  await expect(page.getByText("Pinned revision")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: /Harness automation/ }),
-  ).toBeVisible();
-  await expect(page.getByText(/removed · retained history/)).toBeVisible();
+    page.getByRole("link", { name: "Back to execution records" }),
+  ).toHaveAttribute(
+    "href",
+    new RegExp(
+      `/ui-v2/operations/automation\\?.*tab=records.*rdefinition=${DEFINITION_ID}`,
+    ),
+  );
   state = await harnessState(page, DEFINITION_ID);
   expect(state.definitions).toEqual([]);
   expect(state.occurrenceTotal).toBe(1);
@@ -581,8 +573,8 @@ test("navigating to the copy route never applies the origin's unsaved input", as
   page,
 }) => {
   // P1-1 regression: open the origin, change its Name without saving, then
-  // navigate to another definition route. A Save there publishes that
-  // route's definition, never the origin's retained input.
+  // navigate to another lifecycle card. A Save there publishes that
+  // definition, never the origin's retained input.
   await publishNewDefinition(page);
 
   // Publish a real copy through the list row command first, so the second
@@ -764,12 +756,9 @@ test("a lost Copy response stays unknown across reload until reconciled from the
     void route.fetch().then(() => route.abort());
   });
   const sourceRow = () =>
-    page.getByRole("row").filter({
-      has: page.getByRole("button", {
-        name: "Harness automation",
-        exact: true,
-      }),
-    });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
   await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/复制结果待核对/)).toBeVisible();
   // The retained intent blocks a second submission.
@@ -818,12 +807,9 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
     void route.fetch().then(() => route.abort());
   });
   const sourceRow = () =>
-    page.getByRole("row").filter({
-      has: page.getByRole("button", {
-        name: "Harness automation",
-        exact: true,
-      }),
-    });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
   await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/复制结果待核对/)).toBeVisible();
 
@@ -847,7 +833,9 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
   await page.reload();
   await connectOn(page, "/ui-v2/operations/automation");
   const reloadedRow = () =>
-    page.getByRole("row").filter({ hasText: "Harness automation" });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
   await expect(reloadedRow().getByText(/复制结果待核对/)).toBeVisible();
   await expect(
     reloadedRow().getByRole("button", { name: "复制", exact: true }),
@@ -874,12 +862,9 @@ test("a second lost Copy after a successful copy shows the current unknown and r
   const copyBodies = recordCopyBodies(page);
   await connectOn(page, "/ui-v2/operations/automation");
   const sourceRow = () =>
-    page.getByRole("row").filter({
-      has: page.getByRole("button", {
-        name: "Harness automation",
-        exact: true,
-      }),
-    });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
   await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
   await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
   const afterFirst = await harnessState(page);
@@ -951,12 +936,9 @@ test("a later authority read never pairs with an older displayed row", async ({
   const copyBodies = recordCopyBodies(page);
   await connectOn(page, "/ui-v2/operations/automation");
   const sourceRow = () =>
-    page.getByRole("row").filter({
-      has: page.getByRole("button", {
-        name: "Harness automation",
-        exact: true,
-      }),
-    });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
   await expect(
     sourceRow().getByRole("cell", { name: "5", exact: true }),
   ).toBeVisible();
@@ -1007,12 +989,9 @@ test("a conflict refresh updates the Copy authority so the next explicit copy su
   const copyBodies = recordCopyBodies(page);
   await connectOn(page, "/ui-v2/operations/automation");
   const sourceRow = () =>
-    page.getByRole("row").filter({
-      has: page.getByRole("button", {
-        name: "Harness automation",
-        exact: true,
-      }),
-    });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText("Harness automation", { exact: true }) });
 
   const otherTab = await context.newPage();
   await saveItemLimit(otherTab, DEFINITION_ID, 9);
@@ -1044,7 +1023,7 @@ test("retained history shows the published configuration, never an open Draft", 
 }) => {
   // P1 regression: publish and enable a definition, emit a real occurrence,
   // and leave a compatible open successor Draft with an unpublished name.
-  // After removal the native detail route must show the published history —
+  // After removal the occurrence history must show the published revision —
   // never the Draft candidate.
   //
   // A real due occurrence needs a fresh due-state row: the harness resets
@@ -1061,9 +1040,16 @@ test("retained history shows the published configuration, never an open Draft", 
   const tickBody = (await tick.json()) as { emitted?: string[] };
   expect(tickBody.emitted).toContain(DEFINITION_ID);
 
-  // Remove the published definition. The open Draft from the earlier edit
-  // journey (none is opened here) would not matter — the history resolves
-  // from published evidence either way. Verify the removed detail route.
+  // Leave an open successor Draft with an unpublished name, then remove the
+  // published definition. The occurrence history still resolves the pinned
+  // published revision, never the Draft candidate.
+  const draft = await page.request.post(
+    "/__harness__/open-automation-definition-draft",
+  );
+  expect(draft.ok()).toBe(true);
+  const draftBody = (await draft.json()) as { readonly draftName?: string };
+  expect(draftBody.draftName).toBe("NEVER PUBLISHED browser draft");
+
   await openLifecycle(page, DEFINITION_ID);
   await page.getByLabel(/我确认移除此定义/).check();
   await page.getByRole("button", { name: "移除定义" }).click();
@@ -1071,12 +1057,13 @@ test("retained history shows the published configuration, never an open Draft", 
 
   await connectOn(
     page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
   );
   await expect(
-    page.getByRole("heading", { name: /Harness automation/ }),
+    page.getByRole("heading", { name: "Automation occurrences" }),
   ).toBeVisible();
-  await expect(page.getByText(/removed · retained history/)).toBeVisible();
+  await expect(page.getByText("Pinned revision")).toBeVisible();
+  await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
 });
 
 test("corrupt published evidence is reported as unavailable, never a draft or absence", async ({
@@ -1108,38 +1095,24 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   await page.getByRole("button", { name: "移除定义" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
 
-  // Intact evidence still resolves the real published history.
+  // Intact evidence still resolves the real published occurrence history.
   await connectOn(
     page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
   );
-  await expect(page.getByText(/removed · retained history/)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Automation occurrences" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Active revision/)).toBeVisible();
 
   const corrupted = await page.request.post(
     `/__harness__/corrupt-automation-published-history?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
   );
   expect(corrupted.ok()).toBe(true);
 
-  // The native detail route reports the bounded unavailable state instead of
-  // the unpublished Draft candidate or a false absence. It must not render the
-  // removed definition as retained history, and it must not claim it never
-  // existed.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Operations unavailable" }),
-  ).toBeVisible();
-  await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
-  await expect(page.getByText(/removed · retained history/)).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: /Record not found/ }),
-  ).toHaveCount(0);
-
-  // The lifecycle edit route offers the same bounded recovery and no Save.
-  // The route's list background legitimately shows the open Draft as its
-  // draft-only inventory row; the edit CARD must never render that candidate.
+  // The state-backed edit route and occurrence history report the bounded
+  // unavailable state instead of the unpublished Draft candidate or a false
+  // absence.
   await connectOn(
     page,
     `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
@@ -1183,7 +1156,9 @@ test("the row edit entry opens the same card over the list and protects unsaved 
 
   await connectOn(page, "/ui-v2/operations/automation?sort=name");
   const rowFor = (name: string) =>
-    page.getByRole("row").filter({ hasText: name });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText(name, { exact: true }) });
   await rowFor("Harness automation")
     .getByRole("button", { name: "编辑" })
     .click();
@@ -1393,7 +1368,9 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
 
   await connectOn(page, "/ui-v2/operations/automation?sort=name");
   const rowFor = (text: string) =>
-    page.getByRole("row").filter({ hasText: text });
+    page
+      .getByRole("row")
+      .filter({ has: page.getByText(text, { exact: true }) });
   const openRowEdit = async (text: string) => {
     await rowFor(text).getByRole("button", { name: "编辑" }).click();
     await expect(

@@ -9,9 +9,8 @@
  * the browser.
  *
  * The submitted tab, filters, sort, time window and server page cursor live in
- * the route search, so a reload, a reconnect and a return from a definition or
- * Task Center link re-read the same population instead of resetting to a local
- * default.
+ * the route search, so a reload, a reconnect and a return from an edit card
+ * re-read the same population instead of resetting to a local default.
  *
  * Reading never creates a Draft, a Job, a Task, a grant or a Storage/Provider
  * effect, and no record row offers a recovery command: after a durable formal
@@ -1524,7 +1523,7 @@ export function AutomationListPage({
    * Write one submitted surface state into the route search.
    *
    * Every setter goes through here, so a filter change, a page turn, a tab
-   * switch and a return from a detail page all produce a repeatable URL. A new
+   * switch and a return from an edit card all produce a repeatable URL. A new
    * filter always drops the cursor: a cursor minted for another population is
    * never submitted.
    */
@@ -1580,7 +1579,7 @@ export function AutomationListPage({
     }
   }
 
-  /** The exact return context a definition link carries back to this list. */
+  /** The exact return context the edit card carries back to this list. */
   function listReturnState(): Record<string, string> {
     if (tab === "records") {
       return recordState({ cursor: cursor ?? "", dir: direction });
@@ -1708,14 +1707,6 @@ export function AutomationListPage({
     setHighlightedLabel("刚刚保存");
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void listQuery.refetch();
-  }
-
-  function openDefinition(definitionId: string) {
-    void navigate({
-      to: "/operations/automation/definition/$definitionId",
-      params: { definitionId },
-      search: { returnTab: tab, ...listReturnState() },
-    });
   }
 
   const definitionsPage =
@@ -2005,7 +1996,6 @@ export function AutomationListPage({
                   onSort={(value) =>
                     submitSearch(definitionState({ sort: value }))
                   }
-                  onOpen={openDefinition}
                   onEdit={openEditDialog}
                   highlightedLabel={highlightedLabel}
                   copyAllowed={copyActionAvailable}
@@ -2166,7 +2156,6 @@ function DefinitionsTab({
   onLibraryChange,
   onLibrarySubmit,
   onSort,
-  onOpen,
   onEdit,
   highlightedLabel,
   copyAllowed,
@@ -2217,7 +2206,6 @@ function DefinitionsTab({
   readonly onLibraryChange: (value: string) => void;
   readonly onLibrarySubmit: (value: string) => void;
   readonly onSort: (value: string) => void;
-  readonly onOpen: (definitionId: string) => void;
   readonly onEdit: (definitionId: string) => void;
   readonly onCopy: (definition: AutomationDefinitionModel) => void;
   readonly onCheckCopy: (definitionId: string) => void;
@@ -2516,7 +2504,6 @@ function DefinitionsTab({
                       key={definition.document.id}
                       definition={definition}
                       latestRun={latestRuns[definition.document.id] ?? null}
-                      onOpen={() => onOpen(definition.document.id)}
                       onEdit={() => onEdit(definition.document.id)}
                       onCopy={copyAllowed ? () => onCopy(definition) : null}
                       onCheckCopy={() => onCheckCopy(definition.document.id)}

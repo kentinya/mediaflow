@@ -1,8 +1,9 @@
 /**
- * The bounded `返回自动化` return link used by an Automation definition page.
+ * The bounded `返回自动化` return link used by an Automation workspace child
+ * page.
  *
- * A definition/lifecycle/occurrence page opened from the workspace list carries
- * that list's own bounded state (`returnTab` plus the closed filter/page keys).
+ * A lifecycle/occurrence page opened from the workspace list carries that
+ * list's own bounded state (`returnTab` plus the closed filter/page keys).
  * The page therefore offers a back link that restores the exact tab, filters
  * and server page the operator left instead of dropping them at the workspace
  * default, and an out-of-contract value degrades to the plain workspace entry.

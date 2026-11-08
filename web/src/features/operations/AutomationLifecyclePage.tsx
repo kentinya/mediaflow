@@ -3,11 +3,10 @@
  *
  * The saved-definition lifecycle editing now opens the same shared Chinese
  * card over the Automation list that creation uses (Slice49 RO-3): the row's
- * 编辑 entry, the detail page's ordinary edit link, a deep link, a refresh and
- * a post-login continuation all land in that card with the list as its
- * background and a safe default return. The former standalone long page is
- * gone; the successor-Draft editor keeps its own dedicated route and the
- * Run-once entry stays in the list.
+ * 编辑 entry, a deep link, a refresh and a post-login continuation all land in
+ * that card with the list as its background and a safe default return. The
+ * former standalone lifecycle page and the retired successor-Draft editor are
+ * gone; the list keeps the ordinary Copy and Run-once entries.
  */
 
 import { useParams } from "@tanstack/react-router";

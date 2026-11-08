@@ -1643,20 +1643,14 @@ import {
   type OrganizeDiscoveryScope,
 } from "../../entities/operations/discovery";
 import {
-  normalizeAutomationActivation,
-  normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
-  normalizeAutomationDraftDocument,
   normalizeAutomationGrantState,
   normalizeAutomationMetrics,
   normalizeAutomationOccurrencesPage,
   normalizeAutomationPreview,
   normalizeAutomationRecordsPage,
   normalizeAutomationPreviewItemsPage,
-  type AutomationActivationModel,
-  type AutomationDefinitionModel,
   type AutomationDefinitionsPage,
-  type AutomationDraftDocumentModel,
   type AutomationGrantStateModel,
   type AutomationMetricsModel,
   type AutomationOccurrencesPage,
@@ -5522,58 +5516,6 @@ export async function fetchAutomationDefinitions(
   }
 }
 
-export type AutomationDefinitionRead =
-  | { readonly ok: true; readonly model: AutomationDefinitionModel }
-  | { readonly ok: false; readonly failure: OperationsFailure };
-
-export async function fetchAutomationDefinition(
-  token: string | null,
-  definitionId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationDefinitionRead> {
-  if (!isSafeIdentifier(definitionId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}`,
-      { method: "GET", headers: operationsHeaders(token) },
-    );
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    const source = payload as { definition?: unknown };
-    return {
-      ok: true,
-      model: normalizeAutomationDefinition(source?.definition, "definition", {
-        withReadiness: true,
-      }),
-    };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
-
 export type AutomationMetricsRead =
   | { readonly ok: true; readonly model: AutomationMetricsModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
@@ -5685,52 +5627,6 @@ export async function fetchAutomationRecords(
   }
   try {
     return { ok: true, model: normalizeAutomationRecordsPage(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
-
-export type AutomationDraftRead =
-  | { readonly ok: true; readonly model: AutomationDraftDocumentModel }
-  | { readonly ok: false; readonly failure: OperationsFailure };
-
-export async function fetchAutomationDefinitionDraft(
-  token: string | null,
-  definitionId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationDraftRead> {
-  if (!isSafeIdentifier(definitionId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/draft`,
-      { method: "GET", headers: operationsHeaders(token) },
-    );
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeAutomationDraftDocument(payload) };
   } catch {
     throw new OperationsApiError("malformed");
   }
@@ -5897,31 +5793,6 @@ export async function fetchAutomationOccurrences(
   }
 }
 
-export interface CreateAutomationSuccessorDraftOptions {
-  readonly activeRevisionId: string;
-}
-
-export async function createAutomationSuccessorDraft(
-  token: string | null,
-  options: CreateAutomationSuccessorDraftOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly revisionId: string }>> {
-  if (!isSafeIdentifier(options.activeRevisionId)) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
-    { expectedActiveRevisionId: options.activeRevisionId },
-    (payload) => {
-      const source = readRecord(payload, "successor_draft");
-      return { revisionId: String(source["revisionId"] ?? "") };
-    },
-    fetchImpl,
-  );
-}
-
 export interface CreateAutomationDefinitionOptions {
   readonly revisionId: string;
   readonly expectedVersion: number;
@@ -5945,81 +5816,6 @@ export async function createAutomationDefinition(
       expectedVersion: options.expectedVersion,
       object: options.object,
     },
-    (payload) => {
-      const source = readRecord(payload, "automation_definition_mutation");
-      const value = source["automationTaskDefinition"];
-      const id =
-        value !== null && typeof value === "object" && !Array.isArray(value)
-          ? (value as Record<string, unknown>)["id"]
-          : null;
-      return { id: typeof id === "string" ? id : null };
-    },
-    fetchImpl,
-  );
-}
-
-export interface SaveAutomationDefinitionDraftOptions {
-  readonly revisionId: string;
-  readonly definitionId: string;
-  readonly expectedVersion: number;
-  readonly object: Record<string, unknown>;
-}
-
-export async function saveAutomationDefinitionDraft(
-  token: string | null,
-  options: SaveAutomationDefinitionDraftOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly version: number }>> {
-  if (
-    !isSafeIdentifier(options.revisionId) ||
-    !isSafeIdentifier(options.definitionId)
-  ) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  return submitAutomationMutation(
-    token,
-    "PUT",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/automationTaskDefinitions/${encodeURIComponent(options.definitionId)}`,
-    { object: options.object, expectedVersion: options.expectedVersion },
-    (payload) => {
-      const source = readRecord(payload, "automation_definition_mutation");
-      const version = source["version"];
-      return { version: typeof version === "number" ? version : 0 };
-    },
-    fetchImpl,
-  );
-}
-
-export interface CopyAutomationDefinitionOptions {
-  readonly definitionId: string;
-  readonly revisionId: string;
-  readonly expectedVersion: number;
-  readonly newName?: string | null;
-}
-
-export async function copyAutomationDefinition(
-  token: string | null,
-  options: CopyAutomationDefinitionOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
-  if (
-    !isSafeIdentifier(options.definitionId) ||
-    !isSafeIdentifier(options.revisionId)
-  ) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  const body: Record<string, unknown> = {
-    revisionId: options.revisionId,
-    expectedVersion: options.expectedVersion,
-  };
-  if (options.newName) {
-    body.newName = options.newName;
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/copy`,
-    body,
     (payload) => {
       const source = readRecord(payload, "automation_definition_mutation");
       const value = source["automationTaskDefinition"];
@@ -6060,36 +5856,6 @@ export async function validateAutomationDraft(
         : [];
       return { validationErrors: list };
     },
-    fetchImpl,
-  );
-}
-
-export interface ActivateAutomationDraftOptions {
-  readonly definitionId: string;
-  readonly expectedRevisionId: string;
-  readonly expectedVersion: number;
-}
-
-export async function activateAutomationDraft(
-  token: string | null,
-  options: ActivateAutomationDraftOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<AutomationActivationModel>> {
-  if (
-    !isSafeIdentifier(options.definitionId) ||
-    !isSafeIdentifier(options.expectedRevisionId)
-  ) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/v1/operations/automation/task-definitions/${encodeURIComponent(options.definitionId)}/activate-draft`,
-    {
-      expectedRevisionId: options.expectedRevisionId,
-      expectedVersion: options.expectedVersion,
-    },
-    normalizeAutomationActivation,
     fetchImpl,
   );
 }
