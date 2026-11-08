@@ -89,11 +89,11 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
    目录缓存或全局强制 refresh／新增权限要求。用 mutation 后变化的列表验证最新状态；
    陈旧／矛盾或读取失败的证据不能被当作 verified success，不能通过读媒体补证或自动重放。
    保留外部修改及提供商目录可见性窗口的既有限制，不承诺对任意最终一致后端原子确认。
-6. **补完整隔离证明。** 新增 `tests/test_openlist_metadata_organize.py`，经真实生产服务、
-   API、SQLite、Worker 与真实 OpenList HTTP 适配器验证批量结果；新增
-   `scripts/openlist_metadata_organize_browser_proof.py` 复用现有原生浏览证明方式，从
-   生产构建文件页驱动提交、摘要确认和结果读回。允许最小测试夹具辅助，禁止改生产业务
-   路径来替换真实适配器或绕开准入／权限／pin／fence／稳定性。
+6. **补完整隔离证明。** 优先扩展现有适配器测试、整理集成测试及原生浏览夹具，经真实
+   生产服务、API、SQLite、Worker 与真实 OpenList HTTP 适配器验证批量结果，并从生产
+   构建文件页驱动提交、摘要确认和结果读回。复用不足时可新增最小测试辅助代码，文件名、
+   文件数或独立脚本不是验收条件。禁止改生产业务路径来替换真实适配器或绕开准入／权限／
+   pin／fence／稳定性。
 
 ### Acceptance criteria
 
@@ -107,10 +107,13 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
       关闭源目录清理和无需回滚的正常成功路径；业务规则／元数据使用本地确定性夹具。
       媒体端仅允许 list／native move／rename 成功（另放行既有 health ping），其他内容、
       上传、复制、删除和建目录端点记录并拒绝。fs/get 即使收到请求也始终返回 405。
+- [ ] 在真实 HTTP 适配器的同一 405 夹具下分别验证：仅移动（换目录、名称不变）、仅
+      重命名（目录不变）以及同时移动并重命名；每条路径都完成属性核验，取链接和内容
+      读取请求数均为零。可复用同一夹具／批次覆盖，不要求三套重复的完整浏览旅程。
 - [ ] 从真实文件页浏览和至少两个主文件的有界提交，经现有 durable Task／实际稳定性、
       完整分析、精确摘要、显式确认、Worker 执行、逐项结果核验到刷新／任务详情读回全部
-      完成。至少一项同时换目录和改名，另一项带无需内容解析的匹配字幕；真实计划含附件。
-      Task flow 与各主文件／字幕的成功及 effect certainty 分别有证明，不能只断言 completed。
+      完成，至少一项同时换目录和改名。Task flow 与各主文件的成功及 effect certainty
+      分别有证明，不能只断言 completed。
 - [ ] 对上述完整正常旅程，fs/get 请求数=0、所有内容读取请求数=0，确认之前媒体
       mutation=0；最终只有精确授权的 Move／Rename，各项源消失、目标大小正确，结果
       已持久化；刷新、重复结果读取及再次 Worker poll 不增加 mutation。
@@ -120,35 +123,40 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 - [ ] 生产变更未扩大 Storage 能力、隐式 overwrite／delete／copy fallback、授权、
       配置／schema／Task 状态；测试不访问真实网盘、TMDB、用户媒体、运行数据库或私有凭据。
 
+字幕及其他附件属于已有行为的相关回归，由现有附件测试及直接受影响用例覆盖；不要求为
+405 核心场景额外准备字幕，也不将独立字幕证明作为新增完成条件。发现本修改引入的附件
+回归仍须在本 Task 修复。
+
 ### Required tests
 
 按 [测试等级与分工](docs/development-workflow.md#6-test-levels)：
 Developer 只跑新增／修改及直接受影响验证；B 对固定候选独立验收并完成 T4 全量门禁。
-以下新增测试／脚本名称是计划入口，当前尚未实现，不能记录为已通过。
+优先在已有入口补用例；实现后在本节及交接中写明新增／修改测试和最终原生浏览入口的
+准确命令。以下是已存在的受影响测试命令，不代表新用例或完整浏览证明已经通过。
 
 **Developer — affected tests，仓库根目录：**
 
 ```sh
-.venv/bin/python -m unittest tests.test_openlist_storage tests.test_openlist_metadata_organize
+.venv/bin/python -m unittest tests.test_openlist_storage
 .venv/bin/python -m unittest tests.test_storage_browser tests.test_storage_setup_check tests.test_runtime_storage_configuration tests.test_scanner
 .venv/bin/python -m unittest tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_organizer tests.test_attachments
 .venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers
-.venv/bin/ruff check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py tests/test_openlist_metadata_organize.py scripts/openlist_metadata_organize_browser_proof.py
-.venv/bin/ruff format --check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py tests/test_openlist_metadata_organize.py scripts/openlist_metadata_organize_browser_proof.py
+.venv/bin/ruff check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py
+.venv/bin/ruff format --check mediaflow/infrastructure/openlist_storage.py tests/test_openlist_storage.py
 .venv/bin/python scripts/check_governance.py
 git diff --check
 ```
 
-如另改夹具，将其加入 changed-file check 和直接受影响用例；不因此把整个仓库全套交给
-Developer。上述模块覆盖属性查询、root、发现／稳定性、准入再检查、executor／附件和普通
-文件命令等同一 stat 的消费者。
+将其他实际修改／新增的测试和夹具加入 changed-file check，并运行对应准确测试命令；
+不因此把整个仓库全套交给 Developer。上述模块覆盖属性查询、root、发现／稳定性、准入
+再检查、executor／附件和普通文件命令等同一 stat 的消费者。
 
-在 `web/` 运行 `npm run build`，然后回仓库根运行
-`.venv/bin/python scripts/openlist_metadata_organize_browser_proof.py`。
-该脚本使用当前构建、临时配置／SQLite、本地 HTTP OpenList 与本地元数据夹具和真实 Worker；
-请求台账覆盖启动／浏览至最终读回，最终报告不可仅统计 executor 阶段。脚本应保存脱敏
-结果／截图和计数到 `.git/validation-evidence/<candidate>/openlist-metadata/`，不写用户配置，
-不把“脚本退出 0／SKIP”当作已完成核心证明。
+在 `web/` 运行 `npm run build`，通过复用／扩展的原生浏览入口完成 405 核心旅程，并在
+交接前补齐该入口的准确运行命令。该证明使用当前构建、临时配置／SQLite、本地 HTTP
+OpenList 与本地元数据夹具和真实 Worker；请求台账覆盖启动／浏览至最终读回，最终报告
+不可仅统计 executor 阶段。保存脱敏结果／截图和计数到
+`.git/validation-evidence/<candidate>/openlist-metadata/`，不写用户配置，不把“脚本退出
+0／SKIP”当作已完成核心证明。
 
 **B — independent acceptance / T4：**
 
