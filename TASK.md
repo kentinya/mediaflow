@@ -11,29 +11,34 @@ Test Level: T4
 Planner / Reviewer: B
 ```
 
-用户已明确激活本 Task。B 已独立审查候选，结论为 FIX REQUIRED；修正继续留在本 Task，固定 Base 和授权范围不变。
+用户已明确激活本 Task，并于本轮同意取消跨次整理的历史身份自动复用。
+当前仍为 FIX REQUIRED，Developer 按下述调整继续本 Task；Task ID、固定 Base、Difficulty／T4 不变。
+本轮只更新规划与开发交接，不实施产品源码。
 
-Authority：用户本轮明确的五点最小修正方案；按 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs) 处理已有 Rules／Files／Task 恢复旅程的独立缺陷，不创建或重开 Slice。
+Authority：用户原五点最小修正方案，以及本轮同意的调整：新一次整理重新识别，当前任务继续使用本次已保存的候选；按 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs) 处理已有 Rules／Files／Task 恢复旅程的独立缺陷，不创建或重开 Slice。
 
 ### Goal
 
-TMDB MetadataPolicy 只用“查询类型”决定允许的查询和身份类型。移除策略“媒体类型”这一重复控制；保留识别结果、候选和 MediaIdentity 自身的电影／电视剧类型，继续驱动正确 Provider 查询、命名和分类。重新整理不会把历史电视剧编号当电影查询；人工确认候选或在整理意图页保存已有候选后，重新分析能继续生成准确摘要，不重复要求确认同一候选。
+TMDB MetadataPolicy 只用“查询类型”决定允许的查询和身份类型。移除策略“媒体类型”这一重复控制；保留识别结果、候选和 MediaIdentity 自身的电影／电视剧类型，继续驱动正确 Provider 查询、命名和分类。新一次整理不自动带入历史 TMDB 编号及类型，而是按当前来源与查询类型重新识别；本次任务人工确认候选或在整理意图页保存已有候选后，重新分析继续使用本次已保存的编号和类型生成摘要，不重复要求确认同一候选。
 
 完整旅程：整理规则编辑 TMDB 策略 → 保存并读回实际配置 → Files 整理／Task Center 继续原任务 → 展示当前识别和已有合法候选 → 保存候选及类型 → 显式重新分析 → 查看同一工作上下文的摘要 → 另行明确确认执行。保存选择和分析始终零媒体变更。候选无效、策略不兼容、来源／版本变化、Provider 失败时，显示失败阶段、已保存状态及下一步；未知提交先核对已有状态，不自动重发。
 
-需求依据：`REQ-META-001/002/004–008`、`REQ-RECOG-004`、`V2-RULES-002/004–009`、`V2-OPS-010/012`、`V2-UX-001–003`。遵循 [Rules 旅程](docs/product-experience.md#recognition-and-rules)、[人工整理](docs/product-experience.md#manual-organize)、[逐项恢复](docs/product-experience.md#tasks-results-and-per-item-recovery) 及 [人工整理契约](docs/architecture.md#manual-organize)。既有不可变 pin、来源约束、权限及确认授权保持；不引入新的恢复种类。
+需求依据：`REQ-META-001/002/004–008`、`REQ-REC-004`、`V2-RULES-002/004–009`、`V2-OPS-010/012`、`V2-UX-001–003`。遵循 [Rules 旅程](docs/product-experience.md#recognition-and-rules)、[人工整理](docs/product-experience.md#manual-organize)、[逐项恢复](docs/product-experience.md#tasks-results-and-per-item-recovery) 及 [人工整理契约](docs/architecture.md#manual-organize)。既有不可变 pin、来源约束、权限及确认授权保持；不引入新的恢复种类。
 
 ### Observed code gap and baseline
 
-以下为 Base 上的静态定位，尚未运行产品复现或验收，不能作为修复成功证据：
+以下保留初始 Base 的缺口定位，并标明本轮按当前实现核对的变更点；已运行结果另见 B Review：
 
 - `domain/metadata.py:MetadataPolicy.query_type` 仍从旧 `media_type` 回退；`configuration_objects.py`、`strategy_user_configuration.py` 仍解析／输出策略 `mediaType`。V2 `RulesObjectForm.tsx` 仍并列展示两种控制，`rules-form.ts` 校验／序列化也保留重复字段。
-- `application/manual_organize.py` 的 `_choice_for_type/_metadata_authorities` 用策略类型补历史编号；`PersistentResultRecord` 本身没有独立媒体类型字段。必须检查结果关联的既有类型证据，不能从当前策略或编号猜类型。
+- `application/manual_organize.py` 在 Base 上用策略类型补历史编号；当前候选改为从 evidence 取类型，但 `_default_choice/files_choice_for_source → _choice_for_type → _result_media_type` 仍会将历史身份自动带入新意图。本轮要求移除这条自动初始化路径；不扩展历史类型读取。
 - `manual_organize_preview.py:_identity_compatible/_durable_identity_compatible` 和 `strategy_test.py` 的 durable identity 分支仍依赖策略 `media_type`，与已有按 `query_type` 校验的候选选择分支不一致；`task_item_recovery.py` 又直接检查 `media_query_type`。
 - `metadata_review.py` 已保存所选 Provider、编号和类型；共享分析已有绑定决定／复用身份入口，需打通其兼容校验及消费链，不另建确认系统。
 - API 已投影 `allowedMetadataIdentities`，`entities/operations/organize.ts` 已解析，`api-client.ts:updateOrganizeChoice` 已支持 metadata；`OrganizeIntentPage.tsx:ChoiceEditor` 没有候选控件，提交也没有带所选 metadata。
 
-规划前：仓库 `/Users/songzhidong/mediaflow`，分支 `main`，HEAD 为 Task Base；`python3 scripts/check_governance.py` PASS，工作区／Git 可写，暂存区为空。既有 dirty/untracked 文件均保留，不纳入本 Task。
+初始规划前 HEAD 为 Task Base。本轮调整前：仓库 `/Users/songzhidong/mediaflow`，分支 `main`，
+HEAD `cad6d35cf1e0a58b5a8af9a0ea06411bcf1a0e9c`；治理检查 PASS，暂存区为空。
+既有已跟踪 `mediaflow/.DS_Store` 变更，以及未跟踪系统元数据、调查脚本、日志、`15` 和
+`output/` 材料均保留，不纳入本 Task 检查点。
 
 ### Implementation Scope
 
@@ -41,16 +46,16 @@ TMDB MetadataPolicy 只用“查询类型”决定允许的查询和身份类型
 
 1. **查询类型成为唯一策略控制。** 检查所有 MetadataPolicy 载入、归一化、投影、保存路径及实际消费者。旧配置允许含 `mediaType`，但完全忽略其值，不校验、不回退、不限制查询或身份；缺少 `mediaQueryType` 按既有默认 Auto 处理，非法查询类型仍拒绝。新建／复制／编辑后的策略不保存 `mediaType`。移除 TMDB 策略表单、字段清单、校验和摘要中的重复媒体类型控制；旧 Active／Task 快照只读消费，不重写原文、digest 或历史记录。
 2. **统一允许类型。** 在共享边界复用同一规则：Movie 只接受 movie，TV 只接受 tv，Auto 接受 movie 和 tv；非法／缺失类型不能默认成电影。覆盖正常查询、候选确认／修正、意图保存、重新分析、摘要身份复用及核心 runner。None 保留不查询语义，不能通过保存候选绕过 Provider；既有来源绑定、类型完整的离线路径保持可用。
-3. **历史复用只取结果自身事实。** 从同一来源／版本 Result、分析证据或计划身份中读取准确 Provider＋编号＋类型。历史只有编号、没有类型时，不生成完整可复用身份或自动默认候选，让原有识别流程重新识别；禁止以策略类型、Naming 类型、同号或不相关结果补型。来源／occurrence／pin 约束不放宽。
-4. **确认后继续消费保存的选择。** 沿现有 metadata review／correction → 决定绑定 → Worker 重新分析 → durable identity → 摘要链路，使用已保存候选的 Provider、编号和真实类型。详情读取走正确电影／电视剧接口；不重新执行同一候选的自动评分确认，也不创建重复确认记录。摘要复用已持久化身份，不能再查一次 Provider。新阻塞按原阶段显示真实原因。
+3. **新一次整理重新识别。** 从 Files 新发起整理时，即使同一来源有完整 typed Result、旧执行计划、evidence 或已确认候选，也不自动将它们填入新意图的 metadata。新任务按当前来源、RecognitionType 对应查询类型走正常识别；真正只有编号的历史同样如此。历史 Result／执行记录继续用于查看结果与已有历史提示，不作为自动识别输入。已有 `allowedMetadataIdentities` 可保留完整且符合现有来源／版本／pin 规则的历史候选，但只有用户本次明确选择并保存后才用于分析。来源文件自身的 NFO／外部 ID 识别和 Provider 缓存保持原有行为。
+4. **本次任务确认后继续消费保存的选择。** 沿现有 metadata review／correction → 决定绑定 → Worker 重新分析 → durable identity → 摘要链路，使用已保存候选的 Provider、编号和真实类型。详情读取走正确电影／电视剧接口；不重新执行同一候选的自动评分确认，也不创建重复确认记录。摘要复用已持久化身份，不能再查一次 Provider。新阻塞按原阶段显示真实原因。
 5. **接通整理意图页候选。** 在每项 ChoiceEditor 展示现有 `allowedMetadataIdentities`，显示片名／年份／电影或电视剧／Provider 编号以区分同号不同类型；不加自由输入或新搜索入口。将明确选择的完整 metadata 与识别类型绑定的策略一起，通过现有 optimistic choice API 保存；保存成功后读回，旧摘要失效，使用现有显式重新分析动作生成新摘要。无候选时解释正常重新识别路径；保存失败保留可修正输入，409 重读合法候选。后端继续校验来源、Provider、查询类型和版本。
-6. **文档和测试。** 更新当前配置／规则操作说明与直接受影响示例，明确策略查询类型和结果媒体类型的区别；不改 Slice/Roadmap/Progress 或提前记录交付。
+6. **文档和测试。** 更新当前配置／规则操作说明与直接受影响示例，明确查询类型、结果类型，以及“新整理重新识别／当前任务继续使用已保存选择”的区别；不改 Slice/Roadmap/Progress 或提前记录交付。
 
 ### Acceptance Criteria
 
 - [ ] **AC-1 策略保存／兼容：** TMDB 策略页面没有“媒体类型”输入；查询类型可保存／读回。新建、复制、编辑提交及保存结果均不含该策略 `mediaType`。旧键与查询类型冲突、值非法、只有旧键三种输入均按查询类型／默认 Auto 消费；非法查询类型仍报错。旧快照原文／digest 不变。
 - [ ] **AC-2 一致校验：** Movie／TV 拒绝相反身份，Auto 在正常识别、确认、修正、意图保存、durable identity 与摘要复用中都接受两种合法类型。None 不发查询；合法离线路径不依赖旧键。Provider 不符、身份类型缺失／非法、跨来源／版本／pin 的引用拒绝或回到合法重新识别。
-- [ ] **AC-3 场景一——重新整理电视剧：** 历史关联身份为 tv，旧策略 `mediaType=movie`、查询类型 Auto；从 Files 重新整理，使用 tv 身份和 TV 详情接口，绝不把同号当电影查询。用相同 Provider 编号的 movie／tv 夹具证明没有串型；摘要的集信息、命名／分类按真实 tv 身份。只有历史编号无类型时走重新识别，不复用猜测身份、不修改旧 Result。
+- [ ] **AC-3 场景一——重新整理电视剧：** 已完成的历史使用 tv，旧策略 `mediaType=movie`、查询类型 Auto；从 Files 新发起整理时，初始 `choice.metadata` 为空，按当前剧集来源重新识别，不自动使用旧 TMDB 编号。历史含完整类型、仅有编号、没有历史三种情况遵循同一规则。假 Provider 让新识别返回与历史不同的 tv 编号，验证采用新编号、TV 详情接口和剧集命名分类；同号 movie／tv 不串型。新的歧义允许要求本次选择。用户本次明确选取已有合法历史候选并保存时，则按 AC-4/5 使用其真实类型。旧记录保持原样。
 - [ ] **AC-4 场景二——候选确认后生成摘要：** 原任务停在 Metadata 确认，保存 tv 候选后显式重新分析，在同一任务／原合法 pin 上得到可查看摘要；重新读取／刷新仍保留所选编号和类型。无新歧义时不重复要求确认、不新增同一确认记录；摘要生成不再次访问 Provider。电影候选有对称成功覆盖；新技术失败仍保留已保存决定和真实失败原因。
 - [ ] **AC-5 意图页闭环：** 每项能从既有候选列表明确选择、保存完整 metadata、读回并重新分析得到新摘要；同号不同类型可区分。空候选、不可用选择、409／403、保存未知、Provider 失败均有准确状态／下一步；不会自动提交、伪造候选或让旧摘要继续获得执行授权。
 - [ ] **AC-6 安全与兼容：** 读取／保存决定／分析零 Storage 变更；执行仍须原有精确摘要的明确确认。C 复用 A 命名／分类后仍为 C；成功兄弟不重放，未知效果不可重试；既有 pins／fences、RBAC、source confinement 和逐项独立结果无回归。无 schema／迁移或历史回写。
@@ -61,7 +66,7 @@ TMDB MetadataPolicy 只用“查询类型”决定允许的查询和身份类型
 
 #### Developer — affected tests
 
-在现有测试加入查询类型矩阵、历史无类型、同号不同类型、确认后不重建 review／不重复 Provider 查询，以及前后端完整候选保存断言。Python 使用本地假 Provider、临时 SQLite 和临时 Storage，断言实际调用类型、保存内容、review 数和零 mutation：
+在现有测试加入查询类型矩阵、新任务有／无类型历史均重新识别、同号不同类型、确认后不重建 review／不重复 Provider 查询，以及新任务不自动继承历史、前后端完整候选保存断言。Python 使用本地假 Provider、临时 SQLite 和临时 Storage，断言实际调用类型、保存内容、review 数和零 mutation：
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_metadata*.py'
@@ -91,7 +96,7 @@ npx prettier --check <changed-web-files>
 
 #### B — acceptance and full regression
 
-1. 独立审查整个固定 Base..candidate，核对所有策略旧键的消费者及无 schema／历史改写。在真实 Python/API/SQLite/Worker＋构建后的 Web 上运行 AC-3、AC-4 和 AC-5；通过可记录调用的本地 Provider 验证 TV/Movie 接口、无重复 review 和摘要阶段零 Provider／Storage mutation，刷新后检查持久状态，不能只用 mock API／组件代替验收。
+1. 独立审查整个固定 Base..candidate，核对所有策略旧键的消费者、新任务没有历史身份自动初始化及无 schema／历史改写。在真实 Python/API/SQLite/Worker＋构建后的 Web 上运行 AC-3、AC-4 和 AC-5；通过可记录调用的本地 Provider 验证 TV/Movie 接口、无重复 review 和摘要阶段零 Provider／Storage mutation，刷新后检查持久状态，不能只用 mock API／组件代替验收。
 2. 优先扩展现有 `scripts/operations_inventory_harness.py` 和 `web/tests/e2e/organize-source-history.python.spec.ts` 的局部夹具／场景，沿用临时配置、SQLite、Storage 与假 Provider，不新造持久运行引擎。验收执行（cwd `web/`）：
 
 ```bash
@@ -105,9 +110,11 @@ npm run test:e2e -- tests/e2e/manual-organize.spec.ts tests/e2e/rules-identity.s
 
 ### Non-goals
 
-不改数据库结构、不新增迁移／批量补型、不重写旧配置／Result／review／Task 历史；不删除 MediaCandidate／MediaIdentity／命名／分类中的电影／电视剧类型。不引入新 Provider、搜索算法、自由身份注入、候选搜索页、恢复类型、队列／执行引擎或自动执行；不增加双搜／预算／阈值设置。不改变规则绑定、Storage 变更权限、显式整理确认、未知效果不重放或 Slice52 等已关闭边界。不读用户私有配置／运行数据库／用户媒体，不推送、不发布／部署。
+不改数据库结构、不新增迁移／批量补型、不重写旧配置／Result／review／Task 历史；不删除 MediaCandidate／MediaIdentity／命名／分类中的电影／电视剧类型。不增加历史类型关联／补型或跨任务自动身份复用。不引入新 Provider、搜索算法、自由身份注入、候选搜索页、恢复类型、队列／执行引擎或自动执行；不增加双搜／预算／阈值设置。不改变规则绑定、Storage 变更权限、显式整理确认、未知效果不重放或 Slice52 等已关闭边界。不读用户私有配置／运行数据库／用户媒体，不推送、不发布／部署。
 
-### Developer Completion Report
+### Developer Completion Report — 调整前候选
+
+以下交接报告保留调整前实现和验证事实；其中历史自动复用的描述已由本轮 Scope／AC-3 取代。
 
 ```text
 Candidate source checkpoint: 74d3823282549e3b1090cd32a2ed4d361bc16683
@@ -169,83 +176,71 @@ Status: READY FOR B REVIEW
 - 工作区既有 dirty/untracked 文件（含 `TASK.md` 规划文本之外的私有输出）保持未纳入源码检查点；
   源码检查点仅含本 Task 文件。未推送、未发布。
 
-### B Review Result
+### B Review Result — 本轮方案调整后的开发交接
 
 ```text
 Decision: FIX REQUIRED
-Reviewed Base: 233f6a25769856087d10cb4483c0f1a621a76546
-Reviewed Head: 79e2b2d8f0185dadfdffdd4adc8f9fd54ab40714
+Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
+Previously Reviewed Head: 79e2b2d8f0185dadfdffdd4adc8f9fd54ab40714
 Implementation Head: 74d3823282549e3b1090cd32a2ed4d361bc16683
+Plan Revision Starting Head: cad6d35cf1e0a58b5a8af9a0ea06411bcf1a0e9c
 Reviewer: B
 Review Date: 2026-11-09
-Product blockers: R1
-Required regression: Web E2E has one stale expectation; remaining acceptance gates pending
-Next: Developer corrects this same Task, then returns READY FOR B REVIEW
+Previous R1: WITHDRAWN BY EXPLICIT USER SCOPE CHANGE
+Remaining: remove historical identity auto-initialization; update directly affected tests
+Next: Developer implements this revised scope in the same Task
 ```
 
-独立审查覆盖整个固定 Base..Head 的 34 个变更文件。当前为独立 bug Task；
-Slice52 仍是 PASS / CLOSED，不重开 Slice，不修改 Roadmap／Progress。
+此前 B 已独立审查固定 Base..79e2b2d8 的全部 34 个变更文件。
+用户本轮明确同意取消跨次整理的历史身份自动复用，因此撤销此前 R1 的修正要求：
+**不再要求沿 Result→执行条目补读类型，也不要求新整理自动沿用历史候选。**
+上轮“COPY 成功后再整理会重新搜索并出现歧义”的实际观察保持事实，按新约定这是允许的结果。
+这不是 Task PASS：当前代码还会在历史有同 item evidence 时自动设置 metadata，
+必须统一改为新整理重新识别。原始审查与证据见
+[调整前 B 检查点](https://github.com/kentinya/mediaflow/blob/cad6d35cf1e0a58b5a8af9a0ea06411bcf1a0e9c/TASK.md#b-review-result)。
+Slice52 保持 PASS / CLOSED；本独立 Task 不重开 Slice 或改动 Roadmap／Progress。
 
-**R1 — 已完成的人工整理结果没有复用其执行计划中的媒体类型（P1，AC-3 未完成）。**
+**开发指导 — 本轮具体修改**
 
-真实操作：Auto 查询策略下，从 Files 整理 `ReviewShow.2024.S01E01.mkv` →
-初次识别出现两个电视剧候选 → 在整理意图页选择 `tmdb/702 · tv` 并保存 →
-刷新仍保留选择 → 生成 TV／Season 01／S01E01 摘要 → 明确确认复制整理 →
-真实 Worker 完成，Result 为 SUCCESS，来源保留 → 再从 Files 整理同一来源版本。
+1. 修改 `manual_organize.py` 的新意图默认选择：检查 `_default_choice`、
+   `files_choice_for_source`、`_choice_for_type` 的真实调用，取消从历史 Result/evidence
+   自动设置 metadata。RecognitionType 继续按既有当前规则／明确选择确定。
+   删除仅服务于历史身份自动初始化且已无消费者的读取代码；不补读执行条目、不增加开关。
+   调整 `test_manual_organize_intent.py`、`test_manual_organize_preview.py` 中
+   以历史自动带入身份作为成功前提的断言；查询类型矩阵改用本次明确保存候选来验证。
+2. 保留 `allowedMetadataIdentities` 的既有合法候选投影和 ChoiceEditor 的显式选择保存。
+   保留当前 Task 的 review/correction、已保存 choice、`_bound_metadata_decision` 与
+   `durable_identity` 摘要消费路径。只取消新任务的历史自动带入，不能清空本次确认。
+   新一次整理是否与历史相同，通过现有任务／意图关系判定，不增加跨任务恢复机制。
+3. 沿现有 Files 入口补充回归：第一次选择 tv 候选并完成 COPY → 从 Files 新发起整理
+   同一文件 → 初始无固定 metadata → 假 Provider 的新结果决定新摘要。
+   使用完整历史身份和仅编号历史验证相同行为；正常 Provider 缓存允许命中，
+   测试断言“进入本次识别且不自动钉住旧编号”，不要求实际外网请求或关闭缓存。
+   同一 Task 继续确认 tv／movie 候选后，刷新和显式重新分析应使用保存的编号／类型，
+   不重复评分确认或创建同一 review，摘要发布阶段不再次查询 Provider。
+4. 同步本次 UI 改动直接影响的浏览器断言：
+   `web/tests/e2e/rules-readiness.spec.ts:491` 将旧分组“元数据服务与媒体类型”
+   改为实际“元数据服务与查询类型”，并验证没有策略媒体类型输入。
+   `operations-inventory.python.spec.ts:1562` 附近的歧义旅程仍用
+   `tmdb/111`／`tmdb/911`，同步为页面当前带 `/movie` 的完整选择值，
+   保留保存、摘要、显式执行断言。前者已实际失败，后者为静态发现，未计作运行失败。
+5. 更新 `docs/configuration.md` 的当前说明，写清新整理重新识别、
+   当前任务沿用已保存候选，以及历史候选需本次明确选择。
+   Developer 仅运行新增／修改和直接受影响测试后提交 READY FOR B REVIEW；
+   B 复核完整 Base..新候选并完成 T4 验收。测试用现有 harness 局部夹具，
+   不增加入口或流程工具。本轮开发／复核的测试时间各自小于该轮总用时的 50%。
 
-实际第二次意图的 `choice.metadata` 为 null，Worker 又执行 `search_tv`、
-读取 701／702 两个候选，重新出现歧义，不能直接得到就绪摘要。
-该历史并非“只有编号”：Result `9a6b067d-2390-477c-8fdb-77ceeb085430`
-通过执行条目的 `result_id`、`task_item_id` 精确关联到已完成执行，执行条目的
-固定 `choice.metadata` 和 `plan.mediaIdentity` 均为 `tmdb/702 · tv`，
-来源 occurrence／fingerprint 与本次文件相同。
+**沿用的已验证事实与待验收项**
 
-原因定位：`manual_organize.py:_choice_for_type` 新增调用 `_result_media_type`；
-后者只读 Result 所在 TaskItem 的 `pipeline_evidence`。真实人工整理的类型存放于
-已保存的执行条目／计划，这个 Result TaskItem 没有单独的 PipelineEvidence，
-因此现有读取遗漏了自身已保存的类型。新增单测通过手工为 Result 同一个 item_id
-追加 evidence，覆盖了 evidence 分支，未覆盖真实人工执行的存储形态。
-本次实现 `74d3823282549e3b1090cd32a2ed4d361bc16683`
-（2026-11-09 01:58:47 +08:00）引入此读取分支；原先从策略补型的缺陷尚未完整修复。
-本次实际没有调用 `get_movie`，不能声称已复现“查错电影接口”；已证实的是
-有明确 TV 执行身份的历史仍被当成无类型历史，重复识别并阻断摘要。
+- 调整前真实 Python 浏览器的 Metadata 候选确认和修正两条旅程通过，
+  可在同一 Task 继续到摘要／实际整理，摘要阶段不重复访问 Provider。
+- 调整前 TV 局部夹具从现有 Files 入口产生真实候选；构建后 Web 可选择 702、
+  保存 tv 类型、刷新读回并生成 TV／Season 01／S01E01 摘要，明确确认后 COPY 成功。
+- 上述结果属于调整前候选；涉及修改的执行输入须在新候选重新验收。
+  AC-1–6 当前均保留未最终验收，不把方案调整或旧结果改记为新实现通过。
 
-**开发指导 — 本次修正的具体做法**
 
-1. 在现有历史身份读取处，补读该 Result 精确关联的已保存人工执行条目／计划。
-   仓库已有 `list_manual_executions_for_task_item(task_id, task_item_id)`；
-   从其中与 `result_id` 对应的执行条目取得完整 Provider＋编号＋类型，
-   核对该条目保存的来源版本。保留现有 PipelineEvidence 路径。
-   不从候选列表、当前策略或同号记录推断类型；真正没有类型事实的历史继续重新识别。
-   使用已有表与仓库读取，不增加 schema，不回写旧 Result 或执行记录。
-2. 在已有原生旅程中加入“首次候选选择 → COPY 成功 → Files 再整理同一来源”的回归。
-   通过真实 API／Worker 产生 Result 和执行条目，不为测试额外给 Result 追加 evidence。
-   验证第二次沿用所选 tv 编号、读取 TV 详情、不重新搜索／要求选择，并使用剧集命名分类。
-   继续覆盖同号 movie／tv 以及真正只有编号的历史；这些用现有局部夹具完成。
-3. 同步本次 UI 修改直接影响的浏览器断言：
-   `web/tests/e2e/rules-readiness.spec.ts:491` 仍期望“元数据服务与媒体类型”，
-   全量 E2E 实际在这里失败；应验证新的“元数据服务与查询类型”及不再出现策略媒体类型输入。
-   `operations-inventory.python.spec.ts:1562` 附近的现有歧义旅程还写着
-   `tmdb/111`／`tmdb/911`，而页面值现为带 `/movie` 的完整身份；同步这两个
-   断言与选择值，继续保留完整保存、摘要、显式执行断言。后一处是静态确认的旧选择器，
-   本轮没有将其计为已运行失败。
-4. Developer 只运行修改及直接受影响的测试和静态检查；提交修正候选及实际结果。
-   B 负责复核新候选的完整 Base..Head、原生历史复用／确认后摘要和剩余 T4 验收。
-   不增加新的执行入口、流程工具或产品范围。
-
-**已经核对的交付结果**
-
-- 查询类型成为策略控制、旧键兼容、新保存去掉旧键：代码与自动化覆盖已核对；
-  没有数据库结构／迁移／历史批量改写。
-- 现有真实 Python 浏览器的 Metadata 候选确认、元数据修正两条旅程通过：
-  同一 Task 继续到摘要／实际整理，摘要阶段不重复访问 Provider。
-- 新 TV 夹具从现有 Files discovery 入口产生真实候选；构建后 Web 的整理意图页可选择
-  702、保存完整 tv 身份、刷新读回并重新分析得到 TV 摘要。桌面与 390px 截图已检查。
-  保存及分析期间来源与目标文件保持；只有明确确认后才由 Worker 执行 COPY。
-- AC-3 因 R1 未通过。AC-4 的 TV Task Center 确认分支、AC-1–6 的最终整体验收
-  及完整打包门禁保留 pending，不能以当前部分成功宣告 Task PASS。
-
-**B 实际运行与结果**
+**调整前 B 实际运行与结果（保留事实，不代表新方案通过）**
 
 | 命令／入口 | 实际结果 |
 |---|---|
@@ -253,7 +248,7 @@ Slice52 仍是 PASS / CLOSED，不重开 Slice，不修改 Roadmap／Progress。
 | `web: npm run test -- run` | 98 files／1469 tests PASS；131.92 秒 |
 | `web: npm run test:e2e` | 267 PASS，1 FAIL；192.77 秒；失败为上述 Rules 旧 section 断言 |
 | `web: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'native Metadata'` | 2 PASS；3.72 秒；真实 Python／API／SQLite／Worker |
-| 构建后 Web＋同一现有 harness 的局部 TV 夹具 | 意图页候选保存／刷新／TV 摘要成功；COPY 后重新整理复现 R1 |
+| 构建后 Web＋同一现有 harness 的局部 TV 夹具 | 意图页候选保存／刷新／TV 摘要成功；COPY 后重新整理发生重新搜索／歧义 |
 | `web: npm run build`、`npm run typecheck`、`npm run lint`、`npm run format:check` | PASS |
 | `.venv/bin/python scripts/check_governance.py`、compileall、pip check、两份示例 config validate、`git diff --check` | PASS |
 | `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` | 无匹配（exit 1） |
@@ -261,8 +256,8 @@ Slice52 仍是 PASS / CLOSED，不重开 Slice，不修改 Roadmap／Progress。
 | 对 `git ls-files -- '*.py'` 的全部 354 个已跟踪 Python 文件执行 ruff format/check | PASS；完整受版本管理源码已检查 |
 | `.venv/bin/python -m pip wheel . --no-deps -w dist` | PASS；wheel SHA256 `dc1ca9a6f84eb534d53b6370ddeef021d6f3356c2cce3aa8867a7decf10061b0` |
 
-发现 R1 后未追加完整测试矩阵；wheel smoke、计划中的完整 source-history 原生旅程及
-最终安全／持久化验收仍待修正候选。现有 7 个 Python skips 原样保留；未删断言、加重试或改超时。
+上轮发现 R1 后未追加完整测试矩阵；R1 现已按用户决定撤销。wheel smoke、
+新方案的完整 source-history 原生旅程及最终安全／持久化验收仍待新候选。现有 7 个 Python skips 原样保留；未删断言、加重试或改超时。
 
 可复查的本地证据（忽略目录，不声称远程可访问）：
 `.git/validation-evidence/79e2b2d8/b-query-type-review/`。
@@ -270,9 +265,9 @@ Slice52 仍是 PASS / CLOSED，不重开 Slice，不修改 Roadmap／Progress。
 `tv-reorganize-result.json` 保存第二次选择、摘要和 Provider 调用；
 `tv-after-analysis.json`、`intent-tv-saved-desktop.png` 和
 `intent-tv-summary-desktop.png` 保存首次选择与成功摘要；
-`reorganize-tv-blocked-desktop.png` 保存再次歧义的可见结果。
+`reorganize-tv-blocked-desktop.png` 保存再次识别产生歧义的可见结果（按新方案允许）。
 全量原始日志、结果 JSON 和纯测试夹具数据库 `tv-fixture.sqlite3` 同目录。B 仅修改本 Task 交接；既有 dirty/untracked 文件保留，
-没有修改产品源码、推送或部署。
+没有修改产品源码、推送或部署。本轮只修订 Task，运行治理与文档差异检查；未重跑产品测试。
 
 
 ---
