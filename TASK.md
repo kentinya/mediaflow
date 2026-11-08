@@ -16,7 +16,7 @@ Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
 Status: FIX REQUIRED
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
-Reviewed Head: 34be1d962b4387011b756575b88b306c11bb4491
+Reviewed Head: ae40e6a84311674203f04462286d0ad5abd25f9a
 Correction Candidate: 34be1d962b4387011b756575b88b306c11bb4491
 Difficulty: High
 Test Level: T4
@@ -178,6 +178,34 @@ Move／Rename 路径不因下载链接不可用而在提交、分析、执行前
    ESLint／Prettier／typecheck，命令见下方；其余完整门禁仍由 B 执行。本次是既有测试
    旅程修正，无新增产品能力、状态、并发机制或架构调整。
 
+9. **Python 3.11 无法启动。** B 经声明的矩阵完整 discovery 与已安装的
+   `mediaflow --help` 实测，`OperationsRunProgress` 的 `MappingProxyType({})` 字段默认值
+   在 Python 3.11 导入时被 dataclass 拒绝，118 个测试模块因此不能加载。修正
+   `mediaflow/domain/operations_run.py` 中 dispositions／effect_counts／scan_progress
+   三个同源默认值，采用兼容的 default_factory，保留每个实例独立、只读映射及当前字段／
+   构造语义；不降低支持版本、不改状态／schema 或删测试。Developer 用 Python 3.11
+   执行安装后的 CLI help、现有 `tests.test_operations_task_center`、
+   `tests.test_operations_run_detail_plan_evidence`、`tests.test_operations_run_detail_log_isolation`
+   及相关新增／修改验证；3.12／3.13 跑同一直接受影响检查。B 负责修正候选三版本全量。
+10. **动作可读性脚本按当前页面接入和编辑卡交互验证。**
+    `action-readability.python.spec.ts` 当前两项失败：返回 Connected 后在页面淡入中途
+    （opacity 0.75）测稳定态对比度；另一项等待旧英文编辑标题。B 隔离诊断继续执行又
+    复现编辑卡被背景列表“新建”按钮截获 hover，以及 Task Center 失败读回中途测量。
+    把稳定态测量与现有页面过渡完成条件衔接，保持原 4.5／3 对比度阈值、真实 normal／
+    hover／键盘 focus 和 busy／disabled 断言；编辑使用现有“编辑自动化任务”标题，
+    编辑／新建均在实际 dialog 内选择可操作控件。禁止 fixed sleep、force、放宽超时、
+    关闭产品动画、删除桌面／窄屏／读失败／无重放场景或更改产品调色板来掩盖同步问题。
+    B 临时诊断副本仅作上述对齐后完整 7 passed，候选原 spec 仍为 5 passed／2 failed；
+    Developer 正式修正原 spec 并跑完整 7 项和 TS 静态检查，不直接提交 B 的诊断文件。
+11. **Docker 安全脚本分别校验当前 V1／V2 CSP。**
+    `scripts/docker_release_security_smoke_test.py::V2_SAFE_HEADERS` 仍以旧的无 img-src
+    CSP 同时检查 V2 和 V1；V2 已在接受的探索合同中仅允许可信图片
+    `img-src 'self' https://image.tmdb.org`。按实际路由分别保留两个精确期望，不把
+    V2 的图片许可加给 V1，也不以宽松包含／忽略 CSP／通配域名替代；所有其他安全头、
+    canary／RBAC／零副作用／常驻 Worker／结果与日志检查保持。B 诊断副本只作上述
+    路由区分后完整安全 smoke 通过；正式脚本仍失败，Developer 修正并用固定候选镜像
+    跑原脚本。原生传输 lifecycle smoke 已独立通过，无需为它改产品或放宽夹具。
+
 关联合同补充：`V2-AUTH-001–003`、`V2-SAFE-001`、`V2-OPS-001/004/005/007/008/012/014–017`；
 完整 Task／结果／四类恢复旅程见 [Tasks, results and per-item recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)。
 无新状态、权限、恢复类型或 schema；技术历史、已完成与不确定效果仍按当前合同处理。
@@ -291,7 +319,8 @@ OpenList 与本地元数据夹具和真实 Worker；请求台账覆盖启动／�
 
 1. 审查固定 Task Base..candidate 的完整 diff；先独立重现 HTTP 405 核心场景及故障反例，
    用上述 focused 模块／browser proof 检查 HTTP 台账、真实文件状态和持久化结果。
-   若有实质阻塞，先 FIX REQUIRED，修正在同一 Task 内。
+   用户已进一步要求“一次性查完”：发现失败继续完成其余独立入口，最终一次汇总；
+   修正仍在同一 Task，诊断副本结果与候选正式结果分开。
 2. 对真实候选执行 [shared full gates](docs/development-workflow.md#shared-full-regression-commands)
    的 Python 全量、质量／依赖／示例／禁用依赖、Web 全量检查／构建／E2E、wheel／外部安装
    smoke 及适用安全回归；这次 Storage T4 不能按“只改一个适配器”降为 T2 或省略全量。
@@ -422,57 +451,103 @@ npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts   tes
 
 ### B review result
 
-**FIX REQUIRED — 2026-11-08。本 Task 尚未全部验收通过。**
+**FIX REQUIRED — 2026-11-08。已按用户“一次性查完”执行全部剩余既有入口，未在首次失败处停下。**
 
-完整审查范围：`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..34be1d962b4387011b756575b88b306c11bb4491`。
-核对原全部产品／测试交付及新差异；相比上轮已审候选 `fff1a8dd`，本轮仅 TASK 和两份
-原生 specs 变化，无产品、Python、共享 harness、依赖或构建配置变化。Slice52 四项
-关闭结果与原 Base／接受 Head 保持，不重开 Slice、不新建 Task。本轮独立验收只更新
-TASK；预存 `.DS_Store`、全部未跟踪调查／日志／output／私有文件保持。
+审查范围：`6db3647c7e77d54f3a49b6725c804f0794fc7fbb..ae40e6a84311674203f04462286d0ad5abd25f9a`。
+产品／测试最后候选仍为 `34be1d96`；`34be1d96..ae40e6a8` 仅 TASK 文档变化。
+在固定干净 checkout `/tmp/mediaflow-b-review-34be1d96` 继续全部剩余验收，原工作区及
+私有／未跟踪文件保持。仅 checkpoint TASK，不实施产品修正，不推送／发布；Slice52
+已关闭的四项结果、Base／接受 Head／延期及 Roadmap／Progress 保持。
 
-**上轮修正已通过，剩余阻塞是设置容量的三个既有脚本仍等待已移除的目录侧栏。**
+**一次汇总的待修清单（同一 Task，具体开发指导见第 8–11 项）：**
 
-用户从系统设置保存容量 → 进入文件页选择 source → 选择文件整理。失败现场已显示
-正确根路径、表格和 Three／Four／Two 文件，脚本却等待“目录”侧栏可见，分别在
-`:996/:1088/:1168` 超时，尚未触及三项容量结果。根因是 Task50.3 提交
-`07e6b89fea020d0cf5242c70f1380c14eec59368`（2026-11-06 20:25 +08）删除了页面目录树，
-这份专用 spec 未随当前导航更新。不是本轮产品恢复目录树的需求，也不能以历史失败豁免
-用户“全部现有测试变绿”的授权。开发指导第 8 项已给出当前入口、四处待改等待及三项
-完整验收；后半尚未执行，不推断容量引擎成功或失败。
+| 根因 | 实际用户旅程与失败 | 修正位置 |
+|---|---|---|
+| Python 3.11 启动兼容性 | 在项目声明支持的 3.11 安装后，连 `mediaflow --help` 都在导入进度模型时退出；全量 discovery 118 个模块同一 ValueError | OperationsRunProgress 三个只读映射默认值；保留不可变性并使用兼容工厂 |
+| 容量测试等待已退役侧栏 | 保存设置→进入 Files 后文件已显示，三个脚本仍等“目录”，未走到容量验证 | automation-settings 原三项完整旅程，四处旧等待 |
+| 动作脚本同步／编辑卡语义滞后 | 浏览器返回 Connected 后动画中途测稳定态；编辑卡等旧标题、继续后误操作背景按钮；失败读回也有相同动画测量点 | action-readability 的真实稳定态／编辑 dialog 作用域，保留所有可读性阈值和交互断言 |
+| Docker CSP 期望滞后 | 实际 V2 安全响应只增加探索批准的可信图片域名，安全脚本仍要求 V1 的旧 CSP | 原安全 smoke 按 V1／V2 分别断言精确 CSP，其他安全证明不变 |
 
-独立运行来自固定候选干净 checkout `/tmp/mediaflow-b-review-34be1d96`，复用同一依赖，
-重新 `npm run build`，所有 Playwright 使用独立输出目录、同端口 harness 串行。
-证据根：`.git/validation-evidence/34be1d96/b-review/`（本机），含构建日志、三个完整
-spec 日志、设置失败的原始 trace／error-context。实际结果：
+3.11 根因由 `bc70373a6bd51ff08a72e0a83888d9b4ef267e54`（2026-10-02）引入默认值；
+目录树来自 `07e6b89f`（2026-11-06）删除；编辑卡中文标题／modal 来自 `9eae8f66`
+（2026-11-05），过渡与测量的差异属于已接受后续页面接入；图片 CSP 来自 `f8015b97`
+（2026-11-07）。均属原 Base 前既有差异；用户已授权一并修复，不豁免也不重开旧 Slice。
+动作第一项稳定态是同步问题：B 等现有页面 opacity 回到 1 后原阈值通过；未据瞬态单帧
+推断产品配色缺陷，未修改产品动画或扩大视觉范围。
 
-| 验证 | 本轮实际结果 |
+**完整候选结果：**
+
+| 入口 | 实际结果 |
 |---|---|
-| `playwright.python.config.ts`＋完整 `operations-inventory.python.spec.ts` | **44 passed（1.3m）**；重启后展开持久计划、C→A 身份、成功步骤、未知受理核对／非重放、混合技术历史与四类恢复均通过 |
-| `playwright.python.automation.config.ts`＋完整 `automation-workspace.python.spec.ts` | **9 passed（14.9s）**；两处修正及独立文件结果／记录读回通过 |
-| 同自动化配置＋完整 `automation-settings.python.spec.ts` | **12 passed、3 failed（44.4s）**；失败均为上述已删除目录树等待，没有 skip／retry |
-| Web typecheck／lint／format:check／build | 全部通过 |
-| 文档消费 `tests.test_release_security` | **8 passed**；治理与完整 Base..Head whitespace 检查通过 |
+| Python 3.13.14 全量（上轮相同 Python 输入复用） | 2656 项，2649 passed、7 skipped；315.344s |
+| Python 3.12.13 全量（本轮新建独立环境，按声明安装 dev/test） | 2656 项，2649 passed、7 skipped；362.100s |
+| Python 3.11.15 全量（同上） | discovery 547 项：422 passed、7 skipped、118 errors；31.672s；118 个导入错误均为同一个 mappingproxy 默认值异常，不是 118 个独立缺陷 |
+| Web unit／静态／构建（相同输入复用） | 97 files／1459 passed；typecheck、lint、format、build 通过，产物逐文件 SHA-256 与上轮相同 |
+| 默认 Node E2E（完整新跑、独立输出） | **264 passed（3.4m）**，原 B 的 trace 输出目录碰撞已消除 |
+| wheel 构建＋原 installed-wheel smoke（完整新跑） | **PASS**；外部临时安装、CLI／配置／备份恢复消费者通过 |
+| Docker 原 transfer lifecycle smoke（完整新跑） | **PASS**；真实 API／四常驻服务／OpenList Worker 跨首次激活消费与慢调用租约通过 |
+| Docker 原 release-security smoke（完整新跑） | **FAIL**，精确 CSP 期望不符；不是未启动 Docker 或 SKIP |
 
-上轮 B 的 Python 全量 **2656 项、2649 passed／7 skipped（315.344s）**、Web unit
-**97 files／1459 passed（136.67s）**、Python 质量／依赖／示例检查、405 原生完整旅程
-**1 passed** 和 Unicode 恢复 **1 passed** 可复用未变输入：已用
-`git diff --quiet fff1a8dd..34be1d96 -- mediaflow scripts tests web/src web/package.json web/package-lock.json web/playwright.config.ts`
-确认相同，其他专用配置也未变化；新旧 `web/dist` 的 5 个文件逐项 SHA-256 相同，
-本轮产物清单保存为证据目录内 `build-manifest.json`。旧结果／截图／provider 请求台账仍在
-`.git/validation-evidence/fff1a8dd/b-review/`；该 405 核心为 62 次 list 全部
-`refresh: false`、4 次 Move／Rename、零取链接／内容请求、2 项持久
-`SUCCESS / verified_complete`，Task flow `completed`。这些复用不代表改动的两份 specs
-已由旧运行覆盖；两份均已如上独立完整复跑。
+全部 **16 份原生 Python specs** 已完整执行或复用 B 的相同输入完整运行：
 
-原默认 E2E 的 263 passed＋1 runner ENOENT 仍不能记为全绿，完整独立输出重跑 pending；
-其余原生 specs、405 再次 Worker poll／关联任务／返回文件页与 HTTP 故障补充、wheel／
-外部安装、Python 3.11／3.12 矩阵均尚未完成。Docker 本轮再次查询仍无 daemon socket，
-镜像／两个 smoke pending；七项专用真实服务／耐久环境 skip 的事实及原因保留，不伪造
-环境或凭据。所有门禁筹备属于 B；本次仅已实测的设置 spec 缺陷交 Developer。
+| spec | 通过／失败 | 证据 |
+|---|---|---|
+| action-readability | 5／2 | 本轮原 spec |
+| storage-dialog | 8／0 | 本轮 |
+| task-flow | 3／0 | 本轮 |
+| operations-inventory | 44／0 | 34be1d96 本轮前段完整运行复用 |
+| operations-task-center-visual | 2／0 | 本轮 |
+| organize-source-history | 1／0 | 本轮 |
+| live-files | 5／0 | 本轮 |
+| automation-create-dialog | 14／0 | 本轮 |
+| automation-lifecycle | 21／0 | 本轮，独立新 harness |
+| automation-run-once | 8／0 | 本轮 |
+| automation-settings | 12／3 | 34be1d96 本轮前段完整运行复用 |
+| automation-workspace | 9／0 | 同上 |
+| operations-principal-identity | 1／0 | fff1a8dd 相同输入完整运行复用 |
+| direct-files | 28／0 | 本轮 |
+| explore | 25／0 | 本轮 |
+| openlist-metadata | 1／0 | fff1a8dd 原 spec 复用；本轮另补完整 B 验收旅程 |
 
-发现本轮实质阻塞后停止新增昂贵测试；同一 Task 修正并提交新 checkpoint 后 B 继续
-原 Base..新候选复核和剩余必需门禁。原上轮失败与报告保留在 `8875e987:TASK.md`。
-未推送、发布或修改产品。
+合计原生 **187 passed／5 failed**，无新增 skip／retry；测试均沿当前既有配置和用户入口。
+旧测试在断言处失败阻断其后步骤；下述隔离诊断继续检查其后场景，不能冒充候选已绿。
+
+**补齐验收与诊断：**
+
+- B 基于既有 OpenList 文件页 spec 补查：再次 Worker poll 没有新工作，同一关联任务展示
+  两个原文件结果，返回 Files 后源文件均消失；63 次 list 全部 `refresh: false`、4 次
+  native Move／Rename、零取链接／内容请求、两项持久 `SUCCESS / verified_complete`，
+  Task flow 独立 completed，重复核对不增加 mutation；1 passed（4.5s），截图已查看。
+- 用既有 HTTP fixture＋真实 OpenListStorage／OrganizerExecutor 补查源缺失、目标冲突、
+  执行后列表失败、目标大小错误、原源仍在五类故障。前两项 FAILED／none 且零 mutation；
+  后三项 PARTIAL／attempted_unverified，均不误报成功；全程无 fs/get／强制刷新。
+  初版 B 诊断选了非法空分类路径，在规划层被正常拒绝，已改为既有合法分类输入后验证，
+  此 B 设置错误不列为产品失败。
+- 动作测试隔离副本对齐当前稳定态／中文编辑标题／两类 modal 操作区后，完整 **7 passed
+  （28.9s）**。原候选两项失败仍待 Developer 正式修正；诊断期间暴露的另一处动画读回
+  及背景 hover 一并纳入指导，避免只修第一断点。
+- Docker 安全隔离副本分别使用 V1／V2 的精确 CSP 后，后续完整安全 smoke **PASS**：
+  image／mount／non-root／RBAC／canary／原生整理／持久结果／日志检查均执行。
+  首个诊断仅替换共享常量导致 V1 期望被错误扩大，该 B 诊断已纠正；最终按路由分别校验。
+  原脚本仍 FAIL，不用诊断副本取代正式验收。
+
+本轮通过 Colima 独立 `mediaflow-review` profile 真正启动 Docker；原 Docker context
+仍为 default，临时测试目录独立，结束已停止测试 VM，保留 profile／镜像供正式修正复验。
+传输候选镜像 ID `sha256:4a33a1f33a7c816b1aaa2725cfe9df32cae6358a8c4674027d199ca657030fdd`；
+安全 smoke 按原脚本重新从已提交源码构建并加入测试 canary，诊断使用单独 image tag。
+所有服务／媒体／元数据均隔离，不连接真实 115／SMB／S3／TMDB 或用户数据库。
+七项真实外部服务／耐久环境 skip 继续明确为未执行，不假造凭据。
+
+证据根 `.git/validation-evidence/ae40e6a8/all-remaining/` 保存所有本轮完整命令输出、
+退出台账、失败 traces、B 诊断源与结果、Docker 构建／smoke／VM 启停记录；
+`34be1d96/b-review/`、`fff1a8dd/b-review/` 保存复用的真实结果及产物身份，仅本机。
+除 TASK 之外运行输入没有变化，已核对 Git diff；Python 3.11／3.12 的 compile、pip check
+亦完成。B 诊断临时文件已从 checkout 移除，未提交产品、测试或过程工具。
+
+当前所有规定门禁入口已有实际运行／匹配复用结果，没有仍未尝试的普通门禁；3.11 的
+导入阻塞及候选脚本的失败后半仍须在正式修正后重新验收，不能承诺修正前不可执行的
+部分已经通过。修正仍在同一 Task，第 8–11 项统一交 Developer；B 继续承担修正后完整
+回归与接受，不把全部套件转交 Developer。本轮不宣称 PASS 或全部测试变绿。
 
 ### Developer correction report — 2026-11-08
 
