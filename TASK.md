@@ -31,7 +31,7 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.2
 Task Type: SLICE
 Parent Slice: 52
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
@@ -523,3 +523,103 @@ Packet；不修改Slice／Roadmap／Progress或已接受Slice身份。
   TAC 按完整过程而非数值判定,若 B 在真实视口发现节奏问题,请在同 Task 给单点调节。
   卡同帧抑制语义由 animation 迁移为 transition(同样只在首次渲染揭示),弹卡遮罩/
   滚动/焦点恢复旧行为未改,请在弹卡用例中复核。
+
+## Developer fix completion report — B52.2-02
+
+**READY FOR B REVIEW(修正轮 2)** — Task Base
+`4cf0efdf23981351ee3c7ef19d599726a070a4bb`(保持不变)→ 实现 checkpoint
+`36ac50a5`(web 源码与测试,3 个文件),本报告为其后的 docs checkpoint。
+工作区:分支 main,治理检查 PASS,预存跟踪变更 `mediaflow/.DS_Store` 与全部
+未跟踪文件保留未动,暂存区只含本 Task 文件;未推送、未发布,未读取运行数据库、
+私密配置或用户媒体,夹具均为既有 Node fake-server 与本地 stub。
+
+### 根因与修正(真实源码身份)
+
+- **根因确认(B 命中)**:`web/src/features/operations/AutomationSettingsPanel.tsx`
+  的引擎读取(`GET /api/v1/operations/automation/settings`)在
+  `AuthorizedReadBoundary` 内直接按 `query.isPending` 输出
+  StatusBanner「正在读取引擎设置」,未接入本 Task 的延时呈现门;父级
+  `ConfigurationPage.tsx` 只门控了自己的配置状态等待,子读取在其返回后立即
+  开始——快读时提示块闪出又随时被表单替换(桌面/390px 均可见),下方
+  「整理规则就绪状态」随之两次位移。
+- **修正(commit `36ac50a5`)**:
+  - `AutomationSettingsPanel.tsx` 新增
+    `useReadReveal(query.data === undefined && !query.isError)` 门:快读/缓存
+    返回期间该分支渲染 `null`,读取确有等待(越过共享揭示窗口)才挂出原有
+    StatusBanner 文案;错误与共享鉴权边界不经门。请求、启用条件、查询键、
+    5s 采用情况回读、Save/权限/Active 发布、采用读回与未知提交核对语义一律未改。
+  - 就绪表单 `div.mf-automation-settings` 与无 Active 的 `section.mf-panel` 加入
+    既有 `mf-content-settle`(首次渲染 0.7→1、170ms 一次性揭示),内容接管
+    等待区时平顺接入一次;entry 窗口抑制、弹卡 `:has(...)` 同帧规则与
+    reduced-motion 分支原样作用于它,B52.2-01「已显示内容永不补播」语义不变。
+- **未改动**:`ConfigurationPage.tsx`、`LoadingPanel.tsx`、`RefreshControl.tsx`、
+  `read-reveal.ts`、`styles.css`、九页其余读取接入、两库刷新预留行、Router/
+  AuthBoundary/Query/公共 Modal、后端/权限/schema/任务引擎。
+
+### 覆盖(新增测试,均在真实现有入口上,未构造产品外入口)
+
+- `src/features/operations/AutomationSettingsPage.test.tsx`(新增
+  `heldSettingsRead` 夹具:只持有该页真实发出的引擎 GET,其余 URL 按既有
+  `recordingFetch` 固定应答)+ describe「engine settings read handoff on System
+  Settings (Slice52 RO-3)」三用例,全部从真实 `/ui-v2/configuration` 进入:
+  ① 快读——配置状态已返回、引擎读取仍进行时提示行从未上屏,放行后表单直接
+  接管、全程零写入;② 慢读——越过窗口后出现且持续一条稳定提示,就绪后表单
+  接管、提示不再出现;③ 失败——既有「引擎设置暂不可用/请刷新」原样及时出现,
+  不经过等待行,零写入。
+- `tests/e2e/page-transition.spec.ts`:新增 `SettingsFrame` 帧探针(逐 rAF 记录
+  提示行/表单/配置状态/失败文案四个可见量)与三用例——
+  快读+经探索返回的缓存重进全程 0 帧提示且状态先于表单;
+  慢读仅对该页真实 GET 经现有 `page.route` 延迟(1500ms)后,呈现「状态先到 →
+  一段首尾相连无缺口的提示帧 → 表单接管(无同帧叠加、无二次闪现)」;
+  500 失败走既有恢复文案且零命令。`WAITING_READ_MARKERS` 增补 `引擎设置`,
+  快读断言集扩展到该页。既有 7 个用例的断言未删除、未弱化。
+
+### 可达性核验(防把结论建立在抓不住缺陷的断言上)
+
+临时仅移除呈现门(其余改动保留)重建后:快读单测失败
+(`expect(screen.queryByText("正在读取引擎设置")).toBeNull()` 收到元素)、E2E
+`settings handoff…` 与 `a slow engine read…` 同时失败;恢复修正版重建后,3 个新
+E2E 与 3 个新单测全部通过。新断言能捕获 B52.2-02,已证。
+
+### 受影响测试实际结果(全部实测)
+
+```text
+python3 scripts/check_governance.py              → PASS(实现前后各一次)
+git diff --check                                 → 干净
+npm run typecheck                                → PASS(6s)
+npx eslint <3 个改动 ts/tsx>                      → PASS(修 1 处 prefer-const 后)
+npx prettier --check <3 个改动路径>                → PASS(先 --write 后复核)
+npm run test -- run src/features/configuration/ConfigurationPage.test.tsx
+  src/features/operations/AutomationSettingsPage.test.tsx
+  src/shared/ui/read-reveal.test.tsx
+  src/shared/auth/AuthorizedReadBoundary.test.tsx → 4 files / 62 tests passed(41.98s)
+npx vitest run src/features/operations/
+  AutomationSettingsPage.test.tsx -t "Slice52 RO-3" → 3 passed(1.91s,新用例确已执行)
+npm run build                                    → PASS(产物 grep 到
+  `mf-automation-settings mf-content-settle`,证明改动入包)
+npm run test:e2e -- tests/e2e/page-transition.spec.ts → 10 passed(39.1s;
+  既有 6 + B52.2-01 修正轮 1 + 本轮 3)
+可达性互换(临时去门重建)          → 快读单测 1 failed、快读/慢读 E2E 2 failed(预期)
+恢复重建后重跑 3 个新 E2E          → 3 passed(4.1s)
+```
+
+调试期失败仅两类且非用例逻辑:eslint `prefer-const` 一处(当轮修正)、误用不存在
+的 vitest `--reporter=basic` 参数(改用默认报表重跑);最终形态全部用例首轮即绿。
+失败路径测试在可达性互换下仍通过属预期:它记录的是既有恢复分支,非闪现判别器。
+
+**时间约束:** 计时窗口 15:01:22 → 交接约 15 分钟(此前为文档与代码阅读,未运行
+测试);全部测试/构建/静态检查命令累计约 2.5 分钟(含报表参数报错与可达性互换的
+两轮运行)≈ 16%,低于 30% 上限。
+
+### 剩余风险与待 B
+
+- 未执行 B 分工的全量门禁:全 Web 单测 `run`、全仓 lint/format、page-transition
+  之外的 E2E、`automation-settings.python.spec.ts` 等 Python harness(面板改动
+  直接影响该设置旅程,本轮未新增 Python 用例,既有回归由 B 按原验收计划执行)、
+  TAC 设置页桌面/390px 同视口改前改后人工比较。
+- 本轮未改 CSS 与共享组件,呈现参数仍为 400ms/settle 0.7·170ms/entry 窗口 320ms/
+  入场 0.5·260ms;B 若在真实视口发现设置页节奏问题,请在同 Task 给单点 FIX 指示。
+- 快读单测与 E2E 的“提示从未上屏”依赖观察落在共享揭示窗口内(与其余页面同一
+  机制);极慢 CI 停顿理论上可误报,本轮各次运行均未出现。
+- 既有 403 文案定位失败事实保留;本 Task 未宣称旧 E2E 全绿;Slice52 仍 ACTIVE,
+  RO-4 仍留待后续授权规划,本轮不改 Slice/Roadmap/Progress/合同。
