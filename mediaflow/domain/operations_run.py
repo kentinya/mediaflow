@@ -23,7 +23,7 @@ bounded label instead of disappearing.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
@@ -581,6 +581,12 @@ def statuses_for_disposition(disposition: str) -> tuple[str, ...]:
         raise ValueError("run disposition filter is invalid") from error
 
 
+def _empty_counts() -> Mapping[str, int]:
+    """Return a fresh read-only empty count mapping for one progress snapshot."""
+
+    return MappingProxyType({})
+
+
 def disposition_partition(
     status_counts: Mapping[str, int],
 ) -> tuple[dict[str, int], int]:
@@ -626,15 +632,15 @@ class OperationsRunProgress:
     unavailable_reason: str | None = None
     known_total: int | None = None
     indeterminate: bool = False
-    dispositions: Mapping[str, int] = MappingProxyType({})
+    dispositions: Mapping[str, int] = field(default_factory=_empty_counts)
     uncertain_success: int = 0
     attachment_steps: int = 0
-    effect_counts: Mapping[str, int] = MappingProxyType({})
+    effect_counts: Mapping[str, int] = field(default_factory=_empty_counts)
     results_total: int = 0
     results_complete: bool = True
     scan_errors: int | None = None
     scan_discovery_complete: bool | None = None
-    scan_progress: Mapping[str, int] = MappingProxyType({})
+    scan_progress: Mapping[str, int] = field(default_factory=_empty_counts)
     primary_unit: str = "task_items"
     #: Whether this Task's durable admission authorized Storage execution —
     #: the basis for distinguishing analysis completion from organize

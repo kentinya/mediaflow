@@ -993,7 +993,10 @@ async function organizeOneFileThroughFiles(
     .getByRole("button", { name: /source/ })
     .first()
     .click();
-  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: `选择 ${file}` }),
+  ).toBeVisible();
   await page.getByRole("checkbox", { name: `选择 ${file}` }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(
@@ -1085,7 +1088,7 @@ test("system runtime settings share one organizing allowance across automation a
     .getByRole("button", { name: /source/ })
     .first()
     .click();
-  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
   await page.getByRole("checkbox", { name: "选择 Two.2002.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(page.getByText(/系统整理队列已满/)).toBeVisible({
@@ -1165,7 +1168,7 @@ test("system runtime settings keep an old summary at the current organizing capa
     .getByRole("button", { name: /source/ })
     .first()
     .click();
-  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(page).toHaveURL(/discoveryId=/);
@@ -1194,7 +1197,7 @@ test("system runtime settings keep an old summary at the current organizing capa
     .getByRole("button", { name: /source/ })
     .first()
     .click();
-  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
   await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
   const competitor = page.waitForResponse(
     (response) =>

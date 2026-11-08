@@ -14,14 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
 Reviewed Head: ae40e6a84311674203f04462286d0ad5abd25f9a
-Correction Candidate: 34be1d962b4387011b756575b88b306c11bb4491
+Correction Candidate: PENDING-IMPLEMENTATION-CHECKPOINT
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; B FIX REQUIRED
+Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER CORRECTION HANDOFF READY
 ```
 
 ## Goal and observed gap
@@ -717,3 +717,112 @@ git diff --check                                     # clean
 `web/test-results/automation-stale-reproduction/` 复现，并复制到
 `.git/validation-evidence/<candidate>/inventory-assertions/`（脱敏、仅本机）；最终通过运行
 的命令、计数与无 skip／retry 的事实见上表和本轮交接，不用重复运行制造日志。
+
+### Developer correction report — 2026-11-08（3.11 启动、容量旅程、可读性同步与路由 CSP）
+
+**Status: READY FOR B REVIEW. Authorized bug acceptance remains B’s; no self-approval.**
+
+本轮按上方第 8–11 项修正 B 一次汇总的四个根因；不重开 Slice52，不改 SLICE／Roadmap／
+Progress，不新增产品能力、schema、权限、恢复类型、skip 或超时放宽。预存
+`mediaflow/.DS_Store` 与全部未跟踪调查／日志／output／系统元数据原样保留，未纳入提交。
+
+修改与根因：
+
+- `mediaflow/domain/operations_run.py`：`OperationsRunProgress` 的 dispositions／
+  effect_counts／scan_progress 仍以 `MappingProxyType({})` 作为字段默认值；Python 3.11 的
+  dataclass 拒绝该不可接受默认值，`mediaflow --help` 与 118 个测试模块在导入阶段即退出。
+  三个同源默认值改为 `field(default_factory=_empty_counts)`；每个快照仍得到各自独立的
+  只读空映射，字段集合、构造语义、不可变性与 repr／相等性不变。未降低支持版本、未改
+  状态／schema。
+- `tests/test_operations_run_progress_defaults.py`（新增）：把该契约固定为与解释器版本无关
+  的回归用例——默认计数为空、只读（写入 `TypeError`）、每个实例独立，且三个计数字段
+  确实声明了工厂默认值，避免同一写法再次以 3.11 导入失败的形式回归。
+- `web/tests/e2e/automation-settings.python.spec.ts`：四处 `getByLabel("目录")` 等待的是
+  已删除的旧侧栏目录树。改为等当前 Files 入口实际渲染的所选库文件表格
+  （`role=table`）与精确目标文件复选框（`选择 Two.2002.mkv` 等）可见后再操作；原三项
+  容量旅程（保存 1025／10000 后各自完整整理、容量 1 被占用时拒绝并释放后成功、旧摘要
+  在降容后确认被拒）一字未减，未改共享 seed、容量或权限。
+- `web/tests/e2e/action-readability.python.spec.ts`：新增 `expectSettledSurface()`，在
+  `expectSurfaceReadable()` 起步处等待产品自身页面／内容／卡片入场过渡回到静止值
+  （`.mf-page-surface`、`.mf-content-settle`、`[role=dialog]` 的 opacity 均为 1），不关闭、
+  不缩短动画，也不使用固定 sleep；对比度阈值仍为 4.5／3，normal／hover／键盘 focus 与
+  busy／disabled 断言保留。编辑卡标题改为当前真实卡片「编辑自动化任务」并断言其为
+  dialog；编辑与新建的主／次操作均在各自 dialog 内选取，背景列表的「新建」不再截获
+  hover。读回失败与 Connected 返回后的稳定态测量因此落在操作员实际看到的一帧上。
+- `scripts/docker_release_security_smoke_test.py`：原先一个 `V2_SAFE_HEADERS` 常量用 V1 的
+  无 img-src CSP 同时校验 V1 与 V2。拆为共享安全头 `STATIC_SAFE_HEADERS` 与按路由区分的
+  `V1_STATIC_CSP`／`V2_STATIC_CSP`；V2 精确包含探索合同批准的
+  `img-src 'self' https://image.tmdb.org`，V1 保持历史策略不变，未使用包含判断或通配域名。
+  其余 canary／RBAC／零副作用／常驻 Worker／结果与日志校验未改。
+
+实际验证（仓库根目录，除注明外；Web 命令在 `web/`）：
+
+```sh
+# Python 3.11.15（B 已建的同源解释器环境，运行当前工作树）
+PYTHONPATH=/Users/songzhidong/mediaflow /tmp/mediaflow-review-py311/bin/mediaflow --help   # 正常输出用法
+/tmp/mediaflow-review-py311/bin/python -m unittest \
+  tests.test_operations_run_progress_defaults tests.test_operations_task_center \
+  tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation
+# Ran 42 tests, OK (3.0s)
+# 3.11 下导入全部现有测试模块：imported 149/149 test modules（原 118 个导入错误消失）
+/tmp/mediaflow-review-py312/bin/python -m unittest <同上四模块>   # Ran 42 tests, OK (3.0s)
+.venv/bin/python -m unittest <同上四模块>                          # Ran 42 tests, OK (3.0s；3.13.14)
+.venv/bin/ruff check mediaflow/domain/operations_run.py \
+  scripts/docker_release_security_smoke_test.py tests/test_operations_run_progress_defaults.py
+# All checks passed
+.venv/bin/ruff format --check <同上三文件>        # 3 files already formatted
+.venv/bin/python -m unittest tests.test_release_security   # Ran 8 tests, OK
+python3 scripts/check_governance.py                        # governance check: PASS
+git diff --check                                           # clean
+
+# Web
+npm run build                                              # passed
+npm run typecheck                                          # passed
+npm run test:e2e -- --config=playwright.python.config.ts \
+  tests/e2e/action-readability.python.spec.ts --output=test-results/action-readability-developer-final
+# 7 passed (26.3s)，无 skip／retry；原 5 passed／2 failed
+npm run test:e2e -- --config=playwright.python.automation.config.ts \
+  tests/e2e/automation-settings.python.spec.ts --output=test-results/settings-correction-developer
+# 15 passed (20.3s)，无 skip／retry；原 12 passed／3 failed，且四处旧等待所在旅程全部执行
+npx prettier --check tests/e2e/action-readability.python.spec.ts \
+  tests/e2e/automation-settings.python.spec.ts             # All matched files use Prettier code style
+npx eslint tests/e2e/action-readability.python.spec.ts \
+  tests/e2e/automation-settings.python.spec.ts             # exit 0，无 findings
+```
+
+Docker（本轮实际启动 Colima `mediaflow-review` profile，用当前工作树构建并按原脚本执行）：
+
+```sh
+docker build -t mediaflow:developer-patch-20261108-3 .
+# 成功；镜像 ID sha256:3037d73a291d7735fbd5e1165dc104ad1e262232ccfdbe33d43be1582173e99e
+TMPDIR=<profile 已挂载的宿主临时目录> \
+  .venv/bin/python scripts/docker_release_security_smoke_test.py \
+  --image mediaflow:developer-patch-20261108-3
+# Release-security smoke acceptance passed.（47.9s；含 V1/V2 静态共存与精确 CSP、
+# 非 root／compose 拓扑、RBAC／canary／零副作用、常驻 Worker 消费与持久结果／日志检查）
+```
+
+测试与验证占用时间约 5 分钟（两轮浏览器 spec 53s、Docker 构建 14s 与安全 smoke 48s、
+三版本受限模块约 10s、静态检查约 10s，另有首次因 Colima 未挂载默认临时目录而失败的
+安全 smoke 16s），低于本轮有效开发时间的 30%；未用 sleep、skip、retry、放宽超时或 force
+click 取得结果，未删除任何用例或断言。
+
+剩余风险／待 B 独立验收：
+
+- Developer 未运行 Python 全量、默认 Node E2E 全量、其余 14 份原生 Python specs、
+  OpenList 405 核心旅程重跑、wheel／外部安装 smoke、Docker transfer lifecycle smoke 或
+  真实 115；这些仍是 B 在固定候选上的 T4 门禁，当前不声明全部绿色或 PASS。
+- `expectSettledSurface()` 只等待产品既有过渡的静止 opacity，不承诺上游读取何时完成；
+  若某入口在未来加入新的入场动画元素，需要把它并入同一完成条件，而不是加固定等待。
+- Docker 证据依赖 Colima `mediaflow-review` profile 的显式挂载：默认 `TMPDIR`
+  （`/var/folders/...`）在 VM 内不可见，脚本会因 compose bind 源缺失而失败；这是本地
+  虚拟化环境限制，不是产品缺陷。B 复验时须继续使用该 profile 已挂载的宿主目录作为
+  临时根。
+- 七项专用真实外部服务／耐久环境 skip、Docker transfer lifecycle 与全部未执行门禁仍为
+  pending；未伪造环境或用离线绿色替代。
+
+证据：`web/test-results/action-readability-developer-final/` 与
+`web/test-results/settings-correction-developer/` 保存本轮两次完整浏览器运行的计数与
+附件，`web/test-results/action-readability/` 保存各表面截图与实测读数；关键日志与
+Docker 构建／smoke 输出复制到 `.git/validation-evidence/<本次候选 SHA>/correction-4/`
+（脱敏、仅本机）。测试执行时间与命令见上表，不用重复运行制造日志。

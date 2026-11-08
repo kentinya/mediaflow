@@ -104,17 +104,27 @@ def value_bytes(value: str) -> bytes:
     return value.encode("utf-8")
 
 
-V2_SAFE_HEADERS = (
+#: Every static surface shares the same transport and hardening headers.
+STATIC_SAFE_HEADERS = (
     ("Cache-Control", "no-store"),
-    (
-        "Content-Security-Policy",
-        "default-src 'self'; connect-src 'self'; "
-        "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
-        "frame-ancestors 'none'; form-action 'none'",
-    ),
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "no-referrer"),
     ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+)
+
+#: The exact CSP each static surface must answer with. V2 adds only the trusted
+#: poster host accepted by the Explore contract; V1 keeps its historical policy
+#: unchanged, so the image permission can never silently widen the old surface.
+V1_STATIC_CSP = (
+    "default-src 'self'; connect-src 'self'; "
+    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
+    "frame-ancestors 'none'; form-action 'none'"
+)
+V2_STATIC_CSP = (
+    "default-src 'self'; connect-src 'self'; "
+    "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
+    "object-src 'none'; base-uri 'none'; "
+    "frame-ancestors 'none'; form-action 'none'"
 )
 
 
@@ -140,7 +150,7 @@ def assert_v2_static_serving(base: str, canaries) -> None:
         method: str = "GET",
         expected: int = 200,
         content_type: str | None = None,
-        safe_headers: bool = True,
+        csp: str | None = V2_STATIC_CSP,
     ) -> bytes:
         status, headers, body = request_full(url, method=method)
         assert_no_canaries(body, canaries, f"static response {url}")
@@ -150,8 +160,8 @@ def assert_v2_static_serving(base: str, canaries) -> None:
             raise RuntimeError(
                 f"{url} Content-Type is {headers.get('content-type')!r}, expected {content_type!r}"
             )
-        if safe_headers:
-            for name, value in V2_SAFE_HEADERS:
+        if csp is not None:
+            for name, value in (*STATIC_SAFE_HEADERS, ("Content-Security-Policy", csp)):
                 if headers.get(name.lower()) != value:
                     raise RuntimeError(
                         f"{url} header {name} is {headers.get(name.lower())!r}, expected {value!r}"
@@ -183,13 +193,14 @@ def assert_v2_static_serving(base: str, canaries) -> None:
             f"the V2 entry document does not reference built hashed JS/CSS assets: {references!r}"
         )
 
-    probe(f"{base}/ui-v2/", method="POST", expected=405, safe_headers=False)
-    probe(f"{base}/ui-v2/missing-asset-abc123.js", expected=404, safe_headers=False)
-    probe(f"{base}/ui-v2/..%2f..%2fetc%2fpasswd", expected=404, safe_headers=False)
+    probe(f"{base}/ui-v2/", method="POST", expected=405, csp=None)
+    probe(f"{base}/ui-v2/missing-asset-abc123.js", expected=404, csp=None)
+    probe(f"{base}/ui-v2/..%2f..%2fetc%2fpasswd", expected=404, csp=None)
 
-    probe(f"{base}/ui/", content_type="text/html")
-    probe(f"{base}/ui/app.js", content_type="text/javascript")
-    probe(f"{base}/ui/style.css", content_type="text/css")
+    # The live V1 surface keeps its own exact policy beside V2.
+    probe(f"{base}/ui/", content_type="text/html", csp=V1_STATIC_CSP)
+    probe(f"{base}/ui/app.js", content_type="text/javascript", csp=V1_STATIC_CSP)
+    probe(f"{base}/ui/style.css", content_type="text/css", csp=V1_STATIC_CSP)
 
     status, _, _ = request_full(f"{base}/api/v1/auth/principal")
     if status != 401:

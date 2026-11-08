@@ -173,11 +173,48 @@ async function expectActionStates(
   }
 }
 
+/**
+ * Wait for the product's own entry transitions to reach their rest state.
+ *
+ * Slice52 RO-3 eases the page surface from 0.5, a bounded read region from
+ * 0.7 and a card layer from 0; contrast measured during any of those fades
+ * composites a frame no operator ever sees at rest. This waits for the same
+ * opacity those transitions end at, so it neither disables nor shortens the
+ * animations and is not a fixed delay.
+ */
+async function expectSettledSurface(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const surfaces = [
+            document.querySelector(".mf-page-surface"),
+            ...document.querySelectorAll(".mf-content-settle, [role='dialog']"),
+          ].filter((node): node is Element => node !== null);
+          return surfaces.reduce((lowest, node) => {
+            const opacity = Number.parseFloat(
+              window.getComputedStyle(node).opacity,
+            );
+            return Number.isFinite(opacity)
+              ? Math.min(lowest, opacity)
+              : lowest;
+          }, 1);
+        }),
+      {
+        message:
+          "the page entry, content settle and card transitions reached rest",
+      },
+    )
+    .toBe(1);
+}
+
 /** Every visible action on the surface, measured where it is really painted. */
 async function expectSurfaceReadable(
   page: Page,
   surface: string,
 ): Promise<number> {
+  // Readable means readable at rest: settle the product's own entry first.
+  await expectSettledSurface(page);
   const selector =
     'button:visible, a.mf-button:visible, [role="menuitem"]:visible';
   // The modal owns interaction while open; its backdrop dims/inerts the page.
@@ -392,20 +429,21 @@ test.describe("readable V2 actions", () => {
         surface.label === "Automation edit"
       ) {
         await expect(
-          page.getByRole("heading", {
+          page.getByRole("dialog", {
             name:
               surface.label === "Automation create"
                 ? "新建自动化任务"
-                : "Edit Automation definition",
+                : "编辑自动化任务",
             exact: true,
           }),
         ).toBeVisible();
       }
       counts[surface.label] = await expectSurfaceReadable(page, surface.label);
-      // The create surface is the dialog over the inert list: its readable
-      // controls live inside the dialog, not in the background behind it.
+      // Both automation forms are cards over the inert list: their readable
+      // controls live inside the dialog, never in the background behind it.
       const actionRoot =
-        surface.label === "Automation create"
+        surface.label === "Automation create" ||
+        surface.label === "Automation edit"
           ? page.getByRole("dialog")
           : page.locator("body");
       for (const variant of [".mf-button-primary", ".mf-button-secondary"]) {
