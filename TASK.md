@@ -1,9 +1,10 @@
 # Task52.2 — 九个主页面切换、读取接入与两库刷新体验
 
-用户于 2026-11-08 明确要求“激活TASK”，Task52.2 成为正式活动实施 Task，实施已授权。
-当前状态为 **FIX REQUIRED**：B 独立复核发现切页结束后正文再次变淡，须在同一 Task
-修正。Task ID/Base/Goal/Scope、验收及修订后的测试计划保持；Developer 修正后提交新的
-READY FOR B REVIEW checkpoint。本次激活不授权推送、发布或部署。
+用户于 2026-11-08 明确要求“激活TASK”,Task52.2 成为正式活动实施 Task,实施已授权。
+原处于 **FIX REQUIRED**:B 独立复核发现切页结束后正文再次变淡 (B52.2-01)。Developer
+已在同一 Task 完成修正并提交实现 checkpoint `3178f1bf`,状态转为 **READY FOR B REVIEW**
+待 B 在修正候选上复验;Task ID/Base/Goal/Scope、验收及测试计划保持。本次激活不授权
+推送、发布或部署。
 
 Task52.1 已由独立 B 复核 **PASS**，原始 Base
 `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 已审实现
@@ -30,7 +31,7 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.2
 Task Type: SLICE
 Parent Slice: 52
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
@@ -405,3 +406,91 @@ RO-3：本候选已接入九页延后等待反馈及两库刷新预留位置，�
 尚未交付；其余TAC待修正后的B验收。RO-4：旧自动化打开链路仍在，按合同留待后续Task。
 因此保持Slice52 ACTIVE，修正留在Task52.2，不规划下一Task、不提交Closure Packet，
 不改变Slice／Roadmap／Progress或已接受Slice身份。
+
+## Developer fix completion report — B52.2-01
+
+**READY FOR B REVIEW(修正轮)** — Task Base `4cf0efdf23981351ee3c7ef19d599726a070a4bb`
+(保持不变)→ 实现 checkpoint `3178f1bfdf32b4fd29f0a1f492a75b8dfc9d03d3`(web 代码与
+测试,2 个文件),本报告为其后的 docs checkpoint。工作区:分支 main,治理检查 PASS,
+预存跟踪变更 `mediaflow/.DS_Store` 与全部未跟踪文件保留未动,暂存区只含本 Task 文件;
+未推送、未发布、未读取运行数据库/私密配置/用户媒体。
+
+### 根因与修正(真实源码身份)
+
+- **根因确认(B 命中)**:`styles.css` 中 `mf-content-settle` 是 CSS animation
+  (`animation: ... both`),entry 窗口用 `.mf-page-surface-entry-active
+  .mf-content-settle { animation: none }` 抑制;窗口 320ms 结束移除类时,已显示正文的
+  animation-name 由 none 重新应用,浏览器对仍在 DOM 的元素从 0.7 起补播一次
+  ——“跳过叠加淡入”变成“稍后补播淡入”。
+- **修正(commit `3178f1bf`,`web/src/shared/ui/styles.css`)**:正文揭示改为
+  `transition: opacity`(170ms)+ `@starting-style { opacity: 0.7 }`,即只在元素
+  **首次渲染**时从 0.7 平顺接入一次;transition 只有元素自身 opacity 实际变化才启动,
+  因此 entry 窗口结束、卡片层出现/关闭、reduced-motion 等祖先类变化仅启停 transition
+  属性而不改变 computed opacity——已显示内容永不补播,晚到读取仍按自身时序平顺接入。
+  抑制规则、`:has(卡)` 同帧规则与 reduced-motion 分支同步改为 `transition: none`,
+  删除 `@keyframes mf-content-settle` 并更新注释。B 指导的「区分已呈现/晚到读取」
+  由首次渲染语义天然实现,未延长窗口、未推迟任何请求/错误/授权/已就绪内容。
+- **未改动**:entry 窗口时序(320ms)、`AppShell.tsx`、`LoadingPanel`、
+  `RefreshControl`、两库刷新预留行、九页读取接入代码、Router/AuthBoundary/Query/
+  Modal 生命周期、后端与权限;弹卡覆盖、同页不重播、未保存退出与 reduced-motion
+  既有规则保持。
+
+### 覆盖(新增/修改测试,均在真实现有入口上)
+
+- `web/tests/e2e/page-transition.spec.ts`:采样器增记正文透明度 `content` 与
+  `entryActive`,采样窗口参数化并新增 `waitForSamplerWindowEnd`(必须采样到 entry
+  窗口结束之后,不以首次满透明或等待文案消失为终点);新增用例
+  “sidebar handoff keeps the storage and both library bodies steady through fast,
+  cached and slow reads”:沿真实侧栏完成 存储/文件/媒体库 三页的
+  **首次快读 → 经探索返回的缓存读(3 段)→ reload 断会话缓存后的慢读(3 段)**,
+  慢读仅对这三页实际发出的 inventory / resource-libraries files / media-libraries
+  files 读取经现有 `page.route` 延迟 1500ms。判据全部为可见行为:正文一旦满透明任何
+  后续帧不得回落、慢读正文首帧 >700ms(证明限速真实生效)、快读/缓存后该页等待文案
+  为 0、窗口内确有 entry 窗口帧参与。
+- 既有 6 个用例(共享过渡/慢读占位/弹卡/未保存退出/认证续转与 reduced-motion)
+  未删除、未弱化断言。
+
+### 测试有效性与实际结果(全部实测)
+
+- **可达性核验(防把验收结论建立在不可达断言上)**:临时将 `styles.css` 恢复到候选
+  `e8a65644` 版本重建后,新用例在首段快读即失败:
+  `expect(received).toBeGreaterThanOrEqual(expected)  Expected: >= 0.999  Received: 0.7`
+  (正是 B52.2-01 的正文再次变淡),随后恢复修复版重建;证明该断言能捕获此缺陷。
+- **B 复现脚本复跑**:将 `.git/validation-evidence/e8a65644/b52-2-review/entry-probe.mjs`
+  原样复制到 `.git/validation-evidence/b52.2-01-fix/`(仅随脚本目录改变输出位置),
+  自建 `FAKE_PORT=4192` Node fake-server + 修复后构建:存储/文件/媒体库三页
+  `contentOpacityDrops: []`、`settledShellMinimumContent: 1`(证据在本机 .git 目录,
+  不承诺远程可访问)。
+- 仓库根:`python3 scripts/check_governance.py` → PASS;`git diff --check` → 干净。
+- `web/` 改动文件门禁:`npm run typecheck` → PASS;
+  `npx eslint tests/e2e/page-transition.spec.ts` → PASS;
+  `npx prettier --check tests/e2e/page-transition.spec.ts src/shared/ui/styles.css` → PASS。
+- `npm run build` → PASS(保留原大 chunk 警告;全部 E2E 跑在最终构建产物上)。
+- 单测:`npx vitest run`(AppShell、read-reveal、modal-card、AuthorizedReadBoundary、
+  StorageFilesPage、MediaLibraryFilesPage 6 文件)→ **6 files / 115 tests passed
+  (11.4s)**。
+- `npm run test:e2e -- tests/e2e/page-transition.spec.ts` → **7 passed**(修复后首跑
+  35.1s,最终构建复跑 35.5s,含新增回归用例 20.5s/20.6s)。
+- `npm run test:e2e -- library-files+medialib-files --grep
+  'Task52[.]2|directory navigation, breadcrumb return, refresh and selection reset|
+  library selection, lazy navigation, breadcrumbs, search and refresh|empty and
+  recoverable failure states preserve the Files context|missing directory, stale
+  cursor and unavailable Storage offer scoped recovery'` → **6 passed (6.6s)**。
+- 调试期失败:无(新用例首轮即绿;唯一失败为上述旧 CSS 可达性核验的预期失败)。
+- **时间约束**:本轮 14:16 开始、约 14:42 完成交接,总耗时约 26 分钟;上述全部测试/
+  构建/静态检查命令累计执行约 2.5 分钟 ≈ 10%,低于 30% 上限(未以等待凑时间)。
+
+### 剩余风险与待 B
+
+- B 分工的全量门禁本轮未执行:全 Web 单测 `run`、全仓 lint/format、其余 E2E、
+  Python harness 用例(`operations-inventory/explore/direct-files .python.spec`)、
+  TAC 九页同视口改前/改后人工比较;本修正未触及 Python 相关入口,Python 用例由 B 按
+  原验收计划执行。既有 403 文案定位失败事实保留,本轮未触碰相关断言。
+- `@starting-style` 需较新浏览器(Chromium≥117、Safari≥17.5、Firefox≥129);更旧
+  浏览器上慢读内容直接以满透明出现(无一次性揭示),无功能影响。Playwright Chromium
+  与 B 探针均已验证;若 B 判定需兼容旧浏览器,可在同 Task 改为挂载期 JS 状态判定方案,
+  请给单点 FIX 指示。
+- 呈现参数(settle 170ms/0.7、entry 窗口 320ms、读后延时 400ms)与 B 复核时一致;
+  TAC 按完整过程而非数值判定,若 B 在真实视口发现节奏问题,请在同 Task 给单点调节。
+  卡同帧抑制语义由 animation 迁移为 transition(同样只在首次渲染揭示),弹卡遮罩/
+  滚动/焦点恢复旧行为未改,请在弹卡用例中复核。
