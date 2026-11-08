@@ -10,7 +10,7 @@ Task 实施,构成实施授权;按本文件原计划移除无活动实施声明�
 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份/限制保持。
 预存本地/私有文件不纳入提交。
 
-Next Action: B REVIEWS Task52.1 AT `d269fe4e..900318f9`
+Next Action: DEVELOPER FIXES Task52.1 (B52-01 / B52-02); Base unchanged
 
 ## Task52.1:探索页布局、详情滚动与有界浏览
 
@@ -24,8 +24,8 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.1
 Task Type: SLICE
 Parent Slice: 52
-Status: READY FOR B REVIEW
-Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); B review pending
+Status: FIX REQUIRED
+Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); B review FIX REQUIRED
 Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
 Difficulty: Medium
 Test Level: T3
@@ -276,5 +276,72 @@ Provider语义／CSP／执行权限／schema／媒体引擎。不新增源、推
 
 ## B Review Result
 
-尚未独立审查；角色代行不包含验收。B 后续记录精确 Reviewed Base..Head、PASS／FIX REQUIRED、
-实际验收／限制及整个 Slice 结果是否满足，不自行关闭 Slice。
+```text
+Reviewed Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
+Implementation candidate: 900318f973c598fb66faa7f13851eeafb8cd61b6
+Report successor inspected: d3cfd288f785eb464679ee7c4d37269ad8f08f80 (TASK.md only)
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 于 2026-11-08 独立检查完整 Task Base..candidate（12个文件），并检查报告后继只改
+Task、未改变执行输入。Task Base 不是顶端旧提示中的规划提交 d269fe4e，保持上述原始 Base。
+治理 PASS；分支 main；复核起点 d3cfd288；预存已跟踪 mediaflow/.DS_Store 及所有既有
+未跟踪文件保留，精确清单存于本地证据 initial-status.txt。仅本 Task 文档纳入复核提交。
+
+### Task blockers and Developer guidance
+
+1. **B52-01 / P1 — 翻页后应从新页内容开始阅读。**
+   现有真实入口：390×844 登录探索，滚到分页器，点击“下一页”。第2页成功替换20张
+   海报后，视口仍在页尾（scrollY=3290，首张海报 top=-2780），用户只看到最后几张，
+   必须额外向上滚动才能从头浏览；TAC-3／实现步骤3的“新结果合理定位”未满足。
+   在现有 Explore 局部页目标／成功页交接中完成定位：只有当前明确选择的新页成功显示
+   后才定位到结果开头，并为键盘提供相应可继续阅读的焦点。等待／失败期间保留成功页
+   和当前位置；迟到响应不能抢滚动／焦点。缓存命中与新读取遵循相同规则，详情关闭和
+   退出搜索仍按各自原位置恢复，不套用翻页回顶。不要改共享 Router／Modal 生命周期。
+
+2. **B52-02 / P1 — 退出搜索后恢复可用焦点。**
+   现有真实入口：从浏览进入作品名搜索，再点“退出搜索”。浏览页恢复，但被移除的
+   按钮没有后继焦点，document.activeElement 为 BODY；TAC-3 的合法焦点未满足。
+   复用本页已存在的搜索输入或明确浏览入口作为返回焦点，并用 preventScroll 保持刚
+   恢复的位置；等原目标页可用后完成恢复。补齐正常缓存返回和被淘汰后重读原页的
+   同一旅程，不能只验证 LRU helper 删除了一个 key。
+
+**本轮实施顺序：** 在 ExplorePage 的现有局部状态中区分翻页成功定位和搜索／详情
+返回，按上述两项处理滚动与焦点；随后补真实浏览器回归。先从页尾真实点击分页器，
+等待实际内容成功后验证首行在可读位置、键盘可进入新结果；慢读／失败／快切不提前
+移动。再从非零浏览位置进入搜索、退出，验证原页／滚动／合法焦点一并恢复，包括缓存
+淘汰后的原页重读。复用现有本地 harness，测试命令仍用本 Task 的 Developer affected
+清单；不接管 B 的全量 Web 门禁，不新增业务状态、全局滚动平台或下一 Task。
+
+### Actual acceptance and limits
+
+本地证据根目录：`.git/validation-evidence/900318f9/b52-review/`，不随 Git 同步。
+
+- 根目录 `python3 scripts/check_governance.py`、`git diff --check c7913f6a..900318f9`
+  均通过；`.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'`
+  **46 tests OK (1.907s)**，日志 python.log。
+- web/ `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
+  均通过（构建原有大 chunk 提示保留），对应日志 typecheck/lint/format/build.log。
+- web/ `npm run test -- run` 已启动，确认原生阻塞后由 B 主动中止，退出130，耗时
+  77.12s；**未完成，不记通过，也不记为产品测试失败**。unit.log 保留原始输出。
+- B 使用新构建生产资源 + 原有 Python Explore harness + 临时 SQLite／本地假上游，
+  从登录和页面现有按钮独立复现以上阻塞；图片请求本地中止走既有缺图占位，不访问
+  真实TMDB／用户数据。脚本 native-probe.mjs、结果 native-probe.json、截图
+  page2-mobile.png；重现命令（根目录、harness 端口4187）：
+  `node .git/validation-evidence/900318f9/b52-review/native-probe.mjs`。
+- 已查看 Developer 同视口 before/after desktop、390px整页截图：重复定位行和只读
+  搜索占位已去掉，搜索行对齐、两列海报及分页布局改善。此观察不代替所有 TAC 的通过。
+- 依据工作流允许的已证实阻塞早退，本轮未继续完整 Explore／page-transition／deep-link
+  E2E、所有详情视口／输入方式及缓存淘汰原生验收；Developer 原14 E2E结果仅为其交接
+  事实，不计作 B 独立通过。修正候选提交后 B 重新执行本 Task 已分配的完整验收。
+
+### Whole-Slice reevaluation
+
+RO-1：单标题／对齐与详情滚动已有实现，完整原生验收待修正后完成。
+RO-2：单页替换／有界页缓存已有实现，位置与焦点旅程因上述两项未完成。
+RO-3：九页切换／实际读取接入及两库刷新修正尚未交付。
+RO-4：自动化旧 Open／definition／editor Web链路退出尚未交付。
+因此不提交 Slice Closure Packet、不规划下一 Task；先在原 Task52.1 修正并重新交 B。
+Slice／Roadmap／Progress 的旧规划授权措辞未由 B 改写；实施授权沿用本 Task 顶端记录。
