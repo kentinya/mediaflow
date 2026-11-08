@@ -1,10 +1,10 @@
 # Task52.2 — 九个主页面切换、读取接入与两库刷新体验
 
 用户于 2026-11-08 明确要求“激活TASK”,Task52.2 成为正式活动实施 Task,实施已授权。
-当前状态为 **FIX REQUIRED**：B 在 `3178f1bf` 上确认 B52.2-01（二次变淡）修正通过，
-但设置页后续引擎设置读取仍有短暂提示闪现及突兀替换（B52.2-02）。修正留在同一 Task，
-Task ID/Base/Goal/Scope 与验收保持；Developer 修正后提交新的 READY FOR B REVIEW
-checkpoint。本次激活不授权推送、发布或部署。
+当前状态为 **FIX REQUIRED**：B 在 `36ac50a5` 上确认引擎设置短暂提示已消除，
+但其接入仍突然推走同页已显示的下方内容，B52.2-02 尚未完整解决；B52.2-01保持通过。
+继续同一 Task／同一问题修正，Task ID/Base/Goal/Scope 与验收保持，Developer修正后
+提交新的 READY FOR B REVIEW checkpoint。本次激活不授权推送、发布或部署。
 
 Task52.1 已由独立 B 复核 **PASS**，原始 Base
 `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 已审实现
@@ -31,7 +31,7 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.2
 Task Type: SLICE
 Parent Slice: 52
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
@@ -343,102 +343,88 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts
 
 ```text
 Reviewed Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
-Implementation candidate: 3178f1bfdf32b4fd29f0a1f492a75b8dfc9d03d3
-Report successor inspected: fc74b11feb7c240d72bc77a37e4728d228b03cdd (TASK.md only)
+Implementation candidate: 36ac50a5388355065f717f2650ed061302cc5ee6
+Report successor inspected: 4337b4f691ac098c410bba93f6b034c2a32aca44 (TASK.md only)
 Decision: FIX REQUIRED
-B52.2-01: VERIFIED FIXED
-Task blockers: B52.2-02 (P1)
+B52.2-01: VERIFIED FIXED (unchanged)
+Task blockers: B52.2-02 (P1, partially corrected)
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-2026-11-08 独立 B 重审完整原始 Base..candidate 的24个文件，包含初始实现及本次CSS／
-原生回归修正；candidate之后仅TASK报告变化。起点 main / fc74b11f，预存DS_Store及
-全部未跟踪材料保留，本轮只提交TASK文档。此前FIX REQUIRED与实际失败完整保留在
-[4ab9cc51固定报告](https://github.com/kentinya/mediaflow/blob/4ab9cc51/TASK.md#b-review-result)。
+2026-11-08 独立 B 核对完整原始 Base..candidate 的26个文件；在上轮原始范围审查基础上，
+本轮逐项审查新增的Panel及两份测试变化，其余产品源与上轮一致，报告后继只改TASK。
+复核起点 main / 4337b4f6，预存mediaflow/.DS_Store及全部未跟踪材料保留，只提交Task
+报告。前次实际门禁／失败和原因保留于
+[56a9b91b固定报告](https://github.com/kentinya/mediaflow/blob/56a9b91b/TASK.md#b-review-result)。
 
-### 已修正的 B52.2-01
+### B52.2-02：提示闪现已修正，接入时的突兀推挤仍在
 
-B原样复跑上轮 entry-probe.mjs：存储、文件、媒体库均为 contentOpacityDrops=[]，
-Shell完成后正文最低透明度为1；本次以starting-style／transition处理首次呈现，窗口
-结束没有再次补播。新增快读／缓存／慢读回归通过。该问题不再阻塞，不重置或重新提出。
+**已经完成：** 原样复跑上轮设置探针，正常快读及同一180ms引擎读取下，桌面和390px
+都没有“正在读取引擎设置”提示帧。错误及时显示的新增原生用例通过。B52.2-01的原样
+三页探针仍为contentOpacityDrops=[]、正文最低透明度1，二次变淡没有回归。
 
-### B52.2-02 — 设置页后续引擎读取仍短暂闪出提示（P1，TAC-1/2、Slice AC-5）
+**剩余用户旅程：** 入口连接 → 探索 → 侧栏“系统设置”。配置状态返回后，“整理规则
+就绪状态”先显示在Active状态下面；稍后完整引擎表单插入在它前面，已显示的规则就绪
+内容突然被推到首屏外。390px同样先出现规则就绪内容，再突然换成引擎表单所在区域。
+用户没有滚动或改变页面条件。慢读时，等待提示出现与表单接入还会各推挤一次。
+这仍是上一轮B52.2-02中的突兀替换／推挤部分，未新增问题编号或扩大验收目标。
 
-**完整用户旅程：** 入口连接 → 探索 → 点击侧栏“系统设置”。配置状态先显示，随后出现
-“正在读取引擎设置”的小提示块，刚要阅读又被完整引擎表单及采用情况卡片突然替换；桌面
-下方已显示的“整理规则就绪状态”同时被推到首屏外。390px也可见提示短暂出现再被表单
-替换。问题发生在同一个设置页的快速读取过程中。
+**实际原因：** 当前Panel在快读窗口内返回null，父级后面的RuleReadinessPanel立即
+占用该位置；稍后返回的完整引擎面板重新参与文档布局。mf-content-settle只过渡透明度，
+不会协调待接入区域的空间或后续阅读块的位置。新增SettingsFrame检查提示／表单／父级
+状态／错误是否存在，未观察同页保留内容在接入过程中的阅读位置。
 
-**真实链路与证据：** `ConfigurationPage.tsx:761` 在配置状态读取成功后挂载
-AutomationSettingsPanel。子组件自己的 `GET /api/v1/operations/automation/settings`
-仍直接按query.isPending输出StatusBanner（AutomationSettingsPanel.tsx:823），未接入
-本Task的快读呈现处理。初始实现只处理父级配置状态等待；原Task定位表也遗漏该子读取，
-现已补全实际消费者定位，Goal/Base/AC保持，仍在合同RO-3范围。
+**复现依据：** 沿上轮同一侧栏入口，只延后该页实际发出的引擎GET，配置和数据原样。
+同一180ms夹具中，桌面规则就绪区在相邻帧约228→249ms从top442.5到1146.2；390px约
+230→250ms从top690.5到1965.7，两者scrollY均为0。900ms慢读还分别在等待提示出现、
+表单接入时移动两次。数值仅定位实际过程；阻塞依据是原生画面中同一阅读块短暂上屏后
+突然离开视口，不以任何几何变化本身判失败。正常目标页高度差异、协调占位及平顺替换
+仍允许，不要求所有元素坐标完全不变。
 
-B从现有侧栏进入，只将上述页面本来就发出的GET响应延后180ms，其他读取及配置数据
-保持夹具原样；桌面和390px均记录到约67–231ms的11帧提示，再突然接入表单。180ms是
-本地普通网络延迟夹具，不是新的动画／性能阈值；阻塞依据是原生连续画面中的提示闪现
-及突兀替换，不以任何几何变化或出现过占位本身判失败。原始PNG与完整帧序列保留。
+**Developer修正指导（同B52.2-02／同Base）：**
 
-**Developer修正指导（同Task）：**
+1. 保留已实现的快读无提示、慢读真实反馈和错误直达，继续处理“引擎等待区域 → 就绪
+   表单 → 后续规则就绪内容”的整体接入布局。可安排稳定的待接入区域或协调相关区域
+   的呈现；目标是下方已显示的阅读块不被突然挤走，具体方案由实现选择。不规定固定
+   像素高度或统一骨架，不人为延后请求、表单可用或错误，不改变Save／Active／采用
+   读回、身份及未知提交核对逻辑。
+2. 在同一真实侧栏旅程扩展中间过程回归：快读、缓存返回、慢读分别观察下方仍保留的
+   阅读块与引擎区域，覆盖从父级状态就绪到表单真正接入。测试与人审需能识别本次实际
+   的突然挤走；不能仅以等待文字为0或最终表单存在判通过，也不要改为所有帧坐标必须
+   相等的过强断言。正常布局差异／平顺变化可接受。
+3. 继续跑本Task既有的设置页、反馈逻辑及直接受影响测试和原生新增／修改用例，交新
+   checkpoint。全Web及剩余B验收保持B所有；不重做其他页面或增加流程工具。
 
-1. 完成设置页“父级配置状态 → 引擎设置实际读取 → 就绪表单／采用情况”的整段呈现。
-   快读／缓存避免短暂提示闪出又消失；确有等待时提供稳定可辨反馈，并让内容协调接入。
-   可复用现有反馈机制或安排必要占位，不规定时长、像素高度或统一骨架，不推迟请求及
-   就绪数据，不更改Save／权限／Active发布、采用读回或未知提交核对语义。
-2. 沿相同系统设置入口补原生覆盖，分别观察配置状态和引擎设置先后返回、快读／缓存／
-   慢读、子读取失败后的原安全恢复。检查实际中间过程与可见内容，不能只等父级标题
-   出现或最终页面稳定；保留已通过的B52.2-01结果及同页／弹卡行为。
-3. 跑修改页、新改及直接受影响测试，例如 web/：
-   `npm run test -- run src/features/configuration/ConfigurationPage.test.tsx src/features/operations/AutomationSettingsPage.test.tsx src/shared/ui/read-reveal.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx`；
-   `npm run test:e2e -- tests/e2e/page-transition.spec.ts`（含新增覆盖）。若在既有
-   automation-settings.python.spec.ts新增该旅程，只跑新改受影响用例交接；B负责完整
-   设置原生回归及其余分配验收。保持测试时间小于本轮总耗时50%。
+### 本轮B实际运行与证据
 
-### 本轮B实际验收、失败与材料
+本机证据目录 `.git/validation-evidence/36ac50a5/b52-2-review/`，不承诺随Git同步。
+全部使用当前生产构建、现有Node fake-server和Chromium，从真实入口连接及侧栏操作；
+仅读取本地夹具，无用户媒体／运行数据库／真实外部服务。
 
-证据根目录为本机 `.git/validation-evidence/3178f1bf/b52-2-review/`；不承诺随Git同步。
-执行输入为该候选生产构建，未改产品源代码、测试断言或依赖。
+- web/ `npm run build`：PASS，build.log；原大chunk警告保留。
+- 根目录 `node <证据目录>/entry-probe.mjs`：三页二次变淡未复现；entry-probe.json/log。
+- 根目录 `node <证据目录>/settings-engine-probe.mjs`：桌面／390px，正常及180ms读取
+  共4条旅程全部0帧引擎等待提示，settings-engine-probe.log及settings-engine/。
+- 根目录 `node <证据目录>/settings-position-probe.mjs`：同一入口正常／180ms／900ms
+  共6条，settings-position/settings-engine-probe.json记录真实阅读块位置与scrollY；
+  对应原生PNG保留。人审settings-engine/1536-180-007.png→017.png及
+  390-180-007.png→017.png，确认提示消除后剩余的突兀推挤。
+- web/ `npm run test:e2e -- tests/e2e/page-transition.spec.ts --grep 'settings handoff|a slow engine read|a failed engine read' --output <独立材料目录>`：
+  **3 passed (4.1s)**，settings-e2e.log及settings-e2e-run.json。新增等待／表单断言通过，
+  不足以证明整个接入过程协调；本轮未修改产品源代码或放宽测试。
+- 治理检查与完整Base..candidate `git diff --check`通过。已证实同一P1尚未解决，按工作流
+  提前FIX REQUIRED，其余门禁暂缓；前轮1448单测及原生结果不冒充当前候选的完整验收。
+  T3保持，本轮未跑全Python／wheel／Docker或发布矩阵。
 
-- web/ `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`：
-  全部PASS；static-runs.json和各日志。构建原大chunk提示保留。
-- web/ `npm run test -- run`：**96 files / 1448 tests passed (155.55s)**；unit.log。
-- web/ `npm run test:e2e -- tests/e2e/page-transition.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts --output <该组独立材料目录>`：
-  **84 passed / 1 failed (1.4m)**；navigation-files-isolated.log。失败仍是403测试同一句
-  提示匹配2个元素的strict定位错误，和前序B报告记录的失败一致；原断言未改，未将此
-  命令记为通过或要求Developer修无关基线。
-- web/ `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts --output <独立目录>`：
-  **18 passed (23.4s)**，包括52.1分页、搜索往返、慢读不抢输入、详情真实滚动及52.2读取。
-- web/ `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --output <独立目录>`：
-  **28 passed (59.7s)**，含两库快／慢刷新、一次真实普通命令后更新及未知／独立结果保持。
-- web/ `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep Task52.2`：
-  **1 passed (5.1s)**，真实Python清单读取与Shell接入；python-operations.log。
-- 原生nine-page探针经真实侧栏记录1536×1024和390×844共18条九页慢读取→就绪旅程，
-  目录／规则／自动化／通知／设置按各自实际请求完成，不用统一加载态替代业务。初版
-  误以SPA networkidle代表完成、通知误用table定位；更正完成条件后，证据分别在
-  nine-page-complete/（桌面前7页）与nine-page-remaining/（余下11条）。首版结果不作
-  已完成旅程证明。未发现横向页面溢出；本轮未给全部可见TAC签PASS。
-- 根目录 `node <证据目录>/settings-engine-probe.mjs`：正常快读及180ms引擎读取，桌面／
-  390px各两条。settings-engine-probe-corrected.log与settings-engine/保存完整过程；
-  人审1536-180-007.png→017.png及390-180-007.png→017.png确认B52.2-02。首版帧调度
-  探针有误，已修正后重复同一入口，不将无效初版作为证明。
-- B首轮并行Playwright共用了默认test-results，出现trace材料ENOENT（Node3失败、
-  Explore1失败、Files2失败）；已保留日志，改为各组独立--output后重跑。修正的是B运行
-  组织，产品与断言未改；以上仅独立目录的末轮结果作为有效验收，旧失败没有改写。
-- 治理检查、完整Base..candidate及文档 `git diff --check`通过。全部使用临时／本地夹具，
-  本轮不访问真实TMDB、用户媒体或运行数据库。T3保持，未跑全Python／wheel／Docker。
-  新增设置原生完整门禁留待B52.2-02修正候选；不以未运行门禁冒充通过。
-
-本轮测试计时包含失败及重跑，并行区间按并集，详见review-timing.json；截至记录
-约13分钟，验证约5分钟，低于本轮总耗时50%。
+本轮约5分钟，构建、原生复现、3项E2E及文档检查累计不足1分钟，低于50%；
+详见review-timing.json。
 
 ### 全Slice重评
 
-RO-1／RO-2：Task52.1已有PASS保持。RO-3：B52.2-01已修正，但设置页完整读取接入
-仍有B52.2-02，Task52.2尚不PASS。RO-4：自动化旧打开／definition／editor链路退出仍
-待后续Task。保持Slice52 ACTIVE，本轮继续同Task修正，不规划下一Task、不交Closure
-Packet；不修改Slice／Roadmap／Progress或已接受Slice身份。
+RO-1／RO-2：Task52.1已有PASS保持。RO-3：两项修正均有实际改善，但B52.2-02的突兀
+接入仍在，Task52.2不PASS。RO-4：自动化旧打开链路退出仍待后续Task。保持Slice52
+ACTIVE，继续本Task修正，不规划下一Task，不提交Closure Packet或修改A的边界文档。
 
 ## Developer fix completion report — B52.2-01
 
