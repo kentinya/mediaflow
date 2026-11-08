@@ -269,6 +269,63 @@ Slice52 保持 PASS / CLOSED；本独立 Task 不重开 Slice 或改动 Roadmap�
 全量原始日志、结果 JSON 和纯测试夹具数据库 `tv-fixture.sqlite3` 同目录。B 仅修改本 Task 交接；既有 dirty/untracked 文件保留，
 没有修改产品源码、推送或部署。本轮只修订 Task，运行治理与文档差异检查；未重跑产品测试。
 
+### Developer Completion Report — 新整理重新识别修正
+
+```text
+Candidate source checkpoint: 86d9b7618acd88d640563ffc90f5e9d98c7e8b74
+Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
+Status: READY FOR B REVIEW
+```
+
+实际变更（候选检查点仅含下列 7 个文件）：
+
+- `manual_organize.py`：新 intent item 的 choice 不再从历史 Result/evidence 填入 `metadata`；
+  `_choice_for_type` 只按 RecognitionType 映射下游策略，metadata 恒为 `None`；删除仅服务该
+  自动初始化的 `_result_media_type`/`_evidence_media_type`。既有 RecognitionType 默认保持不变：
+  non-Files 编辑入口沿用历史 Result 类型或首个配置类型，Files 入口继续由 pinned
+  RecognitionRule 决定。`allowedMetadataIdentities`、显式 `update_choice`、review/correction →
+  durable identity → 摘要链路未改。
+- 测试：查询类型矩阵改为“新任务不自动带入 + 本次显式保存 tv 被 Auto 接受 + Movie 查询拒绝”；
+  preview 旧 `mediaType` 用例改为本次显式保存 tv 后走 TV 详情；新增 Files 真实入口回归：
+  首次 tv 分析并完成 COPY 后，从 Files 新发同一文件，初始 `choice.metadata=None`，假 Provider
+  新编号 703 决定新 TV 摘要，零 mutation、旧记录不变；仅编号历史同样不被带入。
+- `docs/configuration.md` 补清新整理重新识别、本次显式保存候选被当前任务继续使用、摘要复用
+  持久身份、换版本／换 Active 不继承旧候选。
+- Rules readiness 断言改为“元数据服务与查询类型”并验证策略媒体类型输入不存在；
+  operations-inventory 歧义旅程候选值同步为 `tmdb/111/movie`、`tmdb/911/movie`。
+
+实际执行（Developer 受影响范围）：
+
+| 命令 | 结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview` | 26 passed |
+| `.venv/bin/python -m unittest tests.test_organize_preparation` | 33 passed |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_metadata*.py'` | 70 passed |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_strategy*.py'` | 32 passed |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_manual_organize*.py'` | 64 passed |
+| `.venv/bin/python -m unittest tests.test_runtime_strategy_configuration tests.test_configuration_objects` | 83 passed |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_v2_rules*.py'` | 193 passed |
+| `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_processing_recovery_admission` | 55 passed |
+| `.venv/bin/python -m unittest tests.test_organize_source_history tests.test_media_discovery` | 23 + 156 passed |
+| `web: npm run test -- run src/entities/rules/rules-form.test.ts src/features/rules/RulesEditPage.test.tsx src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx` | 6 files／67 passed |
+| `web: npm run typecheck`；`npx prettier --check`、`npx eslint` 两个改动 e2e 文件 | PASS |
+| `web: npm run build` | PASS |
+| `web: npx playwright test tests/e2e/rules-readiness.spec.ts -g 'every family keeps its purpose-built'` | 1 passed |
+| `web: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'a brand-new ambiguous source'` | 1 passed |
+| `python3 scripts/check_governance.py`、`compileall -q mediaflow tests scripts`、`git diff --check` | PASS |
+| `.venv/bin/ruff check`／`ruff format --check` 四个改动 Python 文件 | PASS |
+
+已知风险／剩余工作：
+
+- 上述为 Developer 受影响验证，不是 B 验收，也不代表 AC-1–6 已通过。B 仍需在真实
+  Python/API/SQLite/Worker＋构建后 Web 上复核完整固定 Base..`86d9b761`，执行 T4 全量、原生
+  AC-3/4/5、wheel／安全／非重放门禁并记录证据。
+- 新增 Files 回归覆盖“完成 COPY 后新整理重新识别”和“仅编号历史不被带入”；同一任务先人工
+  选择候选再继续摘要的路径由既有单元用例覆盖，本轮未在新的 Files 旅程中重复执行，B 应在
+  AC-4/AC-5 验收时实际复跑。
+- 未改数据库 schema／迁移，未重写旧配置、Result、review 或 Task 历史；本轮未改 Web 产品源码。
+- 工作区既有 dirty/untracked 文件（含 `mediaflow/.DS_Store` 和私有输出）保持未纳入检查点；
+  未推送、未发布、未部署。
 
 ---
 
