@@ -1,7 +1,7 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261108-2 — 探索页边界与详情首屏阅读修正
 
-本轮用户仅要求“规划一个Task”。下方是规划草案，尚未授权实施；保留本通知，
-不启动 Developer、不改产品代码、不推送或部署。实施获授权后，再将草案转为正式活动 Task。
+用户于2026-11-08明确要求“激活Task”，此前草案现为正式活动Task。
+Developer可按下方固定范围实施；本轮仅完成激活，尚未开始产品实现。
 
 上一项独立修正 `PATCH-20261108-1` 已由 B 独立验收 PASS：
 Base `aa752cc3bc194707808a1af79afd8978ce4aef44`，
@@ -9,8 +9,6 @@ Reviewed Head `931d8de688e8777c155ca7163475d3d793c14415`，
 Implementation Head `e2bb72d8c191d34586a90ff49577680107b0295c`；
 完整结果、既有失败及证据限制保留于 `6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134:TASK.md`。
 Slice52 保持 PASS / CLOSED，其 Base、验收和 Roadmap／Progress 不变。
-
-## DRAFT — PATCH-20261108-2 — 探索页边界与详情首屏阅读修正
 
 Authority: 用户本轮明确提出的三项探索页呈现修正及其后的规划请求；
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 管理独立修正生命周期。
@@ -26,7 +24,7 @@ Task Base: 37c3287ece5cd7060a887b42fcd84c6b0fc49e7e
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: USER-AUTHORIZED TASK ACTIVATION; DEVELOPER MAY IMPLEMENT THIS TASK
 ```
 
 ### Goal and authorized boundary
@@ -44,7 +42,7 @@ Development Authorization: PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
 共享呈现／读取边界见 [Architecture](docs/architecture.md#current--v2-explore-homepage-slice51-pass--closed)。
 用户新要求明确调整 `V2-EXPLORE-012` 的“一个可见标题”呈现及旅程中“先看图片”的顺序；
 未来按实际交付协调 CURRENT 文字，保留旧 Slice 的接受事实，不把旧合同追改为新要求。
-本轮只写本 Task 草案。
+本轮仅激活本Task，产品实现和必要CURRENT文字协调按下方步骤进行。
 
 ### Observed entry, behavior and causes
 
@@ -66,6 +64,10 @@ Development Authorization: PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
 Task 可写。预存已跟踪修改为 `mediaflow/.DS_Store`；未跟踪系统元数据、
 `.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15` 及既有 output 材料均保留，
 不读取私有配置、不纳入本次 checkpoint。
+
+激活前HEAD为 `f025acccd1ac9a2c034eedf719a2df10a321e5c4`；相对固定Task Base仅有
+`TASK.md`规划提交，产品源码、测试和依赖未变，原调查及计划继续适用，不重设Base。
+激活前治理检查PASS，暂存区为空，上述预存工作区变更保持且不纳入激活提交。
 
 ### Implementation Scope and steps
 
@@ -93,7 +95,7 @@ Task 可写。预存已跟踪修改为 `mediaflow/.DS_Store`；未跟踪系统�
 5. **更新直接消费者并验证交付。** 增加首屏、可读性和边界测试，迁移依赖“可见探索标题”
    的入口测试。使用真实页面身份／搜索区域等稳定就绪条件，继续断言成功落到探索及无
    可见标题，不能删除等待或放松断言。仅调整直接依赖的 connect／landing 定位，
-   不顺带重构各业务测试。实施获授权后，按实际结果最小协调 V2 Requirements、
+   不顺带重构各业务测试。实施时按实际结果最小协调 V2 Requirements、
    Product Experience、Architecture 中标题和详情呈现的现行描述；交候选时不得自称验收PASS。
 
 ### Acceptance Criteria
@@ -193,7 +195,7 @@ Storage、schema或执行引擎；不修无关既有测试失败、不改旧Slic
 
 ### Developer Completion Report
 
-PENDING — 实施尚未授权。授权后由Developer记录完整checkpoint、受影响测试实际结果、
+PENDING — Task已激活，尚未开始实施。Developer完成后记录完整checkpoint、受影响测试实际结果、
 必要视觉证据和风险，状态交到 READY FOR B REVIEW；不自评PASS。
 
 ### B Review Result
