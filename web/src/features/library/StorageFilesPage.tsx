@@ -94,7 +94,6 @@ import {
   type SavedDeleteAdmission,
 } from "./delete-admission-session";
 import { newRequestId } from "../../shared/api/request-id";
-import { filesOrganizeWorkQueryOptions } from "./organize-work-query";
 import type {
   TransferConflictMode,
   TransferImpactModel,
@@ -1461,149 +1460,6 @@ function FileBrowseView({
   );
 }
 
-/**
- * This library's durable organizing work, read from the backend.
- *
- * RO-2/RO-3: the Task Center no longer owns discovery/manual-action sections, so
- * Files is the one place the operator can reopen the original organizing context —
- * several known runs, and the exact plan summary of each — after a close, a reload,
- * a re-login or a service restart.  The read is side-effect-free: browsing here
- * never creates, resumes or re-submits work.  Ordinary file operations keep their
- * own local status dialog.
- */
-function OrganizeWorkPanel({
-  token,
-  libraryId,
-  operationsReturn,
-}: {
-  readonly token: string | null;
-  readonly libraryId: string;
-  readonly operationsReturn: string | null;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  // The backend's own cursor, so "查看更多" reads the next durable page rather
-  // than truncating a recent-N window: work that left the first page stays
-  // reachable after close/reload/restart.
-  const [cursors, setCursors] = useState<readonly (string | null)[]>([null]);
-  const cursor = cursors[cursors.length - 1] ?? null;
-  const workQuery = useQuery(
-    filesOrganizeWorkQueryOptions(token, libraryId, cursor),
-  );
-  // Slice52 RO-3: the panel distinguishes its own first read from a
-  // background re-read of already-shown work. The waiting line is revealed
-  // only when the exact read stays slow; a fast first read shows the result
-  // directly and a fast re-read simply keeps the current list on screen —
-  // successful content is never swapped away for a transient busy line.
-  const showFirstWorkWait = useReadReveal(workQuery.data === undefined);
-  const showWorkRefetch = useReadReveal(
-    workQuery.data !== undefined && workQuery.isFetching,
-  );
-  const items = workQuery.data?.ok === true ? workQuery.data.items : [];
-  const nextBefore =
-    workQuery.data?.ok === true ? workQuery.data.nextBefore : null;
-  if (libraryId === "") return null;
-  return (
-    <section className="mf-count-section" aria-label="整理记录">
-      <header className="mf-section-head">
-        <h3>整理记录</h3>
-        <button
-          type="button"
-          className="mf-link-button"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-        >
-          {expanded ? "收起" : `查看(${items.length})`}
-        </button>
-      </header>
-      <p className="mf-dashboard-meta">
-        这里列出本资源库由本账号提交的整理工作。打开记录可查看精确计划摘要并明确确认执行;
-        浏览本页不会创建、恢复或重复提交任何工作。
-      </p>
-      {workQuery.data === undefined ? (
-        showFirstWorkWait ? (
-          <p className="mf-dashboard-meta">正在读取整理记录...</p>
-        ) : null
-      ) : !workQuery.data.ok ? (
-        <p className="mf-dashboard-meta" role="status">
-          整理记录暂时无法读取,稍后可刷新重试;已持久保存的工作不受影响。
-        </p>
-      ) : items.length === 0 ? (
-        <p className="mf-dashboard-meta">当前没有整理记录。</p>
-      ) : (
-        <ul className="mf-discovery-list">
-          {(expanded ? items : items.slice(0, 3)).map((item) => (
-            <li key={item.discoveryId}>
-              <Link
-                to="/operations/organize/new"
-                search={{
-                  discoveryId: item.discoveryId,
-                  resourceLibraryId: item.resourceLibraryId,
-                  ...operationsReturnSearch(operationsReturn),
-                }}
-              >
-                {ORGANIZE_WORK_STATUS_LABELS[item.status] ?? item.status} ·{" "}
-                {item.scopes.length > 0
-                  ? item.scopes.map((scope) => scope.path).join(", ")
-                  : `已选 ${item.scopeCount} 个来源`}
-              </Link>
-              <span className="mf-dashboard-meta">
-                {item.prepared
-                  ? " · 计划摘要已就绪,需明确确认后才执行"
-                  : item.failure !== null
-                    ? ` · ${item.failure}`
-                    : " · 处理中"}
-                {item.selection.refused.length > 0
-                  ? ` · 已排除 ${item.selection.refused.length} 项`
-                  : ""}
-                {item.selection.existing.length > 0
-                  ? ` · 已在此工作 ${item.selection.existing.length} 项`
-                  : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {showWorkRefetch ? (
-        <p className="mf-dashboard-meta">正在读取整理记录...</p>
-      ) : null}
-      {workQuery.data?.ok === true && items.length > 0 ? (
-        <footer className="mf-section-foot">
-          {cursors.length > 1 ? (
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => setCursors((value) => value.slice(0, -1))}
-            >
-              返回上一页
-            </button>
-          ) : null}
-          {nextBefore === null ? null : (
-            <button
-              type="button"
-              className="mf-link-button"
-              onClick={() => setCursors((value) => [...value, nextBefore])}
-            >
-              查看更多
-            </button>
-          )}
-        </footer>
-      ) : null}
-    </section>
-  );
-}
-
-const ORGANIZE_WORK_STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  running: "处理中",
-  waiting_stability: "等待文件稳定",
-  analyzing: "分析计划中",
-  paused: "已暂停",
-  completed: "计划摘要已就绪",
-  partial_success: "部分完成",
-  failed: "失败",
-  cancelled: "已取消",
-};
-
 function FilesHeader({
   canAddResourceLibrary,
   addDisabledReason,
@@ -2613,11 +2469,13 @@ export function StorageFilesPage() {
             // guessed navigation.
             throw new Error(
               "暂时无法确认整理申请结果,也未读到本次申请创建的持久记录;" +
-                "可稍后在资源库文件页的整理记录中继续处理,不会自动重复提交或进入其他来源。",
+                "请在任务中心查看是否已有该资源库的整理任务;" +
+                "不会自动重复提交或进入其他来源。",
             );
           }
           throw new Error(
-            "暂时无法确认整理申请结果,也无法读取整理记录;请稍后重试。不会自动重复提交。",
+            "暂时无法确认整理申请结果,也无法读取任务中心的已受理工作;" +
+              "请前往任务中心核查。不会自动重复提交。",
           );
         }
         throw new Error(message);
@@ -3811,6 +3669,25 @@ export function StorageFilesPage() {
               removalBusy={removalMutation.isPending}
             />
           );
+          // The one shared page context for every read state before the
+          // directory body: notice, library cards and the exact path context.
+          // Loading, failure and the browse success state each render it once.
+          const renderBrowseContext = () => (
+            <>
+              <div className="mf-files-banner" role="note">
+                <span className="mf-banner-icon" aria-hidden="true">
+                  i
+                </span>
+                {FILES_BANNER}
+              </div>
+              {libraryNotice !== null && (
+                <p className="mf-error" role="status">
+                  {libraryNotice}
+                </p>
+              )}
+              {renderLibraryHeader()}
+            </>
+          );
           if (invalidPath) {
             return (
               <FilesState
@@ -3848,23 +3725,7 @@ export function StorageFilesPage() {
                 )}
               {filesQuery.data === undefined && !filesQuery.isError ? (
                 <>
-                  <div className="mf-files-banner" role="note">
-                    <span className="mf-banner-icon" aria-hidden="true">
-                      i
-                    </span>
-                    {FILES_BANNER}
-                  </div>
-                  {libraryNotice !== null && (
-                    <p className="mf-error" role="status">
-                      {libraryNotice}
-                    </p>
-                  )}
-                  {renderLibraryHeader()}
-                  <OrganizeWorkPanel
-                    token={token}
-                    libraryId={activeLibraryId}
-                    operationsReturn={operationsReturn}
-                  />
+                  {renderBrowseContext()}
                   {showFilesWait ? (
                     <LibraryLoadingPanel
                       variant="rows"
@@ -3881,23 +3742,7 @@ export function StorageFilesPage() {
                 </>
               ) : filesQuery.isError ? (
                 <>
-                  <div className="mf-files-banner" role="note">
-                    <span className="mf-banner-icon" aria-hidden="true">
-                      i
-                    </span>
-                    {FILES_BANNER}
-                  </div>
-                  {libraryNotice !== null && (
-                    <p className="mf-error" role="status">
-                      {libraryNotice}
-                    </p>
-                  )}
-                  {renderLibraryHeader()}
-                  <OrganizeWorkPanel
-                    token={token}
-                    libraryId={activeLibraryId}
-                    operationsReturn={operationsReturn}
-                  />
+                  {renderBrowseContext()}
                   <AuthorizedReadBoundary
                     query={filesQuery}
                     unavailableTitle="文件读取不可用"

@@ -1145,34 +1145,32 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // The Files page presents physical file facts and explicit actions only:
     // 识别结果 and 整理状态 are not page concepts, while the 整理 action and its
     // server-authoritative continuation remain available.
-    vi.stubGlobal(
-      "fetch",
-      stripFetchMock({
-        status: activeStatus([libraryItem("lib-a", "local-1")]),
-        onFiles: () => {
-          const payload = filesPayload("lib-a", null);
-          return jsonResponse({
-            ...payload,
-            entries: [
-              {
-                name: "movie.mkv",
-                path: "movie.mkv",
-                type: "file",
-                size: 1024,
-                modifiedAt: "2026-08-23T11:15:00Z",
-                isDirectory: false,
-                isSymlink: false,
-                traversable: false,
-                selectable: true,
-                organizeEligible: true,
-                recognitionResult: "Movie (2026)",
-                businessStatus: "pending",
-              },
-            ],
-          });
-        },
-      }),
-    );
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () => {
+        const payload = filesPayload("lib-a", null);
+        return jsonResponse({
+          ...payload,
+          entries: [
+            {
+              name: "movie.mkv",
+              path: "movie.mkv",
+              type: "file",
+              size: 1024,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: true,
+              organizeEligible: true,
+              recognitionResult: "Movie (2026)",
+              businessStatus: "pending",
+            },
+          ],
+        });
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("test-token");
     renderWithProviders(<StorageFilesPage />);
 
@@ -1196,6 +1194,59 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.queryByText("Movie (2026)")).toBeNull();
     openEntryMenu("movie.mkv");
     expect(screen.getByRole("menuitem", { name: "整理" })).toBeEnabled();
+    // Browsing is the directory read only: there is no separate organize
+    // history section and no side read for one.
+    expect(screen.queryByRole("heading", { name: "整理记录" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/files/organize-work"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("hands a slow directory read straight to the page without a temporary organize history", async () => {
+    // The first directory read stays pending long enough for the existing
+    // coordinated wait state.  Nothing describes or reads an organizing
+    // history before or after that handoff: the page context and directory
+    // area are the whole page.
+    const inner = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () => jsonResponse(filesPayload("lib-a", "Season")),
+    });
+    const gate: { release: (() => void) | null } = { release: null };
+    const pending = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    let held = false;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          !held &&
+          /\/resource-libraries\/[^/]+\/files(\?|$)/.test(String(input))
+        ) {
+          held = true;
+          await pending;
+        }
+        return inner(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await waitFor(() => expect(held).toBe(true));
+    expect(screen.getByRole("heading", { name: "文件" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "整理记录" })).toBeNull();
+    expect(screen.queryByText(/正在读取整理记录/)).toBeNull();
+
+    gate.release?.();
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "整理记录" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/files/organize-work"),
+      ),
+    ).toHaveLength(0);
   });
 
   it("lets a focused folder button handle Enter without opening the row menu", async () => {
@@ -2314,8 +2365,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       screen.getByRole("button", { name: "返回资源库根目录" }),
     ).toBeVisible();
-    // The failed read fabricates no table row.
+    // The failed read fabricates no table row and no organizing history.
     expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "整理记录" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/files/organize-work"),
+      ),
+    ).toHaveLength(0);
     for (const [url, init] of fetchMock.mock.calls) {
       expect(String(url)).not.toContain("/file-index");
       const method = (init as RequestInit | undefined)?.method;
@@ -3583,9 +3640,10 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // other binding's discovery. Instead it explains the unresolved state.
     await waitFor(() => expect(discoveryPosts).toHaveLength(1));
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /不会自动重复提交或进入其他来源/,
-      ),
+      expect(screen.getByRole("status")).toHaveTextContent(/任务中心/),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /不会自动重复提交或进入其他来源/,
     );
     expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
   });
@@ -3694,11 +3752,55 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
     await waitFor(() => expect(discoveryPosts).toHaveLength(1));
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /不会自动重复提交或进入其他来源/,
-      ),
+      expect(screen.getByRole("status")).toHaveTextContent(/任务中心/),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /不会自动重复提交或进入其他来源/,
     );
     expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
+  });
+
+  it("points an unreadable admission readback at the Task Center without resubmitting", async () => {
+    // The admission response was lost and the reconciling read itself failed.
+    // Nothing proves an admission, so the page states that the intake is
+    // unconfirmed and names the existing durable surface that can still show
+    // admitted work.  It never resubmits and never points at a removed area.
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          throw new TypeError("simulated lost discovery admission response");
+        },
+        onDiscoveries: () => {
+          throw new TypeError("simulated unreadable organize-work readback");
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("Recover");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 Recover/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /无法读取任务中心的已受理工作/,
+      ),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/请前往任务中心核查/);
+    expect(screen.getByRole("status")).not.toHaveTextContent(/整理记录/);
+    expect(discoveryPosts).toHaveLength(1);
   });
 
   it("recovers a lost discovery admission only for its own proved request", async () => {
