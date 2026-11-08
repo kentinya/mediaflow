@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
  * Built-artifact proof for the shared V2 sidebar main-page transition
@@ -19,7 +19,9 @@ interface NavigationFrame {
   readonly animationName: string;
   readonly transitionDuration: string;
   readonly startClass: boolean;
+  readonly entryActive: boolean;
   readonly opacity: number;
+  readonly content: number | null;
   readonly transform: string;
   readonly sidebar: string;
   readonly topbar: string;
@@ -46,8 +48,11 @@ async function connect(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-async function startNavigationSampler(page: Page): Promise<void> {
-  await page.evaluate(() => {
+async function startNavigationSampler(
+  page: Page,
+  windowMs = 2_000,
+): Promise<void> {
+  await page.evaluate((sampleWindowMs) => {
     const samples: Array<{
       at: number;
       mainPage: string | null;
@@ -55,7 +60,9 @@ async function startNavigationSampler(page: Page): Promise<void> {
       animationName: string;
       transitionDuration: string;
       startClass: boolean;
+      entryActive: boolean;
       opacity: number;
+      content: number | null;
       transform: string;
       sidebar: string;
       topbar: string;
@@ -75,6 +82,9 @@ async function startNavigationSampler(page: Page): Promise<void> {
       const surface = document.querySelector<HTMLElement>("[data-main-page]");
       const style = surface === null ? null : getComputedStyle(surface);
       const modal = document.querySelector<HTMLElement>(".mf-modal-layer");
+      const body = document.querySelector<HTMLElement>(
+        "[data-main-page] .mf-content-settle",
+      );
       samples.push({
         at: performance.now() - started,
         mainPage: surface?.dataset.mainPage ?? null,
@@ -83,7 +93,10 @@ async function startNavigationSampler(page: Page): Promise<void> {
         transitionDuration: style?.transitionDuration ?? "",
         startClass:
           surface?.classList.contains("mf-page-surface-enter-start") ?? false,
+        entryActive:
+          surface?.classList.contains("mf-page-surface-entry-active") ?? false,
         opacity: style === null ? 1 : Number(style.opacity),
+        content: body === null ? null : Number(getComputedStyle(body).opacity),
         transform: style?.transform ?? "",
         sidebar: box(document.querySelector(".mf-shell-sidebar")),
         topbar: box(document.querySelector(".mf-shell-topbar")),
@@ -97,7 +110,7 @@ async function startNavigationSampler(page: Page): Promise<void> {
                 modal.getBoundingClientRect().height,
               )}`,
       });
-      if (!stopped && performance.now() - started < 2_000) {
+      if (!stopped && performance.now() - started < sampleWindowMs) {
         requestAnimationFrame(tick);
       }
     };
@@ -106,6 +119,7 @@ async function startNavigationSampler(page: Page): Promise<void> {
         __navigationSampler: {
           samples: typeof samples;
           stop: () => void;
+          windowMs: number;
         };
       }
     ).__navigationSampler = {
@@ -113,9 +127,10 @@ async function startNavigationSampler(page: Page): Promise<void> {
       stop: () => {
         stopped = true;
       },
+      windowMs: sampleWindowMs,
     };
     requestAnimationFrame(tick);
-  });
+  }, windowMs);
 }
 
 async function readNavigationSamples(page: Page): Promise<NavigationFrame[]> {
@@ -127,6 +142,58 @@ async function readNavigationSamples(page: Page): Promise<NavigationFrame[]> {
         }
       ).__navigationSampler.samples,
   );
+}
+
+/**
+ * Keep observing until this handoff's sampling window is over instead of
+ * ending at the shell's first full-opacity frame, so every later body change
+ * is still recorded (B52.2-01).
+ */
+async function waitForSamplerWindowEnd(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const sampler = (
+      window as unknown as {
+        __navigationSampler?: {
+          samples: Array<{ readonly at: number }>;
+          readonly windowMs: number;
+        };
+      }
+    ).__navigationSampler;
+    if (sampler === undefined || sampler.samples.length === 0) return false;
+    return (
+      sampler.samples[sampler.samples.length - 1].at >= sampler.windowMs - 150
+    );
+  });
+}
+
+/**
+ * B52.2-01: one destination body may ease in once while it mounts, but once it
+ * has been shown at full opacity nothing — the shared entry window ending, a
+ * card layer, a cached re-entry — may make it visibly dim again. The frames
+ * must also continue past the entry window with the body under observation.
+ */
+function expectBodyPresentationStable(
+  frames: readonly NavigationFrame[],
+  pageId: string,
+): readonly NavigationFrame[] {
+  const bodyFrames = frames.filter(
+    (frame) => frame.mainPage === pageId && frame.content !== null,
+  );
+  expect(bodyFrames.length).toBeGreaterThan(20);
+  let previous = 0;
+  for (const frame of bodyFrames) {
+    expect(frame.content).not.toBeNull();
+    expect(frame.content as number).toBeGreaterThanOrEqual(previous - 0.001);
+    previous = frame.content as number;
+  }
+  const afterWindow = bodyFrames.filter(
+    (frame) => !frame.entryActive && frame.opacity === 1,
+  );
+  expect(afterWindow.length).toBeGreaterThan(10);
+  expect(afterWindow.at(-1)?.content).toBe(1);
+  // The shared entry window itself was part of this handoff.
+  expect(frames.some((frame) => frame.entryActive)).toBe(true);
+  return bodyFrames;
 }
 
 async function stopNavigationSampler(page: Page): Promise<NavigationFrame[]> {
@@ -707,4 +774,124 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
+});
+
+test("sidebar handoff keeps the storage and both library bodies steady through fast, cached and slow reads", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+
+  const byPage = (pageId: string) => {
+    const destination = DESTINATIONS.find((entry) => entry.page === pageId);
+    expect(destination).toBeDefined();
+    return destination as (typeof DESTINATIONS)[number];
+  };
+
+  /**
+   * Drive the real sidebar entry and record the whole handoff — the shell
+   * surface and the destination body — until this sampling window is over,
+   * never only until the first full-opacity frame (B52.2-01).
+   */
+  const sampleHandoff = async (pageId: string, windowMs: number) => {
+    const destination = byPage(pageId);
+    await startNavigationSampler(page, windowMs);
+    await openSidebarLink(page, destination.name);
+    await expect.poll(() => currentPath(page)).toBe(destination.path);
+    await expect(
+      page
+        .getByRole("heading", { name: destination.heading, exact: true })
+        .first(),
+    ).toBeVisible();
+    await expectSurfaceSettled(page, pageId);
+    await waitForSamplerWindowEnd(page);
+    return expectBodyPresentationStable(
+      await stopNavigationSampler(page),
+      pageId,
+    );
+  };
+
+  // First visits: every read lands fast, so no waiting marker of these pages
+  // may flash while the body of each destination stays steady end to end.
+  await sampleHandoff("storage", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+  await sampleHandoff("files", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+  await sampleHandoff("library", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+
+  // Cached returns: back through Explore so each revisit lands on valid
+  // cache — the body is present without any waiting marker and must not be
+  // dimmed again when the entry window closes over already-visible content.
+  await openSidebarLink(page, "Explore");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await sampleHandoff("storage", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+  await sampleHandoff("files", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+  await sampleHandoff("library", 1_800);
+  await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
+
+  // Slow reads through the same entry: the in-memory token and the query
+  // cache are per-session, so a reload drops them; reconnect through the
+  // existing auth continuation, then slow only the content reads this
+  // journey really issues.
+  await openSidebarLink(page, "Explore");
+  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await page.reload();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toBeVisible();
+  const slowContentRead = async (route: Route) => {
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await route.fulfill({ response });
+  };
+  await page.route(
+    "**/api/v1/operations/storage-management/inventory*",
+    slowContentRead,
+  );
+  await page.route(
+    /\/api\/v1\/resource-libraries\/[^/]+\/files(?:\?|$)/,
+    slowContentRead,
+  );
+  await page.route(
+    /\/api\/v1\/media-libraries\/[^/]+\/files(?:\?|$)/,
+    slowContentRead,
+  );
+
+  const sampleSlowHandoff = async (pageId: string, waitingName: string) => {
+    const destination = byPage(pageId);
+    await startNavigationSampler(page, 3_400);
+    await openSidebarLink(page, destination.name);
+    await expect.poll(() => currentPath(page)).toBe(destination.path);
+    // Until the delayed read lands, this page presents its own stable
+    // waiting state while the shell entry already completes.
+    await expect(page.getByRole("status", { name: waitingName })).toBeVisible();
+    await expectSurfaceSettled(page, pageId);
+    await expect(
+      page
+        .getByRole("heading", { name: destination.heading, exact: true })
+        .first(),
+    ).toBeVisible();
+    await waitForSamplerWindowEnd(page);
+    const bodyFrames = expectBodyPresentationStable(
+      await stopNavigationSampler(page),
+      pageId,
+    );
+    // The body first appeared only after the read was genuinely slow, and the
+    // waiting state is gone for good once the content has taken over.
+    const firstBodyFrame = bodyFrames.at(0);
+    expect(firstBodyFrame).toBeDefined();
+    expect(firstBodyFrame?.at ?? 0).toBeGreaterThan(700);
+    await expect(page.getByRole("status", { name: waitingName })).toHaveCount(
+      0,
+    );
+  };
+
+  await sampleSlowHandoff("storage", "正在加载存储管理");
+  await sampleSlowHandoff("files", "正在读取文件");
+  await sampleSlowHandoff("library", "正在读取文件");
 });

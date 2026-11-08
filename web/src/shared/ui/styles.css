@@ -2367,10 +2367,14 @@ button.mf-grid-button {
 /* The shell entry owns one visual handoff. A content region that mounts in
    the same window (storage / both library settles) must not add a second fade
    over the still-running page transition: stacking them made the target page
-   dip dark twice. A read that resolves after this window still plays its
-   single content settle, so a slow first read keeps its own gentle handoff. */
+   dip dark twice. The suppression only disables the settle's transition.
+   Because a transition starts only when this element's own opacity actually
+   changes, lifting the window later re-enables the transition without ever
+   restarting it — content already on screen can never be dimmed a second
+   time by the window ending (B52.2-01). A read that resolves after the
+   window starts its single settle from its own first render. */
 .mf-page-surface-entry-active .mf-content-settle {
-  animation: none;
+  transition: none;
 }
 
 /*
@@ -2403,18 +2407,25 @@ button.mf-grid-button {
 
 /*
  * A bounded read region that switches from its content-shaped placeholder to
- * real content settles in once. The animation belongs to the content element
- * itself, so it runs when the pending placeholder is replaced (or when a
- * cached page mounts) and never replays for a same-page poll, filter, dialog
- * or directory update, which keep the same element. Opacity only: a transform
- * here would establish a containing block for the fixed overlay layers.
+ * real content eases in once. The reveal belongs to the content element's own
+ * first rendering: @starting-style gives that one mount a gentle start, and a
+ * transition runs only while this element's opacity actually changes. Class
+ * changes on its ancestors (the shell entry window lifting, a card layer
+ * appearing or closing) never change its opacity, so a finished handoff can
+ * never replay — the pre-B52.2-01 restart came from re-applying an animation
+ * name to content that was already visible. A same-page poll, filter, dialog
+ * or directory update keeps the same element and never reveals again.
+ * Opacity only: a transform here would establish a containing block for the
+ * fixed overlay layers.
  */
-@keyframes mf-content-settle {
-  from {
+.mf-content-settle {
+  opacity: 1;
+  transition: opacity 170ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@starting-style {
+  .mf-content-settle {
     opacity: 0.7;
-  }
-  to {
-    opacity: 1;
   }
 }
 
@@ -2441,23 +2452,21 @@ button.mf-grid-button {
   }
 }
 
-.mf-content-settle {
-  animation: mf-content-settle 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-/* A card opened in the same frame owns its own entry; never dim its layer. */
+/* A card opened in the same frame owns its own entry; never dim its layer.
+   Disabling the transition this way also cannot replay: closing the card
+   re-enables it without an opacity change. */
 .mf-content-settle:has(
   .mf-modal-layer,
   .mf-automation-create-layer,
   .mf-dialog-overlay,
   .mf-rules-drawer-layer
 ) {
-  animation: none;
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .mf-content-settle {
-    animation: none;
+    transition: none;
   }
 }
 
