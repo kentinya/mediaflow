@@ -1000,6 +1000,50 @@ test("a selected page starts at its readable first row only after it lands", asy
   await setFailure(page, "none");
 });
 
+test("a slow selected page never interrupts typing in the search entry", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // The real entry: select page 2 while its read is slow, then move to the
+  // persistent name search and start typing before that page arrives.
+  await setFailure(page, "slow_page_2");
+  const nextPage = page.getByRole("button", { name: "下一页" });
+  await nextPage.scrollIntoViewIfNeeded();
+  await nextPage.click();
+  const slowStatus = page.getByText("正在读取第 2 页(当前显示第 1 页)…");
+  await expect(slowStatus).toBeVisible();
+
+  const input = page.getByLabel("作品名搜索");
+  await input.click();
+  await expect(input).toBeFocused();
+  // The target page is still unread when the operator starts typing; the
+  // response completes in the middle of this sequence.
+  await expect(slowStatus).toBeVisible();
+  const viewportDuringTyping = await page.evaluate(() => window.scrollY);
+  const typed = "abcdefghijklmnopqrstuvwxyz0123456789";
+  await input.pressSequentially(typed, { delay: 50 });
+
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(input).toHaveValue(typed);
+  await expect(input).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(viewportDuringTyping);
+
+  // The search entry still submits normally, and its exit lands on the same
+  // browse page the operator selected before they started typing.
+  await input.fill("深空回声");
+  await input.press("Enter");
+  await expect(page.getByText(/搜索模式/)).toBeVisible();
+  await expect(page.getByText(/已应用:电影 · 搜索「深空回声」/)).toBeVisible();
+  await page.getByRole("button", { name: "退出搜索" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // Cleanup so this harness mode can never leak into a later test.
+  await setFailure(page, "none");
+});
+
 test("search exit restores the exact position and focus, even after its anchor page was evicted", async ({
   page,
 }) => {

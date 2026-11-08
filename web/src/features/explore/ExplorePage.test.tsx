@@ -856,6 +856,61 @@ describe("Explore homepage journey", () => {
     ).toHaveFocus();
   });
 
+  it("keeps the search text and focus when a selected page lands during typing", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    const deferred: {
+      resolve: ((value: Response) => void) | null;
+    } = { resolve: null };
+    stub.browse = (url) => {
+      if (url.includes("page=2")) {
+        return new Promise<Response>((resolve) => {
+          deferred.resolve = resolve;
+        });
+      }
+      return jsonResponse({
+        ...exploreBrowsePayload,
+        applied: conditionsEchoedIn(url),
+      });
+    };
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    scrollIntoView.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    expect(
+      await screen.findByText(/正在读取第 2 页\(当前显示第 1 页\)/),
+    ).toBeVisible();
+
+    // The operator moves into the persistent name search and starts typing
+    // before the selected page arrives; that later action owns focus and the
+    // viewport, while the successful page may still update the grid.
+    const input = screen.getByLabelText("作品名搜索");
+    await user.click(input);
+    await user.type(input, "mat");
+    expect(input).toHaveFocus();
+
+    if (deferred.resolve === null) {
+      throw new Error("the page 2 read was never requested");
+    }
+    deferred.resolve(
+      jsonResponse({
+        ...exploreBrowsePage2Payload,
+        applied: { mediaType: "movie", page: 2, sort: "popular" },
+      }),
+    );
+    await screen.findByRole("button", { name: "肖申克的救赎 (2019)" });
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+
+    await user.keyboard("rix");
+    expect(input).toHaveValue("matrix");
+    expect(input).toHaveFocus();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
   it("keeps the retained page and place when a selected page fails, then positions after its retry", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();

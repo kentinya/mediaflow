@@ -138,6 +138,11 @@ export function ExplorePage() {
   /** Fallback focus when a selected page carries no work to focus. */
   const pageTitleRef = useRef<HTMLHeadingElement | null>(null);
   const pendingPositionRef = useRef<PendingExplorePosition | null>(null);
+  /** A page handover already scheduled for the next frame is cancelled when
+   * the operator starts using the persistent name search: that later user
+   * action owns the viewport and focus, even if the page read completes
+   * afterwards. */
+  const pagePositionEpochRef = useRef(0);
 
   const browseFilters: ExploreBrowseFilters = useMemo(
     () => ({
@@ -257,7 +262,14 @@ export function ExplorePage() {
     }
     if (!shownAtTarget || activeQuery.isFetching) return undefined;
     pendingPositionRef.current = null;
+    const pagePositionEpoch = pagePositionEpochRef.current;
     const frame = window.requestAnimationFrame(() => {
+      if (
+        pending.kind === "page" &&
+        pagePositionEpoch !== pagePositionEpochRef.current
+      ) {
+        return;
+      }
       if (pending.kind === "restore") {
         try {
           window.scrollTo(0, pending.y);
@@ -393,6 +405,16 @@ export function ExplorePage() {
     setActiveKeyword(null);
   };
 
+  const takeOverSearchEntry = () => {
+    // Once the operator moves into the name search, a selected page must not
+    // pull the viewport or the focus back to its first work when its read
+    // lands. Also invalidate a handover already queued for the next frame.
+    if (pendingPositionRef.current?.kind === "page") {
+      pendingPositionRef.current = null;
+    }
+    pagePositionEpochRef.current += 1;
+  };
+
   const applyDraft = () => {
     const parsedYear = parseExploreNumeric("year", draft.year);
     if (!parsedYear.ok) {
@@ -526,7 +548,9 @@ export function ExplorePage() {
             placeholder="输入作品名,例如:银翼杀手"
             value={keyword}
             aria-invalid={searchError !== null}
+            onFocus={takeOverSearchEntry}
             onChange={(event) => {
+              takeOverSearchEntry();
               setKeyword(event.target.value);
               if (searchError !== null) setSearchError(null);
             }}
