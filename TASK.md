@@ -10,7 +10,7 @@ Task 实施,构成实施授权;按本文件原计划移除无活动实施声明�
 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份/限制保持。
 预存本地/私有文件不纳入提交。
 
-Next Action: DEVELOPER FIXES Task52.1 B52-01 remaining interaction race; Base unchanged
+Next Action: B REVIEWS Task52.1 fix candidate 62a158f684996372b08b7a570368ffcf1b4cb194 (B52-01 remaining interaction race); Base unchanged
 
 ## Task52.1:探索页布局、详情滚动与有界浏览
 
@@ -24,8 +24,8 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.1
 Task Type: SLICE
 Parent Slice: 52
-Status: FIX REQUIRED
-Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); fix candidate reviewed; B decision FIX REQUIRED
+Status: READY FOR B REVIEW
+Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); fix round 2 delivered after B review FIX REQUIRED
 Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
 Difficulty: Medium
 Test Level: T3
@@ -405,3 +405,41 @@ RO-4：自动化旧 Open／definition／editor 链路退出尚未交付。
   document(禁用控件的既有浏览器行为,本轮以"新结果从未获得焦点"断言覆盖,未改产品
   语义);TAC-1 整页美观与全部 TAC 的人审判定归 B/A。Developer 不自签 PASS、不推送、
   不发布、不扩大范围。
+
+## Developer Fix Report — B52-01 remaining race (fix round 2)
+
+**状态: READY FOR B REVIEW**(Developer,2026-11-08 fix round 2)。
+
+- **精确候选:** Task Base `c7913f6a751ee980db2b82ffaefec40d3d43528c` 不变;上一已审
+  实现 `ea200b35f67e33f3734d678466125bf1b60b3a21` → 本轮修正实现
+  **`62a158f684996372b08b7a570368ffcf1b4cb194`**(单实现提交,本报告随后续 docs 提交)。
+  预存跟踪变更 `mediaflow/.DS_Store`(未暂存未提交)及全部既有未跟踪文件原样保留;
+  实施前后 `governance` 均 PASS。
+- **修复行为:** `ExplorePage.tsx` 为唯一页定位意图增加搜索接管的归属判断。作品名
+  搜索输入框获得焦点或开始输入时,清除尚未落地的 `kind: page` 意图,并递增
+  `pagePositionEpochRef`;已排入下一帧的页首滚动/首卡焦点交接也会在同一 rAF 前看到
+  纪元变化并放弃。成功响应仍照常更新网格,但保留正在输入的完整文本、输入焦点与当前
+  视口。普通翻页、缓存翻页、失败目标重试、搜索退出/详情返回的既有定位意图不受影响;
+  未改共享 Router/Modal、未延迟或禁用搜索、未新增状态平台。
+- **真实失败复现与修复:** 先在生产构建、真实 Python API/本地假上游上通过真实入口
+  “下一页 → 慢读期间点作品名搜索并连续输入”运行新增 e2e;旧候选在 2.6s 后只保留
+  `abcdefghijklmnopqrstuv`(19 字符),响应落地时焦点/视口被页首交接夺走,与 B 报告
+  一致。修复后同一旅程完整保留 36 字符、焦点与视口,随后正常提交“深空回声”搜索并
+  退出回第 2 页。
+- **受影响测试真实结果(候选 `62a158f6`,本地隔离夹具):**
+  - 根目录:`python3 scripts/check_governance.py` → PASS;`git diff --check` → 无输出。
+  - `web/`:`npm run typecheck` → PASS;5 文件受影响单测 → **110 passed / 5 files**;
+    `npx eslint src/features/explore AppShell.tsx AppShell.test.tsx
+    tests/e2e/explore.python.spec.ts` → 0 problems;`npx prettier --check`(计划所列
+    路径 + e2e spec)→ 全部匹配;`npm run build` → 成功(既有 chunk>500kB 警告保留)。
+  - `npm run test:e2e -- --config=playwright.python.explore.config.ts
+    tests/e2e/explore.python.spec.ts` → **17 passed(18.7s)**,含新增 1 项;该新增用例
+    在修复前旧代码上失败、修复后连续随全量 Explore e2e 与单独 `--grep` 各通过一次。
+  - `scripts/explore_harness.py` 未改动,ruff/unittest 未执行(非本轮受影响面)。
+- **过程中实际失败(保留记录):** 新增 e2e 首跑在旧候选上按预期失败
+  (`toHaveValue` 实际 19 字符);修复后通过。新 e2e 初次格式化检查失败,已用
+  Prettier 只整理本新增块。
+- **剩余风险/未运行(按分工):** 全 Web 单测 (`npm run test -- run`)、
+  page-transition/deep-link E2E、全量 lint/format 及 TAC-1–7 人审判定归 B/A;慢读 e2e
+  仍依赖 1.2s 延迟窗口,新增用例在开始输入前再次确认慢读状态可见以降低瞬态误判,
+  但慢 CI 上仍有理论竞争风险。Developer 不自签 PASS、不推送、不发布、不扩大范围。
