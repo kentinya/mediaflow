@@ -106,8 +106,12 @@ describe("request construction", () => {
   it("never issues an authority header without a working token at the query level", () => {
     // The mandatory-read policy lives in the shared query gate: a null
     // token produces a disabled query, so no request is constructed at all.
-    expect(explorePageQuery(null, DEFAULT_BROWSE_FILTERS).enabled).toBe(false);
-    expect(explorePageQuery(TOKEN, DEFAULT_BROWSE_FILTERS).enabled).toBe(true);
+    expect(explorePageQuery(null, DEFAULT_BROWSE_FILTERS, 1).enabled).toBe(
+      false,
+    );
+    expect(explorePageQuery(TOKEN, DEFAULT_BROWSE_FILTERS, 1).enabled).toBe(
+      true,
+    );
   });
 
   it("keeps the provider failure family separate from the authority family", () => {

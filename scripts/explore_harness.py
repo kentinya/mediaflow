@@ -22,9 +22,16 @@ Failure journeys use the real provider failure families through
 ``POST /__harness__/failure``: ``upstream_auth`` makes every upstream read
 answer 401 (provider authentication failure: the API principal must survive),
 ``search_500`` fails the search read with HTTP 500 before self-healing
-(bounded first-load failure plus explicit retry) and ``genre_503`` fails only
+(bounded first-load failure plus explicit retry), ``genre_503`` fails only
 the filter-catalog read so the options error/recovery entry can be exercised
-next to an already-successful work list.
+next to an already-successful work list, ``page_500`` fails only page 2+ list
+reads (a failed target page beside the retained successful page), and
+``slow_page_2`` delays only page 2+ list reads (a slow target page whose
+actual/target distinction must stay visible). One movie fixture carries a
+deliberately long overview so the detail card's internal scrolling can be
+verified end to end. Switching a failure mode also drops the adapter's
+in-process explore list cache, so every steer really reaches the fake
+upstream instead of answering itself from a warm entry.
 
 ``/__harness__/stats`` additionally reports every ``vote_count.gte`` floor the
 adapter actually sent (``voteFloors``), so a browser assertion can prove the
@@ -41,6 +48,7 @@ import socketserver
 import sqlite3
 import sys
 import threading
+import time
 from contextlib import closing
 from pathlib import Path
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
@@ -154,16 +162,32 @@ def _works(media_type: str) -> list[dict[str, object]]:
                 "original_language": LANGUAGES[index % 3]["iso_639_1"],
                 "poster_path": f"/harness-{media_type}-{index}.jpg",
                 "backdrop_path": f"/harness-{media_type}-{index}-bg.jpg",
-                "overview": (
-                    f"《{title}》是探索假上游提供的作品简介,用于验证详情字段、"
-                    "评分、图片引用与 TMDB 外链的真实读取链路。"
-                ),
+                "overview": _overview(title, index, media_type),
                 "runtime": 90 + index % 60,
                 "seasons": 1 + index % 6,
                 "episodes": (1 + index % 6) * 12 + index % 5,
             }
         )
     return works
+
+
+def _overview(title: str, index: int, media_type: str) -> str:
+    base = (
+        f"《{title}》是探索假上游提供的作品简介,用于验证详情字段、"
+        "评分、图片引用与 TMDB 外链的真实读取链路。"
+    )
+    if index != 1 or media_type != "movie":
+        return base
+    # One dedicated long-detail fixture: its body must really scroll to the
+    # last paragraph through wheel, touch and keyboard inside the card.
+    paragraphs = [base]
+    for number in range(1, 21):
+        paragraphs.append(
+            f"第 {number} 段:本地长简介滚动验证文本,包含足够多的中文字符,"
+            "使详情正文在桌面与矮视口下都明显超过可用卡高,滚轮、触摸与键盘"
+            f"必须能够抵达本段结尾以及最后的 TMDB 外链。填充序号 {number}。"
+        )
+    return "\n\n".join(paragraphs)
 
 
 WORKS = {kind: _works(kind) for kind in ("movie", "tv")}
@@ -260,27 +284,44 @@ def _record(route: str) -> None:
 
 
 def _failure_response(request: httpx.Request) -> httpx.Response | None:
+    # The mode is read under the lock; matching (including the deliberate
+    # delay) runs outside it so stats and sibling reads are never blocked.
     with _lock:
         mode = _failure_mode
-        if mode == "upstream_auth":
-            return httpx.Response(
-                401,
-                json={
-                    "status_code": 7,
-                    "status_message": "Invalid API key: harness credential refused.",
-                },
-            )
-        if mode == "search_500" and "/search/" in request.url.path:
-            return httpx.Response(
-                500,
-                json={"status_code": 500, "status_message": "harness upstream fault"},
-            )
-        if mode == "genre_503" and "/genre/" in request.url.path:
-            return httpx.Response(
-                503,
-                json={"status_code": 503, "status_message": "harness catalog fault"},
-            )
+    if mode == "upstream_auth":
+        return httpx.Response(
+            401,
+            json={
+                "status_code": 7,
+                "status_message": "Invalid API key: harness credential refused.",
+            },
+        )
+    if mode == "search_500" and "/search/" in request.url.path:
+        return httpx.Response(
+            500,
+            json={"status_code": 500, "status_message": "harness upstream fault"},
+        )
+    if mode == "genre_503" and "/genre/" in request.url.path:
+        return httpx.Response(
+            503,
+            json={"status_code": 503, "status_message": "harness catalog fault"},
+        )
+    if mode not in {"page_500", "slow_page_2"}:
         return None
+    page = int(request.url.params.get("page") or "1")
+    is_list_read = (
+        request.url.path.endswith(tuple(f"/{kind}" for kind in WORK_COUNTS))
+        or "/search/" in request.url.path
+    )
+    if page < 2 or not is_list_read:
+        return None
+    if mode == "page_500":
+        return httpx.Response(
+            500,
+            json={"status_code": 500, "status_message": "harness target page fault"},
+        )
+    time.sleep(1.2)
+    return None
 
 
 def fake_tmdb_transport(request: httpx.Request) -> httpx.Response:
@@ -346,6 +387,7 @@ SPY_STORAGE = SpyStorage()
 
 
 def build_api(database: Path) -> MediaFlowApi:
+    global PROVIDER
     repository = SQLiteTaskRepository(database)
     config = TMDBConfig(access_token="harness-tmdb-token")
     transport_client = httpx.Client(transport=httpx.MockTransport(fake_tmdb_transport))
@@ -353,6 +395,7 @@ def build_api(database: Path) -> MediaFlowApi:
 
     client = TMDBClient(config, transport=HttpxTransport(config, client=transport_client))
     provider = TMDBProvider(client)
+    PROVIDER = provider
 
     def registry_factory(_provider_ids: object) -> MetadataProviderRegistry:
         return MetadataProviderRegistry((provider,))
@@ -390,6 +433,17 @@ def effect_counts(database: Path) -> dict[str, int]:
 
 
 STATE: dict[str, object] = {"api": None, "database": None}
+PROVIDER: TMDBProvider | None = None
+
+
+def drop_explore_cache() -> None:
+    """Drop the adapter's warm explore entries for honest failure steering."""
+    provider = PROVIDER
+    if provider is None:
+        return
+    cache = provider._explore_cache  # noqa: SLF001 - harness-owned seam
+    with cache._lock:  # noqa: SLF001 - harness-owned seam
+        cache._entries.clear()  # noqa: SLF001 - harness-owned seam
 
 
 def application(environ, start_response):  # noqa: ANN001, ANN201
@@ -416,11 +470,21 @@ def application(environ, start_response):  # noqa: ANN001, ANN201
             length = int(environ.get("CONTENT_LENGTH") or 0)
             payload = json.loads(environ["wsgi.input"].read(length) or b"{}")
             requested = str(payload.get("mode") or "none")
-            if requested not in {"none", "upstream_auth", "search_500", "genre_503"}:
+            if requested not in {
+                "none",
+                "upstream_auth",
+                "search_500",
+                "genre_503",
+                "page_500",
+                "slow_page_2",
+            }:
                 document = {"error": "unknown failure mode"}
             else:
                 with _lock:
                     _failure_mode = requested
+                # A warm list entry would answer the browser without ever
+                # reaching the steered upstream; the next read must be real.
+                drop_explore_cache()
                 document = {"failureMode": requested}
         else:
             document = {"error": "harness route not found"}

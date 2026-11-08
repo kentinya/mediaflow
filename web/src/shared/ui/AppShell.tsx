@@ -170,6 +170,10 @@ export function AppShell({ children }: AppShellProps) {
   // explicit filters. Account/notification controls stay in the top bar.
   const searchIsOperations = pathname === "/operations";
   const searchIsRules = pathname === "/rules";
+  // Explore owns the single visible "探索" heading and its own works search.
+  // The shell's read-only file-search field and the duplicate location line
+  // would only add an unusable second title and a misaligned placeholder.
+  const searchIsExplore = pathname === "/explore";
   const filesSearchContext = useMemo(
     () => ({
       query: filesSearch,
@@ -283,7 +287,10 @@ export function AppShell({ children }: AppShellProps) {
       </aside>
       <div className="mf-shell-content">
         <header className="mf-shell-topbar">
-          {!searchIsOperations && !searchIsRules && searchField}
+          {!searchIsOperations &&
+            !searchIsRules &&
+            !searchIsExplore &&
+            searchField}
           {shellActions}
         </header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
@@ -294,7 +301,8 @@ export function AppShell({ children }: AppShellProps) {
             {destination !== undefined &&
             destination.id !== "operations" &&
             !isAutomationListSurface(pathname) &&
-            !searchIsRules ? (
+            !searchIsRules &&
+            !searchIsExplore ? (
               <p className="mf-page-context">{destination.label}</p>
             ) : null}
             <FilesSearchContext.Provider value={filesSearchContext}>

@@ -1,9 +1,9 @@
 /**
  * Pure Explore presentation/state helpers, unit-tested without a browser.
  *
- * Page aggregation, the applied-query summary and bounded numeric drafts all
- * live here so the component cannot invent a total, a label or a filter value
- * the backend did not actually apply.
+ * The pagination window, the applied-query summary and bounded numeric
+ * drafts all live here so the component cannot invent a total, a label, a
+ * page number or a filter value the backend did not actually apply.
  */
 
 import type {
@@ -12,7 +12,6 @@ import type {
   ExploreOptionsModel,
   ExplorePageModel,
   ExploreSort,
-  ExploreWorkSummary,
 } from "../../entities/explore/explore";
 
 export const EXPLORE_MEDIA_TYPE_LABELS: Readonly<
@@ -28,31 +27,31 @@ export const EXPLORE_SORT_LABELS: Readonly<Record<ExploreSort, string>> = {
   date: "上映/首播日期",
 };
 
-/** One deduplicated work window across the loaded pages, in page order. */
-export function flattenExplorePages(
-  pages: readonly ExplorePageModel[] | undefined,
-): ExploreWorkSummary[] {
-  if (pages === undefined) return [];
-  const seen = new Set<string>();
-  const items: ExploreWorkSummary[] = [];
-  for (const page of pages) {
-    for (const item of page.items) {
-      const identity = `${item.provider}|${item.mediaType}|${item.providerId}`;
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      items.push(item);
-    }
+/**
+ * A compact direct-jump window for ordinary pagination: first/last page,
+ * the pages around the current one, and `"gap"` markers between. The
+ * operator can always reach every representable page through prev/next, so
+ * the strip only has to stay compact, not exhaustive.
+ */
+export function explorePageWindow(
+  current: number,
+  last: number,
+): readonly (number | "gap")[] {
+  if (last <= 1) return last === 1 ? [1] : [];
+  const clamped = Math.min(Math.max(current, 1), last);
+  const around = [clamped - 1, clamped, clamped + 1].filter(
+    (page) => page >= 1 && page <= last,
+  );
+  const pages = new Set<number>([1, last, ...around]);
+  const sorted = [...pages].sort((left, right) => left - right);
+  const window: (number | "gap")[] = [];
+  let previous = 0;
+  for (const page of sorted) {
+    if (previous !== 0 && page - previous > 1) window.push("gap");
+    window.push(page);
+    previous = page;
   }
-  return items;
-}
-
-/** The last successful page of a loaded window, or `undefined`. */
-export function lastExplorePage(
-  pages: readonly ExplorePageModel[] | undefined,
-): ExplorePageModel | undefined {
-  return pages === undefined || pages.length === 0
-    ? undefined
-    : pages[pages.length - 1];
+  return window;
 }
 
 function genreName(
@@ -184,4 +183,9 @@ export function exploreResultNote(
     };
   }
   return { kind: "end", totalResults: lastPage.totalResults };
+}
+
+/** The highest page the operator may really visit: real end vs service cap. */
+export function exploreBrowsableLastPage(lastPage: ExplorePageModel): number {
+  return Math.max(1, Math.min(lastPage.totalPages, lastPage.pageLimit));
 }

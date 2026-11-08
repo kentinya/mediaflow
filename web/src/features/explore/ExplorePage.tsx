@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import {
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import {
   exploreWorkIdentity,
   parseExploreDetailToken,
   type ExploreMediaType,
+  type ExplorePageModel,
   type ExploreSort,
   type ExploreWorkSummary,
 } from "../../entities/explore/explore";
@@ -34,6 +31,7 @@ import {
   exploreSearchQuery,
   optionsContextId,
   retainExploreContext,
+  retainExplorePage,
   searchContextId,
   type ExploreBrowseFilters,
 } from "./explore-query";
@@ -42,9 +40,8 @@ import {
   EXPLORE_MEDIA_TYPE_LABELS,
   EXPLORE_SORT_LABELS,
   appliedSummary,
+  exploreBrowsableLastPage,
   exploreResultNote,
-  flattenExplorePages,
-  lastExplorePage,
   parseExploreNumeric,
   type ExploreFilterDraft,
 } from "./explore-state";
@@ -61,14 +58,23 @@ const EMPTY_NUMERIC_FILTERS: NumericFilters = {
   minVotes: null,
 };
 
+/** The one successful list page currently on screen for the active context. */
+interface ShownExplorePage {
+  readonly context: string;
+  readonly page: number;
+  readonly data: ExplorePageModel;
+}
+
 /**
- * The V2 Explore homepage (Slice 51 Task 51.1): one Chinese browse/search
- * journey over the deployment TMDB provider. Every visible state comes from
- * an explicitly-triggered read; page 2+, details and options are never
- * prefetched. Search is its own explicit mode whose exit restores the browse
- * conditions, loaded pages and scroll, and one exact work opens a centered
- * detail card handled through the router's `detail` search param, so browser
- * Back closes it like the close button or Escape.
+ * The V2 Explore homepage (Slice 51 Task 51.1; ordinary pagination per
+ * Slice 52 Task 52.1): one Chinese browse/search journey over the deployment
+ * TMDB provider. Every visible state comes from an explicitly-triggered read
+ * of exactly one page — page 2+, details and options are never prefetched —
+ * so the document length and rendered row count stay bounded no matter how
+ * many pages the operator visits. Search is its own explicit mode whose exit
+ * restores the browse conditions, the exact browse page and its scroll, and
+ * one exact work opens a centered detail card through the router's `detail`
+ * search param, so browser Back closes it like the close button or Escape.
  */
 export function ExplorePage() {
   const token = useAuthToken();
@@ -79,7 +85,7 @@ export function ExplorePage() {
   const exploreSearch = useSearch({ from: "/explore" });
 
   /** The browse anchor: only browse-mode actions may change it, so exiting
-   * a search always lands on the exact conditions the operator left. */
+   * a search always lands on the exact conditions and page the operator left. */
   const [mediaType, setMediaType] = useState<ExploreMediaType>("movie");
   /** Search owns its own type: switching it inside search mode never edits
    * the browse context behind it. */
@@ -95,12 +101,22 @@ export function ExplorePage() {
   const [keyword, setKeyword] = useState("");
   const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  /** Ordinary pagination targets: every new condition/type/keyword starts a
+   * fresh result set at page 1; only a page action moves these. */
+  const [browsePage, setBrowsePage] = useState(1);
+  const [searchPage, setSearchPage] = useState(1);
 
   const detailTarget = parseExploreDetailToken(exploreSearch.detail ?? null);
   const invokerRef = useRef<HTMLElement | null>(null);
   const openedByNavRef = useRef(false);
   const hadDetailRef = useRef(false);
-  const savedScrollRef = useRef<Record<string, number>>({});
+  const savedBrowseScrollRef = useRef(0);
+  /** A mode round trip restores its saved position only once its own target
+   * page is really on screen (an evicted cache re-reads that same page). */
+  const pendingScrollRef = useRef<{
+    readonly mode: "browse" | "search";
+    readonly y: number;
+  } | null>(null);
 
   const browseFilters: ExploreBrowseFilters = useMemo(
     () => ({
@@ -121,17 +137,23 @@ export function ExplorePage() {
     activeKeyword === null
       ? browseContext
       : searchContextId(searchMediaType, activeKeyword);
+  const targetPage = activeKeyword === null ? browsePage : searchPage;
   /** The type the toolbar shows/switches: browse context vs search context. */
   const visibleType = activeKeyword === null ? mediaType : searchMediaType;
   const browseEnabled = token !== null && activeKeyword === null;
   const searchEnabled = token !== null && activeKeyword !== null;
 
-  const browseQuery = useInfiniteQuery({
-    ...explorePageQuery(token, browseFilters),
+  const browseQuery = useQuery({
+    ...explorePageQuery(token, browseFilters, browsePage),
     enabled: browseEnabled,
   });
-  const searchQuery = useInfiniteQuery({
-    ...exploreSearchQuery(token, searchMediaType, activeKeyword ?? ""),
+  const searchQuery = useQuery({
+    ...exploreSearchQuery(
+      token,
+      searchMediaType,
+      activeKeyword ?? "",
+      searchPage,
+    ),
     enabled: searchEnabled,
   });
   const optionsQuery = useQuery(exploreOptionsQuery(token, mediaType));
@@ -141,10 +163,12 @@ export function ExplorePage() {
   // authority recovery as well; an upstream credential failure does not.
   useAuthorizedReadAuthorityRecovery(optionsQuery);
 
-  // Bounded Explore cache: the active list context is always the freshest
-  // retained entry; idle entries outlive only five minutes (query gcTime).
+  // Bounded Explore caches: the active list context/page is always the
+  // freshest retained entry; idle entries outlive only five minutes (query
+  // gcTime), contexts stay ≤16 and list pages stay ≤16 in total.
   useEffect(() => {
     retainExploreContext(queryClient, activeListContext);
+    retainExplorePage(queryClient, activeListContext, targetPage);
     if (optionsQuery.data !== undefined) {
       retainExploreContext(queryClient, optionsContextId(mediaType));
     }
@@ -154,24 +178,60 @@ export function ExplorePage() {
   }, [
     queryClient,
     activeListContext,
+    targetPage,
     optionsQuery.data,
     mediaType,
     detailTarget,
   ]);
 
-  // Restore the previous mode's scroll after an explicit mode round trip.
+  // The displayed page is always the currently successful read of exactly
+  // one key: a late answer for an abandoned target stays in its own cache
+  // entry and can never take over the display. The successful read is
+  // adopted during render (state adjusted where it is derived), never in an
+  // effect, so commit and paint show the new page in one step and an old
+  // context's content is already masked the moment the context changes.
+  const [shownState, setShownState] = useState<ShownExplorePage | null>(null);
+  const activeQueryData = activeQuery.data;
+  const adoptFreshPage =
+    activeQueryData !== undefined &&
+    (shownState === null ||
+      shownState.context !== activeListContext ||
+      shownState.page !== targetPage ||
+      shownState.data !== activeQueryData);
+  const shownForActive: ShownExplorePage | undefined =
+    adoptFreshPage && activeQueryData !== undefined
+      ? { context: activeListContext, page: targetPage, data: activeQueryData }
+      : shownState !== null && shownState.context === activeListContext
+        ? shownState
+        : undefined;
+  if (adoptFreshPage && activeQueryData !== undefined) {
+    setShownState({
+      context: activeListContext,
+      page: targetPage,
+      data: activeQueryData,
+    });
+  }
+
+  // Restore a mode round trip's position only after that mode's target page
+  // is really rendered: an evicted cache re-reads the same target first and
+  // the position follows the content, not the mode switch alone.
+  const shownAtTarget =
+    shownForActive !== undefined && shownForActive.page === targetPage;
   useEffect(() => {
-    const target = savedScrollRef.current[mode] ?? 0;
-    if (target === 0 && window.scrollY === 0) return undefined;
+    const pending = pendingScrollRef.current;
+    if (pending === null || pending.mode !== mode) return undefined;
+    if (!shownAtTarget) return undefined;
+    if (activeQuery.isFetching) return undefined;
+    pendingScrollRef.current = null;
     const frame = window.requestAnimationFrame(() => {
       try {
-        window.scrollTo(0, target);
+        window.scrollTo(0, pending.y);
       } catch {
         // A non-scrolling environment keeps its own position.
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [mode]);
+  }, [mode, shownAtTarget, targetPage, activeQuery.isFetching]);
 
   // Return focus to the poster that opened the detail after any close path.
   useEffect(() => {
@@ -196,14 +256,20 @@ export function ExplorePage() {
         ? optionsError.message
         : `${optionsError.message} 下一步:${optionsError.nextAction}`
       : "筛选选项读取未能完成,作品列表不受影响,本次读取没有产生任何媒体或任务效果。可重新读取当前类型的筛选选项。";
-  const pages = activeQuery.data?.pages;
-  const items = useMemo(() => flattenExplorePages(pages), [pages]);
-  const lastPage = lastExplorePage(pages);
+  const pageModel = shownForActive?.data;
+  const items = pageModel?.items ?? [];
+  const displayedPage = shownForActive?.page;
+  const targetInFlight = activeQuery.isPending || activeQuery.isFetching;
   const firstLoadError =
-    activeQuery.isError && activeQuery.data === undefined
+    activeQuery.isError && shownForActive === undefined
       ? activeQuery.error
       : null;
-  const nextPageFailed = activeQuery.isError && activeQuery.data !== undefined;
+  /** A failed target page keeps the successful page next to its own recovery. */
+  const targetReadFailed = activeQuery.isError && shownForActive !== undefined;
+  const setTargetPage = (page: number) => {
+    if (activeKeyword === null) setBrowsePage(page);
+    else setSearchPage(page);
+  };
 
   const authCategory =
     firstLoadError instanceof ExploreApiError ? firstLoadError.category : null;
@@ -218,17 +284,21 @@ export function ExplorePage() {
   // catalog, so the applied pair is re-derived from the new type's options and
   // a stale selection can never reach the backend as an illegal combination.
   // In search mode the type buttons switch only the search: the browse
-  // anchor (type, conditions, loaded pages, scroll) stays untouched so exit
+  // anchor (type, conditions, page, position) stays untouched so exit
   // restores exactly what the operator left.
   const switchType = (next: ExploreMediaType) => {
     if (activeKeyword !== null) {
-      if (next !== searchMediaType) setSearchMediaType(next);
+      if (next !== searchMediaType) {
+        setSearchMediaType(next);
+        setSearchPage(1);
+      }
       return;
     }
     if (next === mediaType) return;
     setMediaType(next);
     setGenreId(null);
     setOriginalLanguage(null);
+    setBrowsePage(1);
   };
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -240,16 +310,21 @@ export function ExplorePage() {
     }
     // The browse anchor is captured only on the browse → search transition;
     // later search submissions never overwrite it, and the search starts
-    // from the browse type the operator was reading.
+    // from page 1 of its own result set.
     if (activeKeyword === null) {
-      savedScrollRef.current.browse = window.scrollY;
+      savedBrowseScrollRef.current = window.scrollY;
       setSearchMediaType(mediaType);
     }
     setSearchError(null);
+    setSearchPage(1);
     setActiveKeyword(trimmed);
+    pendingScrollRef.current = { mode: "search", y: 0 };
   };
   const exitSearch = () => {
-    savedScrollRef.current.search = window.scrollY;
+    pendingScrollRef.current = {
+      mode: "browse",
+      y: savedBrowseScrollRef.current,
+    };
     setActiveKeyword(null);
   };
 
@@ -269,11 +344,18 @@ export function ExplorePage() {
       setDraftError(parsedVotes.message);
       return;
     }
+    const changed =
+      parsedYear.value !== numeric.year ||
+      parsedRating.value !== numeric.minRating ||
+      parsedVotes.value !== numeric.minVotes;
     setNumeric({
       year: parsedYear.value,
       minRating: parsedRating.value,
       minVotes: parsedVotes.value,
     });
+    // A genuinely new condition set starts at the new result set's page 1;
+    // re-applying identical values keeps the page the operator is on.
+    if (changed) setBrowsePage(1);
     setDraftError(null);
   };
 
@@ -284,9 +366,11 @@ export function ExplorePage() {
     setNumeric(EMPTY_NUMERIC_FILTERS);
     setDraft(EMPTY_FILTER_DRAFT);
     setDraftError(null);
+    setBrowsePage(1);
   };
 
   const restartCurrentList = () => {
+    setTargetPage(1);
     void queryClient.resetQueries({
       queryKey: ["explore", activeListContext],
     });
@@ -326,17 +410,20 @@ export function ExplorePage() {
     );
   }
 
-  const loading =
-    activeQuery.isPending || (activeQuery.isFetching && items.length === 0);
+  const loading = shownForActive === undefined && targetInFlight;
   const appliedText =
-    lastPage !== undefined
-      ? appliedSummary(lastPage.applied, options)
+    pageModel !== undefined
+      ? appliedSummary(pageModel.applied, options)
       : firstLoadError !== null
         ? null
-        : "正在读取已应用条件…";
-  const currentPage = lastPage?.page ?? 0;
-  const hasMore = (lastPage?.hasMore ?? false) && !nextPageFailed;
-  const resultNote = exploreResultNote(lastPage, items.length, currentPage);
+        : "正在读取已应用条件...";
+  const lastPage =
+    pageModel !== undefined ? exploreBrowsableLastPage(pageModel) : null;
+  const resultNote = exploreResultNote(
+    pageModel,
+    items.length,
+    displayedPage ?? 1,
+  );
 
   const firstErrorPanel: ReactNode =
     firstLoadError !== null && !showUnauthorized && !showForbidden
@@ -407,7 +494,7 @@ export function ExplorePage() {
       {activeKeyword !== null ? (
         <p className="mf-explore-mode-note" role="status">
           搜索模式:仅按作品名与当前类型搜索,浏览筛选暂不适用;退出搜索后将恢复此前的条件、
-          已加载列表与位置。当前关键词「{activeKeyword}」。
+          当前页与位置。当前关键词「{activeKeyword}」。
         </p>
       ) : (
         <div className="mf-explore-filters">
@@ -441,11 +528,12 @@ export function ExplorePage() {
               value={genreId === null ? "" : String(genreId)}
               disabled={options === undefined}
               aria-busy={optionsLoading}
-              onChange={(event) =>
+              onChange={(event) => {
                 setGenreId(
                   event.target.value === "" ? null : Number(event.target.value),
-                )
-              }
+                );
+                setBrowsePage(1);
+              }}
             >
               <option value="">
                 {options === undefined
@@ -468,11 +556,12 @@ export function ExplorePage() {
               value={originalLanguage ?? ""}
               disabled={options === undefined}
               aria-busy={optionsLoading}
-              onChange={(event) =>
+              onChange={(event) => {
                 setOriginalLanguage(
                   event.target.value === "" ? null : event.target.value,
-                )
-              }
+                );
+                setBrowsePage(1);
+              }}
             >
               <option value="">
                 {options === undefined
@@ -493,7 +582,10 @@ export function ExplorePage() {
             <select
               id="explore-sort"
               value={sort}
-              onChange={(event) => setSort(event.target.value as ExploreSort)}
+              onChange={(event) => {
+                setSort(event.target.value as ExploreSort);
+                setBrowsePage(1);
+              }}
             >
               {(
                 [
@@ -597,13 +689,14 @@ export function ExplorePage() {
           <ExplorePosterGrid
             items={items}
             loading={loading}
-            hasMore={hasMore}
-            loadMoreBusy={activeQuery.isFetchingNextPage}
-            nextPageFailed={nextPageFailed}
-            currentPage={currentPage}
-            totalResults={lastPage?.totalResults ?? 0}
-            onLoadMore={() => void activeQuery.fetchNextPage()}
-            onRetryNextPage={() => void activeQuery.fetchNextPage()}
+            displayedPage={displayedPage}
+            targetPage={targetPage}
+            lastPage={lastPage}
+            totalResults={pageModel?.totalResults ?? 0}
+            busy={targetInFlight}
+            readFailed={targetReadFailed}
+            onPage={setTargetPage}
+            onRetryTarget={() => void activeQuery.refetch()}
             onOpen={openDetail}
             note={noteNode}
             firstError={firstErrorPanel}
@@ -716,7 +809,7 @@ function ExploreResultNote({
   }
   return (
     <p className="mf-explore-boundary">
-      已加载全部可浏览页(共 {note.totalResults} 个结果)。
+      已到可浏览末页(共 {note.totalResults} 个结果)。
     </p>
   );
 }

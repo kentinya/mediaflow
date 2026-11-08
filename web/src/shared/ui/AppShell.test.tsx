@@ -365,6 +365,36 @@ describe("AppShell", () => {
     expect(document.title).toBe("任务中心 | MediaFlow");
   });
 
+  it("shows Explore as one title without the read-only file search field", async () => {
+    stubShellReads();
+    authStore.setToken("shell-test-token");
+    const { router } = renderApp("/ui-v2/explore");
+
+    await screen.findByRole("heading", { name: "探索" });
+    const main = screen.getByRole("main");
+    // Exactly one visible "探索" inside the main content: the shell's
+    // location line and file-search placeholder must not duplicate it.
+    expect(within(main).getAllByText("探索", { exact: true })).toHaveLength(1);
+    expect(main.querySelector(".mf-page-context")).toBeNull();
+    expect(document.querySelector(".mf-shell-search")).toBeNull();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    // The page's own works search plus notification/identity stay usable.
+    expect(screen.getByLabelText("作品名搜索")).toBeVisible();
+    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Explore" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    // Another main page keeps its shell search field and location line.
+    await act(async () => {
+      await router.navigate({ to: "/resourcelib/files" });
+    });
+    await screen.findByRole("heading", { name: "文件" });
+    expect(document.querySelector(".mf-shell-search")).not.toBeNull();
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+  });
+
   /**
    * PATCH-20261029-2: the shared sidebar Files destination is ordinary page
    * navigation.  It must not manufacture a task-center return context from a

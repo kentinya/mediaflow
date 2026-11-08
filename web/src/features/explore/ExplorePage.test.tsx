@@ -7,11 +7,19 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient } from "@tanstack/react-query";
+import type { ExplorePageModel } from "../../entities/explore/explore";
 import { authStore } from "../../shared/api/auth-store";
-import { resetExploreContextOrder } from "./explore-query";
+import {
+  EXPLORE_PAGE_LIMIT,
+  resetExploreContextOrder,
+  retainExplorePage,
+} from "./explore-query";
+import { explorePageWindow, exploreResultNote } from "./explore-state";
 import { renderApp } from "../../../tests/utils";
 import {
   exploreBrowsePayload,
+  exploreBrowsePage2Payload,
   exploreEmptyPagePayload,
   exploreOptionsPayload,
   exploreSearchPayload,
@@ -45,7 +53,7 @@ function providerEnvelope(code: string, status: number): Response {
 }
 
 interface BrowseBehavior {
-  (url: string): Response;
+  (url: string): Response | Promise<Response>;
 }
 
 /**
@@ -273,7 +281,9 @@ describe("Explore homepage journey", () => {
     renderApp("/ui-v2/explore");
 
     expect(await screen.findByText("没有符合条件的作品")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+    // A true empty set still has one page: forward paging is honestly closed.
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+    expect(screen.getByText(/第 1 \/ 1 页 · 共 0 个结果/)).toBeVisible();
     expect(screen.queryByText("探索读取失败")).toBeNull();
   });
 
@@ -389,10 +399,11 @@ describe("Explore homepage journey", () => {
     renderApp("/ui-v2/explore");
 
     await screen.findByRole("button", { name: "Inception (2019)" });
-    await user.click(screen.getByRole("button", { name: "加载更多" }));
+    await user.click(screen.getByRole("button", { name: "下一页" }));
 
     const alert = await screen.findByRole("alert");
-    expect(within(alert).getByText(/页读取失败/)).toBeVisible();
+    expect(within(alert).getByText(/第 2 页读取失败/)).toBeVisible();
+    expect(within(alert).getByText(/当前仍显示第 1 页内容/)).toBeVisible();
     // Page one's works stay on screen: a move/out-of-range never blanks them.
     expect(
       screen.getByRole("button", { name: "Inception (2019)" }),
@@ -591,5 +602,258 @@ describe("Explore homepage journey", () => {
     // Notices stay below the journey: the page heading still leads.
     const heading = screen.getByRole("heading", { name: "探索", level: 1 });
     expect(heading.compareDocumentPosition(attribution) & 4).toBeTruthy();
+  });
+
+  it("renders exactly one page and returns to a previous page without a new read", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreBrowsePage2Payload)
+        : jsonResponse(exploreBrowsePayload);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    expect(screen.getByText(/第 1 \/ 3 页 · 共 42 个结果/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    expect(
+      await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeVisible();
+    // Only the current successful page renders; nothing accumulates: the
+    // page-1-only works of the previous page are gone from the document.
+    expect(
+      screen.queryByRole("button", { name: "The Matrix (2019)" }),
+    ).toBeNull();
+    expect(
+      document.querySelectorAll(".mf-explore-card").length,
+    ).toBeLessThanOrEqual(3);
+    expect(screen.getByText(/第 2 \/ 2 页 · 共 4 个结果/)).toBeVisible();
+    // The real end of this result set closes forward paging.
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+    expect(screen.getByText(/已到可浏览末页/)).toBeVisible();
+
+    const readsAfterPage2 = stub.count("/api/v1/explore/browse?");
+    await user.click(screen.getByRole("button", { name: "上一页" }));
+    expect(
+      await screen.findByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeNull();
+    // Back to a visited page comes from the bounded page cache, not a read.
+    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterPage2);
+  });
+
+  it("starts every new condition set at page one", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreBrowsePage2Payload)
+        : jsonResponse({
+            ...exploreBrowsePayload,
+            applied: conditionsEchoedIn(url),
+          });
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByText(/第 2 \/ 2 页/);
+
+    await screen.findByRole("option", { name: "动作" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "题材" }),
+      "28",
+    );
+    // A new condition set is a fresh result set that really starts at 1.
+    expect(await screen.findByText(/第 1 \/ 3 页/)).toBeVisible();
+    expect(stub.count("genreId=28&page=1")).toBe(1);
+    expect(screen.getByText(/已应用:电影 · 热度优先 · 动作/)).toBeVisible();
+  });
+
+  it("keeps the browse page across a search round trip", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreBrowsePage2Payload)
+        : jsonResponse(exploreBrowsePayload);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByText(/第 2 \/ 2 页/);
+    const browseReads = stub.count("/api/v1/explore/browse?");
+
+    await user.type(screen.getByLabelText("作品名搜索"), "matrix");
+    await user.click(screen.getByRole("button", { name: "搜索" }));
+    expect(
+      await screen.findByRole("button", { name: "The Matrix (1999)" }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "退出搜索" }));
+    // The exact browse page comes back, from cache rather than a new read.
+    expect(
+      await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
+    expect(stub.count("/api/v1/explore/browse?")).toBe(browseReads);
+  });
+
+  it("keeps a late target-page answer from taking over a switched context", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    const deferred: {
+      resolve: ((value: Response) => void) | null;
+    } = { resolve: null };
+    stub.browse = (url) => {
+      if (url.includes("page=2")) {
+        return new Promise<Response>((resolve) => {
+          deferred.resolve = resolve;
+        });
+      }
+      if (url.includes("mediaType=tv")) {
+        return jsonResponse(exploreTvBrowsePayload);
+      }
+      return jsonResponse(exploreBrowsePayload);
+    };
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    // The slow target page is announced while the real page 1 stays visible.
+    expect(
+      await screen.findByText(/正在读取第 2 页\(当前显示第 1 页\)/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+
+    // Switch context while the target page is still in flight.
+    await user.click(screen.getByRole("button", { name: "剧集" }));
+    expect(
+      await screen.findByRole("button", { name: "同号剧集 (2019)" }),
+    ).toBeVisible();
+
+    // The late answer lands in its own key and cannot retake the display.
+    if (deferred.resolve === null) {
+      throw new Error("the page 2 read was never requested");
+    }
+    deferred.resolve(jsonResponse(exploreBrowsePage2Payload));
+    await waitFor(() => expect(stub.count("page=2")).toBe(1));
+    expect(
+      screen.getByRole("button", { name: "同号剧集 (2019)" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "肖申克的救赎 (2019)" }),
+    ).toBeNull();
+    expect(screen.getByText(/已应用:剧集/)).toBeVisible();
+  });
+
+  it("explains an out-of-range page with a legal jump back to page one", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    const user = userEvent.setup();
+    stub.browse = (url) => {
+      const applied = conditionsEchoedIn(url);
+      if (url.includes("page=2")) {
+        return jsonResponse({
+          ...exploreBrowsePayload,
+          page: 2,
+          items: [],
+          hasMore: false,
+          applied,
+        });
+      }
+      return jsonResponse({ ...exploreBrowsePayload, applied });
+    };
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByText("第 2 页超出可浏览范围")).toBeVisible();
+    expect(screen.getByText(/数据源共有 42 个结果/)).toBeVisible();
+    // The condition set still holds its results: jump back, out of the tail.
+    await user.click(screen.getByRole("button", { name: "回到第一页" }));
+    expect(
+      await screen.findByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+    expect(screen.getByText(/第 1 \/ 3 页/)).toBeVisible();
+  });
+});
+
+describe("bounded paging helpers", () => {
+  it("builds a compact direct-jump window around the target page", () => {
+    expect(explorePageWindow(1, 1)).toEqual([1]);
+    expect(explorePageWindow(3, 3)).toEqual([1, 2, 3]);
+    expect(explorePageWindow(5, 10)).toEqual([1, "gap", 4, 5, 6, "gap", 10]);
+    expect(explorePageWindow(1, 10)).toEqual([1, 2, "gap", 10]);
+    // An out-of-window target clamps instead of inventing a page.
+    expect(explorePageWindow(12, 10)).toEqual([1, "gap", 9, 10]);
+    expect(explorePageWindow(3, 1)).toEqual([1]);
+  });
+
+  it("keeps empty, beyond-range, end and service-window notes honest", () => {
+    const base: ExplorePageModel = {
+      provider: "tmdb",
+      mediaType: "movie",
+      page: 1,
+      totalPages: 3,
+      totalResults: 42,
+      hasMore: true,
+      pageLimit: 500,
+      applied: { mediaType: "movie", page: 1, sort: "popular" },
+      items: [],
+    };
+    // A rendered amount of items decides the phase: no fake empties.
+    expect(exploreResultNote(undefined, 0, 1)).toBeNull();
+    expect(exploreResultNote({ ...base, totalResults: 0 }, 0, 1)).toEqual({
+      kind: "empty",
+    });
+    expect(exploreResultNote(base, 0, 4)).toEqual({
+      kind: "beyond-range",
+      page: 4,
+      totalResults: 42,
+    });
+    expect(exploreResultNote({ ...base, hasMore: false }, 20, 3)).toEqual({
+      kind: "end",
+      totalResults: 42,
+    });
+    // The service window is labelled without claiming it is the whole set.
+    expect(
+      exploreResultNote(
+        { ...base, totalPages: 900, hasMore: false, page: 500 },
+        20,
+        500,
+      ),
+    ).toEqual({ kind: "page-limit", totalResults: 42, pageLimit: 500 });
+  });
+
+  it("evicts the least recently used list page beyond the bounded cache", () => {
+    const client = new QueryClient();
+    const context = "browse|movie|popular|-|-|-|-|-";
+    for (let page = 1; page <= EXPLORE_PAGE_LIMIT + 1; page += 1) {
+      client.setQueryData(["explore", context, "page", page], { page });
+      retainExplorePage(client, context, page);
+    }
+    // Exactly the cap survives; the oldest page is re-readable on demand.
+    expect(
+      client.getQueryData(["explore", context, "page", 1]),
+    ).toBeUndefined();
+    expect(client.getQueryData(["explore", context, "page", 2])).toBeDefined();
+    expect(
+      client.getQueryData(["explore", context, "page", EXPLORE_PAGE_LIMIT + 1]),
+    ).toBeDefined();
+
+    // Re-visiting page 2 refreshes it, so page 3 becomes the victim next.
+    retainExplorePage(client, context, 2);
+    client.setQueryData(["explore", context, "page", 18], { page: 18 });
+    retainExplorePage(client, context, 18);
+    expect(
+      client.getQueryData(["explore", context, "page", 3]),
+    ).toBeUndefined();
+    expect(client.getQueryData(["explore", context, "page", 2])).toBeDefined();
   });
 });

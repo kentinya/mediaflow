@@ -27,9 +27,13 @@ import {
 const TOKEN = "explore-harness-token";
 const HARNESS = "http://127.0.0.1:4187";
 const EVIDENCE = "test-results/explore-harness-evidence";
-/** A local 1×1 PNG fixture; real posters never leave the browser. */
+/**
+ * A local 42×63 (exactly 2:3, like a real poster) PNG fixture; real posters
+ * never leave the browser, and the grid/detail aspect checks run against an
+ * image with the honest poster ratio instead of a 1×1 pixel.
+ */
 const FIXTURE_POSTER = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "iVBORw0KGgoAAAANSUhEUgAAACoAAAA/CAYAAACW2FpzAAAAYklEQVR42u3WoQEAIAhFQSZxMCd2HItZF8BkwHCBRrj2frQ+dnZzrvSq/gMUFBQU9A36G+j2DwoKCgr6CJVQUFBQUAtfQkFBQUEtfAkFBQUFtfC1HhQUFNTC13pQUFDQOugBWxI7TMYMTowAAAAASUVORK5CYII=",
   "base64",
 );
 
@@ -168,16 +172,19 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
     page.getByText(/已应用:电影 · 热度优先 · 全部题材/),
   ).toBeVisible();
 
-  // Explicit search mode, then exit restores conditions, pages and scroll.
-  await page.getByRole("button", { name: "加载更多" }).click();
-  await expect(page.getByText(/已加载 40 \/ 共 45 个结果/)).toBeVisible();
+  // Explicit search mode, then exit restores conditions, page and scroll.
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
   // The operator browses deeper, then returns to the form to submit. The
   // round trip must restore the exact position the form actually had when
-  // the search started, together with the loaded pages and conditions.
+  // the search started, together with the visible page and conditions.
   await page.evaluate(() => window.scrollTo(0, 640));
   await page.getByLabel("作品名搜索").fill("深空回声");
   const savedBrowseScroll = await page.evaluate(() => window.scrollY);
-  await page.getByRole("button", { name: "搜索" }).click();
+  // Submit from the focused input itself: a click on the submit button can
+  // nudge the window by its own focus scroll, which would change the very
+  // position this round trip has to restore.
+  await page.getByLabel("作品名搜索").press("Enter");
   await expect(page.getByText(/搜索模式/)).toBeVisible();
   await expect(page.getByText(/已应用:电影 · 搜索「深空回声」/)).toBeVisible();
   await expect(
@@ -186,11 +193,15 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
   // Move within the search results before returning.
   await page.evaluate(() => window.scrollTo(0, 40));
   await page.getByRole("button", { name: "退出搜索" }).click();
-  await expect(page.getByText(/已加载 40 \/ 共 45 个结果/)).toBeVisible();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
   await expect(page.getByText(/搜索模式/)).toHaveCount(0);
   await expect
     .poll(async () => page.evaluate(() => window.scrollY))
     .toBe(savedBrowseScroll);
+
+  // Back to the first page for the exact work from its own window.
+  await page.getByRole("button", { name: "上一页" }).click();
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
 
   // One exact work opens the detail card; Escape closes it and returns focus.
   const opener = page.getByRole("button", { name: "深空回声 (1995)" });
@@ -218,7 +229,7 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.goBack();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByText(/已加载 40 \/ 共 45 个结果/)).toBeVisible();
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
   await expect(
     page.getByText(/已应用:电影 · 热度优先 · 全部题材/),
   ).toBeVisible();
@@ -420,9 +431,8 @@ test("the chosen vote floor reaches the fake upstream under every sort", async (
   // unrated works are gone, and the honest total is the filtered set (the
   // fixture holds 45 movies, exactly 8 carry at least 2000 votes).
   await expect(page.getByText("暂无评分")).toHaveCount(0);
-  await expect(
-    page.getByText("已加载全部可浏览页(共 8 个结果)。"),
-  ).toBeVisible();
+  await expect(page.getByText("已到可浏览末页(共 8 个结果)。")).toBeVisible();
+  await expect(page.getByText(/第 1 \/ 1 页 · 共 8 个结果/)).toBeVisible();
 
   // All three sorts re-issue the same floor; the echoed applied conditions
   // and the real upstream request stay consistent for each one.
@@ -573,7 +583,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   await expect(
     page.getByRole("status").getByRole("button", { name: "清除条件" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "加载更多" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
   await page
     .locator(".mf-explore-filters")
     .getByRole("button", { name: "清除条件" })
@@ -599,7 +609,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   ).toBeVisible();
   await expect(page.getByText(/数据源没有匹配该作品名/)).toBeVisible();
   await expect(page.getByText("探索读取失败")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "加载更多" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
 
   // The same bounded empty journey stays readable at 390px.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -828,4 +838,149 @@ test("the detail card shows the real backdrop, episode counts and the TMDB attri
   });
   await page.getByRole("button", { name: "关闭作品详情" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("ordinary pagination keeps the document bounded and the range true", async ({
+  page,
+}) => {
+  await connect(page);
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  const firstPage = await page.evaluate(() => ({
+    cards: document.querySelectorAll(".mf-explore-card").length,
+    height: document.documentElement.scrollHeight,
+  }));
+  // One physical page of works: the 20-row window the API really returned.
+  expect(firstPage.cards).toBe(20);
+
+  // The compact window jumps directly to another page of the same window.
+  await page.getByRole("button", { name: "第 2 页" }).click();
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  const secondPage = await page.evaluate(() => ({
+    cards: document.querySelectorAll(".mf-explore-card").length,
+    height: document.documentElement.scrollHeight,
+  }));
+  expect(secondPage.cards).toBe(20);
+  // Getting deeper never lengthens the document: only the current page lives.
+  expect(Math.abs(secondPage.height - firstPage.height)).toBeLessThanOrEqual(
+    60,
+  );
+
+  // The real end of the result set: five remaining works, no next page.
+  await page.getByRole("button", { name: "第 3 页" }).click();
+  await expect(page.getByText(/第 3 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(5);
+  await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
+  // Back to the first page: same shape, no accumulated rows or height.
+  await page.getByRole("button", { name: "第 1 页" }).click();
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  const backHeight = await page.evaluate(
+    () => document.documentElement.scrollHeight,
+  );
+  expect(Math.abs(backHeight - firstPage.height)).toBeLessThanOrEqual(60);
+});
+
+test("a slow target page names actual and target; a failed one recovers alone", async ({
+  page,
+}) => {
+  await connect(page);
+  await expect(page.getByText(/第 1 \/ 3 页/)).toBeVisible();
+
+  // Slow page 2: the real displayed page stays visible and is named, while
+  // the target page being read is announced separately.
+  await setFailure(page, "slow_page_2");
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(
+    page.getByText("正在读取第 2 页(当前显示第 1 页)…"),
+  ).toBeVisible();
+  await expect(page.getByText(/第 1 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // Failed page 3: the successful page-2 window is retained beside a
+  // failure that names only the failed target.
+  await setFailure(page, "page_500");
+  await page.getByRole("button", { name: "下一页" }).click();
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("第 3 页读取失败");
+  await expect(alert).toContainText("当前仍显示第 2 页内容");
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+  await expect(page.getByText(/第 2 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+
+  // The stage heals; the explicit retry reaches exactly the failed page.
+  await setFailure(page, "none");
+  await alert.getByRole("button", { name: "重试第 3 页" }).click();
+  await expect(page.getByText(/第 3 \/ 3 页 · 共 45 个结果/)).toBeVisible();
+  await expect(page.locator(".mf-explore-card")).toHaveCount(5);
+  await expect(page.getByRole("button", { name: "下一页" })).toBeDisabled();
+
+  // Cleanup so this harness mode can never leak into a later test.
+  await setFailure(page, "none");
+});
+
+test("the detail body really scrolls to its end while the background stays still", async ({
+  page,
+}) => {
+  await connect(page);
+  // The dedicated long-overview fixture (harness movie index 1).
+  const opener = page.getByRole("button", { name: "城市边缘的光 (1998)" });
+  const backgroundBefore = await page.evaluate(() => window.scrollY);
+  await opener.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/第 20 段/)).toBeVisible();
+  const body = page.locator(".mf-modal-body.mf-explore-detail");
+
+  const initial = await body.evaluate((element) => ({
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    overflowY: getComputedStyle(element).overflowY,
+  }));
+  // The content really exceeds the card and the body is the reading column.
+  expect(initial.overflowY).toBe("auto");
+  expect(initial.scrollHeight).toBeGreaterThan(initial.clientHeight + 400);
+
+  // Wheel over the card: the body scrolls, the page behind it never does.
+  const box = await body.boundingBox();
+  if (box === null) throw new Error("detail body has no visible box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  let atEnd = false;
+  for (let index = 0; index < 40 && !atEnd; index += 1) {
+    await page.mouse.wheel(0, 800);
+    atEnd = await body.evaluate(
+      (element) =>
+        element.scrollTop + element.clientHeight >= element.scrollHeight - 4,
+    );
+  }
+  expect(atEnd).toBe(true);
+  expect(await page.evaluate(() => window.scrollY)).toBe(backgroundBefore);
+  // The TMDB link at the very end of the body is reachable after the wheel.
+  const link = dialog.getByRole("link", { name: "在 TMDB 查看" });
+  await expect(link).toBeInViewport();
+  await page.screenshot({
+    path: `${EVIDENCE}/detail-scrolled-to-end.png`,
+    fullPage: false,
+  });
+
+  // Keyboard: tabbing walks into the card and reaches that same link, and
+  // the browser scrolls it into view inside the body only.
+  await body.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  let linkFocused = false;
+  for (let index = 0; index < 8 && !linkFocused; index += 1) {
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(50);
+    linkFocused = await link.evaluate(
+      (element) => element === document.activeElement,
+    );
+  }
+  expect(linkFocused).toBe(true);
+  await expect(link).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(backgroundBefore);
+
+  // Close keeps the background position; reopening is a fresh read path.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(backgroundBefore);
 });

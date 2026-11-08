@@ -8180,9 +8180,14 @@ tr[aria-selected="true"] {
   gap: 8px;
 }
 
+/* Explore-local field metrics (Slice 52 RO-1): the shared 16px field
+   margin and shell context line left the search row visually detached from
+   the submit button and the type switch. Only this page's fields opt out;
+   every other page keeps the public .mf-field defaults. */
 .mf-explore-search .mf-field {
   min-width: 240px;
   flex: 1;
+  margin: 0;
 }
 
 .mf-explore-type {
@@ -8599,6 +8604,88 @@ tr[aria-selected="true"] {
   margin: 0;
   max-width: 64ch;
   line-height: 1.5;
+}
+
+/* ============================================================
+   Slice 52 Task 52.1 — Explore pagination, layout and detail
+   scrolling (RO-1/RO-2)
+   ============================================================ */
+
+/* Target-page state beside the retained successful page: slow reads say
+   exactly which page is displayed and which is being read. */
+.mf-explore-page-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Ordinary bounded pagination: prev/next, a compact direct-jump window and
+   the real browsable range. Only the current page is ever rendered above. */
+.mf-explore-pager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.mf-explore-pager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+
+.mf-explore-pager-page {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.mf-explore-pager-page:hover,
+.mf-explore-pager-page:focus-visible {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.mf-explore-pager-page.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.mf-explore-pager-gap {
+  color: var(--muted);
+  padding: 0 2px;
+}
+
+.mf-explore-pager-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* Explore-detail card: the shared body keeps its default `overflow: hidden`
+   for every other card. This one card opts into a real inner reading
+   column (wheel/touch/keyboard reach the last paragraph and the TMDB link)
+   contained inside the card — the background never scrolls with it. */
+.mf-modal-body.mf-explore-detail {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mf-modal-body.mf-explore-detail .mf-explore-detail-body {
+  padding-bottom: 8px;
 }
 
 /* The work's real backdrop spans the detail card above poster and facts. */

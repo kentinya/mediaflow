@@ -5,17 +5,24 @@ import {
   type ExploreWorkSummary,
 } from "../../entities/explore/explore";
 import { Button } from "../../shared/ui/Button";
+import { explorePageWindow } from "./explore-state";
 
 export interface ExplorePosterGridProps {
   readonly items: readonly ExploreWorkSummary[];
   readonly loading: boolean;
-  readonly hasMore: boolean;
-  readonly loadMoreBusy: boolean;
-  readonly nextPageFailed: boolean;
-  readonly currentPage: number;
+  /** The successful page currently displayed, or undefined before first read. */
+  readonly displayedPage: number | undefined;
+  /** The page the operator currently targets, which may be ahead of it. */
+  readonly targetPage: number;
+  /** Real browsable last page (real end vs service window), or unknown. */
+  readonly lastPage: number | null;
   readonly totalResults: number;
-  readonly onLoadMore: () => void;
-  readonly onRetryNextPage: () => void;
+  /** A target page read is in flight right now. */
+  readonly busy: boolean;
+  /** The target page read failed while the displayed page is retained. */
+  readonly readFailed: boolean;
+  readonly onPage: (page: number) => void;
+  readonly onRetryTarget: () => void;
   readonly onOpen: (item: ExploreWorkSummary, invoker: HTMLElement) => void;
   /** Honest terminal notes (empty / beyond range / service page window). */
   readonly note: ReactNode;
@@ -28,20 +35,24 @@ function skeletonCards(count = 12): readonly number[] {
 }
 
 /**
- * One 2:3 poster journey: bounded grid, explicit load-more paging with a
- * separate retry for a failed next page, honest empty/boundary notes and a
- * missing-image placeholder that never removes the title or detail action.
+ * One 2:3 poster journey with ordinary bounded pagination (Slice 52): only
+ * the current successful page is rendered, so the document length and row
+ * count never grow with the number of visited pages. Prev/next plus a
+ * compact jump window expose the true browsable range; a slow target page
+ * and a failed target page are distinguished from the retained displayed
+ * page, and honest empty/boundary notes keep their own recovery.
  */
 export function ExplorePosterGrid({
   items,
   loading,
-  hasMore,
-  loadMoreBusy,
-  nextPageFailed,
-  currentPage,
+  displayedPage,
+  targetPage,
+  lastPage,
   totalResults,
-  onLoadMore,
-  onRetryNextPage,
+  busy,
+  readFailed,
+  onPage,
+  onRetryTarget,
   onOpen,
   note,
   firstError,
@@ -49,11 +60,11 @@ export function ExplorePosterGrid({
   if (firstError != null && items.length === 0) {
     return <div className="mf-explore-center">{firstError}</div>;
   }
-  if (loading && items.length === 0) {
+  if (loading) {
     return (
       <div aria-busy="true">
         <p className="mf-explore-status" role="status">
-          正在读取作品列表…
+          正在读取作品列表...
         </p>
         <ul className="mf-explore-grid" aria-hidden="true">
           {skeletonCards().map((index) => (
@@ -71,8 +82,23 @@ export function ExplorePosterGrid({
       </div>
     );
   }
+  const pending =
+    displayedPage !== undefined &&
+    displayedPage !== targetPage &&
+    busy &&
+    !readFailed;
+  const failed = readFailed && displayedPage !== undefined;
+  const upperBound = lastPage ?? targetPage;
+  // The status always reports the page really on screen; the pending line
+  // above names the target, so the two can never claim an unread position.
+  const current = displayedPage ?? targetPage;
   return (
-    <div className="mf-explore-results">
+    <div className="mf-explore-results" aria-busy={busy}>
+      {pending ? (
+        <p className="mf-explore-page-status" role="status">
+          正在读取第 {targetPage} 页(当前显示第 {displayedPage} 页)…
+        </p>
+      ) : null}
       <ul className="mf-explore-grid">
         {items.map((item) => (
           <li
@@ -84,34 +110,65 @@ export function ExplorePosterGrid({
         ))}
       </ul>
       {note}
-      {nextPageFailed ? (
+      {failed ? (
         <div className="mf-explore-page-error" role="alert">
           <p>
-            第 {currentPage + 1} 页读取失败,前面 {currentPage} 页内容仍然保留,
+            第 {targetPage} 页读取失败,
+            {displayedPage !== targetPage
+              ? `当前仍显示第 ${displayedPage} 页内容,`
+              : ""}
             本次读取没有产生任何媒体或任务效果。
           </p>
-          <Button
-            variant="secondary"
-            onClick={onRetryNextPage}
-            disabled={loadMoreBusy}
-          >
-            {loadMoreBusy ? "正在重试…" : `重试第 ${currentPage + 1} 页`}
+          <Button variant="secondary" onClick={onRetryTarget} disabled={busy}>
+            {busy ? "正在重试..." : `重试第 ${targetPage} 页`}
           </Button>
         </div>
       ) : null}
-      {hasMore ? (
-        <div className="mf-explore-load-more">
-          <Button
-            variant="secondary"
-            onClick={onLoadMore}
-            disabled={loadMoreBusy}
-          >
-            {loadMoreBusy ? "正在加载…" : "加载更多"}
-          </Button>
-          <p className="mf-explore-load-hint">
-            已加载 {items.length} / 共 {totalResults} 个结果(每页最多 20 个)
+      {lastPage !== null ? (
+        <nav className="mf-explore-pager" aria-label="结果分页">
+          <div className="mf-explore-pager-controls">
+            <Button
+              variant="secondary"
+              onClick={() => onPage(targetPage - 1)}
+              disabled={targetPage <= 1}
+            >
+              上一页
+            </Button>
+            {explorePageWindow(targetPage, lastPage).map((entry, index) =>
+              entry === "gap" ? (
+                <span className="mf-explore-pager-gap" key={`gap-${index}`}>
+                  …
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  key={entry}
+                  className={`mf-explore-pager-page${
+                    entry === current ? " is-active" : ""
+                  }`}
+                  aria-current={entry === current ? "page" : undefined}
+                  aria-label={`第 ${entry} 页`}
+                  onClick={() => {
+                    if (entry !== targetPage) onPage(entry);
+                  }}
+                >
+                  {entry}
+                </button>
+              ),
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => onPage(targetPage + 1)}
+              disabled={upperBound <= targetPage}
+            >
+              下一页
+            </Button>
+          </div>
+          <p className="mf-explore-pager-status" role="status">
+            第 {current} / {lastPage} 页 · 共 {totalResults} 个结果(每页最多 20
+            个)
           </p>
-        </div>
+        </nav>
       ) : null}
     </div>
   );
