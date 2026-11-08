@@ -18,27 +18,7 @@ Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED IMPLEMENTATION COMPLETED
 ```
 
-## Task PATCH-20261108-3 — OpenList 元数据查询与下载链接解耦
-
-Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目录、仅真正读取内容时
-获取 115 链接，并以取链接接口恒定 405、仅目录列表及原生移动／重命名成功验证完整文件页
-整理链路；先只读调查，随后授权规划本独立修正。
-用户进一步明确：复用 OpenList 自带缓存，不允许强制更新存储；目录查询保持 `refresh: false`。
-[Development Workflow](docs/development-workflow.md) §3.1、§5–8 管理生命周期、测试与提交。
-
-```text
-Task ID: PATCH-20261108-3
-Task Type: STANDALONE MINOR BUG
-Parent Slice: NONE
-Status: PLANNED
-Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
-Difficulty: Medium
-Test Level: T4
-Planner / Reviewer: B
-Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
-```
-
-### Goal and observed gap
+## Goal and observed gap
 
 恢复已有 OpenList 属性查询的纯元数据语义，使不需要读取内容的同一 Storage 原生
 Move／Rename 路径不因下载链接不可用而在提交、分析、执行前检查或执行后校验阶段失败。
