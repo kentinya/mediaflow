@@ -1,10 +1,14 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+PATCH-20261109-2 已由 B 验收 PASS。下方为本次接受的完整 Task／验收记录；不授权新实施。
+
 # Task PATCH-20261109-2 — 查询类型统一与已确认元数据的整理摘要续接
 
 ```text
 Task ID: PATCH-20261109-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: PASS
 Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
 Difficulty: Medium
 Test Level: T4
@@ -12,8 +16,8 @@ Planner / Reviewer: B
 ```
 
 用户已明确激活本 Task，并于本轮同意取消跨次整理的历史身份自动复用。
-当前仍为 FIX REQUIRED，Developer 按下述调整继续本 Task；Task ID、固定 Base、Difficulty／T4 不变。
-本轮只更新规划与开发交接，不实施产品源码。
+当前实现已完成独立 B 验收，结果 PASS；以下规划与此前返工记录作为本 Task 历史保留。
+固定 Base、Difficulty／T4 未变；本次 B 仅验收并收尾，未修改产品源码。
 
 Authority：用户原五点最小修正方案，以及本轮同意的调整：新一次整理重新识别，当前任务继续使用本次已保存的候选；按 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs) 处理已有 Rules／Files／Task 恢复旅程的独立缺陷，不创建或重开 Slice。
 
@@ -53,12 +57,12 @@ HEAD `cad6d35cf1e0a58b5a8af9a0ea06411bcf1a0e9c`；治理检查 PASS，暂存区�
 
 ### Acceptance Criteria
 
-- [ ] **AC-1 策略保存／兼容：** TMDB 策略页面没有“媒体类型”输入；查询类型可保存／读回。新建、复制、编辑提交及保存结果均不含该策略 `mediaType`。旧键与查询类型冲突、值非法、只有旧键三种输入均按查询类型／默认 Auto 消费；非法查询类型仍报错。旧快照原文／digest 不变。
-- [ ] **AC-2 一致校验：** Movie／TV 拒绝相反身份，Auto 在正常识别、确认、修正、意图保存、durable identity 与摘要复用中都接受两种合法类型。None 不发查询；合法离线路径不依赖旧键。Provider 不符、身份类型缺失／非法、跨来源／版本／pin 的引用拒绝或回到合法重新识别。
-- [ ] **AC-3 场景一——重新整理电视剧：** 已完成的历史使用 tv，旧策略 `mediaType=movie`、查询类型 Auto；从 Files 新发起整理时，初始 `choice.metadata` 为空，按当前剧集来源重新识别，不自动使用旧 TMDB 编号。历史含完整类型、仅有编号、没有历史三种情况遵循同一规则。假 Provider 让新识别返回与历史不同的 tv 编号，验证采用新编号、TV 详情接口和剧集命名分类；同号 movie／tv 不串型。新的歧义允许要求本次选择。用户本次明确选取已有合法历史候选并保存时，则按 AC-4/5 使用其真实类型。旧记录保持原样。
-- [ ] **AC-4 场景二——候选确认后生成摘要：** 原任务停在 Metadata 确认，保存 tv 候选后显式重新分析，在同一任务／原合法 pin 上得到可查看摘要；重新读取／刷新仍保留所选编号和类型。无新歧义时不重复要求确认、不新增同一确认记录；摘要生成不再次访问 Provider。电影候选有对称成功覆盖；新技术失败仍保留已保存决定和真实失败原因。
-- [ ] **AC-5 意图页闭环：** 每项能从既有候选列表明确选择、保存完整 metadata、读回并重新分析得到新摘要；同号不同类型可区分。空候选、不可用选择、409／403、保存未知、Provider 失败均有准确状态／下一步；不会自动提交、伪造候选或让旧摘要继续获得执行授权。
-- [ ] **AC-6 安全与兼容：** 读取／保存决定／分析零 Storage 变更；执行仍须原有精确摘要的明确确认。C 复用 A 命名／分类后仍为 C；成功兄弟不重放，未知效果不可重试；既有 pins／fences、RBAC、source confinement 和逐项独立结果无回归。无 schema／迁移或历史回写。
+- [x] **AC-1 策略保存／兼容：** TMDB 策略页面没有“媒体类型”输入；查询类型可保存／读回。新建、复制、编辑提交及保存结果均不含该策略 `mediaType`。旧键与查询类型冲突、值非法、只有旧键三种输入均按查询类型／默认 Auto 消费；非法查询类型仍报错。旧快照原文／digest 不变。
+- [x] **AC-2 一致校验：** Movie／TV 拒绝相反身份，Auto 在正常识别、确认、修正、意图保存、durable identity 与摘要复用中都接受两种合法类型。None 不发查询；合法离线路径不依赖旧键。Provider 不符、身份类型缺失／非法、跨来源／版本／pin 的引用拒绝或回到合法重新识别。
+- [x] **AC-3 场景一——重新整理电视剧：** 已完成的历史使用 tv，旧策略 `mediaType=movie`、查询类型 Auto；从 Files 新发起整理时，初始 `choice.metadata` 为空，按当前剧集来源重新识别，不自动使用旧 TMDB 编号。历史含完整类型、仅有编号、没有历史三种情况遵循同一规则。假 Provider 让新识别返回与历史不同的 tv 编号，验证采用新编号、TV 详情接口和剧集命名分类；同号 movie／tv 不串型。新的歧义允许要求本次选择。用户本次明确选取已有合法历史候选并保存时，则按 AC-4/5 使用其真实类型。旧记录保持原样。
+- [x] **AC-4 场景二——候选确认后生成摘要：** 原任务停在 Metadata 确认，保存 tv 候选后显式重新分析，在同一任务／原合法 pin 上得到可查看摘要；重新读取／刷新仍保留所选编号和类型。无新歧义时不重复要求确认、不新增同一确认记录；摘要生成不再次访问 Provider。电影候选有对称成功覆盖；新技术失败仍保留已保存决定和真实失败原因。
+- [x] **AC-5 意图页闭环：** 每项能从既有候选列表明确选择、保存完整 metadata、读回并重新分析得到新摘要；同号不同类型可区分。空候选、不可用选择、409／403、保存未知、Provider 失败均有准确状态／下一步；不会自动提交、伪造候选或让旧摘要继续获得执行授权。
+- [x] **AC-6 安全与兼容：** 读取／保存决定／分析零 Storage 变更；执行仍须原有精确摘要的明确确认。C 复用 A 命名／分类后仍为 C；成功兄弟不重放，未知效果不可重试；既有 pins／fences、RBAC、source confinement 和逐项独立结果无回归。无 schema／迁移或历史回写。
 
 ### Required Tests
 
@@ -326,6 +330,71 @@ Status: READY FOR B REVIEW
 - 未改数据库 schema／迁移，未重写旧配置、Result、review 或 Task 历史；本轮未改 Web 产品源码。
 - 工作区既有 dirty/untracked 文件（含 `mediaflow/.DS_Store` 和私有输出）保持未纳入检查点；
   未推送、未发布、未部署。
+
+### B Final Review — PASS
+
+```text
+Task ID: PATCH-20261109-2
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Decision: PASS
+Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
+Reviewed Head: fbabe7f80614dd35faa096dcb55198d183784501
+Accepted Implementation Head: 86d9b7618acd88d640563ffc90f5e9d98c7e8b74
+Reviewer: B
+Review Date: 2026-11-09
+Difficulty: Medium
+Test Level: T4
+Task blockers: NONE
+Authorized bug acceptance complete: YES
+Next: NO ACTIVE IMPLEMENTATION TASK
+```
+
+独立审查固定 Base..Reviewed Head 全部 37 个文件（含配置、全部产品消费者、前后端测试、说明和 Task）。
+`86d9b761..fbabe7f8` 只有 Task 交接报告，验收执行输入与已审源码一致。
+本轮没有修改产品源码，也没有改变 schema／迁移、Executor、Docker 或部署契约。
+原 R1 已因用户明确改变方案而撤销；本次按“新整理重新识别／当前任务保留明确选择”验收，
+不把旧的历史自动复用要求重新加入范围。Slice52 及 Roadmap／Progress 保持原接受状态。
+
+**用户旅程与 AC 结果**
+
+| 验收 | 实际结果 |
+|---|---|
+| AC-1 查询类型唯一控制 | Rules 表单及后端 authority 不再提供策略媒体类型；保存、读回和标准化移除旧键，冲突／非法旧值被忽略，只有旧键时默认 Auto，非法查询类型拒绝。已有不可变配置读取保留，未改写旧快照。完整 Rules 与配置集成测试通过。 |
+| AC-2 各入口一致 | Movie／TV 类型约束及 Auto 双类型通过领域、意图保存、修正和摘要回归；None 保留不查询及既有类型完整离线路径。Provider、来源版本、pin 与权限校验仍由原服务执行。真实 Auto＋旧 mediaType=movie 的剧集旅程始终用 TV 详情。 |
+| AC-3 新整理重新识别 | 自动化真实 API／SQLite／Worker 集成：第一次 TV603 COPY 成功后再次从 Files 发起，初始 metadata=None，新 Provider 结果 TV703 进入剧集摘要；仅编号历史同样重新识别，原603 Result不变。另以构建后 Web 实测：TV702 COPY 成功后，从 Files 选择同一文件→批量整理，新意图仍 metadata=None，并重新搜索形成701/702歧义；本次明确选701后生成新摘要，原702 Result不变。新歧义符合本次用户约定。 |
+| AC-4 当前任务确认续接 | 真实 Task Center→元数据恢复→选择TV701→保存并继续分析→原Task进入waiting_confirm并显示TV/Season 01/S01E01摘要；重新打开SQLite，仍仅一个该Task的review，状态resolved、选择701/tv，没有新增重复确认。重新分析只增加一次get_tv(701)，摘要阶段调用数不变。电影候选确认及人工修正两条原生浏览器旅程也通过，并实际执行完成。 |
+| AC-5 整理意图页 | 真实 Web 意图页从已有候选选TV702→保存→刷新重新认证→读回702/tv→显式生成摘要→明确确认→同一Task完成COPY。组件覆盖同号movie/tv可区分及完整metadata提交；完整回归覆盖空选、冲突、权限、未知提交核对及Provider失败。旧摘要失效，保存不会自行执行。 |
+| AC-6 安全与兼容 | 完整安全／恢复回归覆盖临时Storage零变更分析、明确执行授权、exact source／版本／pin、RBAC、失败原子性、C使用A命名分类仍为C、成功与未知效果不重放。原生摘要读取没有增加Provider调用或目标文件；临时SQLite重开证明旧Result未改。无历史回写。 |
+
+**本轮实际门禁**
+
+证据目录为本机稳定忽略目录 `.git/validation-evidence/fbabe7f8/b-final-review/`，
+不是已上传的CI材料。所有测试使用临时配置／SQLite／Storage和本地假Provider，未读用户媒体或私有配置。
+
+| 命令／范围 | 实际结果与证据 |
+|---|---|
+| `.venv/bin/python -m unittest discover -s tests` | 2671项，OK，7 skipped，301.442秒；`python-full.log`。跳过的是未配置专用环境的Local/SMB/OpenList/S3耐久及真实远端适配器矩阵，非本次变更契约。 |
+| `web: npm run test -- run` | 98文件、1469项通过，135.89秒；`web-unit.log`。 |
+| `web: npm run test:e2e` | 首跑266通过、2项在context关闭阶段因产物文件ENOENT失败，3.1分钟；`web-e2e.log`。原因是B并行启动原生浏览器套件共用了默认test-results目录，不是产品断言失败。对这两项使用独立output目录补跑：2/2通过，2.6秒，`web-e2e-rerun.log`；未删断言、加重试或调超时。全部268个场景均有本候选通过结果，不声称首跑全绿。 |
+| `web: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-source-history.python.spec.ts tests/e2e/operations-inventory.python.spec.ts -g <history/source/native-Metadata-filter>` | 5/5通过，9.5秒；包含历史来源、首次歧义同页选择与执行、Metadata确认／修正同Task续接；`native.log`。 |
+| 真实TV局部夹具 | 复用既有operations_inventory_harness和原生入口，无新增产品路由。意图选择保存／刷新／摘要、COPY、新Files整理、Task Center TV确认续接通过；`tv-current.json`、`tv-copy-success.json`、`tv-new-current.json`、`tv-recovery-result.json`、`tv-reopened-persistence.json`及桌面／窄屏截图。 |
+| Python质量 | governance、所有git跟踪Python文件的Ruff检查／格式（354文件）、compileall、pip check、两个示例config validate、Base..Head whitespace均通过；禁用依赖rg无匹配（预期exit 1）。命令与结果见`quality-results.json`及对应日志。未纳入既有未跟踪调查脚本`.explore_adapter_block.py`。 |
+| Web质量／产物 | typecheck、lint、format:check、build全部通过，分别有日志；本轮浏览器使用本轮构建产物。 |
+| wheel／安装后消费 | `pip wheel . --no-deps -w <evidence>/wheel`与`scripts/wheel_smoke_test.py <exact-wheel>`通过；独立虚拟环境、源码树外加载site-packages、CLI／示例验证／数据库备份恢复及准备／恢复消费者检查通过。wheel SHA-256：`07024680022cafd24e38506ad42a76781f364c1fe1f61bdb6a21863469028814`。 |
+
+B局部浏览器脚本的初次探测有选择器／响应监听路径错误，均发生在实际保存或准入之后；
+B读取现有持久记录再继续，没有重复提交。另一个局部脚本原期待新703，但假Provider钩子误用Storage ID，
+实际仍返回701/702；已按真实输出验收新歧义与本次明确选择701，未把它记作703自动匹配。
+603→703与仅编号历史的自动识别证据来自本轮全量中的生产API／Worker集成用例。
+本轮并行运行长门禁时继续审查完整变更；未重复全量套件或以等待凑验收时间。
+这些调查失败保留在证据目录，不转交为产品修正。
+为独立验证后续摘要，在临时夹具中移除了第一次COPY的目标文件，保留来源和Result；
+该操作只是夹具准备，不属于产品恢复动作，首次COPY成功证据已先保存。
+
+本次不改Storage适配器、外部服务或部署契约，未运行生产服务矩阵或Docker发布门禁；
+不声称已部署，也未推送。已有SQLite ResourceWarning及jsdom scrollTo提示保留在原日志，测试退出成功。
+按停止规则，本独立Task所有授权结果已满足，不再规划后续Task；本地仅提交B验收与no-active指针。
 
 ---
 
