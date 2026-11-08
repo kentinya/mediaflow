@@ -485,7 +485,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
       { label: "识别类型", switch: true, section: ["基本信息", "状态"] },
       { label: "识别规则", switch: true, section: ["基本信息", "匹配条件"] },
       { label: "类型策略", switch: true, section: ["识别类型与策略引用"] },
-      { label: "元数据策略", switch: true, section: ["元数据服务与媒体类型"] },
+      { label: "元数据策略", switch: true, section: ["元数据服务与查询类型"] },
       { label: "命名规则", switch: true, section: ["电影模板", "剧集模板"] },
       { label: "分类规则", switch: true, section: ["分类规则列表"] },
       // OrganizePolicy owns no enable state, so no switch may be invented.
@@ -506,6 +506,13 @@ test.describe("Rules reference-aligned workspace presentation", () => {
         .click();
       const drawer = page.getByRole("dialog", { name: `添加${family.label}` });
       await expect(drawer).toBeVisible();
+      // MetadataPolicy's only type control is the query type; the legacy policy
+      // media type input is gone, so it must not reappear as a duplicate field.
+      if (family.label === "元数据策略") {
+        await expect(
+          drawer.locator("label").filter({ hasText: "媒体类型" }),
+        ).toHaveCount(0);
+      }
       // Section titles are real `legend` elements, so a same-named select
       // option elsewhere in the form cannot satisfy (or hide) the check.
       for (const section of family.section)

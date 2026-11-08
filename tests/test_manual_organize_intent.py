@@ -212,44 +212,69 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                         title="The Show",
                     )
                 )
-                movie_policy = replace(
-                    self.snapshot,
-                    metadata_policies=tuple(
-                        replace(item, query_type="movie", media_type="movie")
-                        if item.policy_id == "B"
-                        else item
-                        for item in self.snapshot.metadata_policies
-                    ),
-                )
-                service = ManualOrganizeIntentService(
-                    repository,
-                    configuration_resolver=lambda: movie_policy,
-                    runtime_resolver=lambda snapshot_id, digest: self.runtime,
-                    storage_factory=lambda runtime, ids: {"source": self.storage},
-                )
-                with self.assertRaises(ManualIntentError) as raised:
-                    service.create((self.sources["one"],), actor="operator")
-                self.assertEqual(raised.exception.code, "incompatible_choice")
-
-                legacy_auto = replace(
+                matrix_snapshot = replace(
                     self.snapshot,
                     metadata_policies=tuple(
                         replace(item, query_type="auto", media_type="movie")
                         if item.policy_id == "B"
+                        else replace(item, query_type="movie")
+                        if item.policy_id == "C"
                         else item
                         for item in self.snapshot.metadata_policies
                     ),
                 )
                 service = ManualOrganizeIntentService(
                     repository,
-                    configuration_resolver=lambda: legacy_auto,
+                    configuration_resolver=lambda: matrix_snapshot,
                     runtime_resolver=lambda snapshot_id, digest: self.runtime,
                     storage_factory=lambda runtime, ids: {"source": self.storage},
                 )
                 intent = service.create((self.sources["one"],), actor="operator")
                 self.assertEqual(intent.items[0].choice.recognition_type_id, "B")
-                self.assertIsNotNone(intent.items[0].choice.metadata)
-                self.assertEqual(intent.items[0].choice.metadata.media_type, "tv")
+                # A new organize re-identifies the source: the historical tv
+                # Result/evidence is an offered candidate, never this item's
+                # initial metadata identity.
+                self.assertIsNone(intent.items[0].choice.metadata)
+                updated = service.update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    {
+                        "recognitionTypeId": "B",
+                        "metadata": {
+                            "provider": "tmdb",
+                            "providerId": "603",
+                            "mediaType": "tv",
+                            "title": "The Show",
+                        },
+                    },
+                    expected_version=1,
+                    actor="operator",
+                )
+                self.assertEqual(updated.items[0].choice.metadata.media_type, "tv")
+                self.assertEqual(updated.items[0].choice.metadata.provider_id, "603")
+                # The same tv identity is rejected under a movie query type.
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.update_choice(
+                        intent.intent_id,
+                        intent.items[0].item_id,
+                        {
+                            "recognitionTypeId": "C",
+                            "metadata": {
+                                "provider": "tmdb",
+                                "providerId": "603",
+                                "mediaType": "tv",
+                                "title": "The Show",
+                            },
+                        },
+                        expected_version=2,
+                        expected_item_version=2,
+                        actor="operator",
+                    )
+                self.assertEqual(raised.exception.code, "incompatible_choice")
+                unchanged = service.get(intent.intent_id)
+                self.assertEqual(2, unchanged.version)
+                self.assertEqual("B", unchanged.items[0].choice.recognition_type_id)
+                self.assertEqual("tv", unchanged.items[0].choice.metadata.media_type)
 
     def test_rescan_observation_updates_do_not_stale_the_same_source_occurrence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

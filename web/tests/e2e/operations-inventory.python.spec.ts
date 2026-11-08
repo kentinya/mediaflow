@@ -1546,12 +1546,12 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     .locator("option")
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value")));
   expect(optionValues).toEqual(
-    expect.arrayContaining(["tmdb/111", "tmdb/911"]),
+    expect.arrayContaining(["tmdb/111/movie", "tmdb/911/movie"]),
   );
 
   // Choose one grounded candidate; the same-page analysis produces a real
   // executable summary.
-  await identity.selectOption("tmdb/911");
+  await identity.selectOption("tmdb/911/movie");
   await expect(page.getByText(/修正已持久保存/)).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(

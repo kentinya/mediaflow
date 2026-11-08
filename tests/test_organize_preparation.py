@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import tempfile
 import threading
 import unittest
@@ -49,7 +50,11 @@ from mediaflow.domain.media_discovery import (
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
+from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
+    PersistentTaskItem,
+    TaskItemStatus,
+)
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -123,7 +128,14 @@ class _PreparationFixture(unittest.TestCase):
         value.update(overrides)
         return value
 
-    def document(self, *, exclude_rules: tuple[str, ...] = (), resource_libraries=None) -> dict:
+    def document(
+        self,
+        *,
+        exclude_rules: tuple[str, ...] = (),
+        resource_libraries=None,
+        operation: str = "MOVE",
+        recognition_type: str = "A",
+    ) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"]["databasePath"] = str(self.database)
         document["historyPath"] = str(self.source_root.parent / "history.jsonl")
@@ -158,6 +170,8 @@ class _PreparationFixture(unittest.TestCase):
         # RecognitionRule, so this fixture publishes the ordinary video rule.  A
         # source with *no* matching rule is now its own native Recognition problem
         # and is covered by dedicated journeys in tests.test_media_discovery.
+        for policy in document["organizePolicies"]:
+            policy["operation"] = operation
         document["recognitionRules"] = [
             {
                 "id": "preparation-video-fixture",
@@ -170,7 +184,7 @@ class _PreparationFixture(unittest.TestCase):
                     "operator": "in",
                     "value": ["mkv", "mp4"],
                 },
-                "outputRecognitionType": "A",
+                "outputRecognitionType": recognition_type,
             }
         ]
         document["mediaLibraries"] = [
@@ -199,8 +213,14 @@ class _PreparationFixture(unittest.TestCase):
         candidates: tuple[MediaCandidate, ...] | None = None,
         resource_libraries=None,
         provider: SyntheticMetadataProvider | None = None,
+        operation: str = "MOVE",
+        recognition_type: str = "A",
     ):
-        document = self.document(resource_libraries=resource_libraries)
+        document = self.document(
+            resource_libraries=resource_libraries,
+            operation=operation,
+            recognition_type=recognition_type,
+        )
         source = _RecordingStorage("source", self.source_root)
         source2 = _RecordingStorage("source2", self.second_source_root)
         target = _RecordingStorage("target", self.target_root)
@@ -2410,6 +2430,130 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
                     resource_library_id="two",
                 )
             )
+
+
+class SourceReidentificationJourneyTests(_PreparationFixture):
+    """AC-3: a new Files organize identifies the source again.
+
+    A prior same-version Result/evidence or saved candidate is only an offered
+    candidate on the item document.  It never seeds the new intent, so the
+    pinned RecognitionType/query type runs the ordinary identification again.
+    """
+
+    FILE = "Shows/The Show (2024) S01E01.mkv"
+
+    def _admit_and_settle(self, value):
+        self.admit(value, [self.FILE])
+        settled = self.run_worker(value)
+        self.assertIsNotNone(settled["previewId"], settled)
+        intent = value.repository.get_manual_intent(settled["intentId"])
+        return settled, intent
+
+    def _preview_item(self, value, preview_id: str) -> dict:
+        status, document = self.request(value, f"/api/v1/operations/organize/previews/{preview_id}")
+        self.assertEqual(200, status, document)
+        (item,) = document["items"]
+        return item
+
+    @staticmethod
+    def _identity(item: dict) -> dict:
+        return item["plan"]["analysis"]["metadata"]["identity"]
+
+    def test_a_completed_copy_is_not_seeded_into_the_next_files_organize(self):
+        self.media(self.FILE)
+        history = (MediaCandidate("tmdb", "603", MediaType.TV, "The Show", year=2024),)
+        reidentified = (MediaCandidate("tmdb", "703", MediaType.TV, "The Show", year=2024),)
+        provider = SyntheticMetadataProvider(history, (1,))
+        with self.journey(
+            candidates=history,
+            provider=provider,
+            operation="COPY",
+            recognition_type="B",
+        ) as value:
+            first, first_intent = self._admit_and_settle(value)
+            self.assertIsNone(first_intent.items[0].choice.metadata)
+            self.assertEqual("B", first_intent.items[0].choice.recognition_type_id)
+            first_item = self._preview_item(value, first["previewId"])
+            self.assertEqual("tv", self._identity(first_item)["mediaType"])
+            self.assertEqual("603", self._identity(first_item)["providerId"])
+            self.assertIn("Organized/TV", first_item["plan"]["destination"]["storageRelativePath"])
+
+            execution = self.execute(value, first, [first_item["itemId"]])
+            self.assertIn(execution.get("status"), {"admitted", "running"}, execution)
+            completed = self.run_execution_worker(value)
+            self.assertEqual("completed", completed.status.value, completed)
+            # COPY keeps the same source version available for the next request.
+            self.assertTrue((self.source_root / self.FILE).exists())
+            recorded = value.repository.list_results_for_source("source", self.FILE, limit=100)
+            self.assertEqual({"603"}, {result.provider_id for result in recorded})
+
+            # Free the copied destination in this temporary fixture, then issue a
+            # genuinely new Files organize of the same source version.
+            shutil.rmtree(self.target_root)
+            self.target_root.mkdir()
+            source_mutations = list(value.source.mutations)
+            target_mutations = list(value.target.mutations)
+            provider._candidates = reidentified
+            second, second_intent = self._admit_and_settle(value)
+            self.assertIsNone(second_intent.items[0].choice.metadata)
+            self.assertEqual("B", second_intent.items[0].choice.recognition_type_id)
+            second_item = self._preview_item(value, second["previewId"])
+            self.assertEqual("tv", self._identity(second_item)["mediaType"])
+            self.assertEqual("703", self._identity(second_item)["providerId"])
+            self.assertIn("Organized/TV", second_item["plan"]["destination"]["storageRelativePath"])
+            # Re-identification and the summary stay zero-mutation.
+            self.assertEqual(source_mutations, value.source.mutations)
+            self.assertEqual(target_mutations, value.target.mutations)
+            # The completed history is not rewritten by the new identification.
+            self.assertEqual(
+                {"603"},
+                {
+                    result.provider_id
+                    for result in value.repository.list_results_for_source(
+                        "source", self.FILE, limit=100
+                    )
+                },
+            )
+
+    def test_number_only_history_is_not_seeded_into_a_new_files_organize(self):
+        self.media(self.FILE)
+        reidentified = (MediaCandidate("tmdb", "703", MediaType.TV, "The Show", year=2024),)
+        provider = SyntheticMetadataProvider(reidentified, (1,))
+        with self.journey(
+            candidates=reidentified,
+            provider=provider,
+            recognition_type="B",
+        ) as value:
+            # History carries Provider+ID only, without its own captured type.
+            value.repository.append_result(
+                PersistentResultRecord(
+                    "result-number-only",
+                    "task-number-only",
+                    "item-number-only",
+                    "source",
+                    self.FILE,
+                    None,
+                    None,
+                    "B",
+                    "tmdb",
+                    "603",
+                    "B",
+                    "B",
+                    "B",
+                    "B",
+                    "copy",
+                    "dry_run",
+                    self.clock_value,
+                    title="The Show",
+                )
+            )
+            settled, intent = self._admit_and_settle(value)
+            self.assertIsNone(intent.items[0].choice.metadata)
+            item = self._preview_item(value, settled["previewId"])
+            self.assertEqual("tv", self._identity(item)["mediaType"])
+            self.assertEqual("703", self._identity(item)["providerId"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
 
 if __name__ == "__main__":

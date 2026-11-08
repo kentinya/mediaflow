@@ -998,11 +998,16 @@ class ManualOrganizeIntentService:
         """The ordinary (non-Files) initialized choice for one source.
 
         This is the historic behaviour of an intent admitted without a Files
-        RecognitionRule run: a prior durable Result's type, otherwise the pinned
-        snapshot's first configured type.  It is an *editor* initial value for the
-        explicit manual entry points that existed before RO-2, never a decision the
-        Files journey may treat as the operator's own (see
+        RecognitionRule run: a prior durable Result's RecognitionType, otherwise
+        the pinned snapshot's first configured type.  It is an *editor* initial
+        value for the explicit manual entry points that existed before RO-2, never
+        a decision the Files journey may treat as the operator's own (see
         :meth:`create_from_sources`).
+
+        A new organize identifies its source again: no prior Result, evidence row
+        or saved candidate is seeded into the choice.  Those remain offered
+        candidates (:meth:`allowed_metadata_identities`) that only an explicit
+        operator selection for this item turns into an analysis input.
         """
 
         result = self._latest_source_result(source)
@@ -1012,7 +1017,7 @@ class ManualOrganizeIntentService:
             selected_type = by_type[result.recognition_type]
         if selected_type is None:
             selected_type = snapshot.recognition_types[0]
-        return self._choice_for_type(selected_type, result, snapshot)
+        return self._choice_for_type(selected_type)
 
     def _latest_source_result(self, source):
         results = self._source_results(source)
@@ -1027,94 +1032,15 @@ class ManualOrganizeIntentService:
         )
         return ordered[-1]
 
-    def _choice_for_type(self, selected_type, result, snapshot: ManualConfigurationSnapshot):
-        metadata = None
-        provider = getattr(result, "provider", None) if result is not None else None
-        provider_id = getattr(result, "provider_id", None) if result is not None else None
-        title = getattr(result, "title", None) if result is not None else None
-        metadata_policy = next(
-            (
-                item
-                for item in snapshot.metadata_policies
-                if item.policy_id == selected_type.metadata_policy_id
-            ),
-            None,
-        )
-        # A historical Result carries Provider+ID but no media type column.  The
-        # type is only reusable when this exact Result's own captured analysis
-        # evidence names it; otherwise the ordinary recognition path runs again.
-        media_type = self._result_media_type(result)
-        if (
-            provider
-            and provider_id
-            and media_type is not None
-            and metadata_policy is not None
-            and provider == metadata_policy.provider_id
-        ):
-            metadata = ManualMetadataReference(provider, provider_id, media_type, title=title)
+    @staticmethod
+    def _choice_for_type(selected_type):
         return ManualChoice(
             selected_type.type_id,
-            metadata,
+            None,
             selected_type.naming_policy_id,
             selected_type.classification_policy_id,
             selected_type.organize_policy_id,
         )
-
-    def _result_media_type(self, result) -> str | None:
-        """The media type this exact historical Result itself captured, if any.
-
-        The Result row deliberately has no media type column, so the only
-        factual source is its own captured evidence/execution identity.  A
-        number without a type is not a reusable identity: this method returns
-        ``None`` instead of borrowing the policy, Naming or a same-number value.
-        """
-
-        if result is None:
-            return None
-        provider = getattr(result, "provider", None)
-        provider_id = getattr(result, "provider_id", None)
-        item_id = getattr(result, "item_id", None)
-        if not provider or not provider_id or not item_id:
-            return None
-        reader = getattr(self._repository, "list_evidence_for_item", None)
-        if not callable(reader):
-            return None
-        try:
-            evidence_values = tuple(reader(item_id, limit=16))
-        except Exception:  # noqa: BLE001 - an unreadable evidence row is not authority
-            return None
-        for evidence in evidence_values:
-            if getattr(evidence, "source_storage_id", None) != getattr(
-                result, "source_storage_id", None
-            ) or getattr(evidence, "source_path", None) != getattr(result, "source_path", None):
-                continue
-            media_type = self._evidence_media_type(evidence, provider, provider_id)
-            if media_type is not None:
-                return media_type
-        return None
-
-    @staticmethod
-    def _evidence_media_type(evidence, provider: str, provider_id: str) -> str | None:
-        identity = getattr(evidence, "execution_identity", None)
-        if isinstance(identity, Mapping):
-            media_type = identity.get("mediaType")
-            if (
-                identity.get("provider") == provider
-                and identity.get("providerId") == provider_id
-                and media_type in {"movie", "tv"}
-            ):
-                return str(media_type)
-        section = ManualOrganizeIntentService._metadata_evidence_section(evidence)
-        value = getattr(section, "value", None) if section is not None else None
-        if isinstance(value, Mapping):
-            media_type = value.get("mediaType")
-            if (
-                value.get("provider") == provider
-                and value.get("providerId") == provider_id
-                and media_type in {"movie", "tv"}
-            ):
-                return str(media_type)
-        return None
 
     def default_choice_for_source(
         self, source, snapshot: ManualConfigurationSnapshot
@@ -1157,19 +1083,21 @@ class ManualOrganizeIntentService:
         runtime,
         snapshot: ManualConfigurationSnapshot,
     ) -> ManualChoice:
-        """The Files journey's initialized choice: the pinned rule's own outcome."""
+        """The Files journey's initialized choice: the pinned rule's own outcome.
+
+        A new organize re-identifies its source.  A prior Result, evidence row or
+        saved candidate for the same source is offered as an explicit candidate
+        (:meth:`allowed_metadata_identities`), but it never seeds this choice: the
+        item starts with no fixed metadata identity, and only the operator's own
+        saved selection for this item becomes an analysis input.
+        """
 
         resolved_type = self._resolved_recognition_type(source, runtime, snapshot)
         if resolved_type is None:
             # No rule matched, or several legal types tied: this is the operator's
             # decision to make, published later as the native Recognition problem.
             return ManualChoice(None, None, None, None, None)
-        result = self._latest_source_result(source)
-        if result is not None and result.recognition_type != resolved_type.type_id:
-            # A prior Result under a different type is not this source's evidence
-            # for the rule's answer; keep only the rule-decided type.
-            result = None
-        return self._choice_for_type(resolved_type, result, snapshot)
+        return self._choice_for_type(resolved_type)
 
     @staticmethod
     def _resolved_recognition_type(source: ManualSourceIdentity, runtime, snapshot):

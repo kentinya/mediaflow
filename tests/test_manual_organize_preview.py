@@ -269,8 +269,8 @@ class ManualOrganizePreviewTests(unittest.TestCase):
         )
         return intents, previews, source, target
 
-    def test_legacy_policy_media_type_does_not_override_history_tv_identity(self):
-        """AC-3: a tv Result+evidence stays tv under old mediaType=movie/Auto policy."""
+    def test_legacy_policy_media_type_does_not_override_a_saved_tv_identity(self):
+        """AC-3/4: an explicit tv selection stays tv under old mediaType=movie/Auto."""
 
         fixture = self._fixture(("One.2001.mkv",))
         (
@@ -360,11 +360,31 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     storages={"source": source, "target": target},
                 )
                 intent = intents.create((sources[0],), actor="operator")
+                # A new organize re-identifies its source.  The historical tv
+                # Result/evidence is only an offered candidate here, never the
+                # item's initial metadata identity.
+                self.assertIsNone(intent.items[0].choice.metadata)
+                self.assertEqual(intent.items[0].choice.recognition_type_id, "B")
+                intent = intents.update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    {
+                        "recognitionTypeId": "B",
+                        "metadata": {
+                            "provider": "tmdb",
+                            "providerId": "603",
+                            "mediaType": "tv",
+                            "title": "The Show",
+                        },
+                    },
+                    expected_version=1,
+                    actor="operator",
+                )
                 choice = intent.items[0].choice
-                self.assertEqual(choice.recognition_type_id, "B")
                 self.assertIsNotNone(choice.metadata)
                 self.assertEqual(choice.metadata.media_type, "tv")
-
+                # The old policy mediaType stays ignored: Auto permits this tv
+                # selection and the TV interface is used, never the movie one.
                 preview = previews.create(
                     intent.intent_id,
                     expected_version=intent.version,

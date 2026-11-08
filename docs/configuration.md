@@ -169,6 +169,15 @@ and a missing `mediaQueryType` reads as `auto`. A policy `none` performs no look
 source-linked, type-complete offline identity may still be planned without inventing a Provider
 identity. Saving or re-analysing a choice performs no Storage mutation.
 
+Each new organize identifies its source again. A prior same-version Result, evidence row or saved
+candidate is not copied into the new item's metadata choice; the pinned RecognitionType and its
+`mediaQueryType` run the ordinary identification. The same source-grounded identities stay available
+as bounded `allowedMetadataIdentities`; only after the operator selects and saves one for this item
+does the analysis use that Provider ID and its real movie/tv type. The current Task's re-analysis
+reads the correct movie or TV detail interface and the summary reuses the persisted identity, so a
+saved selection is not confirmed twice or looked up again by the summary stage. A replaced source
+version or a different Active revision never inherits the earlier candidate authority.
+
 ## Automation engine settings (native, focused)
 
 ### CURRENT — Three system runtime settings (Slice47 PASS / CLOSED)
