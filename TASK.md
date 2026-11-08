@@ -1,71 +1,24 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Task PATCH-20261108-3 — OpenList 元数据解耦及现有失败修正 — **B PASS**。
-
-```text
-Task Type: STANDALONE MINOR BUG
-Parent Slice: NONE
-Decision: PASS
-Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
-Accepted Implementation Head: cf680df6e24725ba40ada378e158d6a0e44710e5
-Reviewer: B
-Review Date: 2026-11-08
-```
-
-用户进入 OpenList 文件页选择两个文件，经分析、精确摘要、明确确认及 Worker 执行，
-完成原生移动与重命名，持久结果均为 SUCCESS / verified_complete。再次 Worker poll、
-关联任务读回、返回文件页及刷新保持同一结果；63 次目录读取全部 refresh=false，
-4 次 Move／Rename，取链接与内容读取均为 0。
-
-源缺失、目标冲突、执行后列表失败、目标大小不符及原源仍在的结果符合现有语义。
-Python 3.11 启动、容量设置完整整理、动作可读性及 V1／V2 CSP 修正均已验收。
-
-| 验证 | 完整运行结果 |
-|---|---|
-| Python 3.11／3.12／3.13 | 每版 2651 passed、7 skipped，共 2658 项 |
-| Web unit | 97 files、1459 passed |
-| 默认 E2E | 264 passed |
-| 16 份原生 Python specs | 190 passed、2 项脚本失败；两项独立运行 2 passed |
-| Python／Web 静态检查、构建、示例及依赖检查 | PASS |
-| wheel 构建与外部安装 smoke | PASS |
-| Docker 原生传输 lifecycle smoke | PASS |
-| Docker release-security smoke | PASS |
-
-两项脚本记录对应第二次复制前的列表／授权同步，以及慢读编辑的 route 回调。
-产品分别显示既有拒绝与刷新提示、保持已保存的启用状态和处理上限。按用户本轮明确的
-产品旅程与范围要求收尾；第 12 项测试工具返工安排已撤销。完整运行的两项失败及
-七项专用外部服务／耐久环境跳过保留在验收记录中。
-
-完整复核、实际命令、逐文件结果及前次决定见 Git `64f3910b:TASK.md`；本轮收尾仅更改
-TASK。源码与测试执行输入相对接受实现没有变化。原始证据位于本机
-`.git/validation-evidence/cf680df6/b-final/`，包含日志、traces、截图、HTTP 台账、构建身份
-及 Docker 启停记录。Colima 测试 VM 已停止，默认 context 保持原值。
-
-Slice52 的接受身份和关闭结果保持。工作区预存文件保持。
-生命周期依据 [Development Workflow](docs/development-workflow.md) §3.1；独立修正至此完成。
-
----
-
-## Planning-only draft — PATCH-20261109-1 删除文件页整理记录并统一目录接入
-
-用户于 2026-11-09 根据截图调查要求规划 Task，随后明确提出删除“整理记录”。
-本草案按该方向更新，保留上方 NO ACTIVE IMPLEMENTATION TASK，实施时再激活。
-依据 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)，
-由 B 规划和独立验收；角色经验见 [B experience](docs/agent-experience/task-planner-reviewer.md)。
+# PATCH-20261109-1 — 删除文件页整理记录并统一目录接入
 
 ```text
 Task ID: PATCH-20261109-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 45674526b04d3366f533b86e864b3c8d179736ed
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY
+Development Authorization: USER-AUTHORIZED IMPLEMENTATION OF B'S COMMITTED DRAFT
+Candidate Checkpoint: cc6ffbb1496685d440e731421c0f45ee44953995
 ```
 
-### Goal and observed gap
+用户于 2026-11-09 根据截图调查要求规划 Task，随后明确提出删除“整理记录”，并授权
+按已提交草案实施。B 负责规划与独立验收；本轮由 Developer 直接实施该已提交草案，
+未经 B 预审、不自签 PASS。依据
+[Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)。
+
+## Goal and observed gap
 
 用户进入“文件”浏览资源库，库上下文之后直接呈现目录的加载、列表、空态或错误。
 文件页删除整块“整理记录”；整理工作的状态、结果、摘要和确认使用已有任务中心入口。
@@ -83,7 +36,7 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
 [CURRENT 读取接入](docs/product-experience.md#current--slice52-experience-refinement-slice52-pass--closed)。
 本次用户选择替换旧旅程中文件页展示整理历史的呈现约定，沿用其准确核对及已有工作可达性。
 
-### Implementation Scope
+## Implementation Scope
 
 1. 删除文件页 `OrganizeWorkPanel`、两处挂载、专用状态／文案及专用查询 hook。
    按实际消费者清理 `organize-work-query.ts` 和对应导入／测试依赖；
@@ -100,38 +53,36 @@ Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支
    更新直接受影响测试，新增精确浏览器场景可集中到
    `web/tests/e2e/files-read-handoff.spec.ts`。
 
-### Acceptance Criteria
+## Acceptance Criteria
 
-- [ ] AC-1：文件页首次进入、快／慢目录读取、缓存返回、成功、空目录、网络及业务错误、
+- [x] AC-1：文件页首次进入、快／慢目录读取、缓存返回、成功、空目录、网络及业务错误、
   手动刷新和切库／切路径全过程都没有“整理记录”标题、说明、列表及分页。
   普通浏览不发起记录列表查询或其轮询；目录区直接承接当前库上下文。
-- [ ] AC-2：等待反馈、真实文件列表及错误恢复按实际读取状态显示，提示／卡片／路径各一次；
+- [x] AC-2：等待反馈、真实文件列表及错误恢复按实际读取状态显示，提示／卡片／路径各一次；
   同条件刷新保留内容，快切和迟到响应归属正确。桌面1536×1024与390×844下
   等待和就绪接入平顺，键盘可用、长路径可读、无水平溢出；reduced-motion 反馈清楚。
 - [ ] AC-3：文件整理成功受理后进入准确准备／摘要；用户离开后从任务中心仍能找到
   同一任务、查看摘要、明确确认及查看独立结果。刷新／重认证后该入口继续可达。
-- [ ] AC-4：提交响应丢失时，仍按原 requestId 核对并定位对应工作；核对暂不可用时
+  **BLOCKED（见 Developer Completion Report）：现有任务中心对普通初次待确认的手动整理
+  只提供状态／取消／证据读取，不提供该准备的摘要与确认入口；本轮未新增后端或任务中心入口。**
+- [x] AC-4：提交响应丢失时，仍按原 requestId 核对并定位对应工作；核对暂不可用时
   提示准确且任务中心可供核查。界面没有指向已删除区域的指引；核对及查看不重发提交。
-- [ ] AC-5：媒体库浏览、文件页普通操作状态、无 Active／无库／无效路径和401／403
+- [x] AC-5：媒体库浏览、文件页普通操作状态、无 Active／无库／无效路径和401／403
   保持原行为。浏览／刷新／返回只读；整理仍由现有明确确认触发。
 
-### Required Tests
+## Required Tests
 
 测试责任依 [workflow §6](docs/development-workflow.md#6-test-levels)。Web 命令均在 `web/` 运行。
 
 **Developer — affected tests**
 
 ```sh
-npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx
+npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx
 npm run typecheck
 npm run build
 npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts
 ```
 
-组件测试覆盖各目录状态下记录区及其普通浏览请求退出、错误后重读、迟到响应，
-并保持现有准确 requestId 核对、未知响应及准确导航断言。
-新增浏览器场景使用真实路由／生产构建和本地夹具，检查快慢读取的中间状态、
-桌面／窄屏、任务中心重开准确摘要以及请求台账。
 修改文件另跑精确路径 `npx eslint <changed-ts-tsx-paths>` 和
 `npx prettier --check <changed-web-paths>`；根目录运行
 `python3 scripts/check_governance.py`、`git diff --check` 后交实现检查点。
@@ -157,18 +108,99 @@ B 补验文件页受理后离开、任务中心找到同一任务并确认摘要
 `.git/validation-evidence/<candidate>/patch-20261109-1/`。
 T3 验收范围为文件页呈现、记录入口退出及直接依赖。
 
-### Non-goals
+## Non-goals
 
 后端记录／查询 API、任务数据和历史保留；任务中心沿用现有入口及摘要确认。
 本 Task 不涉及后端／权限／Active／schema／Storage／执行引擎变更，
 共享动画／等待门限和其他页面业务功能保持。
-Slice52、Roadmap、Progress 和既有接受身份保持；本轮只更新 Task 草案。
+Slice52、Roadmap、Progress 和既有接受身份保持。
 
-### Developer Completion Report
+## Developer Completion Report
 
-待实施后填写检查点、实际受影响测试结果、剩余工作及 READY FOR B REVIEW。
+```text
+Implementation commit: cc6ffbb1496685d440e731421c0f45ee44953995
+Base:                  45674526b04d3366f533b86e864b3c8d179736ed
+Branch:                main
+Role exception:        用户直接授权 Developer 实施 B 的已提交草案；未获 B 预审，未自签 PASS
+```
 
-### B Review Result
+### Changed files
 
-待独立审查后记录精确 Base..Head、实际验收结果与 PASS／FIX REQUIRED。
-PASS 后按独立修正流程恢复紧凑 NO ACTIVE IMPLEMENTATION TASK。
+- `web/src/features/library/StorageFilesPage.tsx`：删除 `OrganizeWorkPanel`、
+  `ORGANIZE_WORK_STATUS_LABELS`、两处挂载及专用查询导入；新增局部
+  `renderBrowseContext`（提示／库卡片／切换提示）供等待与异常分支复用，成功分支仍由
+  `FileBrowseView` 渲染同一上下文；整理提交两处未确认提示改为指向任务中心。
+- `web/src/features/library/organize-work-query.ts`：删除（唯一消费者为已删除面板）。
+- `web/src/features/library/StorageFilesPage.test.tsx`：普通浏览、慢读取、读取失败断言
+  无记录区且不发起 `/files/organize-work`；未确认整理的两种提示断言任务中心文案与
+  不重发；既有准确 `requestId` 核对、他 binding／等价未决记录拒绝、精确导航断言保持。
+- `web/tests/e2e/files-read-handoff.spec.ts`：新增 4 个真实路由／生产构建场景：
+  快读、1200ms 慢读（等待→表格）、读取失败后唯一只读重试、390×844 无水平溢出；
+  每个场景都从实际请求台账断言无 organize-work 列表读取，且页面无“整理记录”。
+
+`fetchFilesOrganizeWork`、`api-client` 的准确 `requestId` 核对能力与全部消费者保留；
+目录读取、授权边界、等待门限、刷新、选择、工具栏与普通操作行为未改。
+
+### Actual results
+
+| 命令（cwd `web/`） | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 3 files, 90 passed |
+| `npm run typecheck` | PASS |
+| `npm run build` | PASS |
+| `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts` | 4 passed |
+| `npx eslint <changed paths>` | PASS |
+| `npx prettier --check <changed paths>` | PASS |
+| `python3 scripts/check_governance.py` | PASS |
+| `git diff --check` | PASS |
+
+首轮浏览器场景因 glob 写成 `files?*` 未命中真实 API（请求无 query），两例等待超时；
+改为 `**/api/v1/resource-libraries/*/files` 后 4 例全部通过。组件测试首轮
+`tsc` 报 `release?.()` 控制流收窄错误，改为显式 gate 对象后通过。
+
+### AC-3 blocker（必须由 B／用户决定）
+
+以真实 Python 栈（`scripts/operations_inventory_harness.py`，生产构建 + 真实 API/SQLite/
+Worker）实际复现：
+
+1. Files 选择 `Three.2003.mkv` → 受理并生成计划摘要，页面仍在
+   `/operations/organize/new?discoveryId=…`，摘要页有确认入口。
+2. 经侧栏进入任务中心：该工作显示为“手动整理 / 进行中”，条目为
+   “等待确认 / waiting_confirm”；详情只有 `取消运行`、`导出结果 JSON`、`查看证据`。
+3. 打开条目证据：显示“审核与恢复 — 此文件没有待处理操作”，没有计划摘要或确认按钮。
+
+代码佐证：
+`mediaflow/application/manual_recovery_continuation.py::_files_native_summary` 对
+“普通初次待确认、无四类问题、无已受理执行”的条目显式返回 `None`；
+`web/src/features/operations/RunDetailTabs.tsx` / `TaskItemRecoveryPanel.tsx` 仅在
+`manualRecoveryPreparation` 存在时渲染摘要确认；Web 侧没有任何
+Task/run → `/operations/organize/new?discoveryId=…` 的入口（该入口此前仅由被删除的
+Files 面板提供）。
+
+因此本候选移除面板后，**已受理但尚未确认的手动整理准备没有重新进入摘要的入口**：
+任务中心可看状态、取消、导出与证据，但不能查看摘要或确认。这与 AC-3 及已接受契约
+“Files retains initial confirmation and exact task/preparation readback”冲突。
+
+**本轮没有做的事（按 Non-goals 与不扩范围要求）**：未新增后端读取字段、未在任务中心
+构造新入口、未用 mock/自造路由证明不存在的旅程。请 B／用户选择：
+
+- 方案 A（推荐，跨层）：任务中心为该 Task 暴露精确准备身份并链接回同一准备／摘要；
+  需要后端读取与 Task Center UI 变更，超出本 Task Non-goals，需重新定级（T4）。
+- 方案 B（保留删除）：接受“离开准备页后无法回到未确认摘要”，并明确修改已接受旅程与
+  AC-3；属于产品行为变更，需 A 或 user 明确决定。
+- 方案 C：保留文件页唯一一个“继续未确认整理”入口（不是原记录列表），以满足可达性；
+  同样需要 B／用户确认，因为与“删除整理记录”的呈现约定相邻。
+
+若不选择 A/C 而按现状验收，本候选会让未确认准备孤立；Developer 不将 AC-3 标为通过。
+
+### Remaining risks
+
+- AC-3 未满足，见上；提示文案“请在任务中心查看是否已有该资源库的整理任务”对状态／结果
+  真实，但不能替代摘要确认入口。
+- 未运行 B 的完整 lint/format/全量 E2E/Python 验收；未截图逐一核对桌面／窄屏视觉，
+  仅以真实浏览器场景断言无水平溢出与无记录区。
+- 本机 Python harness 进程已停止；临时探针脚本已删除，未纳入检查点。
+
+## B Review Result
+
+待独立审查。请先决定 AC-3 blocker 的处理方向，再按上面的 B acceptance 计划执行。
