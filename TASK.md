@@ -1,8 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task52.2 — 九个主页面切换、读取接入与两库刷新体验
 
-下方是 **Task52.2 规划草案（PLANNED；尚未授权实施）**。本轮用户要求 B 基于真实代码
-规划和复核；本计划不自行启动 Developer，不授权推送、发布或部署。用户明确要求实施后，
-移除此声明，沿用同一 Task ID/Base/Goal/Scope 进入实施。
+用户于 2026-11-08 明确要求“激活TASK”，Task52.2 成为正式活动实施 Task，实施已授权。
+状态为 **PLANNED**，待 Developer 开工时转为 IN PROGRESS；Task ID/Base/Goal/Scope、
+验收及修订后的测试计划保持。下一步由 Developer 按本 Task 实施，交精确 checkpoint
+供 B 独立复核。本次激活不授权推送、发布或部署。
 
 Task52.1 已由独立 B 复核 **PASS**，原始 Base
 `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 已审实现
@@ -17,7 +18,7 @@ RO-3 九页切换／实际读取接入及两库刷新尚未交付，由本计划
 尚未交付，留待后续授权规划。Slice52 仍 ACTIVE，未达到交 A 终审的条件。
 Slice/Roadmap/Progress 中旧“首次规划”措辞的事实协调留给其所有者，本轮不改变合同。
 
-# Task52.2 — 九个主页面切换、读取接入与两库刷新体验
+## Authority and task metadata
 
 Authority: committed [Slice52 Contract](SLICE.md) at
 `c7913f6a751ee980db2b82ffaefec40d3d43528c`；生命周期及测试分工遵循
@@ -34,7 +35,7 @@ Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B / independent B review of Developer checkpoint
-Implementation Authorization: NOT YET AUTHORIZED
+Implementation Authorization: AUTHORIZED BY USER 2026-11-08 — 激活TASK
 ```
 
 ## Planning checkpoint and workspace
@@ -44,6 +45,10 @@ Implementation Authorization: NOT YET AUTHORIZED
 未跟踪 `.DS_Store`、`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、
 `docs/`／`docs/pics/`／`output/`／`testdata/`／`web/`元数据及 `output/` 下既有调查／
 预览材料均保留。本轮只维护并checkpoint根TASK.md，不读取运行数据库、私有配置或用户媒体。
+
+激活起点：`main` / `419f0539e85e0d016ca9f302cc389f0a70bde129`；治理检查PASS，
+暂存区为空，预存跟踪／未跟踪文件与上述记录一致并保留。本次仅提交TASK.md激活信息；
+原Task Base保持，不以规划／激活提交重新定基线。
 
 ## Goal
 
@@ -156,7 +161,7 @@ Implementation Authorization: NOT YET AUTHORIZED
 ## Required Tests
 
 按[工作流测试分工](docs/development-workflow.md#6-test-levels)。下列命令是未来候选的
-实施／验收计划，本轮只读规划没有执行产品测试。
+实施／验收计划，本轮Task激活没有执行产品测试。
 
 **用户时间约束：** 每轮实施或 B 复核的测试耗时须小于该轮总耗时的50%。记录轮次总耗时
 及测试占用时间，并行测试按占用时间区间并集计。先做代码／旅程核对，合并重复覆盖，
@@ -251,6 +256,6 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 
 ## B Review Result
 
-本轮为规划，尚无 Task52.2 实现候选；不签署产品 PASS / FIX REQUIRED。
+Task52.2 已激活，尚无实现候选；B验收待 Developer 提交 READY FOR B REVIEW 后执行。
 实施后按工作流独立审完整 Base..Head，明确阻塞及用户操作例子；PASS后重新核对全部
 Slice结果，已满足就交A，不为可选清理继续规划。
