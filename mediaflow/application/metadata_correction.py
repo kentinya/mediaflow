@@ -125,6 +125,8 @@ class MetadataCorrectionService:
             raise ValueError("corrected media type must be movie or tv") from error
         if policy.query_type is MediaQueryType.NONE:
             raise ValueError("MetadataPolicy no longer permits lookup")
+        if not policy.allows_media_type(selected_type):
+            raise ValueError("corrected media type is not permitted by the MetadataPolicy")
         item = self._repository.get_item(review.item_id)
         if item is None or item.status is not TaskItemStatus.WAITING_METADATA_CORRECTION:
             raise ValueError("TaskItem is not waiting for metadata correction")
@@ -212,6 +214,8 @@ class MetadataCorrectionService:
                 raise ValueError("MetadataPolicy or provider is no longer enabled or configured")
             if policy.query_type is MediaQueryType.NONE:
                 raise ValueError("MetadataPolicy no longer permits lookup")
+            if not policy.allows_media_type(selected_type):
+                raise ValueError("corrected media type is not permitted by the MetadataPolicy")
             item = self._repository.get_item(review.item_id)
             if (
                 item is None

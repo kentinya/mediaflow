@@ -666,7 +666,7 @@ APP_JS = b"""(() => {
         ['classificationPolicy', 'ClassificationPolicy ID'], ['organizePolicy', 'OrganizePolicy ID'],
         ['priority', 'Priority', 'number']],
       metadataPolicies: [['id', 'ID'], ['name', 'Name'], ['providerId', 'Provider ID (e.g. tmdb)'],
-        ['mediaType', 'MediaType (movie, tv, auto, none)'], ['mediaQueryType', 'MediaQueryType'],
+        ['mediaQueryType', 'MediaQueryType (movie, tv, auto, none)'],
         ['language', 'Language (e.g. zh-CN)'], ['region', 'Region (e.g. CN)'],
         ['automaticThreshold', 'Automatic threshold (0-100)', 'number'],
         ['confirmationThreshold', 'Confirmation threshold (0-100)', 'number'],
@@ -2463,7 +2463,7 @@ APP_JS = b"""(() => {
         providerId.setAttribute('aria-label', 'Metadata provider ID'); metadataBox.append(providerId);
         const mediaType = document.createElement('select'); mediaType.setAttribute('aria-label', 'Metadata media type');
         ['', 'movie', 'tv'].forEach(value => { const option = document.createElement('option');
-          option.value = value; option.textContent = value || 'Use configured media type';
+          option.value = value; option.textContent = value || 'Select media type';
           option.selected = value === ((choice.metadata && choice.metadata.mediaType) || ''); mediaType.append(option); });
         metadataBox.append(mediaType);
         const title = document.createElement('input'); title.type = 'text';
@@ -2480,8 +2480,8 @@ APP_JS = b"""(() => {
           {recognitionTypeId: type.value, namingPolicyId: naming.value,
             classificationPolicyId: classification.value, organizePolicyId: organize.value,
             metadata: providerId.value.trim() ? {provider: metadataPolicy && metadataPolicy.providerId,
-              providerId: providerId.value.trim(), mediaType: mediaType.value ||
-                metadataPolicy && metadataPolicy.mediaType, title: title.value.trim() || undefined,
+              providerId: providerId.value.trim(), mediaType: mediaType.value || undefined,
+              title: title.value.trim() || undefined,
               year: year.value === '' ? undefined : Number(year.value)} : undefined})));
         section.append(controls);
         if (data.status === 'open') section.append(actionButton('Preview this item',

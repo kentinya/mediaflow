@@ -73,15 +73,17 @@ class StrategyConfigurationError(RuntimeError):
     pass
 
 
-def _durable_policy_media_type(policy) -> MediaType | None:
-    """The explicit media type one MetadataPolicy grounds a durable identity to.
+def _durable_identity_permitted(policy, identity: MediaIdentity) -> bool:
+    """Whether the policy's query type permits this already resolved identity.
 
-    A policy with no declared media type cannot prove that a durable identity
-    belongs to it, so the analysis-reuse path declines to pin one.
+    The identity carries its own movie/tv type; the policy only answers which
+    types its query type permits.  The legacy ``media_type`` field is never a
+    fallback here.
     """
 
-    expected = getattr(policy, "media_type", None)
-    return expected if isinstance(expected, MediaType) else None
+    return policy.query_type is not MediaQueryType.NONE and policy.allows_media_type(
+        identity.media_type
+    )
 
 
 @dataclass(frozen=True)
@@ -518,21 +520,16 @@ class StrategyTestRunner:
                 raise StrategyConfigurationError(
                     "durable metadata identity requires a resolved MetadataPolicy"
                 )
-            if (
-                metadata_policy.query_type is MediaQueryType.NONE
-                or _durable_policy_media_type(metadata_policy) is None
-            ):
-                # A policy that performs no lookup (or has no explicit media
-                # type) cannot ground a durable identity; fall through to the
-                # ordinary offline path instead of pinning one.
+            if metadata_policy.query_type is MediaQueryType.NONE:
+                # A policy that performs no lookup cannot ground a durable live
+                # identity; fall through to the ordinary offline path.
                 durable_identity = None
             elif durable_identity.recognition_type_id != recognition.recognition_type_id:
                 raise StrategyConfigurationError(
                     "durable metadata identity RecognitionType no longer matches"
                 )
-            elif (
-                durable_identity.provider != metadata_policy.provider_id
-                or durable_identity.media_type is not metadata_policy.media_type
+            elif durable_identity.provider != metadata_policy.provider_id or not (
+                _durable_identity_permitted(metadata_policy, durable_identity)
             ):
                 raise StrategyConfigurationError(
                     "durable metadata identity does not match the effective MetadataPolicy"
@@ -597,10 +594,7 @@ class StrategyTestRunner:
                 raise StrategyConfigurationError(
                     "pinned metadata identity RecognitionType no longer matches"
                 )
-            if (
-                metadata_identity.provider != metadata_policy.provider_id
-                or metadata_identity.media_type is not metadata_policy.media_type
-            ):
+            if metadata_identity.provider != metadata_policy.provider_id:
                 raise StrategyConfigurationError(
                     "pinned metadata identity does not match the effective MetadataPolicy"
                 )
@@ -634,6 +628,10 @@ class StrategyTestRunner:
                     raise StrategyConfigurationError(
                         "resolved metadata correction media type is invalid"
                     ) from error
+                if not metadata_policy.allows_media_type(corrected_type):
+                    raise StrategyConfigurationError(
+                        "resolved metadata correction media type is not permitted"
+                    )
                 if metadata_correction.provider_id:
                     metadata = identification.identify_by_provider_id(
                         recognition,
@@ -676,11 +674,7 @@ class StrategyTestRunner:
                     raise StrategyConfigurationError(
                         "resolved metadata selection MetadataPolicy no longer permits lookup"
                     )
-                expected_type = {
-                    MediaQueryType.MOVIE: MediaType.MOVIE,
-                    MediaQueryType.TV: MediaType.TV,
-                }.get(metadata_policy.query_type)
-                if expected_type is not None and selected_type is not expected_type:
+                if not metadata_policy.allows_media_type(selected_type):
                     raise StrategyConfigurationError(
                         "resolved metadata selection media type no longer matches"
                     )

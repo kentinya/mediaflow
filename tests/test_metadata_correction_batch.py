@@ -55,7 +55,7 @@ class MetadataCorrectionBatchTests(unittest.TestCase):
                 reviews = service.resolve_pending(
                     query=" Correct Title ",
                     year=2024,
-                    media_type="tv",
+                    media_type="movie",
                     actor=" operator ",
                     note=" fixed ",
                     limit=2,
@@ -72,7 +72,7 @@ class MetadataCorrectionBatchTests(unittest.TestCase):
                     self.assertEqual(stored.status, MetadataCorrectionStatus.RESOLVED)
                     self.assertEqual(stored.corrected_query, "Correct Title")
                     self.assertEqual(stored.corrected_year, 2024)
-                    self.assertEqual(stored.corrected_media_type, "tv")
+                    self.assertEqual(stored.corrected_media_type, "movie")
                     self.assertEqual(stored.actor, "operator")
                     self.assertEqual(
                         repository.get_item(review.item_id).status, TaskItemStatus.PENDING

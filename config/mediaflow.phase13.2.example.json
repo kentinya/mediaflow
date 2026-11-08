@@ -116,7 +116,7 @@
     {
       "id": "Movie",
       "providerId": "tmdb",
-      "mediaType": "movie",
+      "mediaQueryType": "movie",
       "language": "zh-CN",
       "region": "CN",
       "automaticThreshold": 90,
@@ -128,7 +128,7 @@
     {
       "id": "TV",
       "providerId": "tmdb",
-      "mediaType": "tv",
+      "mediaQueryType": "tv",
       "language": "zh-CN",
       "region": "CN",
       "automaticThreshold": 90,
@@ -478,7 +478,6 @@
       "id": "Movie",
       "name": "TMDB movie metadata",
       "providerId": "tmdb",
-      "mediaType": "movie",
       "mediaQueryType": "movie",
       "language": "zh-CN",
       "region": "CN",

@@ -301,6 +301,10 @@ class MetadataIdentificationService:
             remaining_requests -= 1
 
         try:
+            if media_type_override is not None and not policy.allows_media_type(
+                media_type_override
+            ):
+                raise ValueError("MetadataPolicy query type does not permit the selected identity")
             media_type = (
                 media_type_override
                 or _expected_media_type(policy)
@@ -309,7 +313,6 @@ class MetadataIdentificationService:
             effective_policy = (
                 replace(
                     policy,
-                    media_type=media_type,
                     media_query_type=(
                         MediaQueryType.TV if media_type is MediaType.TV else MediaQueryType.MOVIE
                     ),
@@ -479,6 +482,8 @@ class MetadataIdentificationService:
     ) -> MetadataIdentificationResult:
         if recognition.recognition_type is None:
             raise ValueError("metadata identification requires a resolved recognition type")
+        if not policy.enabled or not policy.allows_media_type(media_type):
+            raise ValueError("MetadataPolicy query type does not permit the selected identity")
         provider = self._providers.resolve(policy.provider_id)
         try:
             if media_type is MediaType.MOVIE:

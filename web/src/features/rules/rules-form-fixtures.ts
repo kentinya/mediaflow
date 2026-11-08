@@ -115,7 +115,6 @@ export const formAuthorityPayload = {
         "id",
         "name",
         "providerId",
-        "mediaType",
         "mediaQueryType",
         "language",
         "region",

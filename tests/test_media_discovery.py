@@ -63,6 +63,7 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.in_memory_storage import InMemoryStorage
 from tests.storage_fixtures import PagedMemoryStorage
+from tests.test_manual_organize_intent import source_metadata_evidence
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -6979,6 +6980,16 @@ class A44BReviewCorrections(_DiscoveryFixture):
                     title="Film",
                 )
             )
+            value.repository.append_evidence(
+                source_metadata_evidence(
+                    path=expected_main,
+                    task_id=task_id,
+                    item_id="mixed-trailer-preview-item",
+                    provider_id="909",
+                    media_type="movie",
+                    title="Film",
+                )
+            )
             status, _choice = self.request(
                 value,
                 f"/api/v1/operations/organize/intents/{intent.intent_id}/items/{item.item_id}/choice",
@@ -7496,6 +7507,16 @@ class A44BReviewCorrections(_DiscoveryFixture):
                     "MOVE",
                     "dry_run",
                     now,
+                    title="Film",
+                )
+            )
+            value.repository.append_evidence(
+                source_metadata_evidence(
+                    path=item.source.path,
+                    task_id=task_id,
+                    item_id="preview-proof-item",
+                    provider_id="909",
+                    media_type="tv",
                     title="Film",
                 )
             )

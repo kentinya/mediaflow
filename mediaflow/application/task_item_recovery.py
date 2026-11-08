@@ -225,26 +225,19 @@ class TaskItemRecoveryService:
                 status=400,
                 next_action="select a supported media type and search again",
             ) from None
-        if policy.media_query_type is MediaQueryType.MOVIE and selected_type is not MediaType.MOVIE:
-            raise TaskItemRecoveryError(
-                "media_type_not_permitted",
-                "the Task's MetadataPolicy supports Movie search only",
-                status=409,
-                next_action="use Movie search or repair the MetadataPolicy in Settings",
-            )
-        if policy.media_query_type is MediaQueryType.TV and selected_type is not MediaType.TV:
-            raise TaskItemRecoveryError(
-                "media_type_not_permitted",
-                "the Task's MetadataPolicy supports TV search only",
-                status=409,
-                next_action="use TV search or repair the MetadataPolicy in Settings",
-            )
-        if policy.media_query_type is MediaQueryType.NONE:
+        if policy.query_type is MediaQueryType.NONE:
             raise TaskItemRecoveryError(
                 "metadata_lookup_disabled",
                 "the Task's MetadataPolicy does not permit Metadata lookup",
                 status=409,
                 next_action="repair the MetadataPolicy in Rules, then return and refresh",
+            )
+        if not policy.allows_media_type(selected_type):
+            raise TaskItemRecoveryError(
+                "media_type_not_permitted",
+                "the Task's MetadataPolicy does not permit this media type",
+                status=409,
+                next_action="use the permitted media type or repair the MetadataPolicy in Settings",
             )
         if self._provider_factory is None:
             raise TaskItemRecoveryError(

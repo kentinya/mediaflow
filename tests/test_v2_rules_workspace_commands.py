@@ -547,7 +547,10 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
             families["recognitionTypes"]["fields"], ["description", "enabled", "id", "name"]
         )
         self.assertIn("providerId", families["metadataPolicies"]["fields"])
+        self.assertIn("mediaQueryType", families["metadataPolicies"]["fields"])
+        self.assertNotIn("mediaType", families["metadataPolicies"]["fields"])
         self.assertIn("maxCandidateEnrichments", families["metadataPolicies"]["fields"])
+        self.assertNotIn("mediaType", families["metadataPolicies"]["defaults"])
         for template in (
             "directoryTemplate",
             "filenameTemplate",
@@ -639,6 +642,42 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
             self.assertEqual(adapter.mutations, [], adapter.storage_id)
 
     # -- copy -------------------------------------------------------------
+
+    def test_metadata_policy_save_ignores_legacy_media_type_and_reads_query_type(self) -> None:
+        published = self.save(
+            "metadataPolicies",
+            {
+                "id": "legacy-control",
+                "name": "Legacy control",
+                "providerId": "tmdb",
+                "mediaType": "tv",
+                "mediaQueryType": "movie",
+                "enabled": False,
+            },
+        )
+        stored = next(
+            item
+            for item in published.document["metadataPolicies"]
+            if item["id"] == "legacy-control"
+        )
+        self.assertNotIn("mediaType", stored)
+        self.assertEqual(stored["mediaQueryType"], "movie")
+
+        legacy_only = self.save(
+            "metadataPolicies",
+            {
+                "id": "legacy-only",
+                "name": "Legacy only",
+                "providerId": "tmdb",
+                "mediaType": "tv",
+                "enabled": False,
+            },
+        )
+        stored = next(
+            item for item in legacy_only.document["metadataPolicies"] if item["id"] == "legacy-only"
+        )
+        self.assertNotIn("mediaType", stored)
+        self.assertNotIn("mediaQueryType", stored)
 
     def test_copy_uses_a_new_stable_id_and_defaults_disabled_where_supported(self) -> None:
         status, candidate = self.request("GET", f"{BASE}/objects/metadataPolicies/A/copy")

@@ -96,6 +96,36 @@ class MetadataCorrectionTests(unittest.TestCase):
                     service.resolve(review.review_id, query="Again", year=2024, media_type="movie")
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
 
+    def test_correction_rejects_identity_type_outside_policy_query_type(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _, _, item = create_processing_item(repository)
+                service = MetadataCorrectionService(
+                    repository, self.configuration.metadata_policies
+                )
+                review = service.create(
+                    item,
+                    identification(MetadataIdentificationStatus.NOT_FOUND, count=0),
+                    self.policy_a,
+                    ParseResult("Wrong", year=2025),
+                )
+                with self.assertRaisesRegex(ValueError, "not permitted"):
+                    service.resolve(
+                        review.review_id,
+                        query="Correct Title",
+                        year=2024,
+                        media_type="tv",
+                        actor="operator",
+                    )
+                self.assertEqual(
+                    repository.get_metadata_correction(review.review_id).status,
+                    MetadataCorrectionStatus.PENDING,
+                )
+                self.assertEqual(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_METADATA_CORRECTION,
+                )
+
     def test_tracked_not_found_waits_releases_lock_and_is_not_blindly_retryable(self) -> None:
         policy = self.policy_a
 
@@ -182,17 +212,17 @@ class MetadataCorrectionTests(unittest.TestCase):
         runner = strategy_runner_from_configuration(
             self.configuration, MetadataProviderRegistry((provider,))
         )
-        correction = MetadataCorrectionSelection("C", "C", "tmdb", "Correct Title", 2024, "tv")
+        correction = MetadataCorrectionSelection("B", "B", "tmdb", "Correct Title", 2024, "tv")
         result = runner.run_path(
-            "/special/Wrong.2025.mkv",
+            "/tv/Wrong.2025.mkv",
             live_metadata=True,
-            resource_library_id="special",
+            resource_library_id="tv",
             metadata_correction=correction,
         )
         self.assertEqual(provider.tv_queries, [("Correct Title", 2024)])
         self.assertEqual(result.metadata.identity.provider_id, "129")
-        self.assertEqual(result.recognition.recognition_type_id, "C")
-        self.assertEqual(result.policy.naming_policy_id, "A")
+        self.assertEqual(result.recognition.recognition_type_id, "B")
+        self.assertEqual(result.policy.naming_policy_id, "B")
         self.assertTrue(result.recognition_type_preserved)
 
         movie_provider = CapturingProvider(

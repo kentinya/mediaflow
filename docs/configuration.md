@@ -161,6 +161,14 @@ all historical pin semantics. Scanner/manual discovery consume the same pinned f
 real elapsed stability policy. Forms retain tab-scoped correctable values, never credentials or
 runtime authority. Empty/partial graphs explain missing dependencies without generating policies.
 
+MetadataPolicy uses only `mediaQueryType` (`movie`, `tv`, `auto`, `none`) to decide which Provider
+lookups and resolved identities are permitted. The movie/tv type on a candidate, Recognition Result
+or MediaIdentity belongs to that result and drives the Provider detail call, naming and
+classification; it is not a policy setting. Legacy policy `mediaType` input is accepted and ignored,
+and a missing `mediaQueryType` reads as `auto`. A policy `none` performs no lookup, while a
+source-linked, type-complete offline identity may still be planned without inventing a Provider
+identity. Saving or re-analysing a choice performs no Storage mutation.
+
 ## Automation engine settings (native, focused)
 
 ### CURRENT — Three system runtime settings (Slice47 PASS / CLOSED)

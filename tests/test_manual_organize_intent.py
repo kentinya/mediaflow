@@ -16,6 +16,7 @@ from mediaflow.domain.manual_organize import (
     ManualPolicyOption,
     ManualRecognitionOption,
 )
+from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -51,6 +52,41 @@ def snapshot() -> ManualConfigurationSnapshot:
             ManualPolicyOption("A", "Move", True, operation="move", conflict_strategy="manual"),
             ManualPolicyOption("B", "Copy", True, operation="copy", conflict_strategy="skip"),
         ),
+    )
+
+
+def source_metadata_evidence(
+    *,
+    storage_id: str = "source",
+    path: str = "Movies/one.mkv",
+    task_id: str = "task-c",
+    item_id: str = "item-c",
+    provider_id: str = "603",
+    media_type: str = "movie",
+    title: str = "The Matrix",
+) -> PipelineEvidence:
+    return PipelineEvidence(
+        f"evidence-{task_id}-{item_id}",
+        task_id,
+        item_id,
+        1,
+        storage_id,
+        path,
+        NOW,
+        None,
+        None,
+        "dry_run",
+        {
+            "metadata": EvidenceSection(
+                True,
+                {
+                    "provider": "tmdb",
+                    "providerId": provider_id,
+                    "mediaType": media_type,
+                    "title": title,
+                },
+            )
+        },
     )
 
 
@@ -142,6 +178,78 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                         actor="operator",
                     )
                 self.assertEqual(raised.exception.code, "selection_over_limit")
+
+    def test_query_type_controls_identity_types_and_legacy_media_type_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                repository.append_result(
+                    PersistentResultRecord(
+                        "result-tv",
+                        "task-tv",
+                        "item-tv",
+                        "source",
+                        "Movies/one.mkv",
+                        None,
+                        None,
+                        "B",
+                        "tmdb",
+                        "603",
+                        "B",
+                        "B",
+                        "B",
+                        "B",
+                        "move",
+                        "dry_run",
+                        NOW,
+                        title="The Show",
+                    )
+                )
+                repository.append_evidence(
+                    source_metadata_evidence(
+                        task_id="task-tv",
+                        item_id="item-tv",
+                        media_type="tv",
+                        title="The Show",
+                    )
+                )
+                movie_policy = replace(
+                    self.snapshot,
+                    metadata_policies=tuple(
+                        replace(item, query_type="movie", media_type="movie")
+                        if item.policy_id == "B"
+                        else item
+                        for item in self.snapshot.metadata_policies
+                    ),
+                )
+                service = ManualOrganizeIntentService(
+                    repository,
+                    configuration_resolver=lambda: movie_policy,
+                    runtime_resolver=lambda snapshot_id, digest: self.runtime,
+                    storage_factory=lambda runtime, ids: {"source": self.storage},
+                )
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.create((self.sources["one"],), actor="operator")
+                self.assertEqual(raised.exception.code, "incompatible_choice")
+
+                legacy_auto = replace(
+                    self.snapshot,
+                    metadata_policies=tuple(
+                        replace(item, query_type="auto", media_type="movie")
+                        if item.policy_id == "B"
+                        else item
+                        for item in self.snapshot.metadata_policies
+                    ),
+                )
+                service = ManualOrganizeIntentService(
+                    repository,
+                    configuration_resolver=lambda: legacy_auto,
+                    runtime_resolver=lambda snapshot_id, digest: self.runtime,
+                    storage_factory=lambda runtime, ids: {"source": self.storage},
+                )
+                intent = service.create((self.sources["one"],), actor="operator")
+                self.assertEqual(intent.items[0].choice.recognition_type_id, "B")
+                self.assertIsNotNone(intent.items[0].choice.metadata)
+                self.assertEqual(intent.items[0].choice.metadata.media_type, "tv")
 
     def test_rescan_observation_updates_do_not_stale_the_same_source_occurrence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -249,6 +357,32 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.code, "metadata_unverified")
                 self.assertEqual(service.get(intent.intent_id).version, 1)
+                # The Result has only Provider+ID; without its own captured type
+                # it is not a reusable identity and must not be completed from the
+                # metadata policy.
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.update_choice(
+                        intent.intent_id,
+                        first.item_id,
+                        {
+                            "recognitionTypeId": "C",
+                            "metadata": {
+                                "provider": "tmdb",
+                                "providerId": "603",
+                                "mediaType": "movie",
+                                "title": "The Matrix",
+                            },
+                            "namingPolicyId": "A",
+                            "classificationPolicyId": "A",
+                            "organizePolicyId": "A",
+                        },
+                        expected_version=1,
+                        actor="operator",
+                    )
+                self.assertEqual(raised.exception.code, "metadata_unverified")
+                guessed = service.create((self.sources["one"],), actor="operator")
+                self.assertIsNone(guessed.items[0].choice.metadata)
+                repository.append_evidence(source_metadata_evidence())
                 updated = service.update_choice(
                     intent.intent_id,
                     first.item_id,

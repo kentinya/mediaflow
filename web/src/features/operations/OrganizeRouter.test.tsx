@@ -446,6 +446,85 @@ describe("V2 manual Organize journey", () => {
     ).toBe(false);
   });
 
+  it("selects and saves one typed source-grounded metadata identity", async () => {
+    const user = userEvent.setup();
+    const documentValue = intentDocument();
+    const item = (documentValue["items"] as Json[])[0]!;
+    item["allowedMetadataIdentities"] = [
+      {
+        provider: "tmdb",
+        providerId: "603",
+        mediaType: "movie",
+        title: "Same Number Movie",
+        year: 1999,
+      },
+      {
+        provider: "tmdb",
+        providerId: "603",
+        mediaType: "tv",
+        title: "The Show",
+        year: 2024,
+      },
+    ];
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (call.url.includes("/items/item-1/choice") && call.method === "POST") {
+        return jsonResponse(documentValue);
+      }
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(documentValue);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "整理意图" });
+    const select = await screen.findByLabelText("元数据身份 item-1");
+    await user.selectOptions(select, "tmdb\u0000603\u0000tv");
+    await user.click(screen.getByRole("button", { name: "保存选择" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "POST" && call.url.includes("/items/item-1/choice"),
+        ),
+      ).toBe(true),
+    );
+    const choice = calls.find(
+      (call) =>
+        call.method === "POST" && call.url.includes("/items/item-1/choice"),
+    );
+    expect(choice?.body).toMatchObject({
+      expectedVersion: 2,
+      expectedItemVersion: 2,
+      recognitionTypeId: "A",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
+      metadata: {
+        provider: "tmdb",
+        providerId: "603",
+        mediaType: "tv",
+        title: "The Show",
+        year: 2024,
+      },
+    });
+    // Two identities with the same provider number stay distinguishable by type.
+    expect(
+      await screen.findByRole("option", { name: /Same Number Movie.*电影/ }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: /The Show.*电视剧/ }),
+    ).toBeInTheDocument();
+    expect(JSON.stringify(choice?.body)).not.toMatch(
+      /fingerprint|digest|token/i,
+    );
+  });
+
   it("shows a paused durable analysis without any confirmable plan", async () => {
     const user = userEvent.setup();
     const paused = intentDocument();

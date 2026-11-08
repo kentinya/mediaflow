@@ -575,15 +575,15 @@ export function validateRuleCandidate(
         message: "所选元数据 Provider 不是本服务配置的 Provider。",
       });
     }
-    for (const key of ["mediaType", "mediaQueryType"] as const) {
-      const raw = value[key];
-      if (raw === null || raw === undefined || raw === "") continue;
-      const allowed =
-        key === "mediaType"
-          ? authority.enums.mediaTypes
-          : authority.enums.mediaQueryTypes;
-      if (!allowed.includes(String(raw)))
-        issues.push({ field: key, message: `${key} 不是受支持的取值。` });
+    {
+      const raw = value["mediaQueryType"];
+      if (raw !== null && raw !== undefined && raw !== "") {
+        if (!authority.enums.mediaQueryTypes.includes(String(raw)))
+          issues.push({
+            field: "mediaQueryType",
+            message: "mediaQueryType 不是受支持的取值。",
+          });
+      }
     }
     for (const key of [
       "automaticThreshold",
@@ -992,7 +992,6 @@ const RULE_FORM_FIELD_ALLOWLIST: Readonly<
     "id",
     "name",
     "providerId",
-    "mediaType",
     "mediaQueryType",
     "language",
     "region",

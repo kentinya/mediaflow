@@ -567,6 +567,9 @@ class ManualPolicyOption:
     media_type: str | None = None
     operation: str | None = None
     conflict_strategy: str | None = None
+    # The policy control actually consumed for MetadataPolicy options.  The
+    # legacy media_type above stays readable but never decides identity types.
+    query_type: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.policy_id, str) or not _SAFE_ID.fullmatch(self.policy_id):
@@ -585,6 +588,13 @@ class ManualPolicyOption:
             raise ValueError("manual policy option provider ID is invalid")
         if self.media_type is not None and self.media_type not in {"movie", "tv", "auto"}:
             raise ValueError("manual policy option media type is invalid")
+        if self.query_type is not None and self.query_type not in {
+            "movie",
+            "tv",
+            "auto",
+            "none",
+        }:
+            raise ValueError("manual policy option query type is invalid")
         if self.operation is not None and self.operation not in _MANUAL_OPERATIONS:
             raise ValueError("manual policy option operation is invalid")
         if (
@@ -604,6 +614,7 @@ class ManualPolicyOption:
                 "mediaType": self.media_type,
                 "operation": self.operation,
                 "conflictStrategy": self.conflict_strategy,
+                "queryType": self.query_type,
             }.items()
             if value is not None
         }
@@ -685,6 +696,7 @@ class ManualConfigurationSnapshot:
                     "mediaType",
                     "operation",
                     "conflictStrategy",
+                    "queryType",
                 }
                 unknown = set(item).difference(allowed)
                 if unknown:
@@ -703,6 +715,7 @@ class ManualConfigurationSnapshot:
                         item.get("mediaType"),
                         item.get("operation"),
                         item.get("conflictStrategy"),
+                        item.get("queryType"),
                     )
                 )
             return tuple(result)

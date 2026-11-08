@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -26,6 +27,7 @@ from mediaflow.domain.manual_organize import (
     ManualRecognitionOption,
     ManualSourceIdentity,
 )
+from mediaflow.domain.metadata import MediaQueryType, MediaType
 from mediaflow.domain.recognition import RecognitionContext, RecognitionStatus
 
 
@@ -416,7 +418,9 @@ class ManualOrganizeIntentService:
                 managed_options = self._load_managed_snapshot(
                     value.snapshot_id, value.snapshot_digest
                 )
-                if managed_options.document() != value.options.document():
+                if not self._compatible_options_document(
+                    managed_options.document(), value.options.document()
+                ):
                     raise ManualIntentUnavailable(
                         "manual intent configuration option projection does not match its "
                         "pinned managed snapshot",
@@ -815,6 +819,34 @@ class ManualOrganizeIntentService:
             details={"reason": "configuration_authority_unavailable"},
         )
 
+    @staticmethod
+    def _compatible_options_document(managed: dict, stored: dict) -> bool:
+        """Compare one pinned option projection, tolerating a legacy predecessor.
+
+        Earlier intents predate the explicit MetadataPolicy queryType field.  The
+        pinned digest still proves the same Active revision, so an older stored
+        projection (no queryType) must not make an otherwise valid intent
+        unreadable.  Every other field, including the legacy mediaType value, is
+        still compared exactly; this method never rewrites the stored document.
+        """
+
+        if managed == stored:
+            return True
+        managed_copy = copy.deepcopy(managed)
+        stored_copy = copy.deepcopy(stored)
+        managed_meta = managed_copy.get("metadataPolicies")
+        stored_meta = stored_copy.get("metadataPolicies")
+        if not isinstance(managed_meta, list) or not isinstance(stored_meta, list):
+            return False
+        if len(managed_meta) != len(stored_meta):
+            return False
+        for managed_item, stored_item in zip(managed_meta, stored_meta, strict=True):
+            if not isinstance(managed_item, dict) or not isinstance(stored_item, dict):
+                return False
+            if "queryType" not in stored_item:
+                managed_item.pop("queryType", None)
+        return managed_copy == stored_copy
+
     def _load_managed_snapshot(self, snapshot_id: str, digest: str) -> ManualConfigurationSnapshot:
         """Reload one persisted managed revision without constructing adapters."""
 
@@ -933,6 +965,7 @@ class ManualOrganizeIntentService:
                     item.enabled,
                     item.provider_id,
                     item.media_type.value if item.media_type is not None else None,
+                    query_type=item.query_type.value,
                 )
                 for item in sorted(metadata.values(), key=lambda item: item.policy_id)
             ),
@@ -1007,10 +1040,14 @@ class ManualOrganizeIntentService:
             ),
             None,
         )
-        media_type = metadata_policy.media_type if metadata_policy is not None else None
+        # A historical Result carries Provider+ID but no media type column.  The
+        # type is only reusable when this exact Result's own captured analysis
+        # evidence names it; otherwise the ordinary recognition path runs again.
+        media_type = self._result_media_type(result)
         if (
             provider
             and provider_id
+            and media_type is not None
             and metadata_policy is not None
             and provider == metadata_policy.provider_id
         ):
@@ -1022,6 +1059,62 @@ class ManualOrganizeIntentService:
             selected_type.classification_policy_id,
             selected_type.organize_policy_id,
         )
+
+    def _result_media_type(self, result) -> str | None:
+        """The media type this exact historical Result itself captured, if any.
+
+        The Result row deliberately has no media type column, so the only
+        factual source is its own captured evidence/execution identity.  A
+        number without a type is not a reusable identity: this method returns
+        ``None`` instead of borrowing the policy, Naming or a same-number value.
+        """
+
+        if result is None:
+            return None
+        provider = getattr(result, "provider", None)
+        provider_id = getattr(result, "provider_id", None)
+        item_id = getattr(result, "item_id", None)
+        if not provider or not provider_id or not item_id:
+            return None
+        reader = getattr(self._repository, "list_evidence_for_item", None)
+        if not callable(reader):
+            return None
+        try:
+            evidence_values = tuple(reader(item_id, limit=16))
+        except Exception:  # noqa: BLE001 - an unreadable evidence row is not authority
+            return None
+        for evidence in evidence_values:
+            if getattr(evidence, "source_storage_id", None) != getattr(
+                result, "source_storage_id", None
+            ) or getattr(evidence, "source_path", None) != getattr(result, "source_path", None):
+                continue
+            media_type = self._evidence_media_type(evidence, provider, provider_id)
+            if media_type is not None:
+                return media_type
+        return None
+
+    @staticmethod
+    def _evidence_media_type(evidence, provider: str, provider_id: str) -> str | None:
+        identity = getattr(evidence, "execution_identity", None)
+        if isinstance(identity, Mapping):
+            media_type = identity.get("mediaType")
+            if (
+                identity.get("provider") == provider
+                and identity.get("providerId") == provider_id
+                and media_type in {"movie", "tv"}
+            ):
+                return str(media_type)
+        section = ManualOrganizeIntentService._metadata_evidence_section(evidence)
+        value = getattr(section, "value", None) if section is not None else None
+        if isinstance(value, Mapping):
+            media_type = value.get("mediaType")
+            if (
+                value.get("provider") == provider
+                and value.get("providerId") == provider_id
+                and media_type in {"movie", "tv"}
+            ):
+                return str(media_type)
+        return None
 
     def default_choice_for_source(
         self, source, snapshot: ManualConfigurationSnapshot
@@ -1136,15 +1229,31 @@ class ManualOrganizeIntentService:
             if selected_type is not None
             else None
         )
-        fallback_media_type = getattr(expected_metadata, "media_type", None)
-        authorities = self._metadata_authorities(record, snapshot, fallback_media_type)
+        query_type = self._policy_option_query_type(expected_metadata)
+
+        def permitted(media_type) -> bool:
+            if media_type not in {"movie", "tv"}:
+                return False
+            if query_type is MediaQueryType.MOVIE:
+                return media_type == "movie"
+            if query_type is MediaQueryType.TV:
+                return media_type == "tv"
+            return True
+
+        authorities = self._metadata_authorities(record, snapshot)
         bounded: list[dict[str, object]] = []
         seen: set[tuple[object, object, object, object, object]] = set()
         # The identity already pinned on this item's own choice is itself a legal
         # value: it was validated when the intent was admitted, so re-selecting
-        # it must stay possible after another field changes.
+        # it must stay possible after another field changes.  It is still shown
+        # only when the policy's query type and the identity's own type agree.
         current = item.choice.metadata
-        if current is not None and current.provider and current.provider_id:
+        if (
+            current is not None
+            and current.provider
+            and current.provider_id
+            and permitted(current.media_type)
+        ):
             key = (
                 current.provider,
                 current.provider_id,
@@ -1165,7 +1274,7 @@ class ManualOrganizeIntentService:
         for value in authorities:
             provider = value.get("provider")
             provider_id = value.get("providerId")
-            if not provider or not provider_id:
+            if not provider or not provider_id or not permitted(value.get("mediaType")):
                 continue
             key = (
                 provider,
@@ -1301,15 +1410,21 @@ class ManualOrganizeIntentService:
                     code="incompatible_choice",
                     next_action="choose a normalized identity from the pinned provider policy",
                 )
-            if (
-                metadata_policy.media_type
-                and choice.metadata.media_type is not None
-                and choice.metadata.media_type != metadata_policy.media_type
+            if choice.metadata.media_type not in {"movie", "tv"}:
+                raise ManualIntentError(
+                    "metadata identity requires an explicit movie or tv media type",
+                    code="incompatible_choice",
+                    next_action="choose a complete movie or tv identity shown for this source",
+                )
+            query_type = self._policy_option_query_type(metadata_policy)
+            if query_type in {MediaQueryType.MOVIE, MediaQueryType.TV} and (
+                MediaType(choice.metadata.media_type)
+                is not (MediaType.MOVIE if query_type is MediaQueryType.MOVIE else MediaType.TV)
             ):
                 raise ManualIntentError(
-                    "metadata media type is incompatible with the selected RecognitionType policy",
+                    "metadata identity type is incompatible with the MetadataPolicy query type",
                     code="incompatible_choice",
-                    next_action="choose a normalized identity with the configured media type",
+                    next_action="choose an identity of the policy's permitted media type",
                 )
             self._validate_metadata_reference(
                 choice.metadata, snapshot, record, choice.recognition_type_id
@@ -1318,7 +1433,7 @@ class ManualOrganizeIntentService:
         media_type = (
             choice.metadata.media_type
             if choice.metadata is not None
-            else getattr(metadata_default, "media_type", None)
+            else self._policy_option_expected_media_type(metadata_default)
         )
         naming = maps["namingPolicy"].get(choice.naming_policy_id)
         if (
@@ -1347,14 +1462,7 @@ class ManualOrganizeIntentService:
         a provider ID here, and this method deliberately performs only repository reads.
         """
 
-        selected_type = snapshot.option_maps()["recognitionType"].get(recognition_type_id)
-        expected_metadata = (
-            snapshot.option_maps()["metadataPolicy"].get(selected_type.metadata_policy_id)
-            if selected_type is not None
-            else None
-        )
-        expected_media_type = getattr(expected_metadata, "media_type", None)
-        authorities = self._metadata_authorities(record, snapshot, expected_media_type)
+        authorities = self._metadata_authorities(record, snapshot)
         if metadata.review_ref is not None:
             authorities = tuple(
                 value for value in authorities if value.get("reviewRef") == metadata.review_ref
@@ -1385,7 +1493,6 @@ class ManualOrganizeIntentService:
         self,
         record,
         snapshot: ManualConfigurationSnapshot,
-        fallback_media_type: str | None,
     ) -> tuple[dict[str, object], ...]:
         authorities: list[dict[str, object]] = []
 
@@ -1394,24 +1501,7 @@ class ManualOrganizeIntentService:
         # source-linked evidence (the same authority the preview analysis
         # produced), so the operator can legally re-select it in a same-page
         # correction without inventing a provider payload.
-        self._append_preview_plan_authorities(authorities, record, snapshot, fallback_media_type)
-
-        for result in self._source_results(record):
-            if (
-                getattr(result, "source_storage_id", record.storage_id) != record.storage_id
-                or getattr(result, "source_path", record.path) != record.path
-            ):
-                continue
-            policy_id = getattr(result, "metadata_policy_id", None)
-            media_type = self._metadata_policy_media_type(policy_id, snapshot, fallback_media_type)
-            self._append_metadata_authority(
-                authorities,
-                getattr(result, "provider", None),
-                getattr(result, "provider_id", None),
-                media_type,
-                getattr(result, "title", None),
-                getattr(result, "year", None),
-            )
+        self._append_preview_plan_authorities(authorities, record, snapshot)
 
         for evidence in self._source_evidence(record):
             if (
@@ -1419,6 +1509,16 @@ class ManualOrganizeIntentService:
                 or getattr(evidence, "source_path", record.path) != record.path
             ):
                 continue
+            identity = getattr(evidence, "execution_identity", None)
+            if isinstance(identity, Mapping):
+                self._append_metadata_authority(
+                    authorities,
+                    identity.get("provider"),
+                    identity.get("providerId"),
+                    identity.get("mediaType"),
+                    identity.get("title"),
+                    identity.get("year"),
+                )
             section = self._metadata_evidence_section(evidence)
             if section is None or not bool(getattr(section, "available", False)):
                 continue
@@ -1429,7 +1529,7 @@ class ManualOrganizeIntentService:
                     authorities,
                     value.get("provider"),
                     value.get("providerId"),
-                    value.get("mediaType") or fallback_media_type,
+                    value.get("mediaType"),
                     value.get("title"),
                     value.get("year"),
                 )
@@ -1439,7 +1539,7 @@ class ManualOrganizeIntentService:
                         authorities,
                         best.get("provider"),
                         best.get("providerId"),
-                        best.get("mediaType") or fallback_media_type,
+                        best.get("mediaType"),
                         best.get("title"),
                         best.get("year"),
                     )
@@ -1449,7 +1549,7 @@ class ManualOrganizeIntentService:
                         authorities,
                         item.get("provider"),
                         item.get("providerId"),
-                        item.get("mediaType") or fallback_media_type,
+                        item.get("mediaType"),
                         item.get("title"),
                         item.get("year"),
                     )
@@ -1462,7 +1562,7 @@ class ManualOrganizeIntentService:
                     authorities,
                     getattr(candidate, "provider", None),
                     getattr(candidate, "provider_id", None),
-                    getattr(candidate, "media_type", None) or fallback_media_type,
+                    getattr(candidate, "media_type", None),
                     getattr(candidate, "title", None),
                     getattr(candidate, "canonical_year", None),
                     review_ref=review_ref,
@@ -1472,7 +1572,7 @@ class ManualOrganizeIntentService:
                 authorities,
                 getattr(review, "selected_provider", None),
                 getattr(review, "selected_provider_id", None),
-                getattr(review, "selected_media_type", None) or fallback_media_type,
+                getattr(review, "selected_media_type", None),
                 None,
                 None,
                 review_ref=review_ref,
@@ -1480,22 +1580,27 @@ class ManualOrganizeIntentService:
         return tuple(authorities)
 
     @staticmethod
-    def _metadata_policy_media_type(
-        policy_id: str | None,
-        snapshot: ManualConfigurationSnapshot,
-        fallback: str | None,
-    ):
-        if policy_id is None:
-            return fallback
-        option = snapshot.option_maps()["metadataPolicy"].get(policy_id)
-        return getattr(option, "media_type", None) or fallback
+    def _policy_option_query_type(option) -> MediaQueryType:
+        raw = getattr(option, "query_type", None)
+        if raw is None:
+            return MediaQueryType.AUTO
+        try:
+            return MediaQueryType(raw)
+        except (TypeError, ValueError):
+            return MediaQueryType.AUTO
+
+    @classmethod
+    def _policy_option_expected_media_type(cls, option) -> str | None:
+        return {
+            MediaQueryType.MOVIE: "movie",
+            MediaQueryType.TV: "tv",
+        }.get(cls._policy_option_query_type(option))
 
     def _append_preview_plan_authorities(
         self,
         authorities: list[dict[str, object]],
         record,
         snapshot: ManualConfigurationSnapshot,
-        fallback_media_type: str | None,
     ) -> None:
         """Ground the source's own latest exact Preview identity as an option.
 
@@ -1566,7 +1671,7 @@ class ManualOrganizeIntentService:
                         authorities,
                         identity.get("provider"),
                         identity.get("providerId"),
-                        identity.get("mediaType") or fallback_media_type,
+                        identity.get("mediaType"),
                         identity.get("title"),
                         identity.get("year"),
                     )
@@ -1589,7 +1694,7 @@ class ManualOrganizeIntentService:
                         authorities,
                         candidate.get("provider"),
                         candidate.get("providerId"),
-                        candidate.get("mediaType") or fallback_media_type,
+                        candidate.get("mediaType"),
                         candidate.get("title"),
                         candidate.get("year"),
                     )
@@ -1613,7 +1718,7 @@ class ManualOrganizeIntentService:
             or not provider_id.strip()
         ):
             return
-        if media_type is not None and media_type not in {"movie", "tv"}:
+        if media_type not in {"movie", "tv"}:
             return
         if title is not None and (not isinstance(title, str) or not title.strip()):
             return

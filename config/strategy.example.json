@@ -57,9 +57,9 @@
     }
   ],
   "metadataPolicies": [
-    {"id": "A", "providerId": "tmdb", "mediaType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
-    {"id": "B", "providerId": "tmdb", "mediaType": "tv", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
-    {"id": "C", "providerId": "tmdb", "mediaType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2}
+    {"id": "A", "providerId": "tmdb", "mediaQueryType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
+    {"id": "B", "providerId": "tmdb", "mediaQueryType": "tv", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
+    {"id": "C", "providerId": "tmdb", "mediaQueryType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2}
   ],
   "namingPolicies": [
     {

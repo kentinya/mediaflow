@@ -2188,7 +2188,7 @@ class ManualOrganizePreviewService:
         if metadata.provider and metadata.provider_id and metadata.media_type:
             return metadata
         authorities = getattr(self._intent_service, "_metadata_authorities", lambda *_: ())(
-            record, intent.options, getattr(policy, "media_type", None)
+            record, intent.options
         )
         for value in authorities:
             if metadata.review_ref is not None and value.get("reviewRef") != metadata.review_ref:
@@ -2257,8 +2257,8 @@ class ManualOrganizePreviewService:
     def _durable_identity_compatible(self, metadata_policy, item, identity) -> bool:
         """Whether a completed analysis identity can be pinned to this item.
 
-        The identity must match the pinned MetadataPolicy's provider and media
-        type, so a stale, cross-source or cross-policy identity is never
+        The identity must match the pinned MetadataPolicy's provider and its
+        query type, so a stale, cross-source or cross-policy identity is never
         replanned.  Its RecognitionType is only the type the analysis happened
         to resolve under; because the same provider+media type is source-
         determined, the identity is rebound to this item's own forced
@@ -2271,9 +2271,6 @@ class ManualOrganizePreviewService:
         if not self._identity_compatible(
             metadata_policy, identity.provider, identity.media_type.value
         ):
-            return False
-        expected = getattr(metadata_policy, "media_type", None)
-        if expected is not None and identity.media_type is not expected:
             return False
         return True
 
@@ -2335,15 +2332,11 @@ class ManualOrganizePreviewService:
             return False
         if getattr(policy, "provider_id", None) != provider:
             return False
-        if policy.query_type is MediaQueryType.NONE:
-            return False
-        expected = getattr(policy, "media_type", None)
-        if expected is None:
-            return True
         try:
-            return expected is MediaType(media_type)
+            resolved_type = MediaType(media_type)
         except ValueError:
             return False
+        return policy.allows_media_type(resolved_type)
 
     def _bound_metadata_decision(self, bound, item, type_policy, metadata_policy):
         """Bind a resolved identity decision to the item's own manual choice context.

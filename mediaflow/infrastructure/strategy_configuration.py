@@ -2,7 +2,7 @@
 
 from mediaflow.application.strategy_test import StrategyTestConfiguration
 from mediaflow.domain.classification import ClassificationPolicy, ClassificationRule
-from mediaflow.domain.metadata import MediaType, MetadataPolicy
+from mediaflow.domain.metadata import MediaQueryType, MediaType, MetadataPolicy
 from mediaflow.domain.naming import NamingMediaTypeMode, NamingPolicy
 from mediaflow.domain.organizer import OrganizeOperationType, OrganizePolicy
 from mediaflow.domain.recognition import (
@@ -55,9 +55,9 @@ def smoke_strategy_configuration(
         "minimum_score_gap": minimum_score_gap,
     }
     metadata_policies = (
-        MetadataPolicy("A", "tmdb", media_type=MediaType.MOVIE, **policy_options),
-        MetadataPolicy("B", "tmdb", media_type=MediaType.TV, **policy_options),
-        MetadataPolicy("C", "tmdb", media_type=MediaType.MOVIE, **policy_options),
+        MetadataPolicy("A", "tmdb", media_query_type=MediaQueryType.MOVIE, **policy_options),
+        MetadataPolicy("B", "tmdb", media_query_type=MediaQueryType.TV, **policy_options),
+        MetadataPolicy("C", "tmdb", media_query_type=MediaQueryType.MOVIE, **policy_options),
     )
     naming_policies = (
         NamingPolicy("A", "Standard Movie", media_type_mode=NamingMediaTypeMode.MOVIE),

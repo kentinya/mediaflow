@@ -228,13 +228,31 @@ class MetadataPolicy:
 
     @property
     def query_type(self) -> MediaQueryType:
+        """The one policy control that permits Metadata lookup and identity types.
+
+        ``media_type`` is a read-only legacy field retained so historical policy
+        snapshots keep loading; it never falls back into this decision.
+        """
+
         if self.media_query_type is not None:
             return self.media_query_type
-        if self.media_type is MediaType.MOVIE:
-            return MediaQueryType.MOVIE
-        if self.media_type is MediaType.TV:
-            return MediaQueryType.TV
         return MediaQueryType.AUTO
+
+    def allows_media_type(self, media_type: MediaType) -> bool:
+        """Whether this policy permits one resolved MediaIdentity media type.
+
+        Movie accepts only Movie, TV only TV, Auto both; None performs no lookup.
+        Missing or invalid types are rejected by callers before reaching here.
+        """
+
+        query_type = self.query_type
+        if query_type is MediaQueryType.NONE:
+            return False
+        if query_type is MediaQueryType.MOVIE:
+            return media_type is MediaType.MOVIE
+        if query_type is MediaQueryType.TV:
+            return media_type is MediaType.TV
+        return isinstance(media_type, MediaType)
 
 
 class CandidateMatchStatus(StrEnum):

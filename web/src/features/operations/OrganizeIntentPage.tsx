@@ -84,6 +84,20 @@ function safeValue(value: string | null): string {
   return value === null || value === "" ? "—" : value;
 }
 
+function identityKey(identity: {
+  readonly provider: string | null;
+  readonly providerId: string | null;
+  readonly mediaType: string | null;
+}): string {
+  return `${identity.provider ?? ""}\u0000${identity.providerId ?? ""}\u0000${identity.mediaType ?? ""}`;
+}
+
+function mediaTypeLabel(value: string | null): string {
+  if (value === "movie") return "电影";
+  if (value === "tv") return "电视剧";
+  return value ?? "类型未知";
+}
+
 function ChoiceEditor({
   intentId,
   intentVersion,
@@ -121,6 +135,9 @@ function ChoiceEditor({
   const [recognitionTypeId, setRecognitionTypeId] = useState<string>(
     item.choice.recognitionTypeId ?? "",
   );
+  const [metadataKey, setMetadataKey] = useState<string>(
+    item.choice.metadata === null ? "" : identityKey(item.choice.metadata),
+  );
   const [result, setResult] = useState<string | null>(null);
 
   const editable = Boolean(item.nextAction) && item.status === "ready";
@@ -138,15 +155,30 @@ function ChoiceEditor({
     selected.classificationPolicyId !== null &&
     selected.organizePolicyId !== null;
   const mappingIncomplete = selected !== undefined && !mappingComplete;
-  const failClosed = selectionUnavailable || mappingIncomplete;
+  const selectedMetadata = item.allowedMetadataIdentities.find(
+    (value) => identityKey(value) === metadataKey,
+  );
+  const metadataUnavailable =
+    metadataKey !== "" && selectedMetadata === undefined;
+  const failClosed =
+    selectionUnavailable || mappingIncomplete || metadataUnavailable;
 
   // The submitted choice is always projected from the pinned mapping, so an
   // initial render with a stale stored downstream policy is normalized to the
   // RecognitionType's exact policies before any save.
   const projectedChoice: OrganizeChoiceModel | null =
-    selected !== undefined && mappingComplete
+    selected !== undefined && mappingComplete && !metadataUnavailable
       ? {
-          metadata: item.choice.metadata,
+          metadata:
+            selectedMetadata === undefined
+              ? null
+              : {
+                  provider: selectedMetadata.provider,
+                  providerId: selectedMetadata.providerId,
+                  mediaType: selectedMetadata.mediaType,
+                  title: selectedMetadata.title,
+                  year: selectedMetadata.year,
+                },
           recognitionTypeId: selected.id,
           namingPolicyId: selected.namingPolicyId,
           classificationPolicyId: selected.classificationPolicyId,
@@ -171,6 +203,16 @@ function ChoiceEditor({
         ...(next.organizePolicyId
           ? { organizePolicyId: next.organizePolicyId }
           : {}),
+        metadata:
+          next.metadata === null
+            ? null
+            : {
+                provider: next.metadata.provider,
+                providerId: next.metadata.providerId,
+                mediaType: next.metadata.mediaType,
+                title: next.metadata.title,
+                year: next.metadata.year,
+              },
       }),
     retry: false,
     onSuccess: (value) => {
@@ -295,6 +337,40 @@ function ChoiceEditor({
               )}
           </select>
         </label>
+        {item.allowedMetadataIdentities.length > 0 ? (
+          <label>
+            元数据身份
+            <select
+              aria-label={`元数据身份 ${item.itemId}`}
+              value={metadataKey}
+              disabled={!editable || mutation.isPending}
+              onChange={(event) => {
+                setResult(null);
+                setMetadataKey(event.target.value);
+              }}
+            >
+              <option value="">重新识别（不指定固定身份）</option>
+              {item.allowedMetadataIdentities.map((value) => (
+                <option key={identityKey(value)} value={identityKey(value)}>
+                  {value.title ?? value.providerId}
+                  {value.year !== null ? ` (${value.year})` : ""} ·{" "}
+                  {mediaTypeLabel(value.mediaType)} · {value.provider}/
+                  {value.providerId}
+                </option>
+              ))}
+            </select>
+            <span className="mf-dashboard-meta">
+              候选来自本来源已保存的
+              Result、证据或确认记录。保存选择后请重新生成分析摘要； 同一
+              Provider 编号的电影与电视剧按类型区分。
+            </span>
+          </label>
+        ) : (
+          <p className="mf-dashboard-meta" role="status">
+            本来源当前没有可选择的固定元数据候选；保存识别类型后，分析会按当前识别流程重新匹配，
+            不存在的身份不会被自动生成。
+          </p>
+        )}
         <p className="mf-dashboard-meta">
           识别类型决定命名、分类和整理策略。选择识别类型后会应用当前预览固定的精确策略映射，不能单独修改下游策略。
         </p>
@@ -304,7 +380,9 @@ function ChoiceEditor({
           <p>
             {selectionUnavailable
               ? `当前固定配置中没有识别类型“${recognitionTypeId}”，无法应用其策略。`
-              : `当前固定配置中，识别类型“${recognitionTypeId}”缺少命名、分类或整理策略。`}
+              : metadataUnavailable
+                ? "所选元数据身份已不在当前来源的合法候选中，不能保存这个旧值。"
+                : `当前固定配置中，识别类型“${recognitionTypeId}”缺少命名、分类或整理策略。`}
           </p>
           <p className="mf-dashboard-meta">
             请刷新意图并从当前可用选项中重新选择。本次没有提交任何选择。

@@ -2242,7 +2242,7 @@ export interface UpdateOrganizeChoiceOptions {
     readonly mediaType: string | null;
     readonly title: string | null;
     readonly year: number | null;
-  };
+  } | null;
 }
 
 export async function updateOrganizeChoice(
@@ -2272,13 +2272,16 @@ export async function updateOrganizeChoice(
     }
   }
   if (options.metadata !== undefined) {
-    body["metadata"] = {
-      provider: options.metadata.provider,
-      providerId: options.metadata.providerId,
-      mediaType: options.metadata.mediaType,
-      title: options.metadata.title,
-      year: options.metadata.year,
-    };
+    body["metadata"] =
+      options.metadata === null
+        ? null
+        : {
+            provider: options.metadata.provider,
+            providerId: options.metadata.providerId,
+            mediaType: options.metadata.mediaType,
+            title: options.metadata.title,
+            year: options.metadata.year,
+          };
   }
   return submitOrganizeMutation(
     token,

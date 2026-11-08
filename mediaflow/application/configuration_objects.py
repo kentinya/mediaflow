@@ -3199,7 +3199,7 @@ class ConfigurationObjectService:
         return MetadataPolicy(
             str(normalized["id"]),
             str(normalized["providerId"]),
-            MediaType(normalized["mediaType"]) if normalized.get("mediaType") else None,
+            None,
             normalized.get("language"),
             normalized.get("region"),
             str(normalized["name"]),
@@ -6249,7 +6249,6 @@ class ConfigurationObjectService:
             "id": policy.policy_id,
             "name": policy.name,
             "providerId": policy.provider_id,
-            "mediaType": policy.media_type.value if policy.media_type else None,
             "mediaQueryType": policy.query_type.value,
             "language": policy.language,
             "region": policy.region,
@@ -7071,7 +7070,7 @@ class ConfigurationObjectService:
                 value
                 for value in (
                     cls._rules_text(item.get("providerId"), 64),
-                    cls._rules_text(item.get("mediaType"), 32),
+                    cls._rules_text(item.get("mediaQueryType"), 32),
                     cls._rules_text(item.get("language"), 32),
                     cls._rules_text(item.get("region"), 32),
                 )
@@ -8894,13 +8893,14 @@ class ConfigurationObjectService:
             return result
         if kind is ConfigurationObjectKind.METADATA_POLICY:
             provider_id = cls._metadata_identifier(value, "providerId", "MetadataPolicy")
-            raw_media_type = value.get("mediaType")
+            # ``mediaType`` is a legacy input key: it is accepted and ignored.
+            # Only ``mediaQueryType`` controls lookup/identity types.
             raw_query_type = value.get("mediaQueryType")
             try:
-                media_type = MediaType(raw_media_type) if raw_media_type is not None else None
                 query_type = MediaQueryType(raw_query_type) if raw_query_type is not None else None
             except (TypeError, ValueError) as error:
-                raise ValueError("MetadataPolicy media/query type is unsupported") from error
+                raise ValueError("MetadataPolicy query type is unsupported") from error
+            media_type = None
             language = cls._metadata_locale(value.get("language"), "language", language=True)
             region = cls._metadata_locale(value.get("region"), "region", language=False)
             automatic = cls._bounded_number(
@@ -8966,8 +8966,6 @@ class ConfigurationObjectService:
                     "enabled": enabled,
                 }
             )
-            if media_type is not None:
-                result["mediaType"] = media_type.value
             if query_type is not None:
                 result["mediaQueryType"] = query_type.value
             if language is not None:

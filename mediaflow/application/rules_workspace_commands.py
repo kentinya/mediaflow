@@ -132,6 +132,18 @@ def rules_family_section(family: str) -> str:
     return spec.section
 
 
+# The typed form never offers the legacy MetadataPolicy mediaType control.  It
+# remains an accepted-but-ignored input key at the Save boundary so an older
+# client cannot write it into a new Active document.
+_METADATA_POLICY_FORM_FIELDS = METADATA_POLICY_CONFIGURATION_FIELDS - {"mediaType"}
+
+
+def _candidate_fields(spec: _FamilySpec) -> frozenset[str]:
+    if spec.family == "metadataPolicies":
+        return frozenset({*_METADATA_POLICY_FORM_FIELDS, "mediaType"})
+    return spec.form_fields
+
+
 _FAMILY_SPECS: dict[str, _FamilySpec] = {
     "recognitionRules": _FamilySpec(
         family="recognitionRules",
@@ -186,7 +198,7 @@ _FAMILY_SPECS: dict[str, _FamilySpec] = {
         kind=ConfigurationObjectKind.METADATA_POLICY,
         section="metadataPolicies",
         label="MetadataPolicy",
-        form_fields=METADATA_POLICY_CONFIGURATION_FIELDS,
+        form_fields=frozenset(_METADATA_POLICY_FORM_FIELDS),
         supports_enabled=True,
     ),
     "namingPolicies": _FamilySpec(
@@ -251,7 +263,6 @@ _FORM_DEFAULTS: dict[str, dict[str, object]] = {
     "recognitionTypes": {"name": "", "description": "", "enabled": True},
     "metadataPolicies": {
         "providerId": "tmdb",
-        "mediaType": MediaType.MOVIE.value,
         "mediaQueryType": MediaQueryType.AUTO.value,
         "language": "zh-CN",
         "region": None,
@@ -496,7 +507,7 @@ class RulesWorkspaceCommandService:
         for field in spec.form_fields:
             if field in candidate:
                 merged[field] = copy.deepcopy(candidate[field])
-        unknown = set(candidate).difference(spec.form_fields)
+        unknown = set(candidate).difference(_candidate_fields(spec))
         if unknown:
             raise self._invalid(
                 spec,
@@ -1191,13 +1202,14 @@ class RulesWorkspaceCommandService:
             for field in spec.form_fields:
                 if field in candidate:
                     merged[field] = copy.deepcopy(candidate[field])
-            unknown = set(candidate).difference(spec.form_fields)
+            unknown = set(candidate).difference(_candidate_fields(spec))
             if unknown:
                 raise self._invalid(
                     spec,
                     "compose",
                     f"{spec.label} candidate contains unsupported field {sorted(unknown)[0]!r}",
                 )
+            merged.pop("mediaType", None)
             self._validate_form_fields(spec, merged)
             self._prepare_candidate(spec, merged, stored)
             composed = self._normalize_or_reject(spec, merged)

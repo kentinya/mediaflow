@@ -1069,14 +1069,14 @@ export function OrganizeCreationPage() {
                                   value={
                                     item.choice.metadata === null
                                       ? ""
-                                      : `${item.choice.metadata.provider}/${item.choice.metadata.providerId}`
+                                      : `${item.choice.metadata.provider}/${item.choice.metadata.providerId}/${item.choice.metadata.mediaType ?? ""}`
                                   }
                                   disabled={correctionMutation.isPending}
                                   onChange={(event) => {
                                     const chosen =
                                       item.allowedMetadataIdentities.find(
                                         (value) =>
-                                          `${value.provider}/${value.providerId}` ===
+                                          `${value.provider}/${value.providerId}/${value.mediaType ?? ""}` ===
                                           event.target.value,
                                       );
                                     if (chosen === undefined) return;
@@ -1123,13 +1123,19 @@ export function OrganizeCreationPage() {
                                   {item.allowedMetadataIdentities.map(
                                     (value) => (
                                       <option
-                                        key={`${value.provider}/${value.providerId}`}
-                                        value={`${value.provider}/${value.providerId}`}
+                                        key={`${value.provider}/${value.providerId}/${value.mediaType ?? ""}`}
+                                        value={`${value.provider}/${value.providerId}/${value.mediaType ?? ""}`}
                                       >
                                         {value.title ?? value.providerId}
                                         {value.year !== null
                                           ? ` (${value.year})`
                                           : ""}{" "}
+                                        ·{" "}
+                                        {value.mediaType === "movie"
+                                          ? "电影"
+                                          : value.mediaType === "tv"
+                                            ? "电视剧"
+                                            : "类型未知"}{" "}
                                         · {value.provider}/{value.providerId}
                                       </option>
                                     ),

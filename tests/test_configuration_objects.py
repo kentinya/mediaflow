@@ -2892,6 +2892,44 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(rerun.result["effectiveMetadataPolicy"]["region"], "KR")
                 self.assertEqual(rerun.result["effectiveMetadataPolicy"]["maxProviderRequests"], 9)
 
+    def test_metadata_policy_query_type_is_the_only_saved_control(self) -> None:
+        legacy = ConfigurationObjectService._normalize(
+            ConfigurationObjectKind.METADATA_POLICY,
+            {"id": "legacy", "providerId": "tmdb", "mediaType": "movie"},
+        )
+        self.assertNotIn("mediaType", legacy)
+        self.assertNotIn("mediaQueryType", legacy)
+        legacy_policy = ConfigurationObjectService._metadata_policy_from_value(legacy)
+        self.assertIsNone(legacy_policy.media_type)
+        self.assertEqual(legacy_policy.query_type.value, "auto")
+
+        controlled = ConfigurationObjectService._normalize(
+            ConfigurationObjectKind.METADATA_POLICY,
+            {
+                "id": "controlled",
+                "providerId": "tmdb",
+                "mediaType": "tv",
+                "mediaQueryType": "movie",
+            },
+        )
+        self.assertNotIn("mediaType", controlled)
+        self.assertEqual(controlled["mediaQueryType"], "movie")
+        controlled_policy = ConfigurationObjectService._metadata_policy_from_value(controlled)
+        self.assertIsNone(controlled_policy.media_type)
+        self.assertEqual(controlled_policy.query_type.value, "movie")
+
+        ignored_invalid_legacy = ConfigurationObjectService._normalize(
+            ConfigurationObjectKind.METADATA_POLICY,
+            {"id": "legacy-invalid", "providerId": "tmdb", "mediaType": "album"},
+        )
+        self.assertEqual(ignored_invalid_legacy["id"], "legacy-invalid")
+
+        with self.assertRaisesRegex(ValueError, "query type"):
+            ConfigurationObjectService._normalize(
+                ConfigurationObjectKind.METADATA_POLICY,
+                {"id": "bad", "providerId": "tmdb", "mediaQueryType": "film"},
+            )
+
     def test_metadata_policy_validation_rejects_unknown_secret_and_invalid_semantics(self) -> None:
         base = {"id": "A", "providerId": "tmdb"}
         invalid = (

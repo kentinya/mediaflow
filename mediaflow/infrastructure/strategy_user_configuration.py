@@ -278,13 +278,13 @@ def _metadata_policies(document, base, required):
             raise ValueError("metadataPolicies name must be bounded non-empty text")
         if not required and policy_id in policies:
             current = policies[policy_id]
-            media_type = value.get("mediaType")
             query_type = value.get("mediaQueryType")
             policies[policy_id] = replace(
                 current,
                 name=name,
                 provider_id=str(value.get("providerId", current.provider_id)),
-                media_type=MediaType(media_type) if media_type is not None else current.media_type,
+                # mediaType is legacy read-only data; an override never changes it
+                # and never feeds query/identity decisions.
                 media_query_type=MediaQueryType(query_type)
                 if query_type is not None
                 else current.media_query_type,
@@ -305,12 +305,21 @@ def _metadata_policies(document, base, required):
                 ),
             )
             continue
-        media_type = value.get("mediaType")
         query_type = value.get("mediaQueryType")
+        legacy_media_type = None
+        raw_media_type = value.get("mediaType")
+        if raw_media_type is not None:
+            try:
+                # Retain the legacy value only so an already-stored manual intent's
+                # option projection still compares equal.  It is not validated and
+                # is never used to restrict lookup or identities.
+                legacy_media_type = MediaType(raw_media_type)
+            except (TypeError, ValueError):
+                legacy_media_type = None
         policies[policy_id] = MetadataPolicy(
             policy_id,
             _string(value, "providerId"),
-            MediaType(media_type) if media_type is not None else None,
+            legacy_media_type,
             _optional_string(value, "language", None),
             _optional_string(value, "region", None),
             name,

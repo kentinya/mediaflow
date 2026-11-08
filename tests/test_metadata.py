@@ -21,6 +21,7 @@ from mediaflow.domain.metadata import (
     EpisodeIdentity,
     MediaCandidate,
     MediaIdentity,
+    MediaQueryType,
     MediaType,
     MetadataError,
     MetadataErrorCode,
@@ -90,7 +91,40 @@ def config(**changes) -> TMDBConfig:
 
 
 def policy(media_type=MediaType.MOVIE, **changes) -> MetadataPolicy:
-    return replace(MetadataPolicy("metadata", "tmdb", media_type=media_type), **changes)
+    query_type = {
+        MediaType.MOVIE: MediaQueryType.MOVIE,
+        MediaType.TV: MediaQueryType.TV,
+    }[media_type]
+    return replace(
+        MetadataPolicy("metadata", "tmdb", media_query_type=query_type),
+        **changes,
+    )
+
+
+class MetadataPolicyQueryTypeTests(unittest.TestCase):
+    def test_query_type_is_the_only_control_and_legacy_media_type_is_ignored(self) -> None:
+        legacy = MetadataPolicy("legacy", "tmdb", media_type=MediaType.MOVIE)
+        self.assertIs(legacy.query_type, MediaQueryType.AUTO)
+        self.assertTrue(legacy.allows_media_type(MediaType.MOVIE))
+        self.assertTrue(legacy.allows_media_type(MediaType.TV))
+
+        movie = MetadataPolicy(
+            "movie",
+            "tmdb",
+            media_type=MediaType.TV,
+            media_query_type=MediaQueryType.MOVIE,
+        )
+        self.assertIs(movie.query_type, MediaQueryType.MOVIE)
+        self.assertTrue(movie.allows_media_type(MediaType.MOVIE))
+        self.assertFalse(movie.allows_media_type(MediaType.TV))
+
+        tv = MetadataPolicy("tv", "tmdb", media_query_type=MediaQueryType.TV)
+        self.assertTrue(tv.allows_media_type(MediaType.TV))
+        self.assertFalse(tv.allows_media_type(MediaType.MOVIE))
+
+        none = MetadataPolicy("none", "tmdb", media_query_type=MediaQueryType.NONE)
+        self.assertFalse(none.allows_media_type(MediaType.MOVIE))
+        self.assertFalse(none.allows_media_type(MediaType.TV))
 
 
 class TMDBClientTests(unittest.TestCase):

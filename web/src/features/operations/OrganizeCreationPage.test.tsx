@@ -508,8 +508,8 @@ describe("organize creation workspace", () => {
       Array.from(select.querySelectorAll("option")).map((option) =>
         option.getAttribute("value"),
       ),
-    ).toContain("tmdb/999");
-    await user.selectOptions(select, "tmdb/999");
+    ).toContain("tmdb/999/movie");
+    await user.selectOptions(select, "tmdb/999/movie");
     await waitFor(() => expect(choiceBody).not.toBeNull());
     const body = choiceBody as unknown as Record<string, unknown>;
     expect((body["metadata"] as Record<string, unknown>)["providerId"]).toBe(

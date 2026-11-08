@@ -32,6 +32,7 @@ from mediaflow.domain.manual_organize_preview import (
 )
 from mediaflow.domain.metadata import (
     MediaCandidate,
+    MediaIdentity,
     MediaQueryType,
     MediaType,
     MetadataError,
@@ -51,8 +52,35 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.source_fixtures import source_identity_from_storage as _source_identity
+from tests.test_manual_organize_intent import source_metadata_evidence
 
 NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
+
+
+class RecordingMetadataProvider(SyntheticMetadataProvider):
+    def __init__(self, candidates, episodes=()):
+        super().__init__(candidates, episodes)
+        self.movie_searches: list[object] = []
+        self.tv_searches: list[object] = []
+        self.movie_details: list[str] = []
+        self.tv_details: list[str] = []
+
+    def search_movie(self, query, policy=None, **kwargs):
+        self.movie_searches.append(query)
+        return super().search_movie(query, policy, **kwargs)
+
+    def search_tv(self, query, policy=None, **kwargs):
+        self.tv_searches.append(query)
+        return super().search_tv(query, policy, **kwargs)
+
+    def get_movie(self, provider_id, policy=None, **kwargs):
+        self.movie_details.append(provider_id)
+        return super().get_movie(provider_id, policy, **kwargs)
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        self.tv_details.append(provider_id)
+        return super().get_tv(provider_id, policy, **kwargs)
+
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -240,6 +268,197 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             storages={"source": source, "target": target},
         )
         return intents, previews, source, target
+
+    def test_legacy_policy_media_type_does_not_override_history_tv_identity(self):
+        """AC-3: a tv Result+evidence stays tv under old mediaType=movie/Auto policy."""
+
+        fixture = self._fixture(("One.2001.mkv",))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            _provider,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                repository.append_result(
+                    PersistentResultRecord(
+                        "result-tv",
+                        "task-tv",
+                        "item-tv",
+                        "source",
+                        "One.2001.mkv",
+                        None,
+                        None,
+                        "B",
+                        "tmdb",
+                        "603",
+                        "B",
+                        "B",
+                        "B",
+                        "B",
+                        "move",
+                        "dry_run",
+                        NOW,
+                        title="The Show",
+                    )
+                )
+                repository.append_evidence(
+                    source_metadata_evidence(
+                        path="One.2001.mkv",
+                        task_id="task-tv",
+                        item_id="item-tv",
+                        provider_id="603",
+                        media_type="tv",
+                        title="The Show",
+                    )
+                )
+                configuration = replace(
+                    configuration,
+                    strategy=replace(
+                        configuration.strategy,
+                        metadata_policies=tuple(
+                            replace(
+                                policy,
+                                media_type=MediaType.MOVIE,
+                                media_query_type=MediaQueryType.AUTO,
+                            )
+                            if policy.policy_id == "B"
+                            else policy
+                            for policy in configuration.strategy.metadata_policies
+                        ),
+                    ),
+                )
+                provider = RecordingMetadataProvider(
+                    (
+                        MediaCandidate(
+                            "tmdb",
+                            "603",
+                            MediaType.TV,
+                            "The Show",
+                            year=2024,
+                        ),
+                    )
+                )
+                source = MutationSpyStorage(LocalStorage("source", source_root))
+                target = MutationSpyStorage(LocalStorage("target", target_root))
+                intents = ManualOrganizeIntentService(
+                    repository,
+                    configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {"source": source},
+                )
+                previews = ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    configuration=configuration,
+                    providers=MetadataProviderRegistry((provider,)),
+                    storages={"source": source, "target": target},
+                )
+                intent = intents.create((sources[0],), actor="operator")
+                choice = intent.items[0].choice
+                self.assertEqual(choice.recognition_type_id, "B")
+                self.assertIsNotNone(choice.metadata)
+                self.assertEqual(choice.metadata.media_type, "tv")
+
+                preview = previews.create(
+                    intent.intent_id,
+                    expected_version=intent.version,
+                    actor="operator",
+                )
+                self.assertEqual(
+                    ManualPreviewStatus.PREVIEWED, preview.status, preview.items[0].error
+                )
+                item = preview.items[0]
+                self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
+                self.assertEqual(provider.tv_details, ["603"])
+                self.assertEqual(provider.movie_details, [])
+                self.assertEqual(provider.tv_searches, [])
+                self.assertEqual(provider.movie_searches, [])
+                identity = item.plan["analysis"]["metadata"]["identity"]
+                self.assertEqual(identity["mediaType"], "tv")
+                self.assertEqual(identity["providerId"], "603")
+                self.assertEqual(item.plan["operation"], "MOVE")
+                self.assertEqual([], source.calls)
+                self.assertEqual([], target.calls)
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    def test_durable_identity_reuse_needs_no_provider_lookup(self):
+        """AC-4: the persisted identity itself produces the summary, no second call."""
+
+        fixture = self._fixture(("One.2001.mkv",))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            _provider,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                source = MutationSpyStorage(LocalStorage("source", source_root))
+                target = MutationSpyStorage(LocalStorage("target", target_root))
+                intents = ManualOrganizeIntentService(
+                    repository,
+                    configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {"source": source},
+                )
+                previews = ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    configuration=configuration,
+                    storages={"source": source, "target": target},
+                )
+                intent = intents.create((sources[0],), actor="operator")
+                intent = intents.update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    {"recognitionTypeId": "B"},
+                    expected_version=intent.version,
+                    actor="operator",
+                )
+                identity = MediaIdentity(
+                    "tmdb",
+                    "603",
+                    MediaType.TV,
+                    "The Show",
+                    year=2024,
+                    season=1,
+                    episode=1,
+                    episodes=(1,),
+                    episode_title="Pilot",
+                    recognition_type_id="B",
+                )
+                preview = previews.create(
+                    intent.intent_id,
+                    expected_version=intent.version,
+                    actor="operator",
+                    reuse_analysis_identity=identity,
+                    require_durable_identity=True,
+                )
+                self.assertEqual(
+                    ManualPreviewStatus.PREVIEWED, preview.status, preview.items[0].error
+                )
+                item = preview.items[0]
+                self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
+                self.assertEqual(item.plan["analysis"]["metadata"]["identity"]["mediaType"], "tv")
+                self.assertEqual(item.plan["analysis"]["metadata"]["identity"]["providerId"], "603")
+                self.assertEqual(item.plan["analysis"]["metadata"]["identity"]["season"], 1)
+                self.assertEqual([], source.calls)
+                self.assertEqual([], target.calls)
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
 
     def test_storage_source_preview_succeeds_without_file_index_row(self):
         fixture = self._fixture(("One.2001.mkv",))
@@ -600,6 +819,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                         "move",
                         "dry_run",
                         NOW,
+                        title="One",
+                    )
+                )
+                repository.append_evidence(
+                    source_metadata_evidence(
+                        path="One.2001.mkv",
+                        task_id="task-offline",
+                        item_id="item-offline",
+                        provider_id="129",
+                        media_type="movie",
                         title="One",
                     )
                 )

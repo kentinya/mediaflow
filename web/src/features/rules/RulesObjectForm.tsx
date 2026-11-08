@@ -906,7 +906,7 @@ export function RulesObjectForm({
         {text("id", requiredHint("id"), true)}
         {text("name", requiredHint("name"), true)}
       </Section>,
-      <Section key="provider" title="元数据服务与媒体类型">
+      <Section key="provider" title="元数据服务与查询类型">
         {select(
           "providerId",
           authority.providers.map((item) => item.providerId),
@@ -914,10 +914,6 @@ export function RulesObjectForm({
           "仅列出本服务实际配置的 Provider;凭据始终以环境变量名引用,不会出现在页面上。",
           true,
         )}
-        {select("mediaType", authority.enums.mediaTypes, {
-          movie: "电影",
-          tv: "电视剧",
-        })}
         {select("mediaQueryType", authority.enums.mediaQueryTypes, {
           movie: "仅电影",
           tv: "仅电视剧",
