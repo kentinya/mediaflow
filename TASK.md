@@ -149,6 +149,7 @@ Role exception:        用户直接授权 Developer 实施 B 的已提交草案�
 | `npm run typecheck` | PASS |
 | `npm run build` | PASS |
 | `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts` | 4 passed |
+| `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/page-transition.spec.ts` | 59 passed（附加受影响回归） |
 | `npx eslint <changed paths>` | PASS |
 | `npx prettier --check <changed paths>` | PASS |
 | `python3 scripts/check_governance.py` | PASS |
