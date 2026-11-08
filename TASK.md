@@ -1,8 +1,7 @@
 # Task PATCH-20261108-1 — 探索筛选、来源呈现与详情背景位置修正
 
-**已激活，待 Developer 开始实施。** 用户于 2026-11-08 明确要求“激活Task吧”，
-本 Task 从规划草案提升为活动实施 Task，保留原 ID、Base、范围、验收和测试分工。
-本轮仅激活并 checkpoint；Developer 开工时将状态改为 IN PROGRESS。
+**已实施，待 B 独立审查。** 用户于 2026-11-08 明确要求“激活Task吧”，本 Task 保留
+原 ID、Base、范围、验收和测试分工；Developer 已完成实施与受影响测试，未自签 PASS。
 
 Authority: 用户于 2026-11-08 提出的四项探索体验问题、“规划一个Task吧”及“激活Task吧”；
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) §3.1、§5–8。
@@ -13,13 +12,14 @@ Roadmap 或 Progress。B 负责本 Task 规划及后续独立验收，Developer 
 Task ID: PATCH-20261108-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: aa752cc3bc194707808a1af79afd8978ce4aef44
+Implementation Candidate: e2bb72d8c191d34586a90ff49577680107b0295c
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR DEVELOPER
-Next Action: DEVELOPER IMPLEMENTS THIS TASK
+Implementation Authorization: USER-AUTHORIZED TASK ACTIVATION — DEVELOPER COMPLETED
+Next Action: B INDEPENDENT REVIEW
 ```
 
 ## Goal
@@ -213,8 +213,68 @@ B 检查相同视口、相同夹具的改前／改后完整页面和详情末尾
 
 ## Developer Completion Report
 
-未开始；Task 已激活，下一步由 Developer 按本 Task 实施。后续按模板记录候选 SHA、
-实际受影响测试／风险和 READY FOR B REVIEW，不在本次激活填入实施或验证结论。
+**READY FOR B REVIEW** — 分支 `main`，实现候选
+`e2bb72d8c191d34586a90ff49577680107b0295c`。权威 Task Base 仍为
+`aa752cc3bc194707808a1af79afd8978ce4aef44`；实施前 checkout 为已激活 HEAD
+`62cc23cf`（仅 TASK 激活文档）。工作区保留预存 `mediaflow/.DS_Store` 修改及全部
+未跟踪日志／元数据／output 材料，均未纳入候选。未推送、未发布、未部署、未自签 PASS。
+
+### 变化与关键决策
+
+- `ExplorePage` 将搜索下的控件重排为“类型／排序／题材／原始语言／评分／操作”标签行：
+  左侧固定标签，右侧单选标签组；题材和语言使用当前 API options，保留“全部”，长行只在
+  自身区域横向滚动。年份留在“更多筛选”。评分行只保留一个滑条、一个最低评分人数输入和
+  一次“应用筛选”，`待应用` 区分草稿与真实 applied；空值仍为不限，显式 `0` 仍为真实条件。
+- 保留原查询、分页、搜索、失败恢复与迟到响应隔离；排序、题材、语言、评分、人数仍由现有
+  Browse 请求作用于后端完整结果集。搜索态只显示当前类型与关键词，不显示浏览筛选。
+- 删除 `ExploreAttribution` 列表横栏及详情内重复中文／英文说明。详情末尾只保留本地批准
+  TMDB 图标和“在 TMDB 查看 ↗”精确作品外链，使用现有安全新标签属性；不再有默认紫色下划线。
+- 新增 `features/about` 静态署名卡，由 `AppShell` 侧栏底部“关于与鸣谢”入口挂载，复用共享
+  ModalCard 的焦点、滚动锁、Escape 和 reduced-motion；不读取配置／Provider，不建路由，
+  不改变页面条件、滚动或身份。Shell 不依赖 Explore。
+- `openDetail` 与无来源关闭分支显式 `resetScroll: false`；普通打开、关闭、Escape、
+  popstate／前进后退均保留列表非零位置。未修改共享滚动锁或全局 Router 行为。
+- 单元与真实 Python Explore 用例迁移到新控件入口，新增 `PATCH-20261108-1` 浏览器回归：
+  中列表位慢加载、加载后、正文滚到底、关闭、后退、前进、Escape 均比较同一背景卡片的
+  滚动值与几何位置；另覆盖 390px 底部剧集、矮视口、reduced-motion 和集中署名卡。
+
+### 实际验证结果（最终候选）
+
+根目录：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean。
+
+`web/`：
+
+```text
+npm run typecheck                                      → PASS
+npm run build                                          → PASS
+npx eslint <Explore/About/AppShell/spec 目标文件>       → PASS(0 问题)
+npx prettier --check <同范围源码、CSS、spec>            → PASS
+npm run test -- run src/features/explore src/features/about
+  src/shared/ui/AppShell.test.tsx src/shared/ui/modal-card.test.tsx
+  src/routes/router.test.tsx                           → 5 files / 67 tests passed(8.94s)
+npm run test:e2e -- --config=<Explore Python config>
+  tests/e2e/explore.python.spec.ts                     → 20 passed(25.6s)
+```
+
+真实浏览器最终 20 例中，既有浏览／分页／搜索／失败恢复／零副作用全部通过；新增
+`PATCH-20261108-1` 两例通过。首次迁移后曾失败 4 例：3 例仍定位旧 `.mf-explore-filters`
+容器，1 例在 Playwright 自动滚动后才点击却使用点击前旧基线；均改为新真实标签板和先滚动
+后捕获，未删除断言、未加跳过或重试。
+
+测试执行合计约 4.7 分钟，本轮约 25 分钟，低于 30%。证据保留于
+`.git/validation-evidence/e2bb72d8/developer-patch-20261108-1/`：改前桌面／390 整页与
+详情末尾截图、改后同视口整页／标签行／关于卡／中列表详情加载与末尾／矮视口截图及
+`commands.txt`。本机 4187 已被并行 `node tests/fake-server.mjs` 占用，实际 E2E 使用同一
+Python harness／生产构建的临时 4197 等价配置；committed config/spec 仍保持 4187，B 可在
+端口空闲时直接运行 Task 原命令。
+
+### 剩余风险与边界
+
+- B 尚未独立验收；完整 Web 单元、`page-transition`／`deep-link`、全量 lint/format 和
+  Base..候选审查仍由 B 承担。Developer 未运行全仓套件或 Python 全量。
+- 真实 TMDB、生产配置、用户媒体、Storage／Task／权限／schema 均未触碰；Explore harness
+  的固定题材／语言数量有限，超大真实选项集的横向浏览由 CSS 与 390px 结构检查覆盖。
+- 视觉最终判断归 B；本轮截图只证明实际候选的布局、详情末尾和零背景位移证据。
 
 ## B Review Result
 
