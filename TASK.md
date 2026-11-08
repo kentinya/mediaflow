@@ -13,6 +13,7 @@ checkpoint，不授权产品实施、其他代理、推送或部署。得到实�
 Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目录、仅真正读取内容时
 获取 115 链接，并以取链接接口恒定 405、仅目录列表及原生移动／重命名成功验证完整文件页
 整理链路；先只读调查，随后授权规划本独立修正。
+用户进一步明确：复用 OpenList 自带缓存，不允许强制更新存储；目录查询保持 `refresh: false`。
 [Development Workflow](docs/development-workflow.md) §3.1、§5–8 管理生命周期、测试与提交。
 
 ```text
@@ -85,10 +86,14 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
    `exists()` 仍只将 NOT_FOUND 转 false；健康检查、Delete 类型检查和上传的 absent
    检查通过同一 metadata stat 自然获益，不给业务层增加 OpenList 分支。
 5. **保留真实结果核验。** 原生移动／重命名及相关附件的源／目标检查不删减；移动后仍
-   校验目标存在、大小和源消失，必要时保留既有类型证据。复用当前列表语义，不引入长期
-   目录缓存或全局强制 refresh／新增权限要求。用 mutation 后变化的列表验证最新状态；
-   陈旧／矛盾或读取失败的证据不能被当作 verified success，不能通过读媒体补证或自动重放。
-   保留外部修改及提供商目录可见性窗口的既有限制，不承诺对任意最终一致后端原子确认。
+   校验目标存在、大小和源消失，必要时保留既有类型证据。所有目录请求显式保持
+   `refresh: false`，复用 OpenList 自带缓存；查询未命中、冲突、失败或结果核验时也不得
+   改用 `refresh: true`、清缓存、调用管理接口刷新存储或以其他方式绕过缓存强制更新。
+   依赖 OpenList 正常缓存生命周期及原生操作后的缓存处理，不新增目录缓存或权限要求；
+   正常未命中／到期可能触发的上游目录读取不属于强制刷新，也不承诺其请求数为零。
+   正常列表返回可观察到矛盾、不完整或读取失败时，不能据此标记 verified success；沿用
+   既有失败／效果未核验语义，不通过读媒体补证或自动重放。不要求识别上游返回中不可观察
+   的陈旧状态，不扩展外部修改及提供商目录可见性窗口的既有一致性保证。
 6. **补完整隔离证明。** 优先扩展现有适配器测试、整理集成测试及原生浏览夹具，经真实
    生产服务、API、SQLite、Worker 与真实 OpenList HTTP 适配器验证批量结果，并从生产
    构建文件页驱动提交、摘要确认和结果读回。复用不足时可新增最小测试辅助代码，文件名、
@@ -99,14 +104,17 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 
 - [ ] 所有 metadata-only stat／exists（文件、目录、配置根、缺失项）不请求 fs/get，
       不访问 raw_url／代理下载／其他内容端点；health 的既有 ping 可保留。
+- [ ] HTTP 请求台账检查端点及请求体：所有 OpenList 目录请求显式为 `refresh: false`；
+      正常与失败路径均无 `refresh: true`、清缓存、管理接口刷新存储或其他强制更新／绕过缓存
+      请求。结果核验同样遵守此约束，不以强制刷新换取成功。
 - [ ] 精确属性、跨页找到、完整缺失、空目录、合法根与路径约束正确。列表权限、超时、
       限流、非法 DTO 和中途页失败保持正确错误及有限请求，不吞错、不循环、不误报缺失。
 - [ ] 显式 read 仍取链接并流式读取；链接 405 时 read 正常失败。NFO 解析、Hash 检测、
       跨 Storage 流式传输等真正内容需求保持原语义，不能为了零请求偷偷关闭产品功能。
 - [ ] 405 核心场景使用同一 Storage ID，预置完整目标目录，Hash=none、无待解析 NFO、
       关闭源目录清理和无需回滚的正常成功路径；业务规则／元数据使用本地确定性夹具。
-      媒体端仅允许 list／native move／rename 成功（另放行既有 health ping），其他内容、
-      上传、复制、删除和建目录端点记录并拒绝。fs/get 即使收到请求也始终返回 405。
+      媒体端仅允许 `refresh: false` 的 list／native move／rename 成功（另放行既有 health ping），
+      其他内容、上传、复制、删除和建目录端点记录并拒绝。fs/get 即使收到请求也始终返回 405。
 - [ ] 在真实 HTTP 适配器的同一 405 夹具下分别验证：仅移动（换目录、名称不变）、仅
       重命名（目录不变）以及同时移动并重命名；每条路径都完成属性核验，取链接和内容
       读取请求数均为零。可复用同一夹具／批次覆盖，不要求三套重复的完整浏览旅程。
@@ -114,10 +122,12 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
       完整分析、精确摘要、显式确认、Worker 执行、逐项结果核验到刷新／任务详情读回全部
       完成，至少一项同时换目录和改名。Task flow 与各主文件的成功及 effect certainty
       分别有证明，不能只断言 completed。
-- [ ] 对上述完整正常旅程，fs/get 请求数=0、所有内容读取请求数=0，确认之前媒体
+- [ ] 对上述完整正常旅程，OpenList 取链接及文件内容端点的请求数均为零（包括 fs/get、
+      raw_url／代理下载），不限制正常业务 API／元数据夹具／静态资源请求；确认之前媒体
       mutation=0；最终只有精确授权的 Move／Rename，各项源消失、目标大小正确，结果
       已持久化；刷新、重复结果读取及再次 Worker poll 不增加 mutation。
-- [ ] 已有目标冲突或源元数据变化在 mutation 前拒绝；目标大小错误／源仍存在／执行后
+- [ ] 未解决或未获授权的目标冲突、源元数据变化在 mutation 前拒绝；合法 Skip／Rename／
+      显式授权 Overwrite 保持现有策略语义。目标大小错误／源仍存在／执行后
       列表失败不能变成成功；重命名失败保留现有补偿与不确定效果规则。批量一项失败不重放
       已成功兄弟项，现有故障语义及 C→A RecognitionType 身份回归不被放宽。
 - [ ] 生产变更未扩大 Storage 能力、隐式 overwrite／delete／copy fallback、授权、
@@ -180,6 +190,7 @@ OpenList 与本地元数据夹具和真实 Worker；请求台账覆盖启动／�
 
 不新增 Provider／Storage 操作、下载产品、缓存／限速／队列系统、自动风控重试、批量并发
 优化、文件内容验证策略或新的恢复类型；不关闭已有 NFO／Hash／跨 Storage 读取能力。
+不强制刷新存储、清缓存或绕过 OpenList 缓存，不增加识别不可观察陈旧缓存的要求。
 不修改业务流水线、UI 产品、schema、Active 发布合同、权限或 effect certainty 语义。
 不修复／迁移已失败的生产任务，不自动重放已移动或不确定项，不连接真实 115 做压力测试。
 不改 Slice52、SLICE／Roadmap／Progress，不扩大至独立性能或其他已知 Web 测试问题。
