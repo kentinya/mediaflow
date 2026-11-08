@@ -112,6 +112,27 @@ function ShellHarness(
   );
 }
 
+function BackgroundShellHarness() {
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  const onRequestClose = vi.fn();
+  return (
+    <ModalCardShell
+      layerRef={layerRef}
+      closing={false}
+      busy={false}
+      title="详情卡片"
+      titleId="background-shell-title"
+      description="装饰背景"
+      closeLabel="关闭"
+      closeDisabled={false}
+      onRequestClose={onRequestClose}
+      layerBackground={<div data-testid="layer-background" />}
+    >
+      <p>可读正文</p>
+    </ModalCardShell>
+  );
+}
+
 function layerAndBackdrop() {
   const card = screen.getByRole("dialog");
   const layer = card.closest(".mf-modal-layer");
@@ -144,6 +165,15 @@ describe("ModalCardShell close permission", () => {
     fireEvent.mouseDown(layer);
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+  });
+
+  it("keeps an optional decorative layer behind the ordinary card content", () => {
+    render(<BackgroundShellHarness />);
+    const card = screen.getByRole("dialog");
+    const background = screen.getByTestId("layer-background");
+    expect(card.firstElementChild).toBe(background);
+    expect(screen.getByText("可读正文")).toBeVisible();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled();
   });
 });
 

@@ -106,9 +106,7 @@ test("connect from root opens the Explore homepage and stays oriented", async ({
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/explore$/);
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   // The default browse context is visible: its applied conditions echo and
   // at least one honest poster card.
   await expect(page.getByText(/已应用:电影/)).toBeVisible();
@@ -204,9 +202,7 @@ test("no supported page emits a retired Library address into the DOM", async ({
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 
   // Task46.3 RO-2: a generic creation URL now guides to ResourceLibrary Files
   // instead of offering another library picker.  Memory-only authority is
@@ -255,9 +251,7 @@ test("refresh keeps memory-only semantics and reconnects to the same supported p
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 
   // A full reload clears the memory-only store; the current supported path
   // becomes the safe intended destination shown at the connection boundary.
@@ -276,9 +270,7 @@ test("refresh keeps memory-only semantics and reconnects to the same supported p
   // raw-token copy beyond the existing principal-entry interaction.
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 });
 
 test("disconnect clears token, intent and cache with no hidden retry or redirect", async ({
@@ -288,9 +280,7 @@ test("disconnect clears token, intent and cache with no hidden retry or redirect
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   // The homepage opens exactly its own reads for the default context: one
   // browse page and one options catalog.
   await expect.poll(() => exploreReads.length).toBe(2);
@@ -306,9 +296,7 @@ test("disconnect clears token, intent and cache with no hidden retry or redirect
   // Reconnect proves token, intent and cache were fully cleared.
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await expect.poll(() => exploreReads.length).toBe(4);
 });
 
@@ -343,9 +331,7 @@ test("401 clears rejected authority and an explicit new credential continues to 
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: /深空回声/ }).first(),
   ).toBeVisible();
@@ -391,9 +377,7 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 });
 
 test("an unavailable read shows a bounded state and explicit retry recovers", async ({

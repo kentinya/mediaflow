@@ -49,7 +49,7 @@ describe("EntryPage", () => {
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
     // Root entry has no deep intention, so it falls through to Explore.
-    await screen.findByRole("heading", { name: "探索" });
+    await screen.findByRole("region", { name: "探索" });
     expect(authStore.getIntendedPath()).toBeNull();
   });
 
@@ -100,7 +100,7 @@ describe("EntryPage", () => {
     renderApp("/ui-v2/");
     await user.type(await screen.findByLabelText("API token"), TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
-    await screen.findByRole("heading", { name: "探索" });
+    await screen.findByRole("region", { name: "探索" });
     expect(document.body.textContent).not.toContain(TOKEN);
     expect(document.body.innerHTML).not.toContain(TOKEN);
   });

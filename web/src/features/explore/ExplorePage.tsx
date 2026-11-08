@@ -135,8 +135,9 @@ export function ExplorePage() {
   const savedBrowseScrollRef = useRef(0);
   /** The results region is the position anchor of a newly selected page. */
   const resultsRef = useRef<HTMLDivElement | null>(null);
-  /** Fallback focus when a selected page carries no work to focus. */
-  const pageTitleRef = useRef<HTMLHeadingElement | null>(null);
+  /** The explore workspace keeps its accessible region identity and is the
+   * stable programmatic focus target when a selected page carries no work. */
+  const exploreRegionRef = useRef<HTMLElement | null>(null);
   const pendingPositionRef = useRef<PendingExplorePosition | null>(null);
   /** A page handover already scheduled for the next frame is cancelled when
    * the operator starts using the persistent name search: that later user
@@ -289,18 +290,21 @@ export function ExplorePage() {
       resultsRef.current?.scrollIntoView?.({ block: "start" });
       const focusTarget =
         resultsRef.current?.querySelector<HTMLElement>(".mf-explore-card") ??
-        pageTitleRef.current;
+        exploreRegionRef.current;
       focusTarget?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [mode, shownAtTarget, targetPage, activeQuery.isFetching, detailTarget]);
 
-  // Return focus to the poster that opened the detail after any close path.
+  // Return focus to the poster that opened the detail after any close path;
+  // a deep link or a vanished invoker falls back to the labelled workspace.
   useEffect(() => {
     if (hadDetailRef.current && detailTarget === null) {
       const invoker = invokerRef.current;
       if (invoker instanceof HTMLElement && document.contains(invoker)) {
         invoker.focus({ preventScroll: true });
+      } else {
+        exploreRegionRef.current?.focus({ preventScroll: true });
       }
     }
     hadDetailRef.current = detailTarget !== null;
@@ -567,10 +571,13 @@ export function ExplorePage() {
     );
 
   return (
-    <section className="mf-explore" aria-labelledby="explore-page-title">
-      <h1 id="explore-page-title" tabIndex={-1} ref={pageTitleRef}>
-        探索
-      </h1>
+    <section
+      id="explore-workspace"
+      className="mf-explore"
+      aria-label="探索"
+      tabIndex={-1}
+      ref={exploreRegionRef}
+    >
       <div className="mf-explore-toolbar">
         <form
           className="mf-explore-search"

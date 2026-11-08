@@ -2350,6 +2350,14 @@ button.mf-grid-button {
   padding: 28px 4vw 64px;
 }
 
+/* Explore uses the same compact content start as Files, Rules, Automation and
+   the task center: the page owns the inset, so its search, filter board and
+   poster grid align with those pages instead of growing a 4vw gutter. */
+.mf-shell-main:has(.mf-explore) {
+  max-width: none;
+  padding: 0 0 40px;
+}
+
 /* Shared main-page transition (Slice50 RO-4 / V2-UX-012). ------------------
    The surface is keyed by the existing sidebar destination identity, never by
    every URL change. The mount-time start class lowers opacity for one frame;
@@ -8225,12 +8233,22 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-bottom: 32px;
+  padding: 20px 18px 28px 23px;
 }
 
-.mf-explore h1 {
-  margin: 0;
-  font-size: 1.6rem;
+.mf-explore:focus {
+  outline: none;
+}
+
+.mf-explore:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 4px;
+}
+
+@media (max-width: 850px) {
+  .mf-explore {
+    padding: 18px 14px 28px;
+  }
 }
 
 .mf-explore-toolbar {
@@ -8689,13 +8707,15 @@ tr[aria-selected="true"] {
 
 .mf-explore-detail-body {
   display: grid;
-  gap: 18px;
-  grid-template-columns: 1fr;
+  gap: 12px 16px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
 }
 
 @media (min-width: 720px) {
   .mf-explore-detail-body {
-    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 20px 24px;
+    grid-template-columns: 180px minmax(0, 1fr);
   }
 }
 
@@ -8713,18 +8733,23 @@ tr[aria-selected="true"] {
 }
 
 .mf-explore-detail-poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 8px;
+  color: var(--muted);
+  font-size: 1.5rem;
 }
 
 .mf-explore-detail-facts dl {
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mf-explore-detail-facts dl > div {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 74px minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -8736,11 +8761,19 @@ tr[aria-selected="true"] {
 .mf-explore-detail-facts dd {
   margin: 0;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 720px) {
+  .mf-explore-detail-facts dl > div {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
 }
 
 .mf-explore-detail-overview {
   line-height: 1.7;
-  margin: 12px 0;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
 }
 
 /* The detail tail is one compact primary action: the approved local logo,
@@ -8991,27 +9024,88 @@ tr[aria-selected="true"] {
    for every other card. This one card opts into a real inner reading
    column (wheel/touch/keyboard reach the last paragraph and the TMDB link)
    contained inside the card — the background never scrolls with it. */
+/* Explore detail is the content, not a fixed empty canvas: a short work
+   gets a compact centered card, while a long body grows to the same bounded
+   maximum and scrolls inside it. Other cards keep the shared fixed height. */
+.mf-modal-card.mf-explore-detail-card {
+  height: auto;
+  min-height: 360px;
+  max-height: min(88dvh, 820px);
+}
+
+@media (max-width: 720px) {
+  .mf-modal-card.mf-explore-detail-card {
+    min-height: 320px;
+    max-height: calc(100dvh - 16px);
+  }
+}
+
 .mf-modal-body.mf-explore-detail {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 16px 20px 20px;
+  background: #fbfcfe;
 }
 
-.mf-modal-body.mf-explore-detail .mf-explore-detail-body {
-  padding-bottom: 8px;
+@media (max-width: 720px) {
+  .mf-modal-body.mf-explore-detail {
+    padding: 14px 16px 16px;
+  }
 }
 
-/* The work's real backdrop spans the detail card above poster and facts. */
+/* The work's real backdrop is one decorative, non-interactive card layer. It
+   never owns a row or aspect box, so the body starts immediately below the
+   stable header and late/missing art cannot move the reading position. */
 .mf-explore-detail-backdrop {
-  grid-column: 1 / -1;
-  min-width: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(145deg, #223552 0%, #0b1320 100%);
 }
 
 .mf-explore-detail-backdrop img {
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 100%;
   object-fit: cover;
-  border-radius: 8px;
-  background: var(--disabled-surface);
+}
+
+.mf-explore-detail-card > .mf-modal-header,
+.mf-explore-detail-card > .mf-modal-body {
+  position: relative;
+  z-index: 1;
+}
+
+/* White text is carried on a stable near-opaque navy scrim: over any bright
+   or dark backdrop photo the composited header stays above 4.5:1, while the
+   real image remains visible as the card's background. */
+.mf-explore-detail-card > .mf-modal-header {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+  background: rgba(8, 14, 26, 0.66);
+  color: #ffffff;
+}
+
+.mf-explore-detail-card > .mf-modal-header h2 {
+  color: #ffffff;
+}
+
+.mf-explore-detail-card > .mf-modal-header p {
+  color: #eef3fa;
+}
+
+.mf-explore-detail-card > .mf-modal-header .mf-modal-close {
+  color: #f8fafc;
+}
+
+.mf-explore-detail-card > .mf-modal-header .mf-modal-close:hover,
+.mf-explore-detail-card > .mf-modal-header .mf-modal-close:focus {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.mf-explore-detail-card > .mf-modal-header .mf-modal-close:focus-visible {
+  outline-color: #ffffff;
 }

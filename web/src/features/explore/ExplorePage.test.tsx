@@ -222,9 +222,8 @@ describe("Explore homepage journey", () => {
     const stub = stubExploreFetch();
     renderApp("/ui-v2/explore");
 
-    expect(
-      await screen.findByRole("heading", { name: "探索", level: 1 }),
-    ).toBeVisible();
+    expect(await screen.findByRole("region", { name: "探索" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "探索" })).toBeNull();
     const inception = await screen.findByRole("button", {
       name: "Inception (2019)",
     });
@@ -517,6 +516,26 @@ describe("Explore homepage journey", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("keeps a deterministic workspace focus when a selected page has no cards", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.browse = (url) =>
+      url.includes("page=2")
+        ? jsonResponse(exploreEmptyPagePayload)
+        : jsonResponse(exploreBrowsePayload);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByText("没有符合条件的作品")).toBeVisible();
+    // The old title was the only fallback focus target; the labelled
+    // workspace now receives it without scrolling the list back to the top.
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "探索" })).toHaveFocus(),
+    );
+  });
+
   it("marks a changed second page as unavailable without hiding page one", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
@@ -646,9 +665,19 @@ describe("Explore homepage journey", () => {
     await user.click(screen.getByRole("button", { name: "剧集" }));
     await user.click(screen.getByRole("button", { name: "同号剧集 (2019)" }));
     let dialog = await screen.findByRole("dialog");
-    // The real backdrop renders at the fixed w780 rendition.
-    const backdrop = within(dialog).getByAltText("同号剧集 背景图");
+    // The real backdrop is the card's decorative layer at the fixed w780
+    // rendition, not a 16:9 row inside the scrolling body.
+    const backdrop = dialog.querySelector<HTMLImageElement>(
+      ".mf-explore-detail-backdrop img",
+    );
+    expect(backdrop).not.toBeNull();
     expect(backdrop).toHaveAttribute("src", expect.stringMatching(/\/w780\//));
+    expect(backdrop?.closest(".mf-modal-body")).toBeNull();
+    expect(
+      dialog
+        .querySelector(".mf-explore-detail-backdrop")
+        ?.getAttribute("aria-hidden"),
+    ).toBe("true");
     // Season and total-episode counts of this exact show.
     expect(within(dialog).getByText("4 季")).toBeVisible();
     expect(within(dialog).getByText("42 集")).toBeVisible();
@@ -657,11 +686,18 @@ describe("Explore homepage journey", () => {
       within(dialog).getByRole("link", { name: "在 TMDB 查看" }),
     ).toHaveAttribute("href", "https://www.themoviedb.org/tv/603");
 
-    // A broken backdrop image drops out while every fact stays readable.
+    // A broken backdrop image drops out while every fact stays readable and
+    // the stable layer itself (not a page-sized hole) remains.
+    if (backdrop === null) throw new Error("backdrop image missing");
     fireEvent.error(backdrop);
     await waitFor(() =>
-      expect(within(dialog).queryByAltText("同号剧集 背景图")).toBeNull(),
+      expect(
+        dialog.querySelector(".mf-explore-detail-backdrop img"),
+      ).toBeNull(),
     );
+    expect(
+      dialog.querySelector(".mf-explore-detail-backdrop.is-empty"),
+    ).not.toBeNull();
     expect(within(dialog).getByText("42 集")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "关闭作品详情" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -734,6 +770,52 @@ describe("Explore homepage journey", () => {
     ).toBeNull();
     link.focus();
     expect(link).toHaveFocus();
+  });
+
+  it("closes a direct detail deep link back to the labelled workspace", async () => {
+    authStore.setToken(TOKEN);
+    stubExploreFetch();
+    const user = userEvent.setup();
+    const { router } = renderApp("/ui-v2/explore?detail=movie-27205");
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByRole("heading", { name: "Inception" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "关闭作品详情" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // No list poster was the invoker and the old page-title fallback is gone;
+    // the labelled workspace receives focus without scrolling the list away.
+    expect(screen.getByRole("region", { name: "探索" })).toHaveFocus();
+    expect(router.state.location.search.detail).toBeUndefined();
+  });
+
+  it("keeps a detail read failure in the card and retries the exact work", async () => {
+    authStore.setToken(TOKEN);
+    const stub = stubExploreFetch();
+    stub.detail = () => providerEnvelope("provider_unavailable", 502);
+    const user = userEvent.setup();
+    renderApp("/ui-v2/explore");
+    await screen.findByRole("button", { name: "Inception (2019)" });
+
+    await user.click(screen.getByRole("button", { name: "Inception (2019)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("详情读取失败")).toBeVisible();
+    // The list behind stays readable and the failure names its own recovery.
+    expect(
+      screen.getByRole("button", { name: "Inception (2019)" }),
+    ).toBeVisible();
+    expect(stub.count("/api/v1/explore/movie/27205")).toBe(1);
+
+    stub.detail = null;
+    await user.click(
+      within(dialog).getByRole("button", { name: "重试详情读取" }),
+    );
+    expect(
+      await within(dialog).findByRole("heading", { name: "Inception" }),
+    ).toBeVisible();
+    expect(within(dialog).getByText("136 分钟")).toBeVisible();
+    expect(stub.count("/api/v1/explore/movie/27205")).toBe(2);
   });
 
   it("renders exactly one page and returns to a previous page without a new read", async () => {

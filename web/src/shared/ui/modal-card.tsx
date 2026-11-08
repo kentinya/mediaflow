@@ -271,6 +271,12 @@ export interface ModalCardShellProps {
   readonly size?: "form" | "detail";
   readonly cardClassName?: string;
   readonly bodyClassName?: string;
+  /**
+   * An optional decorative layer rendered behind the header/body as the
+   * first child of the card. It must position itself and stay non-interactive;
+   * no other card supplies one, so their geometry and lifecycle are unchanged.
+   */
+  readonly layerBackground?: ReactNode;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
 }
@@ -290,6 +296,7 @@ export function ModalCardShell({
   size = "form",
   cardClassName,
   bodyClassName,
+  layerBackground,
   children,
   footer,
 }: ModalCardShellProps) {
@@ -331,6 +338,7 @@ export function ModalCardShell({
         aria-labelledby={accessibleName === undefined ? titleId : undefined}
         aria-busy={busy}
       >
+        {layerBackground}
         <header className="mf-modal-header">
           <div>
             <h2 id={titleId}>{title}</h2>

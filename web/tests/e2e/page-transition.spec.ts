@@ -43,9 +43,7 @@ async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
 async function startNavigationSampler(
@@ -302,6 +300,23 @@ function currentPath(page: Page): string {
   return new URL(page.url()).pathname;
 }
 
+async function expectDestinationReady(
+  page: Page,
+  destination: (typeof DESTINATIONS)[number],
+): Promise<void> {
+  if (destination.page === "home") {
+    // Explore has no visible page heading; its labelled workspace region is
+    // the stable ready identity now used by connect and sidebar entry tests.
+    await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+    return;
+  }
+  await expect(
+    page
+      .getByRole("heading", { name: destination.heading, exact: true })
+      .first(),
+  ).toBeVisible();
+}
+
 test("all nine sidebar main pages transition once and keep the shell stable", async ({
   page,
 }, testInfo) => {
@@ -332,14 +347,7 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
     await startNavigationSampler(page);
     await openSidebarLink(page, destination.name);
     await expect.poll(() => currentPath(page)).toBe(destination.path);
-    await expect(
-      page
-        .getByRole("heading", {
-          name: destination.heading,
-          exact: true,
-        })
-        .first(),
-    ).toBeVisible();
+    await expectDestinationReady(page, destination);
     const surface = page.locator(`[data-main-page="${destination.page}"]`);
     await expect(surface).toHaveCount(1);
     await expect(surface).toHaveAttribute("data-page-transition", "enter");
@@ -420,14 +428,7 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
   ]) {
     await openSidebarLink(page, destination.name);
     await expect.poll(() => currentPath(page)).toBe(destination.path);
-    await expect(
-      page
-        .getByRole("heading", {
-          name: destination.heading,
-          exact: true,
-        })
-        .first(),
-    ).toBeVisible();
+    await expectDestinationReady(page, destination);
     await page.waitForTimeout(120);
     await expect(
       page.locator(`[data-main-page="${destination.page}"]`),
@@ -798,11 +799,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
     await startNavigationSampler(page, windowMs);
     await openSidebarLink(page, destination.name);
     await expect.poll(() => currentPath(page)).toBe(destination.path);
-    await expect(
-      page
-        .getByRole("heading", { name: destination.heading, exact: true })
-        .first(),
-    ).toBeVisible();
+    await expectDestinationReady(page, destination);
     await expectSurfaceSettled(page, pageId);
     await waitForSamplerWindowEnd(page);
     return expectBodyPresentationStable(
@@ -841,9 +838,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
   await page.reload();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   const slowContentRead = async (route: Route) => {
     const response = await route.fetch();
     await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -871,11 +866,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
     // waiting state while the shell entry already completes.
     await expect(page.getByRole("status", { name: waitingName })).toBeVisible();
     await expectSurfaceSettled(page, pageId);
-    await expect(
-      page
-        .getByRole("heading", { name: destination.heading, exact: true })
-        .first(),
-    ).toBeVisible();
+    await expectDestinationReady(page, destination);
     await waitForSamplerWindowEnd(page);
     const bodyFrames = expectBodyPresentationStable(
       await stopNavigationSampler(page),

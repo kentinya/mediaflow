@@ -193,9 +193,9 @@ export function AppShell({ children }: AppShellProps) {
   // explicit filters. Account/notification controls stay in the top bar.
   const searchIsOperations = pathname === "/operations";
   const searchIsRules = pathname === "/rules";
-  // Explore owns the single visible "探索" heading and its own works search.
-  // The shell's read-only file-search field and the duplicate location line
-  // would only add an unusable second title and a misaligned placeholder.
+  // Explore owns its one labelled workspace region and its own works search.
+  // It has no separate visible page title; the shell's read-only file-search
+  // field and duplicate location line would only add an unusable placeholder.
   const searchIsExplore = pathname === "/explore";
   const filesSearchContext = useMemo(
     () => ({

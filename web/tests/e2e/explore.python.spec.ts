@@ -37,6 +37,87 @@ const FIXTURE_POSTER = Buffer.from(
   "base64",
 );
 
+/** A local full-colour SVG backdrop; no external image leaves the browser. */
+function backdropFixture(fill: string): Buffer {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="780" height="439">` +
+      `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0" stop-color="${fill}"/>` +
+      `<stop offset="1" stop-color="#5687ff"/>` +
+      `</linearGradient></defs>` +
+      `<rect width="780" height="439" fill="url(#g)"/>` +
+      `<circle cx="610" cy="96" r="180" fill="#ffffff" fill-opacity="0.34"/>` +
+      `<circle cx="180" cy="360" r="230" fill="#0b1320" fill-opacity="0.26"/>` +
+      `</svg>`,
+  );
+}
+
+function backdropFixtureFor(url: string): Buffer {
+  const match = /harness-movie-(\d+)-bg\.jpg/.exec(url);
+  const index = match === null ? -1 : Number(match[1]);
+  if (index === 0) return backdropFixture("#fffdf4");
+  if (index === 1) return backdropFixture("#05070d");
+  if (index === 2) {
+    return Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="780" height="439">` +
+        `<rect width="390" height="439" fill="#ffffff"/>` +
+        `<rect x="390" width="390" height="439" fill="#000000"/>` +
+        `</svg>`,
+    );
+  }
+  return FIXTURE_POSTER;
+}
+
+interface PosterControls {
+  fail(key: string): void;
+  allow(key: string): void;
+  delayOnce(key: string, milliseconds: number): void;
+}
+
+/** Intercept every fixture image at its fixed host with local bytes. */
+async function servePosters(page: Page): Promise<PosterControls> {
+  const failing = new Set<string>();
+  const delays = new Map<string, number>();
+  await page.route("**://image.tmdb.org/**", async (route) => {
+    const url = route.request().url();
+    const key = url.split("/").at(-1) ?? url;
+    if (failing.has(key)) {
+      await route.abort();
+      return;
+    }
+    const delay = delays.get(key);
+    if (delay !== undefined) {
+      delays.delete(key);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    const usesSvg =
+      url.includes("-bg.jpg") && /harness-movie-[012]-bg\.jpg/.test(url);
+    await route.fulfill({
+      status: 200,
+      contentType: usesSvg ? "image/svg+xml" : "image/png",
+      headers: { "Cache-Control": "no-store" },
+      body: usesSvg ? backdropFixtureFor(url) : FIXTURE_POSTER,
+    });
+  });
+  return {
+    fail: (key) => failing.add(key),
+    allow: (key) => failing.delete(key),
+    delayOnce: (key, milliseconds) => delays.set(key, milliseconds),
+  };
+}
+
+async function connect(page: Page): Promise<PosterControls> {
+  const posters = await servePosters(page);
+  await page.goto("/ui-v2/");
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "探索", exact: true }),
+  ).toHaveCount(0);
+  return posters;
+}
+
 interface HarnessStats {
   readonly failureMode: string;
   readonly tmdbRequests: number;
@@ -83,27 +164,6 @@ async function setFailure(page: Page, mode: string): Promise<void> {
     data: { mode },
   });
   expect(response.ok()).toBe(true);
-}
-
-/** Intercept every fixture poster at its fixed host with local bytes. */
-async function servePosters(page: Page): Promise<void> {
-  await page.route("**://image.tmdb.org/**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "image/png",
-      body: FIXTURE_POSTER,
-    });
-  });
-}
-
-async function connect(page: Page): Promise<void> {
-  await servePosters(page);
-  await page.goto("/ui-v2/");
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
 }
 
 test("the static CSP keeps every directive and adds only the fixed TMDB image source", async ({
@@ -1322,6 +1382,186 @@ function expectAnchored(
   expect(Math.abs(actual.y - expected.y)).toBeLessThanOrEqual(1);
 }
 
+interface DetailGeometry {
+  readonly card: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly header: { readonly y: number; readonly height: number };
+  readonly body: {
+    readonly y: number;
+    readonly height: number;
+    readonly bottom: number;
+  };
+  readonly factsTop: number;
+  readonly overviewTop: number;
+  readonly posterWidth: number;
+  readonly posterHeight: number;
+  readonly backdropHeight: number | null;
+  readonly backdropPosition: string | null;
+  readonly backdropPointerEvents: string | null;
+  readonly hasBackdropImage: boolean;
+}
+
+/** Real rectangles of the settled card, its reading body and the backdrop. */
+async function detailGeometry(page: Page): Promise<DetailGeometry> {
+  return page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>(
+      ".mf-modal-card.mf-explore-detail-card",
+    );
+    const header = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-card > .mf-modal-header",
+    );
+    const body = document.querySelector<HTMLElement>(
+      ".mf-modal-body.mf-explore-detail",
+    );
+    const facts = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-facts",
+    );
+    const overview = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-overview",
+    );
+    const poster = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-poster, .mf-explore-detail-art > .mf-explore-poster",
+    );
+    const backdrop = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-backdrop",
+    );
+    if (card === null || header === null || body === null) {
+      throw new Error("detail card geometry is incomplete");
+    }
+    const cardBox = card.getBoundingClientRect();
+    const headerBox = header.getBoundingClientRect();
+    const bodyBox = body.getBoundingClientRect();
+    const factsBox = facts?.getBoundingClientRect() ?? null;
+    const overviewBox = overview?.getBoundingClientRect() ?? null;
+    const posterBox = poster?.getBoundingClientRect() ?? null;
+    const backdropBox = backdrop?.getBoundingClientRect() ?? null;
+    const style = backdrop === null ? null : getComputedStyle(backdrop);
+    return {
+      card: {
+        x: cardBox.x,
+        y: cardBox.y,
+        width: cardBox.width,
+        height: cardBox.height,
+      },
+      header: { y: headerBox.y, height: headerBox.height },
+      body: {
+        y: bodyBox.y,
+        height: bodyBox.height,
+        bottom: bodyBox.bottom,
+      },
+      factsTop: factsBox?.top ?? Number.NaN,
+      overviewTop: overviewBox?.top ?? Number.NaN,
+      posterWidth: posterBox?.width ?? Number.NaN,
+      posterHeight: posterBox?.height ?? Number.NaN,
+      backdropHeight: backdropBox?.height ?? null,
+      backdropPosition: style?.position ?? null,
+      backdropPointerEvents: style?.pointerEvents ?? null,
+      hasBackdropImage:
+        backdrop?.querySelector<HTMLImageElement>("img") !== null,
+    };
+  });
+}
+
+function parseCssRgba(value: string): [number, number, number, number] {
+  const match = /rgba?\(([^)]+)\)/.exec(value);
+  if (match === null) throw new Error(`unexpected colour ${value}`);
+  const parts = match[1]
+    .split(",")
+    .map((part) => Number.parseFloat(part.trim()))
+    .filter((part) => Number.isFinite(part));
+  if (parts.length < 3) throw new Error(`unexpected colour ${value}`);
+  return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+}
+
+function composite(
+  foreground: [number, number, number, number],
+  background: [number, number, number],
+): [number, number, number] {
+  const alpha = foreground[3];
+  return [
+    foreground[0] * alpha + background[0] * (1 - alpha),
+    foreground[1] * alpha + background[1] * (1 - alpha),
+    foreground[2] * alpha + background[2] * (1 - alpha),
+  ];
+}
+
+function channelLuminance(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045
+    ? value / 12.92
+    : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+function luminance(colour: [number, number, number]): number {
+  return (
+    0.2126 * channelLuminance(colour[0]) +
+    0.7152 * channelLuminance(colour[1]) +
+    0.0722 * channelLuminance(colour[2])
+  );
+}
+
+function contrastRatio(
+  first: [number, number, number],
+  second: [number, number, number],
+): number {
+  const lighter = Math.max(luminance(first), luminance(second));
+  const darker = Math.min(luminance(first), luminance(second));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** Header text and its scrim, resolved from the real rendered card. */
+async function headerColors(page: Page): Promise<{
+  scrim: string;
+  title: string;
+  description: string;
+  close: string;
+}> {
+  return page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(
+      ".mf-explore-detail-card > .mf-modal-header",
+    );
+    const title = header?.querySelector<HTMLElement>("h2") ?? null;
+    const description = header?.querySelector<HTMLElement>("p") ?? null;
+    const close = header?.querySelector<HTMLElement>(".mf-modal-close") ?? null;
+    if (
+      header === null ||
+      title === null ||
+      description === null ||
+      close === null
+    ) {
+      throw new Error("detail header is incomplete");
+    }
+    const style = getComputedStyle(header);
+    return {
+      scrim: style.backgroundColor,
+      title: getComputedStyle(title).color,
+      description: getComputedStyle(description).color,
+      close: getComputedStyle(close).color,
+    };
+  });
+}
+
+function usableHeaderContrast(scrim: string, text: string): number {
+  const background = parseCssRgba(scrim);
+  const foreground = parseCssRgba(text);
+  return Math.min(
+    contrastRatio(composite(background, [255, 255, 255]), [
+      foreground[0],
+      foreground[1],
+      foreground[2],
+    ]),
+    contrastRatio(composite(background, [0, 0, 0]), [
+      foreground[0],
+      foreground[1],
+      foreground[2],
+    ]),
+  );
+}
+
 test("PATCH-20261108-1 labelled filter rows, explicit rating draft and no list attribution strip", async ({
   page,
 }) => {
@@ -1536,4 +1776,367 @@ test("PATCH-20261108-1 a non-top detail keeps the background anchored through lo
   await dialog.getByRole("button", { name: "关闭作品详情" }).click();
   await expect(dialog).toHaveCount(0);
   expectAnchored(await backgroundAnchor(page, tvOpener), tvBefore);
+});
+
+test("PATCH-20261108-2 Explore content aligns with compact pages at 1440, 1920 and 390", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+
+  for (const width of [1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+    const exploreBox = await page.locator(".mf-explore-search").boundingBox();
+    const sidebarBox = await page.locator(".mf-shell-sidebar").boundingBox();
+    if (exploreBox === null || sidebarBox === null) {
+      throw new Error("Explore search or sidebar has no visible box");
+    }
+    // The compact content start is 23px from the fixed sidebar, independent
+    // of viewport width; the old Shell 4vw inset produced 57.6/76.8px.
+    expect(exploreBox.x - (sidebarBox.x + sidebarBox.width)).toBeCloseTo(23, 0);
+
+    // The same viewport's Rules header starts on the same content edge.
+    await page
+      .getByRole("link", { name: "Organizing rules", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "整理规则", exact: true }),
+    ).toBeVisible();
+    const rulesBox = await page.locator(".mf-rules-header").boundingBox();
+    if (rulesBox === null) throw new Error("Rules page has no visible box");
+    expect(rulesBox.x).toBeCloseTo(exploreBox.x, 0);
+    await page.getByRole("link", { name: "Explore", exact: true }).click();
+    await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+    if (width === 1440) {
+      await page.screenshot({
+        path: `${EVIDENCE}/PATCH-20261108-2-desktop-aligned.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+  const narrow = await page.evaluate(() => {
+    const explore = document.querySelector<HTMLElement>(".mf-explore-search");
+    if (explore === null) throw new Error("Explore search missing");
+    return {
+      x: explore.getBoundingClientRect().x,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      columns: getComputedStyle(
+        document.querySelector(".mf-explore-grid") as Element,
+      ).gridTemplateColumns.split(" ").length,
+    };
+  });
+  expect(narrow.x).toBeCloseTo(14, 0);
+  expect(narrow.scrollWidth).toBeLessThanOrEqual(narrow.innerWidth);
+  expect(narrow.columns).toBe(2);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-mobile-390-aligned.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("PATCH-20261108-2 detail first screen stays readable at the four required viewports", async ({
+  page,
+}) => {
+  await connect(page);
+  const viewports = [
+    { width: 1440, height: 900 },
+    { width: 1440, height: 720 },
+    { width: 390, height: 844 },
+    { width: 390, height: 600 },
+  ];
+  const typeGroup = page.getByRole("group", { name: "作品类型" });
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await typeGroup.getByRole("button", { name: "电影" }).click();
+    await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+    for (const type of ["movie", "tv"] as const) {
+      if (type === "tv") {
+        await typeGroup.getByRole("button", { name: "剧集" }).click();
+        await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+      }
+      const opener =
+        type === "movie"
+          ? page.getByRole("button", { name: "深空回声 (1995)" })
+          : page.getByRole("button", { name: /北岸列车/ }).first();
+      await opener.click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect(
+        dialog.getByText("TMDB 评分", { exact: true }),
+      ).toBeVisible();
+
+      const title = type === "movie" ? "深空回声" : /北岸列车/;
+      await expect(
+        dialog.getByRole("heading", { name: title }),
+      ).toBeInViewport();
+      await expect(
+        dialog.getByRole("button", { name: "关闭作品详情" }),
+      ).toBeInViewport();
+      await expect(
+        dialog.getByText("TMDB 评分", { exact: true }),
+      ).toBeInViewport();
+      await expect(dialog.getByText("类型", { exact: true })).toBeInViewport();
+
+      const geometry = await detailGeometry(page);
+      // The backdrop is a non-interactive card layer, not a 16:9 body row.
+      expect(geometry.backdropPosition).toBe("absolute");
+      expect(geometry.backdropPointerEvents).toBe("none");
+      expect(geometry.hasBackdropImage).toBe(true);
+      expect(
+        Math.abs((geometry.backdropHeight ?? 0) - geometry.card.height),
+      ).toBeLessThanOrEqual(2);
+      // Poster is an aid beside the facts, never a full-width mobile block.
+      expect(geometry.posterWidth).toBeLessThan(geometry.card.width / 3);
+      // Basic facts and the overview start are already inside the visible
+      // reading body before any card scroll.
+      expect(geometry.factsTop).toBeGreaterThanOrEqual(geometry.body.y);
+      expect(geometry.factsTop).toBeLessThan(geometry.body.bottom - 20);
+      expect(geometry.overviewTop).toBeGreaterThanOrEqual(geometry.body.y);
+      expect(geometry.overviewTop).toBeLessThan(geometry.body.bottom - 20);
+
+      if (viewport.height === 600 && viewport.width === 390) {
+        await page.screenshot({
+          path: `${EVIDENCE}/PATCH-20261108-2-mobile-390x600-${type}.png`,
+          fullPage: false,
+          animations: "disabled",
+        });
+        const body = page.locator(".mf-modal-body.mf-explore-detail");
+        await body.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        await expect(
+          dialog.getByRole("link", { name: "在 TMDB 查看" }),
+        ).toBeInViewport();
+        await body.evaluate((element) => {
+          element.scrollTop = 0;
+        });
+      } else {
+        await page.screenshot({
+          path: `${EVIDENCE}/PATCH-20261108-2-${viewport.width}x${viewport.height}-${type}.png`,
+          fullPage: false,
+          animations: "disabled",
+        });
+      }
+
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    }
+  }
+});
+
+test("PATCH-20261108-2 long title and long overview remain scrollable from a 390x600 first screen", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+  const longName = page
+    .getByRole("button", {
+      name: /在所有被命名的河流都干涸之前我们仍然记得那座灯塔/,
+    })
+    .first();
+  await longName.click();
+  let dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("TMDB 评分", { exact: true })).toBeVisible();
+  await expect(
+    dialog.getByRole("heading", {
+      name: /在所有被命名的河流都干涸之前我们仍然记得那座灯塔/,
+    }),
+  ).toBeInViewport();
+  let geometry = await detailGeometry(page);
+  expect(geometry.overviewTop).toBeLessThan(geometry.body.bottom - 20);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-mobile-long-title-first.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+  const body = page.locator(".mf-modal-body.mf-explore-detail");
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeInViewport();
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-mobile-long-title-tail.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "城市边缘的光 (1998)" }).click();
+  dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/第 20 段/)).toBeVisible();
+  geometry = await detailGeometry(page);
+  expect(geometry.overviewTop).toBeLessThan(geometry.body.bottom - 20);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-mobile-long-overview-first.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    dialog.getByRole("link", { name: "在 TMDB 查看" }),
+  ).toBeInViewport();
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-mobile-long-overview-tail.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("PATCH-20261108-2 missing or late backdrop never moves the reading start", async ({
+  page,
+}) => {
+  const posters = await connect(page);
+  await page.setViewportSize({ width: 1440, height: 720 });
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+  const opener = page.getByRole("button", { name: "深空回声 (1995)" });
+  await opener.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("TMDB 评分", { exact: true })).toBeVisible();
+  const normal = await detailGeometry(page);
+  expect(normal.hasBackdropImage).toBe(true);
+  expect(
+    Math.abs((normal.backdropHeight ?? 0) - normal.card.height),
+  ).toBeLessThanOrEqual(2);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // A fresh exact work whose backdrop fails from the start; no earlier image
+  // can answer from this page's cache.
+  posters.fail("harness-movie-4-bg.jpg");
+  await page.getByRole("button", { name: "午夜法庭 (2007)" }).click();
+  await expect(dialog.getByText("TMDB 评分", { exact: true })).toBeVisible();
+  await expect(dialog.locator(".mf-explore-detail-backdrop img")).toHaveCount(
+    0,
+  );
+  const missing = await detailGeometry(page);
+  expect(missing.hasBackdropImage).toBe(false);
+  // The body starts immediately after the stable header: no image row, no
+  // page-sized hole, no pushed-down facts or overview.
+  expect(
+    missing.body.y - (missing.header.y + missing.header.height),
+  ).toBeLessThanOrEqual(1);
+  expect(missing.factsTop).toBeGreaterThanOrEqual(missing.body.y);
+  expect(missing.factsTop).toBeLessThan(missing.body.bottom - 20);
+  expect(missing.overviewTop).toBeGreaterThanOrEqual(missing.body.y);
+  expect(missing.overviewTop).toBeLessThan(missing.body.bottom - 20);
+  expect(
+    Math.abs((missing.backdropHeight ?? 0) - missing.card.height),
+  ).toBeLessThanOrEqual(2);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-missing-backdrop.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  posters.allow("harness-movie-4-bg.jpg");
+
+  posters.delayOnce("harness-movie-5-bg.jpg", 900);
+  await page.getByRole("button", { name: "纸飞机计划 (2010)" }).click();
+  await expect(dialog.getByText("TMDB 评分", { exact: true })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  // Let the card's enter animation settle; the background request is still
+  // deliberately pending at this point.
+  await page.waitForTimeout(300);
+  const pending = await detailGeometry(page);
+  const pendingImage = dialog.locator(".mf-explore-detail-backdrop img");
+  await expect(pendingImage).toHaveCount(1);
+  await expect
+    .poll(() =>
+      pendingImage.evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  const loaded = await detailGeometry(page);
+  // Image arrival changes no reading geometry (within sub-pixel layout noise).
+  expect(
+    Math.abs(loaded.header.height - pending.header.height),
+  ).toBeLessThanOrEqual(2);
+  expect(Math.abs(loaded.body.y - pending.body.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(loaded.factsTop - pending.factsTop)).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(loaded.overviewTop - pending.overviewTop),
+  ).toBeLessThanOrEqual(2);
+  await page.screenshot({
+    path: `${EVIDENCE}/PATCH-20261108-2-late-backdrop.png`,
+    fullPage: false,
+    animations: "disabled",
+  });
+});
+
+test("PATCH-20261108-2 bright, dark and high-contrast backdrops keep the header readable", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator(".mf-explore-card")).toHaveCount(20);
+
+  const cases = [
+    { name: "深空回声 (1995)", key: "harness-movie-0-bg.jpg", label: "bright" },
+    {
+      name: "城市边缘的光 (1998)",
+      key: "harness-movie-1-bg.jpg",
+      label: "dark",
+    },
+    {
+      name: "沉默的第十二个夏天 (2001)",
+      key: "harness-movie-2-bg.jpg",
+      label: "contrast",
+    },
+  ];
+
+  for (const item of cases) {
+    await page.getByRole("button", { name: item.name }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("TMDB 评分", { exact: true })).toBeVisible();
+    const backdrop = dialog.locator(".mf-explore-detail-backdrop img");
+    await expect(backdrop).toHaveAttribute(
+      "src",
+      new RegExp(`/w780/${item.key}$`),
+    );
+    await expect
+      .poll(() =>
+        backdrop.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0);
+
+    const colours = await headerColors(page);
+    // The actual white text is composited over both the brightest and the
+    // darkest possible pixel of that image; both extremes must stay >= 4.5.
+    expect(
+      usableHeaderContrast(colours.scrim, colours.title),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      usableHeaderContrast(colours.scrim, colours.description),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      usableHeaderContrast(colours.scrim, colours.close),
+    ).toBeGreaterThanOrEqual(4.5);
+    await page.screenshot({
+      path: `${EVIDENCE}/PATCH-20261108-2-backdrop-${item.label}.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
 });

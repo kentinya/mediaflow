@@ -41,7 +41,7 @@ export function ExploreDetailCard({
   const requestClose = () => exit.beginClose(onClose);
   const layer = useModalLayer({
     onEscape: requestClose,
-    fallbackFocusId: "explore-page-title",
+    fallbackFocusId: "explore-workspace",
   });
   const token = useAuthToken();
   const query = useQuery(exploreDetailQuery(token, mediaType, providerId));
@@ -117,7 +117,6 @@ export function ExploreDetailCard({
   } else if (detail !== undefined) {
     body = (
       <div className="mf-explore-detail-body">
-        <DetailBackdrop path={detail.backdropPath} title={detail.title} />
         <div className="mf-explore-detail-art">
           <DetailPoster
             mediaType={mediaType}
@@ -127,18 +126,6 @@ export function ExploreDetailCard({
         </div>
         <div className="mf-explore-detail-facts">
           <dl>
-            <div>
-              <dt>原名</dt>
-              <dd>{detail.originalTitle ?? "缺项"}</dd>
-            </div>
-            <div>
-              <dt>{mediaType === "movie" ? "上映日期" : "首播日期"}</dt>
-              <dd>
-                {mediaType === "movie"
-                  ? (detail.releaseDate ?? "缺项")
-                  : (detail.firstAirDate ?? "缺项")}
-              </dd>
-            </div>
             <div>
               <dt>TMDB 评分</dt>
               <dd>
@@ -151,6 +138,18 @@ export function ExploreDetailCard({
               <dt>类型</dt>
               <dd>
                 {detail.genres.length > 0 ? detail.genres.join(" / ") : "缺项"}
+              </dd>
+            </div>
+            <div>
+              <dt>原名</dt>
+              <dd>{detail.originalTitle ?? "缺项"}</dd>
+            </div>
+            <div>
+              <dt>{mediaType === "movie" ? "上映日期" : "首播日期"}</dt>
+              <dd>
+                {mediaType === "movie"
+                  ? (detail.releaseDate ?? "缺项")
+                  : (detail.firstAirDate ?? "缺项")}
               </dd>
             </div>
             {mediaType === "movie" ? (
@@ -215,6 +214,12 @@ export function ExploreDetailCard({
       size="detail"
       cardClassName="mf-explore-detail-card"
       bodyClassName="mf-explore-detail"
+      layerBackground={
+        <DetailBackdrop
+          key={detail?.backdropPath ?? "none"}
+          path={detail?.backdropPath ?? null}
+        />
+      }
     >
       {body}
     </ModalCardShell>
@@ -222,27 +227,27 @@ export function ExploreDetailCard({
 }
 
 /**
- * The work's real backdrop (fixed w780). Missing or failed art simply drops
- * out: the poster, facts, external link and both close paths stay readable.
+ * The work's real backdrop (fixed w780) as one non-interactive decorative
+ * layer behind the card; it never occupies a text row or changes the body's
+ * starting position. Missing/failed art keeps the stable card surface while
+ * poster, facts, external link and both close paths stay readable.
  */
-function DetailBackdrop({
-  path,
-  title,
-}: {
-  readonly path: string | null;
-  readonly title: string;
-}) {
+function DetailBackdrop({ path }: { readonly path: string | null }) {
   const [failed, setFailed] = useState(false);
   const url = tmdbImageUrl(path, "w780");
-  if (url === null || failed) return null;
   return (
-    <div className="mf-explore-detail-backdrop">
-      <img
-        src={url}
-        alt={`${title} 背景图`}
-        decoding="async"
-        onError={() => setFailed(true)}
-      />
+    <div
+      className={`mf-explore-detail-backdrop${url === null || failed ? " is-empty" : ""}`}
+      aria-hidden="true"
+    >
+      {url !== null && !failed ? (
+        <img
+          src={url}
+          alt=""
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      ) : null}
     </div>
   );
 }

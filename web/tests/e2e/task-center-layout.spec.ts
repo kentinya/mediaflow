@@ -84,9 +84,7 @@ async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(
-    page.getByRole("heading", { name: "探索", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
 async function openOperations(page: Page): Promise<void> {
