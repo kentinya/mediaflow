@@ -471,14 +471,10 @@ RO-3：本候选已接入九页延后等待反馈及两库刷新预留位置，�
   (11.4s)**。
 - `npm run test:e2e -- tests/e2e/page-transition.spec.ts` → **7 passed**(修复后首跑
   35.1s,最终构建复跑 35.5s,含新增回归用例 20.5s/20.6s)。
-- `npm run test:e2e -- library-files+medialib-files --grep
-  'Task52[.]2|directory navigation, breadcrumb return, refresh and selection reset|
-  library selection, lazy navigation, breadcrumbs, search and refresh|empty and
-  recoverable failure states preserve the Files context|missing directory, stale
-  cursor and unavailable Storage offer scoped recovery'` → **6 passed (6.6s)**。
+- `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts --grep 'Task52[.]2|directory navigation, breadcrumb return, refresh and selection reset|library selection, lazy navigation, breadcrumbs, search and refresh|empty and recoverable failure states preserve the Files context|missing directory, stale cursor and unavailable Storage offer scoped recovery'` → **6 passed (6.6s)**。
 - 调试期失败:无(新用例首轮即绿;唯一失败为上述旧 CSS 可达性核验的预期失败)。
-- **时间约束**:本轮 14:16 开始、约 14:42 完成交接,总耗时约 26 分钟;上述全部测试/
-  构建/静态检查命令累计执行约 2.5 分钟 ≈ 10%,低于 30% 上限(未以等待凑时间)。
+- **时间约束**:本轮 14:16:21 开始、14:33 完成交接,总耗时约 17 分钟;上述全部
+  测试/构建/静态检查命令累计执行约 2.4 分钟 ≈ 14%,低于 30% 上限(未以等待凑时间)。
 
 ### 剩余风险与待 B
 
