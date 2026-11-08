@@ -4,13 +4,13 @@
 Task ID: PATCH-20261109-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 45674526b04d3366f533b86e864b3c8d179736ed
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED IMPLEMENTATION OF B'S COMMITTED DRAFT
-Candidate Checkpoint: cc6ffbb1496685d440e731421c0f45ee44953995
+Candidate Checkpoint: 9f6f2f301d4908e02750055366d8c24759772807
 B Reviewed Head: a3094876dd98cdd6b1d5601155da6fa0b0e426da
 ```
 
@@ -69,9 +69,9 @@ B 独立复核发现：原规划将任务中心的“查看状态／证据”当
 - [x] AC-2：等待反馈、真实文件列表及错误恢复按实际读取状态显示，提示／卡片／路径各一次；
   同条件刷新保留内容，快切和迟到响应归属正确。桌面1536×1024与390×844下
   等待和就绪接入平顺，键盘可用、长路径可读、无水平溢出；reduced-motion 反馈清楚。
-- [ ] AC-3：文件整理成功受理后进入准确准备／摘要；用户离开后从任务中心仍能找到
+- [x] AC-3：文件整理成功受理后进入准确准备／摘要；用户离开后从任务中心仍能找到
   同一任务、查看摘要、明确确认及查看独立结果。刷新／重认证后该入口继续可达。
-  B 已复现当前候选没有返回初次摘要的入口；按下方开发指导补齐后复核。
+  本轮新增 Task 详情的持久准备关联及“继续整理”入口，原生旅程已从同一摘要确认一次并核对结果。
 - [x] AC-4：提交响应丢失时，仍按原 requestId 核对并定位对应工作；核对暂不可用时
   提示准确且任务中心可供核查。界面没有指向已删除区域的指引；核对及查看不重发提交。
 - [x] AC-5：媒体库浏览、文件页普通操作状态、无 Active／无库／无效路径和401／403
@@ -167,52 +167,72 @@ Slice52、Roadmap、Progress 和既有接受身份保持。
 ## Developer Completion Report
 
 ```text
-Implementation commit: cc6ffbb1496685d440e731421c0f45ee44953995
+Implementation commit: 9f6f2f301d4908e02750055366d8c24759772807
 Base:                  45674526b04d3366f533b86e864b3c8d179736ed
 Branch:                main
-Role exception:        用户直接授权 Developer 实施 B 的已提交草案；未获 B 预审，未自签 PASS
+Role exception:        用户直接授权 Developer 实施 B 的已提交草案并完成 FIX REQUIRED 修正；未自签 PASS
 ```
 
 ### Changed files
 
-- `web/src/features/library/StorageFilesPage.tsx`：删除 `OrganizeWorkPanel`、
-  `ORGANIZE_WORK_STATUS_LABELS`、两处挂载及专用查询导入；新增局部
-  `renderBrowseContext`（提示／库卡片／切换提示）供等待与异常分支复用，成功分支仍由
-  `FileBrowseView` 渲染同一上下文；整理提交两处未确认提示改为指向任务中心。
-- `web/src/features/library/organize-work-query.ts`：删除（唯一消费者为已删除面板）。
-- `web/src/features/library/StorageFilesPage.test.tsx`：普通浏览、慢读取、读取失败断言
-  无记录区且不发起 `/files/organize-work`；未确认整理的两种提示断言任务中心文案与
-  不重发；既有准确 `requestId` 核对、他 binding／等价未决记录拒绝、精确导航断言保持。
-- `web/tests/e2e/files-read-handoff.spec.ts`：新增 4 个真实路由／生产构建场景：
-  快读、1200ms 慢读（等待→表格）、读取失败后唯一只读重试、390×844 无水平溢出；
-  每个场景都从实际请求台账断言无 organize-work 列表读取，且页面无“整理记录”。
-
-`fetchFilesOrganizeWork`、`api-client` 的准确 `requestId` 核对能力与全部消费者保留；
-目录读取、授权边界、等待门限、刷新、选择、工具栏与普通操作行为未改。
+- `mediaflow/interfaces/service_api.py`：`_operations_run_overview` 新增
+  `_operations_run_files_preparation`，只使用 `get_media_discovery_for_task(task_id)` 读取
+  该 Task 自己持久关联的准备，并校验 `discovery.organize_task_id == task_id`；详情响应新增
+  小型 `filesPreparation`（`discoveryId/resourceLibraryId`）。无关联、非该 Task 的准备或
+  无 Task 身份时为 `null`，不从文件名、最近记录、当前 Active 或浏览器记忆推算；
+  列表逐项读取不含该字段。
+- `tests/test_operations_task_center.py`：新增准确关联、兄弟 Task 不借用、无关联为空、
+  列表不投影准备、普通 READ 可读及无身份读取 401 的断言；读取不新增 discovery。
+- `web/src/entities/operations/run.ts`：接入 fail-closed 的 `filesPreparation` 归一化；
+  无 Task 身份却出现关联视为矛盾，畸形字段使整份详情读取失败而不是渲染近似链接。
+- `web/src/features/operations/OperationsLanding.tsx`：`RunDetailPanel`／`RunDetailFacts`
+  使用 Router 已注册的准备路由显示“继续整理”链接，携带当前运行、列表与详情状态的
+  `returnOps` 上下文；打开链接只读取原准备，不重发提交。
+- `web/src/features/operations/OperationsInventory.test.tsx`、`web/src/entities/operations/run.test.ts`：
+  覆盖真实链接、准备身份、刷新式重新读取、返回同一准备上下文与畸形／无关联拒绝。
+- `web/src/shared/ui/styles.css`：仅新增该准备事实块的本地可读样式。
+- `web/tests/e2e/operations-inventory.python.spec.ts`：新增原生场景
+  “initial manual preparation remains reachable from Task Center”：真实 Files 选择、
+  真实 discovery Worker 生成摘要、不确认即离开到任务中心、打开同一运行、刷新／重认证后
+  仍见“继续整理”，返回同一摘要明确确认一次，真实 manual Worker 完成并核对源文件移动；
+  再次从该入口查看已受理执行，全程无重复 POST。
+- `docs/product-experience.md`、`docs/v2-requirements.md`：仅协调“Files 发起、任务中心
+  返回同一准备”的现行呈现，不改 Slice52 合同、Roadmap、Progress 或既有接受身份。
 
 ### Actual results
 
-| 命令（cwd `web/`） | 实际结果 |
+| 命令 | 实际结果 |
 |---|---|
-| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx` | 3 files, 90 passed |
-| `npm run typecheck` | PASS |
-| `npm run build` | PASS |
-| `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts` | 4 passed |
-| `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/page-transition.spec.ts` | 59 passed（附加受影响回归） |
-| `npx eslint <changed paths>` | PASS |
-| `npx prettier --check <changed paths>` | PASS |
+| `.venv/bin/python -m unittest discover -s tests -p test_operations_task_center.py` | 26 passed |
+| `.venv/bin/ruff check mediaflow/interfaces/service_api.py tests/test_operations_task_center.py` | PASS |
+| `.venv/bin/ruff format --check mediaflow/interfaces/service_api.py tests/test_operations_task_center.py` | PASS |
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx`（cwd `web/`） | 3 files, 90 passed |
+| `npm run test -- run src/entities/operations/run.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/OrganizeCreationPage.test.tsx`（cwd `web/`） | 3 files, 85 passed |
+| `npm run typecheck`（cwd `web/`） | PASS |
+| `npm run build`（cwd `web/`） | PASS；保留现有大 chunk 提示 |
+| `npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts`（cwd `web/`） | 4 passed |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable from Task Center"`（cwd `web/`） | 1 passed，8.3s |
+| `npx eslint <changed web paths>` | PASS |
+| `npx prettier --check <changed web paths>` | PASS |
 | `python3 scripts/check_governance.py` | PASS |
 | `git diff --check` | PASS |
 
-首轮浏览器场景因 glob 写成 `files?*` 未命中真实 API（请求无 query），两例等待超时；
-改为 `**/api/v1/resource-libraries/*/files` 后 4 例全部通过。组件测试首轮
-`tsc` 报 `release?.()` 控制流收窄错误，改为显式 gate 对象后通过。
+首轮把两条 Playwright 套件放在同一 `test-results` 目录并行执行，trace 文件复制冲突导致
+原生场景报 ENOENT；单独重跑同一最终源码／构建后 1 passed。该失败是测试运行器产物竞争，
+不是产品失败，未删除断言、加跳过或放宽等待。
 
-### 未完成项
+### Remaining risks
 
-Developer 已报告 AC-3：普通初次待确认任务在任务中心只有状态／证据，没有摘要确认入口。
-B 已独立复现并决定沿用同一 Task 补齐到已有准备页的只读返回入口，见上方开发指导。
-原始报告与方案讨论保留在 `a3094876:TASK.md`；不再等待用户在 A/B/C 方案中选择。
+- 新入口按持久 `organize_task_id` 精确关联；若该 discovery 行损坏，读取该运行详情会按
+  既有 fail-closed 读取语义失败，而不是显示猜测链接。
+- Developer 只执行 T3 受影响范围，未跑全量 Python／Web／全套浏览器矩阵；T3 验收与
+  其他 Slice 回归由 B 在最终候选执行。
+- 原生场景使用一个未确认的 Files 准备；已确认后的返回由同一入口展示原准备的已受理
+  执行，本轮已在完成 Worker 后核对，但不新增摘要或恢复机制。
+- 现有未知提交核对由 `StorageFilesPage.test.tsx` 的既有准确 `requestId` 用例覆盖并
+  随上述 90 passed 重跑；导航、刷新和重新连接均为只读。
+
+下方 `B Review Result` 保留上一轮 FIX REQUIRED 的原始决定，供 B 本轮复核对照。
 
 ## B Review Result
 
