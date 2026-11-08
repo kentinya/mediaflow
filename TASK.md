@@ -1,20 +1,18 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# ACTIVE TASK — Task52.1 (Slice 52)
 
-[Slice52](SLICE.md) 已激活为 **ACTIVE**。下方为 **Task52.1 计划草案，等待产品实施授权**；
-用户授权 A 代 B 的角色例外只限本次规划，后续 B 独立验收及 A 独立终审保持。
-尚未修改产品代码、运行产品验收或取得 Task PASS。
-
-Next Action: USER AUTHORIZES TASK52.1 IMPLEMENTATION
-
-获实施授权后保留 Task ID／Base／Goal／Scope，移除本无活动实施声明，再按工作流实施；
-本草案不自行授权实现、其他代理、推送或部署。最近接受基线仍为
-[Slice51 固定关闭记录](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md)，
+[Slice52](SLICE.md) 为 **ACTIVE**。用户于 2026-11-08 在会话中明确指示 Developer 按本
+Task 实施,构成实施授权;按本文件原计划移除无活动实施声明并保留 Task ID/Base/Goal/Scope。
+用户授权 A 代 B 的角色例外仍只限首次规划,B 独立验收及 A 独立终审保持;本 Task 不自行
+授权推送、发布、部署或扩大范围。最近接受基线仍为
+[Slice51 固定关闭记录](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md),
 原 Base `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`、已审实现
 `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113`、B Closure Packet
-`e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份／限制保持。
-预存本地／私有文件不纳入提交。
+`e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份/限制保持。
+预存本地/私有文件不纳入提交。
 
-## Planning Draft — Task52.1：探索页布局、详情滚动与有界浏览
+Next Action: B REVIEWS Task52.1 AT `d269fe4e..900318f9`
+
+## Task52.1:探索页布局、详情滚动与有界浏览
 
 Authority: committed [Slice52 Contract](SLICE.md) at
 `c7913f6a751ee980db2b82ffaefec40d3d43528c`；
@@ -26,8 +24,8 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.1
 Task Type: SLICE
 Parent Slice: 52
-Status: PLANNED
-Plan Authorization: DRAFT; IMPLEMENTATION NOT AUTHORIZED
+Status: READY FOR B REVIEW
+Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); B review pending
 Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
 Difficulty: Medium
 Test Level: T3
@@ -216,8 +214,65 @@ Provider语义／CSP／执行权限／schema／媒体引擎。不新增源、推
 
 ## Developer Completion Report
 
-尚未实施。获授权后填写实际 checkpoint／READY FOR B REVIEW、行为与文件、受影响测试
-真实结果、失败／风险和剩余工作；没有结果先不填 PASS 或产品测试计数。
+**状态: READY FOR B REVIEW**(Developer,由 `mimo-v2.6-flash:free` 模型在 pi harness
+会话中执行;2026-11-08)。
+
+- **精确候选:** Task Base `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 实现 HEAD
+  `900318f973c598fb66faa7f13851eeafb8cd61b6`(单实现提交;本报告随后续 docs 提交)。
+  预存文件保留:跟踪变更 `mediaflow/.DS_Store`(未暂存未提交);既有未跟踪日志/
+  `15`/`output/`/`.DS_Store` 等原样保留。实施前后治理检查均 PASS。
+- **行为与文件:**
+  - `web/src/features/explore/explore-query.ts`:infinite query 改为单页
+    `queryOptions`(键 = 上下文+页,queryFn 直读既有 `page` 参数 API;5 分钟 TTL、
+    重试/焦点策略不变);新增 `retainExplorePage` 全局页 LRU(≤16 页,当前页永不
+    淘汰),原 `retainExploreContext`(≤16 上下文)保留。
+  - `ExplorePage.tsx`:browse/search 各自页目标;成功页在渲染期采纳(不走 effect),
+    旧上下文内容永不瞬显;慢读显示“第 N 页(当前显示第 M 页)”,失败留在成功页且
+    仅重试失败目标;迟到响应只进入自身 key;搜索往返在目标页真实上屏后恢复原条件/
+    页/滚动;新条件/类型/关键词回第 1 页;移除累加 flatten/lastPage 与“加载更多”
+    文案,末页说明改为“已到可浏览末页”。
+  - `ExplorePosterGrid.tsx`:上/下一页 + 紧凑页码窗(`explorePageWindow`)+ 以实际
+    显示页为准的真实范围状态行、失败/慢读状态与独立重试;只渲染当前成功页。
+  - `AppShell.tsx`:仅在 `/explore` 抑制 `mf-page-context` 重复定位行与只读文件搜索
+    占位,通知/身份操作与其他页面搜索/定位行不变(新增 AppShell 单测)。
+  - `styles.css`:探索局部 `.mf-explore-search .mf-field { margin: 0 }`(公共
+    `.mf-field` 默认不动)、分页器样式、`.mf-modal-body.mf-explore-detail` 真实内滚
+    (overflow-y auto + overscroll contain,不改公共 `.mf-modal-body` 默认)。
+  - `scripts/explore_harness.py`:电影 index1 长简介夹具(约 20 段)、`page_500`/
+    `slow_page_2` 失效模式,并在切模式时丢弃服务端 adapter 暖缓存(失效/延迟必须
+    真达假上游,不能被自缓存假成功)。
+  - 测试:`ExplorePage.test.tsx` 改写 2 处旧断言并新增 8 项(单页渲染/回页不重读、
+    条件换页重置、搜索往返保页、迟到响应不窜上下文、越界页回合法页、页码窗、
+    四类结果笔记纯逻辑、16 页 LRU 淘汰);`explore-api.test.ts` 适配签名;e2e 改写
+    7 处旧“加载更多/已加载”断言,新增 3 项(有界分页、慢读+失败恢复、详情真实
+    滚动到底),海报夹具换成 42×63(2:3)真实比例 PNG。
+- **受影响测试真实结果(候选 `900318f9`,本地隔离夹具,末轮一次通过):**
+  - `python3 scripts/check_governance.py` → PASS;`git diff --check` → 无输出。
+  - `web/`:`npm run typecheck` → PASS;`npm run test -- run <ExplorePage.test.tsx /
+    explore.test.ts / explore-api.test.ts / AppShell.test.tsx / modal-card.test.tsx>`
+    → **105 passed / 5 files**;`npx eslint src/features/explore AppShell.tsx
+    AppShell.test.tsx` → 0 problems;`npx prettier --check`(计划所列路径)→ 全部匹配;
+    `npm run build` → 成功(既有 chunk>500kB 警告,非本 Task 引入)。
+  - `npm run test:e2e -- --config=playwright.python.explore.config.ts
+    tests/e2e/explore.python.spec.ts` → **14 passed(末轮 12.4s,含新增 3 用例)**。
+  - `.venv/bin/ruff check` / `format --check` `scripts/explore_harness.py` → 通过;
+    `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'` → 46 OK。
+  - 同视口改前/改后证据:本地 `output/slice52-task52-1/`(before/after desktop、
+    390px、detail-scroll JSON;改前 `overflow:hidden` 滚不到底,改后滚到底且背景
+    不动);e2e 滚动截屏在 `web/test-results/explore-harness-evidence/`。均未入库。
+- **失败/风险(保留实际失败):**
+  - e2e 首两轮各 3 失败,根因已定位修复:(a) harness 服务端 300s adapter 缓存令
+    `page_500`/`slow_page_2` 假执行——改为切模式清缓存;(b) `搜索` 按钮点击的焦点
+    滚动使 spec 捕获的恢复位置过期(170 vs 实际 156)——改为从已聚焦输入框 Enter
+    提交;(c) 尾页高度差武断阈值(尾页天然更短)——删除该断言并保留卡片数/等高/
+    回页断言。末轮 14/14 全绿,仅末轮全绿,请 B 独立复跑。
+  - 单测早期一轮曾出现 1 项偶发失败(TV backdrop 时序),此后 4 轮 105/105 稳定,
+    未能复现;B 全量回归时留意。
+  - 慢读 e2e 依赖 1.2s 延迟窗口,慢 CI 上存在瞬态竞争的理论风险。
+  - 按分工未运行:全 Web 单测(`npm run test -- run`)、page-transition/deep-link
+    E2E、全量 lint/format;TAC-1 整页美观的同视口人审判定留给 B/A。
+- **剩余工作:** B 独立验收(四个原问题复现与 TAC-1–7);Developer 不自签 PASS、
+  不推送、不发布、不扩大范围。
 
 ## B Review Result
 
