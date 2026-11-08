@@ -1,7 +1,13 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task52.3 已由 B 独立复核 PASS。Slice52 四项结果已完成，Closure Packet 见下文；
+下一步交 A 独立终审，当前没有待实施的新 Task。
+
 # Task52.3 — 自动化旧“打开”与后继 Draft Web 链路退出
 
 用户于 2026-11-08 明确要求“激活Task”，Task52.3 成为正式活动实施 Task，实施已授权。
-Task52.2 的独立 B PASS 保持；Slice52 仍 ACTIVE，RO-4 待本 Task 交付及独立验收。
+Task52.2 的独立 B PASS 保持；Task52.3 已经独立 B 验收 PASS。Slice52 的四项结果已完成，
+本文件提交 Closure Packet 交 A 独立终审；Slice 状态及关闭由 A 决定。
 
 Authority: committed [Slice52 Contract](SLICE.md)（合同 checkpoint
 `c7913f6a751ee980db2b82ffaefec40d3d43528c`）的 RO-4、AC-7/8；生命周期和测试分工遵循
@@ -13,7 +19,7 @@ Authority: committed [Slice52 Contract](SLICE.md)（合同 checkpoint
 Task ID: 52.3
 Task Type: SLICE
 Parent Slice: 52
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: f4279b95a1ee05095fa940247f2fa26f15cbf042
 Implementation Candidate: f5409da41191c6e4bbf238bb7def601229fc59dc
 Difficulty: Medium
@@ -122,22 +128,22 @@ records payload 的 `handoff.definitionSettings` 在当前 `AutomationInventory`
 
 ## Acceptance Criteria
 
-- [ ] **TAC-1 列表入口退出：** 有结果、筛选／分页、刚创建／保存／复制高亮时，名称均为
+- [x] **TAC-1 列表入口退出：** 有结果、筛选／分页、刚创建／保存／复制高亮时，名称均为
   可读普通文本，不能点击或键盘进入旧详情；无“打开”。现有新建、编辑、复制、运行一次
   及其权限／独立反馈保持，桌面和390px可用；不新增另一旧详情入口。
-- [ ] **TAC-2 旧链路完整退出：** 两旧已知地址包括原有查询条件，直接访问／重载及原登录
+- [x] **TAC-2 旧链路完整退出：** 两旧已知地址包括原有查询条件，直接访问／重载及原登录
   续转均按现有普通未找到处理，不保留 alias、redirect、说明页、旧导航身份、页面或专属
   依赖。单纯查看不发旧详情／Draft 请求、配置命令或工作准入。
-- [ ] **TAC-3 当前管理完整：** 列表及有效创建／编辑深链仍到同一中文卡片；确切值、保存、
+- [x] **TAC-3 当前管理完整：** 列表及有效创建／编辑深链仍到同一中文卡片；确切值、保存、
   显式启停、取消／未保存选择、权限／校验／冲突、未知发布核对及列表条件／位置／焦点
   返回保持；复制仍是新 ID 的停用副本，运行一次仍明确提交一次并可查看准确 Task。
-- [ ] **TAC-4 历史与恢复：** occurrences 成功／失败均可返回合法列表／执行记录及正确范围，
+- [x] **TAC-4 历史与恢复：** occurrences 成功／失败均可返回合法列表／执行记录及正确范围，
   删除定义后的记录／原 pin／结果仍可读，损坏证据仍显示读取失败与原恢复入口；分页／
   Run once 历史／Task 链接保持。执行记录的简洁结果／原因／下一步与四类恢复原归属不变。
-- [ ] **TAC-5 清理及不重放：** 专属代码和测试退出，存活消费者无悬空依赖；通知编辑与
+- [x] **TAC-5 清理及不重放：** 专属代码和测试退出，存活消费者无悬空依赖；通知编辑与
   共用 Draft 校验仍可用，共享管理 API／CLI 保留。旧页面退出不删除定义、配置、Task、
   Result、审计或运行记录，不丢未知创建／保存／复制／运行一次核对上下文，不自动重发。
-- [ ] **TAC-6 已交付结果保持：** 探索 RO-1/2、九页切换／读取与两库刷新 RO-3 无直接回归；
+- [x] **TAC-6 已交付结果保持：** 探索 RO-1/2、九页切换／读取与两库刷新 RO-3 无直接回归；
   探索／纯导航零业务 mutation、原鉴权隔离／Active／pins／fences 保持。B 在本 Task
   PASS 后逐项重评 RO-1–4／AC-1–8，并按完整 Slice Base..Head 准备交 A。
 
@@ -299,7 +305,125 @@ git diff --check                                             → clean
 
 ## B Review Result
 
-Task52.3 已激活，尚无实现候选；待 Developer 实施交接，未作产品 PASS／FIX REQUIRED 判断。
-实施后独立审查完整 Task Base..Head；PASS后重评全部 Slice结果。全部满足则停止规划、
-完成 Slice-final验证并交 `SLICE READY FOR A REVIEW`，不由 B关闭 Slice；有真实阻塞留在
-同 Task修正，并以用户的完整操作旅程说明失败阶段、原因和可执行修正。
+```text
+Reviewed Task Base: f4279b95a1ee05095fa940247f2fa26f15cbf042
+Implementation candidate: f5409da41191c6e4bbf238bb7def601229fc59dc
+Report successor inspected: 61faa66bbf424c2d127f2a0b66e13e52a500038b (TASK.md only)
+Decision: PASS
+Task blockers: NONE
+Slice Required Outcomes / Surfaces all satisfied: YES
+Next: SLICE READY FOR A REVIEW
+```
+
+2026-11-08，B 独立审查完整 Task Base..Head（19 个文件，含两页删除、共享客户端清理、
+测试迁移和 fake 分支），并重评完整 Slice Base..candidate。起点为 main / 61faa66b，
+治理检查 PASS，预存 `mediaflow/.DS_Store` 和全部未跟踪材料保持；本轮只提交 TASK.md。
+实现保持 T3：未改后端、权限、Active 发布、schema、Storage 或执行引擎，不扩大为 T4。
+
+### 用户结果与验收
+
+- **TAC-1/2：** 从“自动化 → 任务列表”读取名称、筛选和分页，名称为普通文本，无“打开”；
+  编辑、复制、运行一次及各行独立反馈保留。桌面1536×1024和390×844材料可读，窄屏
+  宽表在自身容器内横向滚动。两个旧已注册地址及查询条件均为现有普通未找到；认证态
+  单测、未认证浏览器直达和导航模型覆盖，源码确认无登录续转身份、别名或自动跳转。
+  查看旧地址没有旧详情／Draft 请求，也没有配置或工作命令。
+- **TAC-3：** 真实 Python API／临时 SQLite 上，创建14、lifecycle21、Run once8条旅程
+  全部通过。用户从列表新建或编辑后可保存、启停并返回，复制得到停用新副本，运行一次
+  返回准确 Task。未保存退出、权限拒绝、并发冲突、再次编辑、迟到响应及丢失回复后的
+  原请求核对均保持；核对不会再次创建、保存、复制或执行。
+- **TAC-4/5：** occurrences 成功与失败返回合法执行记录页，默认带本 definition 筛选；
+  已有合法列表返回条件保留。删除定义后原 occurrence、pin 和运行历史仍可读，损坏
+  发布证据仍报读取失败；没有从 Draft 冒充历史。分页、Run once 历史和准确 Task 链接
+  的存活实现保留。通知的共享 Draft 校验通过12条 Node 通知旅程；记录详情未新增旧
+  定义链接或恢复／执行控件。原请求会话未删除，后端历史／管理 API／CLI 未改。
+- **TAC-6：** 最终候选重新运行探索、九页导航、两种库与通知的受影响旅程；原52.1／52.2
+  结果保持。纯探索／导航无业务命令，两库普通命令后的读取不重发命令；Task流程与
+  文件结果、失败／未知效果与四类恢复保持原归属。
+
+### B 实际门禁与失败归属
+
+证据根为本机 `.git/validation-evidence/f5409da41191c6e4bbf238bb7def601229fc59dc/b52-3-review/`，
+不承诺随 Git 同步。每个命令的参数、起止和退出码在对应 JSON，原始日志及失败 trace
+均保留。全部使用生产 Web 构建、本地假 API／Provider 和临时 SQLite／Storage；
+没有用户配置、运行数据库、媒体或真实外部服务。未删除断言、隐藏跳过或添加重试。
+
+| cwd / 命令（完整参数见同名 JSON） | 实际结果 / 日志 |
+|---|---|
+| web/ `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` | PASS；typecheck/lint/format/build.log，原大 chunk 提示保留 |
+| web/ `npm run test -- run` | 96 files / **1450 passed**，130.39s；unit.log，jsdom scrollTo提示保留 |
+| web/ `npm run test:e2e -- automation.spec + automation-presentation + notifications + page-transition + deep-link + library-files + medialib-files` | **112 passed / 1 failed**，1.5m；node-e2e.log |
+| web/ Automation Python config，lifecycle + create-dialog + workspace + run-once | **49 passed / 3 failed**，1.9m；python-automation.log |
+| web/ Explore Python config，explore.python.spec.ts | **18 passed**，21.2s；python-explore.log |
+| web/ Direct Files Python config，direct-files.python.spec.ts | **28 passed**，54.4s；python-files.log |
+| 独立导出的 Task Base/web/ 与当前 web/，Automation config，workspace 三条问题用例 `--grep 'the inventory reads|a technical record|two technical failures'` | 两版本均 **1 passed / 2 failed**；base-workspace.log、candidate-workspace-isolated.log |
+| Task Base/web/，Node config，deep-link `--grep '403 is visibly'` | **同样1 failed**；base-403.log |
+| 根目录治理、完整 Task／Slice diff 及报告 `git diff --check` | PASS |
+
+原 Task Base 使用 `git archive f4279b95` 独立导出、相同依赖单独构建；不替换当前源码或
+构建。三个问题的用户含义及证据边界如下：
+
+1. **403单句定位：** 无读取权限的人进入探索时，现有权限提示在两处显示；脚本全页
+   定位同一句话得到2个元素，严格模式报错。Base与候选相同，原403／401区分与显式
+   断开／换身份恢复事实保持；先前 B 的完整恢复材料见 `35fec54c/b52-2-review/403-probe.*`。
+   本轮原 trace 仍显示权限拒绝而非作品空态，没有把命令记作通过。
+2. **两条技术失败的旧文案：** 用户运行自动化，某文件存储失败后，在记录看到流程已结束
+   与独立失败文件，再到该任务查看证据。Base与候选都已经显示“处理失败；请查看上方
+   失败原因与已记录结果。”，脚本仍等待“这是一个技术失败条目”，所以超时。失败前的
+   真实结果、成功兄弟、失败数量和效果断言已通过；trace中证据页只发 GET，未发恢复命令。
+   当前技术历史只读语义由本轮通过的 TaskItemRecoveryPanel／RunDetailTabs 单测覆盖。
+   不恢复旧教程文案，也不声称这两条脚本尾部尚未执行的断言已通过。
+3. **合并夹具残留：** 本 Task 迁移的历史用例明确留下一个未发布 Draft，以证明历史不读
+   Draft。现有 reset 只清 Active 定义，后续 workspace 的“启用筛选应为空”便看到真实
+   的启用 Draft 行；这不是用户筛选漏掉已启用对象。B在独立新进程分别跑当前和Base的
+   完整筛选旅程，两者均通过。合并运行的失败继续保留；用独立运行核对该结果，不为
+   清测试状态而改产品 Draft／Active 规则或追加治理工具。
+
+这些是测试定位／夹具限制，当前必需管理与历史结果已由实际入口、原始证据及独立运行
+核对，没有本 Task P0/P1。T3 未跑无影响的全 Python、wheel、Docker 或生产发布矩阵。
+浏览器交互工具报告宿主不可用；本轮人审采用实际 Playwright 页面截图和已有完整中间帧，
+没有宣称另做了一次交互工具手动验收。新建卡的 patch 截图捕获入场中间态，不作为停稳
+画面；卡片交互由真实 Python 与现有稳定性回归验证。
+
+### Slice 全部结果重评与 Closure Packet
+
+```text
+Slice: 52
+Base: 9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8
+Implementation Head: f5409da41191c6e4bbf238bb7def601229fc59dc
+Required Outcomes and Surfaces: COMPLETE
+Tasks: 52.1 PASS / 52.2 PASS / 52.3 PASS
+Decision: SLICE READY FOR A REVIEW
+```
+
+| 合同结果 / AC | 完整用户旅程与判断 |
+|---|---|
+| RO-1 / AC-1/2 | 进入探索看到单一主标题和对齐工具区；桌面／390px整页、两列海报及来源层级协调。电影／剧集详情、长简介／缺图／矮视口可读到末尾；关闭／Escape／后退恢复背景与焦点。52.1同视口改前改后及滚轮／触摸／键盘材料保持，当前真实探索18条回归通过。 |
+| RO-2 / AC-3/4 | 继续浏览采用单页替换，长度和渲染条目不累加；可回先前页，搜索退出恢复原页／滚动／焦点。慢读明确目标，失败保留成功页并仅重读目标，迟到响应与输入竞争已有修正，最终候选回归保持。 |
+| RO-3 / AC-5/6 | 九个真实侧栏入口、快切／前后退／认证续转、同页卡片与reduced-motion保持。快读不闪等待提示，慢读保留真实反馈，设置下方阅读块平顺移动；两种库冷读、缓存、快慢刷新和真实命令后更新保持。最终候选10条切页、两库Node与28条Python旅程通过；九页完整中间帧与设置专项材料按下文复用。 |
+| RO-4 / AC-7 | 列表普通名称、无打开；旧definition/editor及专属页面／客户端调用退出。有效新建／编辑、复制、运行一次、执行记录、历史返回及准确Task保持；本轮TAC-1–5完成。 |
+| 安全 / AC-8 | 全Slice没有业务后端、权限、schema、引擎或Storage实现改动；只读探索／导航未准入工作，配置／Task历史与原pins/fences保持。共享通知校验、未知发布／请求核对及不重放经受影响回归保持。原RecognitionType C→A命名／分类身份规则未变。 |
+
+**材料复用依据：** 已审52.1的 `62a158f6/b52-review/` 和52.2的
+`35fec54c/b52-2-review/` 保留原始Base、候选、命令及失败，不能改写为旧轮全绿。
+本轮完整检查35fec54c..candidate清单：设置面板、配置页、共享Shell／CSS／read-reveal、
+page-transition与settings Python spec、Python harness、包锁及Playwright配置的10个
+Git blob完全相同（`settings-reuse-inputs.json`）。客户端只删除旧页面专用API包装，
+设置实际使用的传输／解析未改；当前导航及全Web门禁已重跑。故复用设置12条原生通过、
+3条旧Files“目录”定位失败的原报告和九页／设置逐帧视觉判断，不把新JS包伪称为旧包。
+产物摘要见 `candidate-assets.json`。原52.2三条容量脚本尚未证明其后半段容量断言的限制
+继续披露；本Slice不改容量引擎，当前两库可达入口已实跑。
+
+当前截图、原同视口整页、九页等待／就绪及设置连续帧已检查；新旧自动化列表的变化只在
+本Task退出范围。全部结果满足后停止规划，不增设清理Task。尚需A独立终审与事实协调：
+SLICE状态／Implementation Head／Closure Packet，Roadmap／Progress／README／docs索引，
+requirements／V2／product-experience／architecture中的“仅首次规划／尚未实施”措辞，
+探索追加加载／返回表示及自动化旧Open的CURRENT合同。B不代A宣布PASS / CLOSED。
+
+既有延期保持：新源与播放／下载、持久会话恢复、全站业务重设计、后端全面退役、新命令／
+schema／权限／队列／恢复引擎、历史转换、外部服务验收、发布／部署均未纳入。
+本轮无新增需写入角色经验的通用教训，不为收尾制造过程文档。
+
+时间记录见证据目录 `review-timing.json`；测试区间按并集计，包含失败、Base对照与静态门禁。
+本轮按首个明确时钟09:03:11 UTC起算（更早的仓库／文档阅读不计），记录时总时长10.58分钟；
+实测验证区间并集301.1秒，另为短治理／差异检查和Base构建预留3秒，
+保守占比47.9%，小于50%；未通过等待凑比例。
