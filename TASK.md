@@ -10,7 +10,7 @@ Task 实施,构成实施授权;按本文件原计划移除无活动实施声明�
 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份/限制保持。
 预存本地/私有文件不纳入提交。
 
-Next Action: DEVELOPER FIXES Task52.1 (B52-01 / B52-02); Base unchanged
+Next Action: B REVIEWS Task52.1 fix candidate ea200b35f67e33f3734d678466125bf1b60b3a21 (B52-01 / B52-02); Base unchanged
 
 ## Task52.1:探索页布局、详情滚动与有界浏览
 
@@ -24,8 +24,8 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.1
 Task Type: SLICE
 Parent Slice: 52
-Status: FIX REQUIRED
-Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); B review FIX REQUIRED
+Status: READY FOR B REVIEW
+Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); fix round 1 delivered after B review FIX REQUIRED
 Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
 Difficulty: Medium
 Test Level: T3
@@ -317,7 +317,9 @@ Task、未改变执行输入。Task Base 不是顶端旧提示中的规划提交
 
 ### Actual acceptance and limits
 
-本地证据根目录：`.git/validation-evidence/900318f9/b52-review/`，不随 Git 同步。
+本地证据根目录:`.git/validation-evidence/900318f9/b52-review/`,不随 Git
+同步(以下为 B 第 1 轮 FIX REQUIRED 的复核记录,修正候选见文末
+Developer Fix Report)。
 
 - 根目录 `python3 scripts/check_governance.py`、`git diff --check c7913f6a..900318f9`
   均通过；`.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'`
@@ -345,3 +347,60 @@ RO-3：九页切换／实际读取接入及两库刷新修正尚未交付。
 RO-4：自动化旧 Open／definition／editor Web链路退出尚未交付。
 因此不提交 Slice Closure Packet、不规划下一 Task；先在原 Task52.1 修正并重新交 B。
 Slice／Roadmap／Progress 的旧规划授权措辞未由 B 改写；实施授权沿用本 Task 顶端记录。
+
+## Developer Fix Report — B52-01 / B52-02
+
+**状态: READY FOR B REVIEW**(Developer 由 `mimo-v2.6-flash:free` 在 pi harness 会话中
+执行;2026-11-08,fix round 1)。
+
+- **精确候选:** Task Base `c7913f6a751ee980db2b82ffaefec40d3d43528c` 不变;上轮已审实现
+  `900318f973c598fb66faa7f13851eeafb8cd61b6` → 本轮修正实现
+  **`ea200b35f67e33f3734d678466125bf1b60b3a21`**(单实现提交,本报告随后续 docs 提交)。
+  预存状态保留:跟踪变更 `mediaflow/.DS_Store`(未暂存未提交)与全部既有未跟踪文件原样
+  保留;本 Task 仅 5 个 web 源/测试文件入库。实施前后 `governance` 均 PASS。
+- **B52-01(翻页后从新页开始阅读):** `ExplorePage.tsx` 新增单一"定位意图"
+  `PendingExplorePosition`(`kind: page | restore`,带 `mode` 身份):只有显式页选择
+  (`setTargetPage`,含"回到第一页")且该**目标页真实上屏**后,才在 rAF 内对结果区
+  `scrollIntoView({block:"start"})` 并把焦点交给该页首张作品卡(`preventScroll`;空页回焦
+  h1),键盘从新结果继续。慢读/失败/被取代的意图不提前移动,受损目标只保留成功页;
+  详情打开期间意图让位给模态(背景锁定、焦点归详情所有),关闭后继续生效。
+  `styles.css` 仅在 `.mf-explore-results` 增加 `scroll-margin-top: 74px`(贴 58px 顶栏下方,
+  未动公共滚动/Modal 规则);`ExplorePosterGrid` 只接收结果区 ref。
+- **B52-02(退出搜索后可用焦点):** 退出搜索安装 `kind: restore`(保存的浏览 y +
+  `focusSearch`),目标页真实可用后 `window.scrollTo` 并将焦点 `preventScroll` 交回常驻
+  作品名输入框(按钮已随模式移除)。**行内根因修复:** 重写该 effect 时一度把 `mode` 从
+  依赖中去掉,而搜索退出前后 `targetPage/shownAtTarget/isFetching/detail` 全部相同 →
+  effect 不再执行、恢复意图被静默丢弃(e2e 真实复现 scrollY 残留 0)。现 `mode` 既存于
+  意图结构又列入依赖与体部判断,退出必然唤醒 effect;该回归由既有 e2e
+  `search with its own type exits back to the exact browse anchor` 当场捕获并已修复。
+- **测试真实结果(候选 `ea200b35`,本地隔离夹具):**
+  - 根目录:`python3 scripts/check_governance.py` → PASS;`git diff --check` → 无输出。
+  - `web/`:`npm run typecheck` → PASS;`npx eslint src/features/explore AppShell.tsx
+    AppShell.test.tsx tests/e2e/explore.python.spec.ts` → 0 problems;
+    `npx prettier --check`(计划所列路径 + e2e spec)→ 全部匹配;`npm run build` → 成功
+    (既有 chunk>500kB 警告保留)。
+  - 计划的 5 文件受影响单测命令 → **109 passed / 5 files**(候选上 `ExplorePage.test.tsx`
+    单文件连续 3 次 26/26)。新增 4 项:慢读定位不提前/失败保位与恢复定位焦点、
+    缓存退出回焦、**真实 16 次搜索上下文驱逐锚点后仍重读原页并回位回焦**。
+  - `npm run test:e2e -- --config=playwright.python.explore.config.ts
+    tests/e2e/explore.python.spec.ts` → **16 passed × 2 连续**(末轮 15.9s,含新增 2 项)。
+  - `scripts/explore_harness.py` 未改动,ruff/unittest 未执行(非本轮受影响面)。
+  - 同视口证据(未入库):`web/test-results/explore-harness-evidence/`
+    `mobile-page2-at-start.png`(390px 翻页后首行在顶栏下方、焦点圈在新作品上)、
+    `mobile-page3-after-retry.png`、`search-exit-restored-focus.png`。
+- **过程中实际失败与根因(保留记录):**
+  1. 退出搜索 scrollY 不恢复 → 根因为上述 `mode` 依赖缺失,已修。
+  2. 新增 e2e 一直抓不到慢读状态行 → 组件与既有用例文本以 `…`(U+2026)结尾,新用例
+     写成三个 ASCII 点,`getByText` 恒为 0;已改用与组件一致的字符。
+  3. 单测打字偶发丢字 → 根因是本修复的"到页首焦点交接" rAF 与测试随后的连续打字
+     竞争(焦点被交接夺走后按键落到卡片);在测试中先 `waitFor` 该焦点交接再打字即
+     稳定(3×26/26),真实浏览器旅程不受影响。
+  4. 失败横幅插在分页器旁使本机布局实测位移 31px,像素级相等断言不可行;e2e 改为
+     "|Δ|≤64 且仍停留在页面深度(>2500)"——修复前的行为(跳到结果首行 ≈436)会被该
+     断言捕获。
+- **剩余风险/未运行(按分工):** 全 Web 单测 (`npm run test -- run`)、
+  page-transition/deep-link E2E、全量 lint/format 归 B;慢读 e2e 依赖 1.2s 延迟窗口,
+  慢 CI 存在理论瞬态;失败目标页时其"下一页"控件因不可达目标即时禁用而焦点落回
+  document(禁用控件的既有浏览器行为,本轮以"新结果从未获得焦点"断言覆盖,未改产品
+  语义);TAC-1 整页美观与全部 TAC 的人审判定归 B/A。Developer 不自签 PASS、不推送、
+  不发布、不扩大范围。
