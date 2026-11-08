@@ -1,9 +1,10 @@
 # Task52.2 — 九个主页面切换、读取接入与两库刷新体验
 
 用户于 2026-11-08 明确要求“激活TASK”，Task52.2 成为正式活动实施 Task，实施已授权。
-状态为 **PLANNED**，待 Developer 开工时转为 IN PROGRESS；Task ID/Base/Goal/Scope、
-验收及修订后的测试计划保持。下一步由 Developer 按本 Task 实施，交精确 checkpoint
-供 B 独立复核。本次激活不授权推送、发布或部署。
+状态为 **PLANNED**,待 Developer 开工时转为 IN PROGRESS;Task ID/Base/Goal/Scope、
+验收及修订后的测试计划保持。Developer 实施完毕后已按元数据转为
+**READY FOR B REVIEW**,见下方 Developer Completion Report。本次激活不授权推送、
+发布或部署。
 
 Task52.1 已由独立 B 复核 **PASS**，原始 Base
 `c7913f6a751ee980db2b82ffaefec40d3d43528c` → 已审实现
@@ -30,7 +31,7 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.2
 Task Type: SLICE
 Parent Slice: 52
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 4cf0efdf23981351ee3c7ef19d599726a070a4bb
 Difficulty: Medium
 Test Level: T3
@@ -251,8 +252,86 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 
 ## Developer Completion Report
 
-尚未实施。交接时填写精确实现SHA、READY FOR B REVIEW、变化、受影响测试实际结果、
-总耗时／测试耗时、剩余工作和风险；B的完整验收尚待执行。
+**READY FOR B REVIEW** — Task Base `4cf0efdf23981351ee3c7ef19d599726a070a4bb`
+→ 实现候选 `e8a65644`(web 代码与测试);本报告随随后的 docs checkpoint 落盘。
+工作区:分支 main,治理检查 PASS,预存脏文件 `mediaflow/.DS_Store` 及全部未跟踪
+文件保留未动,暂存区仅含本 Task 文件。未推送、未发布。
+
+### 变化(实现候选内 26 个文件)
+
+- 新增 `web/src/shared/ui/read-reveal.ts`:共享延时呈现门 `useReadReveal`(默认
+  400ms 只延后呈现,不延后请求/错误/授权/已就绪内容)+ `read-reveal.test.tsx`
+  三个可见行为用例(快读不显示、慢读稳定显示并保持、结束即隐并重新武装)。
+- 九页接入真实等待:Explore(首读骨架、已应用条件行、筛选选项状态行)、
+  文件(库信息/目录两个首读面板)、媒体库(库列表首读面板、目录首读面板、系统状态
+  未返回时不再假称“无 Active 配置”)、存储(LoadingPanel)、整理规则(保留 header、
+  正文状态行)、自动化(两个 tab 各自的读取横幅)、任务中心(运行清单横幅)、
+  通知、设置(整块替换横幅)——均只在各自读取真实变慢后才挂出等待态,错误分支
+  不经过延时门(排除 isError)。另修整理记录面板:快读/缓存重读不再用瞬时行
+  替换已示内容,慢速后台重读在内容尾部追加一条稳定状态行。
+- 两库刷新:`new web/src/features/library/FilesRefreshState.tsx` — 固定高度预留行
+  (`mf-files-refresh-slot`, min-height 20px)替代原来 `refreshing` 时直接插入的
+  `正在刷新当前目录...` 段落;快刷不出现文字、不推挤列表,慢刷在预留位淡入一条
+  `role="status"` 稳定反馈,结束时原位移除。两页的 `mf-content-settle` 保留。
+- 主页面过渡:`AppShell.tsx` 新增 `mf-page-surface-entry-active` 窗口(entry 开始后
+  320ms),窗口内抑制 `mf-content-settle` 叠加淡入(同页/晚到内容的 settle 不受影响);
+  `styles.css` 入场起始透明度 0.2→0.5、200ms→260ms,settle 起始 0.55→0.7,新增
+  等待态淡入 `mf-wait-reveal`。persistent ShellPageSurface、同页不重播、遮罩层
+  `:has(...)` 立即满透明规则、reduced-motion 分支均保持。
+- `LoadingPanel.tsx` 加 `mf-wait-reveal` 类;`RefreshControl.tsx` 快刷保持原文案、
+  慢刷才切换到 refreshingLabel(disabled 不变)。
+- 测试:`page-transition.spec.ts` 按 Task 要求移除固定 280ms 采样、“必须降低透明度”、
+  “必须使用 mf-content-settle/动画名”类实现断言,改为:settle 轮询、九页各自
+  等待文案归零(快读不闪)、采样窗口内 sidebar/topbar 几何不变、溢出≤1、
+  叠加层不被过渡约束、缓存再进入无等待文案;慢读用例把
+  `**/api/v1/storages*` 改为真实命中的 `**/api/v1/operations/storage-management/inventory*`
+  (旧 glob 从未匹配,原“慢读”并未真正限流——本次已用 route 拦截计时验证)并延至
+  1600ms。新增两库 `Task52.2` 刷新用例(Node 与 direct-files Python 各自验证
+  快刷无闪烁、慢刷稳定反馈、列表 y 坐标零位移、逐 GET);direct-files 另含一次真实
+  新建文件夹命令后刷新不重发 POST;explore.python 新增 `Task52.2` 快换页无等待态+
+  慢目标页单一稳定状态;operations-inventory.python 新增 `Task52.2` 真实慢读交接
+  (拦截计数断言证明限流生效)。
+
+### 受影响测试实际结果(全部在 `web/`,仓库根治理 PASS、`git diff --check` 干净)
+
+```text
+python3 scripts/check_governance.py                         → PASS
+npm run typecheck                                           → PASS(多次,含最终)
+npx eslint <22 个改动 ts/tsx>                                → PASS(0 问题)
+npx prettier --check <改动 web 路径>                          → PASS(先 --write 修 2 处后复核)
+npm run test -- run <13 个受影响/新增单测文件>                 → 13 files / 341 tests passed(35s)
+npm run build                                                → PASS
+npm run test:e2e -- tests/e2e/page-transition.spec.ts         → 6 passed(14.7s,终版)
+npm run test:e2e -- library-files+medialib-files --grep
+  'Task52[.]2|directory navigation…|library selection…|empty…|missing…' → 6 passed(7.1s)
+npm run test:e2e -- --config=playwright.python.config.ts
+  operations-inventory.python.spec.ts --grep Task52.2         → 1 passed(3.8s)
+npm run test:e2e -- --config=playwright.python.explore.config.ts
+  explore.python.spec.ts --grep Task52.2                      → 1 passed(2.8s)
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  direct-files.python.spec.ts --grep Task52.2                 → 1 passed(5.2s)
+```
+
+调试期失败均定位到真实原因并已修复:初次 page-transition 慢读用例失败=路由 glob
+从未命中真实库存路径;两库新用例首轮失败=根目录无查询串致正则不命中(已改为
+`files(?:\?|$)`);explore 新用例首轮失败=断言串用三 ASCII 点而组件渲染 U+2026
+(已按真实字符修正,并保留调试期证明行在 DOM 的证据);operations 用例首轮“通过
+但 1.3s”=过早 unroute 提前释放了被拦截请求(已改为响应回来后再 unroute,并加
+拦截计数断言)。修复仅调整本 Task 自己的新用例,未删除既有断言。
+
+**时间约束:** 本轮总耗时约 50 分钟;全部测试执行累计约 8 分钟(各命令实测时间戳
+相加,含 2 次 typecheck、单测、build、5 组 E2E,并行区间按并集)≈ 16%,低于 30% 上限。
+
+### 剩余风险与待 B
+
+- B 的全量 Web 单测/lint/format/完整 E2E/Python 回归及 TAC 逐页人工对比未执行
+  (按分工归 B);改前/改后同视口过程比较需 B 在真实夹具中进行。
+- 403 文案定位失败的既有事实保留(未触碰相关断言);本 Task 未宣称旧 E2E 全绿。
+- 延时门为呈现参数(400ms)/过渡参数(0.5、260ms、0.7、320ms),TAC 要求按过程
+  而非数值判定;若 B 在真实视口发现过慢/过快,应在同一 Task 内给 FIX 单点调节。
+- 未跑:全量 `npm run test -- run`、全仓 eslint/format、未列出的 Python/发布矩阵
+  (均属 B 范围);未改后端/权限/schema/任务引擎/公共 Modal。
+- 会话内未读取运行数据库、私密配置或用户媒体;临时 fixture 均为既有 harness。
 
 ## B Review Result
 
