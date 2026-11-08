@@ -726,6 +726,10 @@ truthfully with an existing Web re-enable path. The immutable visual references 
 keyboard states are in [Files specification](file-page-visual-spec.md) and
 [MediaLibrary specification](media-library-page-visual-spec.md).
 
+OpenList browsing and native Move／Rename checks use directory attributes. The verified result
+records the target's actual attributes and, for Move, the source's disappearance. NFO parsing,
+Hash checks and streamed transfers read content according to the selected operation.
+
 ### Common file maintenance
 
 Use toolbar/selection bar or an accessible entry context menu to create folder/text, rename one

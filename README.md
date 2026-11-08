@@ -80,6 +80,13 @@ the detail backdrop decorative so the main facts and overview start are readable
 The fixed reviews retain validation results, existing test failures reproduced at their respective
 Bases and evidence limits. Slice51/52 acceptance identities stay unchanged.
 
+[PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) passed B product review on 2026-11-08
+at implementation `cf680df6e24725ba40ada378e158d6a0e44710e5`. OpenList metadata queries use
+cached directory listings; content reads obtain download links separately. The Files journey
+completes native moves and renames with per-file verification. Python 3.11 startup and the existing
+validation cases were corrected. [Release validation](docs/release.md#current-v2-validation-boundary)
+records the complete results, including two intermittent browser-script failures.
+
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
 cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,
 consistent library loading and stable Automation create/edit. [CURRENT requirements](docs/v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)

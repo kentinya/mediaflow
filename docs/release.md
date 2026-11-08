@@ -45,6 +45,26 @@ This is development acceptance, not a V2 release. Current support is fresh initi
 migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are
 excluded. Readable immutable configuration containing retired fields does not add an upgrade promise.
 
+The latest standalone [OpenList correction](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) was accepted by B on 2026-11-08,
+from Base `6db3647c7e77d54f3a49b6725c804f0794fc7fbb` through implementation
+`cf680df6e24725ba40ada378e158d6a0e44710e5`. Its final candidate validation is:
+
+| Gate | Result |
+|---|---|
+| Python 3.11 / 3.12 / 3.13 full regression | Each: 2651 passed, 7 skipped, 2658 total |
+| Web unit / default browser E2E | 1459 passed / 264 passed |
+| All 16 real-Python browser specs | 190 passed, 2 intermittent script failures; the two isolated cases passed |
+| Quality, examples, dependencies and Web build | PASS |
+| Wheel and external installed consumers | PASS |
+| Docker native transfer lifecycle / release security | PASS / PASS |
+
+The two script failures concern Copy's post-publication list/authority synchronization and a delayed
+route callback during edit. Product checks showed the existing refusal/refresh feedback and correct
+saved values; their full-run failures remain in the fixed review. The seven skips require dedicated
+external-service or endurance environments. The OpenList 405 proof used local HTTP fixtures and
+verified native Move／Rename, zero download-link/content requests and `refresh: false` throughout.
+Raw evidence is stored locally at `.git/validation-evidence/cf680df6/b-final/`.
+
 Use [Deployment](deployment.md) for current executable startup, health, backup and same-version
 recovery. Earlier V1 upgrade acceptance below remains historical; it is not a current `main` gate
 or permission to run an old database with a different artifact. Git push does not publish an image,

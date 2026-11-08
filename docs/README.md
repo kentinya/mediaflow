@@ -15,6 +15,10 @@ Slice51／50及更早接受身份、延期保持；开发关闭不等于推送�
 [PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
 删除可见页面标题、统一内容边界，并将横幅作为装饰背景，使详情主要信息与简介开头首屏可读。
 验收结果、在各自 Base 复现的既有测试失败与证据限制见固定记录；现行要求、旅程和架构已同步。
+[PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) 于 2026-11-08 经 B 产品验收 PASS：
+OpenList 属性查询改用目录列表，实际内容读取单独获取下载链接；文件页完成原生移动／
+重命名及逐项核验，并修复 Python 3.11 启动。实现为 `cf680df6`，当前无活动实施 Task。
+完整验证结果见 [Release](release.md#current-v2-validation-boundary)。
 此前的[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已由 B 验收 PASS：任务状态/进度/文件结果分层、文件处理经过可读、切页加载衔接和自动化
 页头刷新删除。现行行为见完整旅程及页面规范；原 Slice 接受身份保留。
 
@@ -38,6 +42,7 @@ Slice51／50及更早接受身份、延期保持；开发关闭不等于推送�
 | 自动化创建、编辑与运行一次 | [Slice49 现行旅程](product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed) / [稳定要求](v2-requirements.md#automation-forms-and-direct-run-once--current-slice49-pass--closed)；列表直接运行或复制已保存定义，复制紧邻编辑并生成停用副本；创建/编辑共用中文卡片和紧凑启用开关，启停随创建/保存生效；未知结果核对原请求/发布，不重发 |
 | 自动化执行记录 | [完整工作区旅程](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46) / [现行要求](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)；记录只读展示当前 Task 流程、原始实际时间、独立文件结果、失败原因和下一步；合法续作不改写原始时间/尝试/文件效果，不增加运行次数或恢复入口 |
 | 三项系统运行设置 | [字段、保存与实际采用](configuration.md#current--three-system-runtime-settings-slice47-pass--closed)；系统设置是唯一常用入口，整理额度由各入口共享，Worker 空闲轮询覆盖共享异步工作，Scheduler 轮询只检查自动化到期；发布与实际采用分开呈现 |
+| OpenList 属性查询与内容读取 | [配置说明](configuration.md#openlist-metadata-and-content-reads) / [Storage 架构](architecture.md#storage-abstraction)；属性使用缓存目录列表，内容按实际需求读取，原生移动／重命名保留前后核验 |
 | 已退役能力的现行边界 | [FileIndex](file-index-retirement-spec.md) / [Preview](preview-retirement-spec.md)；不恢复旧入口或兼容执行器 |
 | 角色经验 / Task 模板 | [A](agent-experience/slice-owner-architect-final-reviewer.md)、[B](agent-experience/task-planner-reviewer.md)、[Developer](agent-experience/developer-implementation-role.md) / [Task Template](../Task/TEMPLATE.md) |
 

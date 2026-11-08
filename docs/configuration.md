@@ -273,6 +273,17 @@ new submission. For genuine setup-required state, the Storage page offers the ex
 Configuration first-setup handoff and returns to refreshed Storage truth. No direct database edit,
 configuration reset or physical-file migration is required.
 
+### OpenList metadata and content reads
+
+OpenList `stat`／`exists` use `/api/fs/list` to locate the exact entry in its parent directory,
+following the configured page size. The configured Storage root is checked by listing itself.
+Directory requests use `refresh: false` and OpenList's existing cache.
+
+`read` obtains a download link through `/api/fs/get` and then streams the content. NFO parsing,
+Hash checks and transfers between different Storages read content when their operation requires it.
+Same-Storage native Move／Rename uses directory metadata for source, conflict and result checks.
+A successful result includes target verification and, for Move, confirmation that the source is gone.
+
 ## Validation and evidence
 
 Validation uses the same normalized runtime loader that constructs production policy and Storage

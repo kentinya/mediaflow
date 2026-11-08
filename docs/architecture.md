@@ -833,6 +833,18 @@ own timeout, retry and streaming rules. Read-only checks use a guarded adapter v
 never inferred from capability metadata and no production adapter is assumed to support every
 operation.
 
+OpenList metadata and content access have separate HTTP paths. `HttpOpenListClient.stat()`
+locates the exact basename in paged `/api/fs/list` responses; `exists()` uses that metadata path.
+The configured root is checked by listing itself and uses a synthetic directory entry with size 0
+and UTC epoch mtime. Ordinary entries retain their actual size, type and mtime. Complete traversal
+establishes absence; list errors remain Storage errors. All directory requests use `refresh: false`
+and the provider's cache.
+
+`open_read()` obtains `raw_url` from `/api/fs/get` and streams the content. Same-Storage native
+Move／Rename keeps the existing source/conflict checks and target-size/source-absence verification.
+NFO, Hash and streamed transfers continue to use the explicit content-read path. This is the
+CURRENT adapter contract accepted in PATCH-20261108-3.
+
 ### Storage and path semantics
 
 `Storage.rootPath` belongs to the adapter. `ResourceLibrary.storagePath` and `MediaLibrary.rootPath`
