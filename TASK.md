@@ -1,4 +1,6 @@
-# ACTIVE TASK — Task52.1 (Slice 52)
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task52.1 已由独立 B 复核 PASS；下方保留已完成 Task 的计划与复核报告，不授权新的实施。
 
 [Slice52](SLICE.md) 为 **ACTIVE**。用户于 2026-11-08 在会话中明确指示 Developer 按本
 Task 实施,构成实施授权;按本文件原计划移除无活动实施声明并保留 Task ID/Base/Goal/Scope。
@@ -10,7 +12,7 @@ Task 实施,构成实施授权;按本文件原计划移除无活动实施声明�
 `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` 及全部旧接受身份/限制保持。
 预存本地/私有文件不纳入提交。
 
-Next Action: B REVIEWS Task52.1 fix candidate 62a158f684996372b08b7a570368ffcf1b4cb194 (B52-01 remaining interaction race); Base unchanged
+Next Action: NEXT TASK — Slice52 RO-3 / RO-4 remain; no new Task planned in this review
 
 ## Task52.1:探索页布局、详情滚动与有界浏览
 
@@ -24,8 +26,8 @@ Authority: committed [Slice52 Contract](SLICE.md) at
 Task ID: 52.1
 Task Type: SLICE
 Parent Slice: 52
-Status: READY FOR B REVIEW
-Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); fix round 2 delivered after B review FIX REQUIRED
+Status: PASS
+Plan Authorization: AUTHORIZED BY USER 2026-11-08 (session instruction); independent B review PASS at 62a158f6
 Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
 Difficulty: Medium
 Test Level: T3
@@ -113,26 +115,26 @@ Task 的实现方案，不重新定义用户需求或 Slice 接受边界。
 
 ## Acceptance Criteria
 
-- [ ] **TAC-1 布局：** 探索主内容仅一个可见标题（正常侧栏入口保留），只显示可用作品
+- [x] **TAC-1 布局：** 探索主内容仅一个可见标题（正常侧栏入口保留），只显示可用作品
   搜索，输入／按钮对齐。桌面和390px的标题、工具区、筛选、网格、导航／署名在层级、
   密度、比例、留白和字体／色彩上协调，长文案／校验可用，无页面横向溢出。
-- [ ] **TAC-2 浏览有界：** 浏览和搜索连续访问多页后只呈现当前成功页，文档长度及同时
+- [x] **TAC-2 浏览有界：** 浏览和搜索连续访问多页后只呈现当前成功页，文档长度及同时
   渲染条目不随访问量累增，仍可继续及返回先前页。前后页、真实末页／服务上限和总结果
   含义正确，无后续页自动请求或保留全部页的缓存堆积。
-- [ ] **TAC-3 条件与往返：** 新条件／类型／关键词从起点开始，搜索不假装应用浏览专属
+- [x] **TAC-3 条件与往返：** 新条件／类型／关键词从起点开始，搜索不假装应用浏览专属
   条件；搜索内切类型不改原浏览锚点。详情／退出搜索恢复原条件、页、滚动及合法焦点，
   包括缓存淘汰后的原页重读；不新增刷新／重认证恢复会话承诺。
-- [ ] **TAC-4 竞争／失败：** 目标页慢读或失败时实际显示页／目标页可辨，成功内容保留，
+- [x] **TAC-4 竞争／失败：** 目标页慢读或失败时实际显示页／目标页可辨，成功内容保留，
   只重读失败范围，不虚增成功位置。快切页／条件、迟到响应、结果集缩短／越界不串结果，
   不把未返回或读失败当真实空态。
-- [ ] **TAC-5 详情：** 桌面、390px和代表性矮视口下，电影／剧集、长名称／简介、有无图片
+- [x] **TAC-5 详情：** 桌面、390px和代表性矮视口下，电影／剧集、长名称／简介、有无图片
   均可用滚轮／触摸／键盘真正读到正文末尾并操作外链，标题／关闭可达。慢读／失败可退；
   关闭／Escape／后退不改背景位置／宽度，锁定正确释放，重复打开不残留旧作品。
-- [ ] **TAC-6 读取／安全：** 首读、选项、详情和图片的原失败／合法恢复可用；401／断开
+- [x] **TAC-6 读取／安全：** 首读、选项、详情和图片的原失败／合法恢复可用；401／断开
   清理身份相关数据，403不冒充空态，上游凭据失败不清除合法API身份。正常布局差异、
   稳定占位及平顺替换允许；不为动画人为延迟／串行本可并行的请求，正常数据依赖、鉴权
   顺序与有限退避保持。
-- [ ] **TAC-7 共享表面：** 探索同页筛选／分页／搜索／详情不重播整页入场。Shell其他页
+- [x] **TAC-7 共享表面：** 探索同页筛选／分页／搜索／详情不重播整页入场。Shell其他页
   入口／搜索／身份操作及认证续转保持；复用共享弹卡而不改其生命周期，其他卡片的滚动／
   退出／焦点不因本 Task 失效。浏览／分页／详情零媒体Storage效果、零任务准入／配置
   发布／执行权限变更；图片来源／CSP／脱敏保持。
@@ -278,76 +280,76 @@ Provider语义／CSP／执行权限／schema／媒体引擎。不新增源、推
 
 ```text
 Reviewed Task Base: c7913f6a751ee980db2b82ffaefec40d3d43528c
-Implementation candidate: ea200b35f67e33f3734d678466125bf1b60b3a21
-Report successor inspected: 49c28bfc85d26f44a4e85648a6d4871e31ac64eb (TASK.md only)
-Decision: FIX REQUIRED
+Implementation candidate: 62a158f684996372b08b7a570368ffcf1b4cb194
+Report successor inspected: 425196824d607bda18ea57030aa3a011e695b08e (TASK.md only)
+Decision: PASS
+Task blockers: NONE
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK (not planned in this review)
 ```
 
-2026-11-08，独立 B 重评完整原始 Base..candidate（12个文件），重点检查新增修正及测试；
-报告后继没有执行输入变更。main / 49c28bfc 起始；预存已跟踪 mediaflow/.DS_Store 及所有
-未跟踪文件保持，清单见本轮本地证据 initial-status.txt。只更新本 Task，不改 Slice 边界。
-上轮完整拒绝记录保留于 ec441ccc:TASK.md；本轮不改写原始失败与中止事实。
+2026-11-08 独立 B 审查完整原始 Base..candidate（12个文件），包含初始实现及两次修正；
+文档后继未改变执行输入。main / 42519682 起始，预存 mediaflow/.DS_Store 与全部未跟踪
+文件保留，本轮只提交 Task 文档。之前 FIX REQUIRED 与实际中止／失败保留于
+ec441ccc:TASK.md、599d2109:TASK.md；不改写 Developer 的历史交接。
 
-### Delivered results and remaining blocker
+### Task results and acceptance
 
-- 原 B52-01 的普通翻页路径已修复：390×844 从页尾点下一页，第2页首张海报 top=74，
-  焦点在新结果；不再停于页尾。慢读／失败后重试的既有原生用例通过。
-- B52-02 已修复：退出搜索回到常驻作品名输入框；缓存淘汰后重读原第2页并恢复滚动／
-  焦点的原生用例也通过。此项不再作为阻塞。
-- **B52-01 / P1 剩余：新页读取完成会打断用户已经开始的搜索输入。**
-  真实入口为探索页“下一页”和“作品名搜索”：下一页慢读期间，回到搜索框开始打字，
-  第2页返回后，页面仍强制滚到新网格并把焦点交给首卡。B 在生产构建、真实 Python API／
-  本地假上游上输入36字符，输入框最终只有 `abcdefghijklmnopqrs`（19字符），其余按键
-  落在作品卡上，焦点从 INPUT 变成首卡、scrollY 从0变245。没有改造 API 数据、伪造
-  路由或调用不存在的产品入口。TAC-3/4 的可用搜索／正确交接仍未完成。
+- TAC-1：桌面1280×900、390×844整页与原同视口材料对照，主内容一个探索标题、无只读
+  文件搜索占位；搜索对齐，筛选／网格／分页／署名层级协调，窄屏两列、长标题可读。
+- TAC-2/3/4：单页替换与16页缓存保持有界；末页、条件重置、搜索内切类型、迟到响应、
+  越界与失败保留／重试通过回归。普通翻页首行 top=74、焦点进入新结果；退出搜索回
+  INPUT；真实缓存淘汰后重读原第2页并回滚动／焦点的原生用例通过。
+- B52-01 剩余输入竞争已消除：独立复跑上轮同一脚本，慢读期间进入搜索框持续输入，
+  完整36字符保留，焦点保持 INPUT，scrollY 保持0；新页仍正常更新。普通翻页定位和
+  退出搜索回焦均保持。B52-01/02 不再阻塞。
+- TAC-5：1280×900、390×844触屏、1280×480缺图，电影长简介能真正滚到底，键盘 Tab
+  可到TMDB外链；触摸实测内滚319px。关闭按钮／Escape／浏览器后退分别检查，背景
+  scrollY及宽度与打开前一致，焦点回原卡；剧集事实、重复开关与长名另有原生回归。
+- TAC-6/7：API身份与Provider错误分离、选项独立恢复、空态、可信图片／CSP、零Storage
+  与持久业务效果通过探索回归；全量Web／共享Modal及正常导航认证回归已执行。
+  没有修改后端、执行权限、Active、schema或共享Modal生命周期，维持 T3。
 
-### Developer guidance for this same Task
+### Actual runs, baseline failure and evidence
 
-1. 仅调整 ExplorePage 的翻页定位交接：保留用户等待翻页且未转做其他操作时的页首定位／
-   键盘继续；用户已主动进入搜索框输入时，成功响应可以更新网格，但应放弃旧翻页的自动
-   滚动与焦点交接，保留完整文本、输入焦点和当前视口。不要要求用户等读取完成再输入，
-   不禁用搜索框，不延迟请求，不改共享 Router／Modal。
-2. 对既有的“页目标成功后才定位”逻辑补足后续用户操作的归属判断；同时保留失败只重试
-   目标、普通翻页／缓存翻页／重试成功后的正常定位和搜索退出／详情返回。无需另建状态
-   平台或独立 Task。
-3. 增加真实浏览器回归：从分页器点下一页，确认慢读后点击现有搜索输入框，持续输入跨过
-   响应完成时刻；断言完整文本、输入焦点、视口保持，再正常提交名称搜索并退出。保持
-   原普通翻页及失败恢复断言。不能只在单测中先等待页首焦点再开始打字来回避此旅程。
-4. Developer 仍只执行本 Task 已列的 affected 清单并追加该用例。B 接手完整验收；本轮
-   不要求 Developer 跑全量 Web 单测／全站 E2E，不改原 Task Base／Goal／Scope。
+本轮均由 B 在本地隔离环境执行。证据根目录
+`.git/validation-evidence/62a158f6/b52-review/`（本机文件，不承诺随Git同步）。
 
-### Actual acceptance and evidence
+- web/ `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
+  均通过；对应日志及 gates.json。构建原有大chunk提示保持。
+- web/ `npm run test -- run`：**95 files / 1445 tests passed**，118.22s；unit.log。
+  原候选中止结果未复用为通过；日志保留jsdom scrollTo未实现提示。
+- web/ `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`：
+  **17 passed (18.3s)**，explore-e2e.log；截图复制至 e2e-screenshots/。
+- web/ `npm run test:e2e -- tests/e2e/page-transition.spec.ts tests/e2e/deep-link.spec.ts`：
+  **20 passed / 1 failed (16.5s)**，navigation-e2e.log。失败是403用例全页按同一句提示
+  定位得到2个元素，Playwright strict模式拒绝。未修改断言、删除用例、增加重试或把该
+  命令记作通过。
+- 在 `.git/.../base-source/web` 用 `git archive c7913f6a web` 导出原Task Base，复用同一
+  node_modules独立构建；运行 `npm run test:e2e -- tests/e2e/deep-link.spec.ts --grep '403 is visibly'`
+  **同样1 failed**，同一句提示2个元素；base-build.log、base-403-e2e.log及原始trace
+  保留。确认是原始基线的定位问题，不是本 Task 新增的权限行为缺陷。
+- B 另用403-probe.mjs按原用例的完整用户步骤核对两处可见提示、无401、身份保留、令牌
+  不显示、显式断开／换有READ权限身份并回探索，**全部通过**（403-probe.json/log）。
+  此项完成失败用例所要证明的行为；原测试定位失败仍列为非阻塞基线问题，未称全套
+  E2E绿色、不要求Developer为此修改产品或创建额外Task。
+- 独立原生脚本 native-probe、typing-probe、detail-probe（.mjs/.json/.log）及同名截图
+  覆盖以上实际交互，生产构建→真实Python API→本地假上游／临时SQLite。没有使用
+  用户配置／数据库／媒体，没有联网访问真实TMDB／图片。
+- 根目录 `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'`：
+  **46 tests OK (1.966s)**，python.log；ruff check / format --check
+  scripts/explore_harness.py、治理检查及完整Base..candidate diff --check均通过。
+- T3不要求全Python／wheel／Docker／生产发布矩阵，本轮未运行，不将本结论扩为发布接受。
+  测试与代码审查并行；完成本 Task 的分配验收后未追加无关回归。
 
-本地证据 `.git/validation-evidence/ea200b35/b52-review/`（仅本机可用）：
+### Whole-Slice reevaluation and stop boundary
 
-- `native-probe.mjs/json`、page2-mobile.png：上轮两项从登录和现有按钮独立复现，确认
-  普通路径已修复。`typing-probe.mjs/json`、typing-interrupted.png：新页晚到时打断输入的
-  独立原生复现。使用生产资源、临时 SQLite、本地 fake transport；图片请求中止走既有
-  缺图占位，不访问真实TMDB／私有配置／用户数据库／媒体。根目录在4187 harness启动后
-  运行 `node .git/validation-evidence/ea200b35/b52-review/typing-probe.mjs` 可重现。
-- web/ `npm run build`、`npm run typecheck`、`npm run lint`、`npm run format:check`
-  全部通过；build/typecheck/lint/format.log 与 gates.json。构建原有大 chunk 提示保持。
-- web/ `npm run test:e2e -- --config=playwright.python.explore.config.ts tests/e2e/explore.python.spec.ts`
-  **16 passed (16.1s)**；explore-e2e.log，截图复制至 e2e-screenshots/。覆盖普通分页、
-  慢读／失败、缓存淘汰返回、选项独立恢复、长详情滚动、原鉴权／效果等既有范围；这些
-  成功不能覆盖本轮已独立复现的输入中断。Developer 原报告“真实浏览器不受影响”的结论
-  与本轮复现不符，作为其历史报告保留，不作为接受依据。
-- 根目录 `.venv/bin/python -m unittest discover -s tests -p 'test_explore*.py'`
-  **46 tests OK (1.951s)**（python.log）；ruff check / format --check
-  scripts/explore_harness.py、治理检查及完整 Base..candidate diff --check 均通过。
-- 确认产品阻塞后按工作流提前 FIX REQUIRED；本轮未启动全量 Web 单测及
-  page-transition/deep-link E2E，完整详情视口／触摸人工验收也未完成，均不计通过。
-  原候选全量 Web 中止结果不复用为通过；修正后 B 执行本 Task 已分配的完整验收。
-
-### Whole-Slice reevaluation
-
-RO-1：单标题、对齐、详情滚动已有实现；完整验收仍待继续。
-RO-2：有界分页与搜索退出已有实现；翻页响应打断正在进行的输入仍阻塞。
-RO-3：九页切换／读取接入及两库刷新修正尚未交付。
-RO-4：自动化旧 Open／definition／editor 链路退出尚未交付。
-继续原 Task52.1，不规划下一 Task，不提交 Closure Packet，不关闭 Slice。
+RO-1 探索布局／完整详情、RO-2 有界浏览／准确返回：本 Task 完成。
+RO-3 九页切换、真实读取接入及两库刷新：尚未交付；现有导航回归通过不代表该改善已完成。
+RO-4 自动化旧 Open／definition／editor Web链路退出：尚未交付。
+因此 Task52.1 PASS，Slice52仍ACTIVE；选择 NEXT TASK，当前回合不新建实施Task、不提交
+Closure Packet、不宣告Slice关闭。Slice／Roadmap／Progress未由B修改；其中旧规划授权
+措辞的事实协调仍留给对应所有者，本 Task 已记录实际实施授权与复核结果。
 
 ## Developer Fix Report — B52-01 / B52-02
 
