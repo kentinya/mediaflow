@@ -14,14 +14,14 @@ Authority: 用户在本会话明确提出 OpenList `stat()/exists()` 改查目�
 Task ID: PATCH-20261108-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6db3647c7e77d54f3a49b6725c804f0794fc7fbb
 Reviewed Head: fff1a8ddc0226730e0d919b8e212682a3f9dce8e
-Correction Candidate: 763da6da53c971ee4b661c654e54d75626747ddf (implementation checkpoint)
+Correction Candidate: PENDING-IMPLEMENTATION-CHECKPOINT
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; B FIX REQUIRED
+Development Authorization: USER-AUTHORIZED SAME-TASK CORRECTIONS; DEVELOPER CORRECTION HANDOFF READY
 ```
 
 ## Goal and observed gap
@@ -545,3 +545,84 @@ click 取得结果。
   E2E／原生 Files 回归还需覆盖其他菜单消费者。
 - 七项专用真实 OpenList／SMB／S3 与耐久环境 skip、Docker 不可用和全部未执行门禁仍为
   pending；未伪造环境或以离线绿色替代。
+
+### Developer correction report — 2026-11-08（原生任务清单断言）
+
+**Status: READY FOR B REVIEW. Authorized bug acceptance remains B’s; no self-approval.**
+
+本轮按上方第 7 项与用户“现有失败全部修复、最终全部测试变绿”的授权，只修正既有
+E2E 断言及同一根因的另一处既有失败；未改产品源码、OpenList 适配器、schema、权限、
+恢复语义或 SLICE／Roadmap／Progress。预存 `mediaflow/.DS_Store` 与全部未跟踪调查／
+日志／output／系统元数据原样保留，未纳入提交。
+
+修改与根因：
+
+- `web/tests/e2e/operations-inventory.python.spec.ts:1371`：`a1b591db` 把持久审核计划
+  移入默认折叠的“技术诊断”。该旅程在重启后、尚未展开诊断时直接等待计划标题。现按
+  真实用户操作先点击“技术诊断（计划、日志与审计…）”，再验证“持久审核计划(已捕获)”、
+  `Metadata C · Naming A · Classification A`（C 识别使用 A 命名／分类）以及持久完成
+  步骤“创建目录（CREATE_DIRECTORY）、移动（MOVE）”。重启后同一任务、成功效果、
+  `/tmp/`／token 不泄露与 Execute 仅一次的断言全部保留；不默认展开诊断。
+- 同文件 `:2232` 混合任务：`02323640` 用业务结果说明替换旧“技术失败条目”。现验上方
+  “需处理原因”的“目标存储拒绝操作。”与只读面板的“处理失败；请查看上方失败原因与
+  已记录结果。”；技术失败／成功／不确定兄弟项不可选择恢复、无通用继续按钮、真实
+  Recognition／Conflict Attention 及 API 类型断言保留。原
+  `not.toContainText("repair the destination Storage permission")` 会命中折叠诊断内的
+  DOM 文本，与产品“原始服务指引按需保留在诊断中”的既有语义不符；改为断言该原始
+  指引在关闭的诊断中不可见（`toBeHidden`），既保留“无可见修复邀请”，又不删除技术事实。
+- 同文件 `:2356`（B 的 run 此前中止，未执行到该用例）等待同一被替换文案。改为当前
+  “处理失败；请查看上方失败原因与已记录结果。”并验证上方“安全分析中断。”；只读
+  恢复边界与批处理持久状态断言保留。
+- `web/tests/e2e/automation-workspace.python.spec.ts` 两处：与 `:2232` 同源，仍等待当前
+  源码中已不存在的“这是一个技术失败条目”。先在候选上实际复现 2 failed，再改为当前
+  事实说明与上方“存储操作未完成。”；无通用重试／继续／摘要按钮、原始 population 与
+  结果不重放的断言保留。此项属用户已授权的既有失败，不新增产品行为。
+
+实际验证（仓库根目录，除注明外；`web/` 目录执行 Web 命令）：
+
+```sh
+# 修正前复现（旧断言）：2 failed，均为等待已移除文案
+npm run test:e2e -- --config=playwright.python.automation.config.ts \
+  tests/e2e/automation-workspace.python.spec.ts \
+  --grep "a technical record preserves original results|two technical failures retain independent evidence" \
+  --output=test-results/automation-stale-reproduction
+
+# 构建当前候选后，完整既有入口（Playwright 自动启动真实 Python harness）
+npm run build                                            # built in 151ms
+npm run test:e2e -- --config=playwright.python.config.ts \
+  tests/e2e/operations-inventory.python.spec.ts \
+  --output=test-results/inventory-correction-developer-final
+# 44 passed (1.3m)，无 skip、无 retry
+npm run test:e2e -- --config=playwright.python.automation.config.ts \
+  tests/e2e/automation-workspace.python.spec.ts \
+  --output=test-results/automation-workspace-developer-full
+# 9 passed (14.3s)
+npx prettier --check tests/e2e/operations-inventory.python.spec.ts \
+  tests/e2e/automation-workspace.python.spec.ts      # Prettier code style
+npx eslint tests/e2e/operations-inventory.python.spec.ts \
+  tests/e2e/automation-workspace.python.spec.ts      # exit 0，无 findings
+npm run typecheck                                    # passed
+python3 scripts/check_governance.py                  # PASS
+git diff --check                                     # clean
+```
+
+测试执行时间约 5 分钟，低于本轮有效开发时间（约 18 分钟）的 30%；未用 sleep、skip、
+重试、放宽超时或 force click 取得绿色。构建产物来自当前工作树，最终两轮 E2E 均在重新
+构建后的 `dist/` 上执行，不是早先的 22:30 旧包。
+
+剩余风险／待 B 独立验收：
+
+- Developer 未运行默认 Node E2E、其余 14 份原生 Python specs、Python 全量、wheel／外部
+  安装 smoke、Docker resident 消费链或真实 115；这些仍是 B 在固定候选上的 T4 门禁，当前
+  不声明全部绿色或 PASS。
+- 本轮只改动两个既有 spec；`automation-workspace.python.spec.ts` 的修正依据是实际复现的
+  2 failed 与产品当前渲染，不是推断。其余 native spec 的文案漂移未在本轮扫描／运行。
+- 折叠诊断中的原始英文服务下一步仍是既有技术事实（按需展开），不是用户可见的修复邀请；
+  B 如认为需改变该产品呈现，应另立范围，本轮不擅自改 UI。
+- 七项专用真实环境 skip、Docker 不可用及未执行门禁继续 pending，未伪造环境或用离线
+  绿色替代。
+
+证据：修正前 `automation-workspace` 2 failed 的 trace 与 error-context 已在
+`web/test-results/automation-stale-reproduction/` 复现，并复制到
+`.git/validation-evidence/<candidate>/inventory-assertions/`（脱敏、仅本机）；最终通过运行
+的命令、计数与无 skip／retry 的事实见上表和本轮交接，不用重复运行制造日志。

@@ -523,7 +523,17 @@ test("a technical record preserves original results without a generic retry entr
     `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
   );
   const recovery = page.getByRole("region", { name: "条目审核与恢复" });
-  await expect(recovery.getByText(/这是一个技术失败条目/)).toBeVisible();
+  // The failed item reads as its own factual history; the concrete reason sits
+  // in the upper evidence block instead of a standing technical tutorial.
+  await expect(
+    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "条目证据" })
+      .getByRole("region", { name: "需处理原因" })
+      .getByText("存储操作未完成。", { exact: true }),
+  ).toBeVisible();
   await expect(
     recovery.getByRole("button", {
       name: /继续此条目的安全分析|生成计划摘要|重试/,
@@ -674,7 +684,15 @@ test("two technical failures retain independent evidence without false resolutio
   // control can hide one sibling or turn this partial run into success.
   await connectOn(page, `/ui-v2/operations?run=${taskId}&item=${recoverOnly}`);
   const recovery = page.getByRole("region", { name: "条目审核与恢复" });
-  await expect(recovery.getByText(/这是一个技术失败条目/)).toBeVisible();
+  await expect(
+    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "条目证据" })
+      .getByRole("region", { name: "需处理原因" })
+      .getByText("存储操作未完成。", { exact: true }),
+  ).toBeVisible();
   await expect(
     recovery.getByRole("button", {
       name: /继续此条目的安全分析|生成计划摘要|重试/,

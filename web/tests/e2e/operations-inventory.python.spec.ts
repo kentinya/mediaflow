@@ -1367,11 +1367,23 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
   const restoredEvidence = restored.getByRole("region", { name: "条目证据" });
+  // The captured plan now lives inside the collapsed technical diagnostics;
+  // the operator opens that disclosure before reading it. Do not expand it by
+  // default or move the plan back into the primary body.
+  await restoredEvidence.getByText(/技术诊断（计划、日志与审计/).click();
   await expect(
     restoredEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
+  // RecognitionType C still resolves through the A naming/classification
+  // policies after the restart; the plan is read from durable history.
   await expect(
-    restoredEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+    restoredEvidence.getByText(/Metadata C · Naming A · Classification A/),
+  ).toBeVisible();
+  // The completed steps stay the ones captured with that reviewed plan.
+  await expect(
+    restoredEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
+      exact: true,
+    }),
   ).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain("/tmp/");
@@ -2228,11 +2240,26 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   // The technical item's factual detail stays readable without a generic
   // repair/retry/verification invitation.
   await technicalRow.getByRole("button", { name: "查看证据" }).click();
+  // The upper evidence states the concrete failure reason. The technical item
+  // is factual history, not a standing "technical failure" tutorial.
+  const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    itemEvidence
+      .getByRole("region", { name: "需处理原因" })
+      .getByText("目标存储拒绝操作。", { exact: true }),
+  ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
-  await expect(recovery.getByText(/技术失败条目/)).toBeVisible();
-  await expect(recovery).not.toContainText(
-    "repair the destination Storage permission",
-  );
+  await expect(
+    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+  ).toBeVisible();
+  // The raw persisted server guidance stays available on demand inside the
+  // closed technical diagnostics; it is not a visible standing repair
+  // invitation in the panel's primary body.
+  await expect(
+    recovery.getByText(
+      "repair the destination Storage permission, then re-check this item",
+    ),
+  ).toBeHidden();
   await expect(
     recovery.getByRole("button", { name: "继续此条目的安全分析" }),
   ).toHaveCount(0);
@@ -2351,9 +2378,19 @@ test("the exact undecided batch item is reachable read-only without a generic re
     .filter({ hasText: seeded.batchEligibleItemId });
   await expect(itemRow).toHaveCount(1);
   await itemRow.getByRole("button", { name: "查看证据" }).click();
+  // The interrupted analysis is factual technical history: read-only, with its
+  // concrete zero-effect failure reason and no standing tutorial.
+  const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    itemEvidence
+      .getByRole("region", { name: "需处理原因" })
+      .getByText("安全分析中断。", { exact: true }),
+  ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await expect(recovery).toBeVisible();
-  await expect(recovery.getByText(/技术失败条目/)).toBeVisible();
+  await expect(
+    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+  ).toBeVisible();
   await expect(
     recovery.getByRole("button", { name: "继续此条目的安全分析" }),
   ).toHaveCount(0);
