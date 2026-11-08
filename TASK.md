@@ -46,14 +46,12 @@ Slice52 的接受身份和关闭结果保持。工作区预存文件保持。
 
 ---
 
-## Planning-only draft — PATCH-20261109-1 文件页目录接入与整理记录稳定呈现
+## Planning-only draft — PATCH-20261109-1 删除文件页整理记录并统一目录接入
 
-用户于 2026-11-09 要求根据截图调查结果规划 Task。本节为规划草案，保留上方
-NO ACTIVE IMPLEMENTATION TASK；实施开始时再按工作流激活本 Task。
-授权范围：修正资源库文件页在目录读取期间临时展示整理记录、目录成功后记录消失的行为，
-使文件浏览与记录查看各自稳定可用。独立修正依据
-[Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)，
-规划／验收由 B 负责；角色经验见 [B experience](docs/agent-experience/task-planner-reviewer.md)。
+用户于 2026-11-09 根据截图调查要求规划 Task，随后明确提出删除“整理记录”。
+本草案按该方向更新，保留上方 NO ACTIVE IMPLEMENTATION TASK，实施时再激活。
+依据 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)，
+由 B 规划和独立验收；角色经验见 [B experience](docs/agent-experience/task-planner-reviewer.md)。
 
 ```text
 Task ID: PATCH-20261109-1
@@ -69,66 +67,57 @@ Development Authorization: PLANNING ONLY
 
 ### Goal and observed gap
 
-从侧栏“文件”进入 `/ui-v2/resourcelib/files`，用户先选择资源库、浏览目录，
-并可在本页查看本账号提交的整理记录，打开准确计划摘要继续处理。
-目录和记录分别显示自己的读取、成功、空态或失败；目录成功后记录入口及内容仍可访问。
+用户进入“文件”浏览资源库，库上下文之后直接呈现目录的加载、列表、空态或错误。
+文件页删除整块“整理记录”；整理工作的状态、结果、摘要和确认使用已有任务中心入口。
+用户从文件选择发起整理仍进入原准确准备／摘要页面；提交结果未知时继续核对原请求。
 
-Base 的 `StorageFilesPage.tsx` 仅在 `filesQuery.data === undefined` 和
-`filesQuery.isError` 两个分支挂载 `OrganizeWorkPanel`，成功分支只有 `FileBrowseView`。
-本地浏览器已复现：目录尚未返回时先出现“整理记录”，400ms 等待门限之后出现目录加载区，
-成功后记录整块消失；网络失败时记录保留。媒体库页的库卡片后直接呈现目录读取区域。
-该复现使用本地夹具与受控响应，截图中的示例记录可独立于目录请求先返回。
+Base 的 `StorageFilesPage.tsx` 仅在目录数据未返回及网络异常分支挂载
+`OrganizeWorkPanel`，目录成功后整块移除。本地浏览器复现了截图对应的临时记录区、
+400ms 后出现目录等待区以及成功后记录消失；媒体库页直接呈现目录读取区域。
+当前 `fetchFilesOrganizeWork` 同时供提交响应丢失后的准确 `requestId` 核对使用。
+该共享调用与界面记录列表的生命周期分别处理。
 
-适用要求：`REQ-WEB-003/005`、`UX-001/002/007`、`V2-UX-012/015`；完整旅程见
+适用 `REQ-WEB-003/005`、`UX-001/002/007`、`V2-UX-012/015`；完整旅程见
 [Real Storage Files](docs/product-experience.md#real-storage-files)、
 [Manual organize](docs/product-experience.md#manual-organize) 和
 [CURRENT 读取接入](docs/product-experience.md#current--slice52-experience-refinement-slice52-pass--closed)。
-记录归属沿用 [CURRENT local readback](docs/architecture.md#current--slice46-presentation-and-work-query-ownership)。
+本次用户选择替换旧旅程中文件页展示整理历史的呈现约定，沿用其准确核对及已有工作可达性。
 
 ### Implementation Scope
 
-1. 调整 `web/src/features/library/StorageFilesPage.tsx` 的呈现组合：共用当前资源库的
-   提示／库卡片／路径上下文；其后为目录区，目录区下方为独立的“整理记录”区。
-   同一库内目录从等待到成功／失败、刷新和翻目录时，记录区保持同一组件身份与位置关系，
-   展开状态和记录分页不因目录状态变化重置。成功列表复用现有 `FileBrowseView`，
-   使提示、卡片和上下文各显示一次。
-2. 目录区独立沿用现有等待门限、加载组件、列表／网格、真实空目录、读取错误及重读入口。
-   快响应／有效缓存直接接入内容；慢读取显示协调等待，成功后平顺替换目录区。
-   同条件刷新保留文件列表和现有刷新反馈。必要时仅补文件页局部布局样式，
-   以正常目标内容高度接入保持阅读连续。
-3. 记录区沿用现有有界 API、当前账号／资源库范围、状态说明、前三条／展开、
-   后端游标分页及准确摘要链接。记录请求与目录请求独立进行；记录有自己的等待、
-   空态、失败及明确只读重读入口。目录读取失败仍可打开已读记录；
-   记录读取失败仍可浏览目录。切换资源库重置记录分页／展开并读取新库记录，
-   迟到响应保持其原库归属；记录与文件路径切换分别维护各自状态。
-4. 补充组件和浏览器回归：分别控制目录与记录的返回顺序，覆盖原截图阶段、
-   成功后的记录可达性、错误恢复和跨库迟到响应；对照媒体库现有呈现。
-   复用本地夹具，新增精确场景可集中在 `web/tests/e2e/files-read-handoff.spec.ts`。
+1. 删除文件页 `OrganizeWorkPanel`、两处挂载、专用状态／文案及专用查询 hook。
+   按实际消费者清理 `organize-work-query.ts` 和对应导入／测试依赖；
+   `fetchFilesOrganizeWork` 及其请求身份核对能力按现有消费者保留。
+2. 文件页保持提示、库卡片及路径上下文，其后直接呈现目录区。
+   收敛等待／异常／成功分支中的重复组合，复用现有 `FileBrowseView` 和授权边界；
+   目录快读／缓存直接接入，慢读显示现有协调占位，同条件刷新保留列表。
+   需要时仅调整文件页局部布局，保持内容接入、路径、工具栏及普通操作入口可用。
+3. 修正整理提交错误中“在资源库文件页的整理记录中继续处理”等悬空提示，
+   指向已有任务中心查看已受理工作。保留按准确 requestId 核对并进入对应摘要的路径。
+   核对失败时明确受理尚未确认、可去任务中心核查；提示和导航均不重复提交。
+4. 验证从任务中心查看本次手动整理任务、打开其当前摘要并明确确认的完整旅程，
+   包括目录离开／返回、刷新／重认证和提交响应丢失的场景。
+   更新直接受影响测试，新增精确浏览器场景可集中到
+   `web/tests/e2e/files-read-handoff.spec.ts`。
 
 ### Acceptance Criteria
 
-- [ ] AC-1：从侧栏首次进入文件页，目录先于记录／记录先于目录两种返回顺序均可用；
-  页面保持库上下文 → 目录区 → 整理记录的清楚层级，记录内容按其自身读取状态呈现。
-  快读、缓存返回和慢读全过程均没有“临时记录页再整块换成文件列表”的现象。
-- [ ] AC-2：目录成功、有文件或真实空目录时，整理记录仍可查看；同库翻目录、刷新、
-  列表／网格切换保持记录展开及合法分页。正常目录等待和就绪替换平顺，
-  文件选择、路径、工具栏和普通操作状态入口保持原行为。
-- [ ] AC-3：目录网络失败及业务失败分别显示现有可操作错误，记录仍可查看；
-  显式重读成功后恢复目录。记录等待、空态、读取失败及显式重读分别真实，
-  记录失败不阻挡文件浏览。无 Active、无库、无效路径、401／403 保持原入口和权限语义。
-- [ ] AC-4：快速切库／路径和迟到响应保持正确归属；切库后的记录从新库第一页开始，
-  同库目录状态变化保持记录分页。记录“查看更多／返回上一页”可达；打开准确记录、
-  返回文件页以及刷新／重认证后仍可按当前账号和资源库读回记录。
-- [ ] AC-5：桌面1536×1024与390×844检查进入、等待中、就绪、错误恢复和展开记录；
-  记录长文件名、分页、键盘操作可用，内容宽度协调且没有水平溢出。
-  媒体库页保持原有文件浏览层级；reduced-motion 下等待与接入仍清楚。
-- [ ] AC-6：单纯进入、读取、翻页、展开、重读及返回只读取现有范围；
-  请求台账确认未提交整理／普通文件命令，记录链接保留准确工作与返回上下文。
-  “当前页面操作状态”继续只承载原普通文件工作。
+- [ ] AC-1：文件页首次进入、快／慢目录读取、缓存返回、成功、空目录、网络及业务错误、
+  手动刷新和切库／切路径全过程都没有“整理记录”标题、说明、列表及分页。
+  普通浏览不发起记录列表查询或其轮询；目录区直接承接当前库上下文。
+- [ ] AC-2：等待反馈、真实文件列表及错误恢复按实际读取状态显示，提示／卡片／路径各一次；
+  同条件刷新保留内容，快切和迟到响应归属正确。桌面1536×1024与390×844下
+  等待和就绪接入平顺，键盘可用、长路径可读、无水平溢出；reduced-motion 反馈清楚。
+- [ ] AC-3：文件整理成功受理后进入准确准备／摘要；用户离开后从任务中心仍能找到
+  同一任务、查看摘要、明确确认及查看独立结果。刷新／重认证后该入口继续可达。
+- [ ] AC-4：提交响应丢失时，仍按原 requestId 核对并定位对应工作；核对暂不可用时
+  提示准确且任务中心可供核查。界面没有指向已删除区域的指引；核对及查看不重发提交。
+- [ ] AC-5：媒体库浏览、文件页普通操作状态、无 Active／无库／无效路径和401／403
+  保持原行为。浏览／刷新／返回只读；整理仍由现有明确确认触发。
 
 ### Required Tests
 
-测试责任依 [workflow §6](docs/development-workflow.md#6-test-levels)。以下 Web 命令均在 `web/` 运行。
+测试责任依 [workflow §6](docs/development-workflow.md#6-test-levels)。Web 命令均在 `web/` 运行。
 
 **Developer — affected tests**
 
@@ -139,15 +128,17 @@ npm run build
 npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts
 ```
 
-组件测试覆盖 AC-1–4 的独立读取、空／失败／重读、正确归属、目录状态变化保持记录状态和
-记录分页；新增浏览器场景使用实际路由及生产构建，覆盖两种返回顺序、成功后记录入口、
-快／慢读取中间状态、桌面／窄屏和零命令请求。修改文件另跑精确路径的
-`npx eslint <changed-ts-tsx-paths>`、`npx prettier --check <changed-web-paths>`。
-根目录运行 `python3 scripts/check_governance.py` 和 `git diff --check` 后提交实现检查点。
+组件测试覆盖各目录状态下记录区及其普通浏览请求退出、错误后重读、迟到响应，
+并保持现有准确 requestId 核对、未知响应及准确导航断言。
+新增浏览器场景使用真实路由／生产构建和本地夹具，检查快慢读取的中间状态、
+桌面／窄屏、任务中心重开准确摘要以及请求台账。
+修改文件另跑精确路径 `npx eslint <changed-ts-tsx-paths>` 和
+`npx prettier --check <changed-web-paths>`；根目录运行
+`python3 scripts/check_governance.py`、`git diff --check` 后交实现检查点。
 
 **B — acceptance and regression**
 
-独立审查精确 Task Base..候选，在最终候选重新构建并执行：
+独立审查 Task Base..候选，在最终候选构建并执行：
 
 ```sh
 npm run typecheck
@@ -159,19 +150,19 @@ npm run test:e2e -- tests/e2e/files-read-handoff.spec.ts tests/e2e/library-files
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts tests/e2e/organize-source-history.python.spec.ts
 ```
 
-范围分别覆盖文件页组合／普通操作入口、两库实际浏览与读取接入、真实 Python live list 的
-只读及错误恢复和整理摘要／确认旅程。B 补验从已就绪目录的记录链接打开准确摘要、
-返回／刷新／重认证后重开，以及同库记录翻页后目录刷新、跨库迟到响应；
-需要新增断言时复用上述本地夹具。保存桌面／窄屏的等待与就绪画面和实际中间过程，
-结合可见层级、阅读连续性及交互验收；原始结果放在
+覆盖两库目录接入、普通操作入口、真实 Python live list 的只读／错误恢复及整理摘要确认。
+B 补验文件页受理后离开、任务中心找到同一任务并确认摘要、刷新／重认证返回，
+以及响应丢失后准确核对与核对失败指引；新增断言复用现有本地夹具。
+逐阶段检查桌面／窄屏画面和实际操作，原始结果保存到
 `.git/validation-evidence/<candidate>/patch-20261109-1/`。
-本 Task 的影响范围为文件页组合及直接依赖，T3 验收执行上述门禁。
+T3 验收范围为文件页呈现、记录入口退出及直接依赖。
 
 ### Non-goals
 
-文件页局部呈现及其回归之外的产品代码、后端／API／权限／Active／schema／Storage／
-执行引擎、整理状态或恢复机制、共享动画／等待门限、九页整体重设计和媒体库业务功能均在范围外。
-Slice52、Roadmap、Progress 和已接受修正的身份保持；本轮文档变更仅此 Task 草案。
+后端记录／查询 API、任务数据和历史保留；任务中心沿用现有入口及摘要确认。
+本 Task 不涉及后端／权限／Active／schema／Storage／执行引擎变更，
+共享动画／等待门限和其他页面业务功能保持。
+Slice52、Roadmap、Progress 和既有接受身份保持；本轮只更新 Task 草案。
 
 ### Developer Completion Report
 
