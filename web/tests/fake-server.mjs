@@ -3546,6 +3546,11 @@ function organizeDiscoveryDocument(discovery) {
     intentId: discovery.intentId,
     journey: "discovery",
     autoPrepare,
+    // PATCH-20261109-3: the backend always publishes `organizeFlow`; the fake
+    // discovers no durable organizing Task (the real backend links one when a
+    // Files selection is admitted), so its real association semantics are an
+    // explicit `null` — never an omitted required key.
+    organizeFlow: null,
     prepared,
     previewId: discovery.previewId ?? null,
     nextAction: prepared

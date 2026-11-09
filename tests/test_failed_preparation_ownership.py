@@ -219,6 +219,104 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
                     value.repository.get_item(item.item_id).status,
                 )
 
+    def test_ended_flow_refuses_reanalysis_and_keeps_the_saved_plan_readable(self):
+        """B3-03 backend facts: one eligibility predicate, real history entry.
+
+        After the production failure publication, the same real re-analysis
+        entrance is refused from the shared settled-flow fact (before the
+        durable record is touched), the run document publishes the ended
+        presentation the preparation page renders, and the original summary
+        stays reachable through its own two read-only associations — the
+        intent's ``latestPlan`` (backend ``get_latest_manual_preview`` read)
+        and the Preview detail route.  Read-only: zero Storage effect.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = _provider(MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001))
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            old_id, preview = self.summary(
+                value, ["Movies/One.2001.mkv"], "11111111-1111-4111-8111-111111111111"
+            )
+            discovery = value.repository.get_media_discovery_for_task(old_id)
+            self.assertIsNotNone(discovery)
+
+            # Enter the real re-analysis stage, then produce the real failure:
+            # the engine's own ``_fail_discovery`` boundary fails the flow.
+            status, _body = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                method="POST",
+                body={"expectedVersion": discovery.version},
+            )
+            self.assertIn(status, (200, 202), _body)
+            with patch.object(
+                value.discovery,
+                "run_claimed",
+                side_effect=DiscoveryUnavailable("the claimed discovery is no longer readable"),
+            ):
+                self._drive(value, old_id, steps=4)
+            # production failure publication
+            task = value.repository.get_task(old_id)
+            self.assertEqual(PersistentTaskStatus.FAILED, task.status)
+            record = value.repository.get_media_discovery(discovery.discovery_id)
+            version_before = record.version
+
+            # The same real entrance is now refused by the shared eligibility
+            # fact, without touching the durable record.
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                method="POST",
+                body={"expectedVersion": record.version},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("organize_flow_ended", refused["error"]["code"])
+            self.assertEqual(
+                version_before,
+                value.repository.get_media_discovery(discovery.discovery_id).version,
+            )
+
+            # The run document the preparation page consumes: the ended flow
+            # fact, an advertised-but-refused ``prepare`` action with the same
+            # predicate's reason, and an ended native next action instead of a
+            # promise that a Worker is analysing this record.
+            code, document = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}"
+            )
+            self.assertEqual(200, code, document)
+            self.assertEqual(
+                {"taskId": old_id, "status": "failed", "continuable": False},
+                document["organizeFlow"],
+            )
+            prepare = document["actions"]["prepare"]
+            self.assertFalse(prepare["available"])
+            self.assertEqual("organize_flow_ended", prepare["reason"])
+            self.assertIn("already ended", document["nextAction"])
+            self.assertNotIn("running the complete analysis", document["nextAction"])
+
+            # The original summary is still reachable as read-only history
+            # through both existing associations the Web page uses.
+            code, intent = self.request(
+                value, f"/api/v1/operations/organize/intents/{preview['intentId']}"
+            )
+            self.assertEqual(200, code, intent)
+            self.assertEqual(preview["previewId"], intent["latestPlan"]["previewId"])
+            code, reopened = self.request(
+                value, f"/api/v1/operations/organize/previews/{preview['previewId']}"
+            )
+            self.assertEqual(200, code, reopened)
+            self.assertTrue(reopened["zeroMutation"])
+
+            # A stale page that still invokes it creates no second work and no
+            # media effect; the original waiting item evidence is unchanged.
+            self.assertEqual([old_id], [t.task_id for t in value.repository.list_tasks(limit=50)])
+            for item in value.repository.list_items(old_id):
+                self.assertEqual(
+                    TaskItemStatus.WAITING_CONFIRM,
+                    value.repository.get_item(item.item_id).status,
+                )
+            self.assertEqual([], value.target.mutations)
+
 
 class MixedBatchPerFileReleaseTests(_SupersededHandoffFixture):
     """One analysis-failed sibling releases; the waiting siblings keep their summary.

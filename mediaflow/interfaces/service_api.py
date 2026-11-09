@@ -11982,6 +11982,19 @@ class MediaFlowApi:
         next_action = self._discovery_next_action(
             discovery, terminal=terminal, frozen=frozen, worker_ready=worker["ready"]
         )
+        # PATCH-20261109-3: one bounded projection of the flow-eligibility fact.
+        # An ended organizing flow replaces the walk/analysis-oriented native
+        # guidance ("the Worker is running the analysis", "open the linked plan
+        # summary to confirm") with the truthful ended state: the summary is
+        # read-only history and the files re-enter through a fresh Files
+        # organize.  The durable discovery record itself is never rewritten.
+        organize_flow = self._organize_flow_document(discovery.organize_task_id)
+        if organize_flow is not None and not organize_flow["continuable"]:
+            next_action = (
+                "this organizing flow has already ended; its read-only summary and "
+                "recorded results stay available in Task Center, and these files "
+                "re-enter through a fresh organize from Files"
+            )
         analysis_available, analysis_refusal, analysis_next_action, analysis_pending = (
             self._media_discovery.analysis_availability(discovery)
             if self._media_discovery is not None
@@ -12080,7 +12093,7 @@ class MediaFlowApi:
             # status: an ended flow keeps its read-only evidence and its ordinary
             # Files re-organize path, and never offers a confirmation the backend
             # would refuse.
-            "organizeFlow": self._organize_flow_document(discovery.organize_task_id),
+            "organizeFlow": organize_flow,
             "autoPrepare": discovery.auto_prepare,
             "prepared": discovery.prepared,
             "previewId": discovery.preview_id,

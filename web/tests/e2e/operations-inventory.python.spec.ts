@@ -3915,10 +3915,22 @@ test("initial manual preparation remains reachable from Task Center", async ({
   await expect(completedDetail.getByText("已完成").first()).toBeVisible({
     timeout: 15_000,
   });
-  await completedDetail.getByRole("link", { name: "继续整理" }).click();
+  // PATCH-20261109-3: a completed run has ended as a whole, so its entry is
+  // the read-only summary link — never an execution-nature "继续整理".
+  await completedDetail.getByRole("link", { name: "查看只读摘要" }).click();
   await expect(
     page.getByRole("heading", { name: "新建整理任务", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
+  // The reopened page is real read-only history: the ended fact replaces any
+  // live-stage prompt, the plan stays readable, and neither a confirmation
+  // button nor the same-page re-analysis entry exists.
+  await expect(page.getByText(/本次整理工作已结束/).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByRole("button", { name: "重新检查并更新摘要" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
   await expect(page.getByText("已有受理的兄弟项")).toBeVisible({
     timeout: 15_000,
   });

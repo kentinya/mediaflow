@@ -16,7 +16,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -286,13 +286,194 @@ describe("organize creation workspace", () => {
       screen.queryByRole("heading", { name: "无法读取准备状态" }),
     ).toBeNull();
     expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    expect(screen.getByText(/任务状态：\s*failed/)).toBeVisible();
-    // The stale confirmation is refused by its own bounded reason, never
-    // offered as an executable entry, and re-analysis is not offered either.
-    const confirm = screen.getByRole("button", { name: /确认整理/ });
-    expect(confirm).toBeDisabled();
+    expect(screen.getByText(/任务状态:\s*failed/)).toBeVisible();
+    // The ended state is read-only: the backend's bounded refusal reason is
+    // shown under 确认整理, but no executable confirmation button exists and
+    // no checkbox exists that could imply selectable history.
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     expect(screen.getByText(/start a fresh organize from Files/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: /重新分析/ })).toBeNull();
+    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
+    expect(screen.getByText("只读历史,不可选择")).toBeVisible();
+    // The real same-page re-analysis entry is named 重新检查并更新摘要; even a
+    // stale action bit saying `available` must not render it for an ended flow.
+    expect(
+      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
+    ).toBeNull();
+    // An ended flow never presents a live-stage prompt.
+    expect(screen.queryByText(/正在完整分析并生成计划摘要/)).toBeNull();
+    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+    // The failed run's preparation identity stays visible for the task-center
+    // handoff; nothing was executable on this page.
+    expect(screen.getByRole("heading", { name: "计划摘要" })).toBeVisible();
+  });
+
+  it("reopens the ended run's original summary as read-only history, without a fake wait", async () => {
+    // The real failed-re-analysis journey: an explicit re-check cleared the
+    // run's own preview link, the analysis pass then failed and the Worker
+    // published the organizing Task as failed (discovery stays `analyzing`).
+    // The saved plan behind the intent's durable association — the backend's
+    // `get_latest_manual_preview` projection — must render as read-only history.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              status: "analyzing",
+              previewId: null,
+              prepared: false,
+              organizeFlow: {
+                taskId: "organize-task-1",
+                status: "failed",
+                continuable: false,
+              },
+              nextAction:
+                "this organizing flow has already ended; its read-only summary and recorded results stay available in Task Center, and these files re-enter through a fresh organize from Files",
+              actions: {
+                cancel: action(),
+                resume: action(),
+                finalize: action(),
+                prepare: {
+                  available: true,
+                  method: "POST",
+                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
+                  requiresVersion: true,
+                  sideEffects: "none",
+                  refusal: null,
+                },
+              },
+            }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+          const value = clone("organizeIntentChoice");
+          value["intentId"] = "intent-1";
+          ((value["actions"] as Json)["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          // The real latest-plan association the backend reads through its
+          // read-only get_latest_manual_preview projection.
+          value["latestPlan"] = {
+            previewId: PREVIEW_ID,
+            status: "previewed",
+            current: true,
+            intentVersion: 2,
+            createdAt: "2026-01-01T00:00:00+00:00",
+            updatedAt: "2026-01-01T00:00:00+00:00",
+            truncated: false,
+          };
+          return jsonResponse(value);
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          const execute = (value["actions"] as Json)["execute"] as Json;
+          execute["available"] = false;
+          execute["reason"] =
+            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    // The original plan content is actually readable — not a placeholder.
+    await screen.findByRole("heading", { name: "计划摘要" });
+    await screen.findByText("One.2001.mkv");
+    expect(screen.getByText(/只读历史\(本次整理已结束\)/)).toBeVisible();
+    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
+    // No fake waiting: neither the live-stage label nor the Worker prompt plus
+    // any re-analysis entry appears for the ended flow.
+    expect(screen.queryByText(/正在完整分析并生成计划摘要/)).toBeNull();
+    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
+    expect(screen.getByText("只读历史,不可选择")).toBeVisible();
+    // The bounded refusal reason of the confirmation section stays visible so
+    // the read-only end is explained where the action used to be.
+    await screen.findByText(/start a fresh organize from Files/);
+
+    // Refresh / same-version reopen: a fresh mount from the same durable
+    // documents renders the same read-only history, again without any fake wait.
+    cleanup();
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+    await screen.findByRole("heading", { name: "计划摘要" });
+    await screen.findByText("One.2001.mkv");
+    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
+    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
+    ).toBeNull();
+  });
+
+  it("states plainly when an ended run never generated any summary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              status: "analyzing",
+              previewId: null,
+              prepared: false,
+              organizeFlow: {
+                taskId: "organize-task-1",
+                status: "failed",
+                continuable: false,
+              },
+              actions: {
+                cancel: action(),
+                resume: action(),
+                finalize: action(),
+                prepare: {
+                  ...action(),
+                  reason: "organize_flow_ended",
+                  nextAction:
+                    "this organizing flow has already ended; start a fresh organize from Files",
+                },
+              },
+            }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+          const value = clone("organizeIntentChoice");
+          value["intentId"] = "intent-1";
+          ((value["actions"] as Json)["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          value["latestPlan"] = null;
+          return jsonResponse(value);
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    // The absence is explicit and truth-telling — no fake wait, no invented
+    // summary, no re-analysis or confirmation entry.
+    await screen.findByText(/从未生成过计划摘要/);
+    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
+    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "重新分析并生成摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
   });
 
   it("never offers an executable prefix after a material budget refusal", async () => {

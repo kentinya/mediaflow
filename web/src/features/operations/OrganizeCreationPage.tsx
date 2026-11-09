@@ -138,26 +138,6 @@ export function OrganizeCreationPage() {
       ? preparationQuery.data.model
       : undefined;
 
-  // The linked exact Preview is read from the same bounded Preview authority
-  // the standalone page uses.  No selection or authority is invented here.
-  const previewQuery = useQuery(
-    organizePreviewQueryOptions(
-      token,
-      preparation?.previewId ?? "",
-      preparation?.previewId != null,
-    ),
-  );
-  const preview: OrganizePreviewModel | undefined =
-    previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
-
-  const executeHistoryQuery = useQuery(
-    organizeExecutionListQueryOptions(
-      token,
-      { previewId: preview?.previewId ?? "", limit: 100 },
-      preview !== undefined,
-    ),
-  );
-
   // The linked intent remains the one durable choice authority.  An operator
   // correction is saved there, which invalidates the earlier plan summary and
   // re-enters the durable analysis stage on the same page.
@@ -170,6 +150,56 @@ export function OrganizeCreationPage() {
   );
   const intent =
     intentQuery.data?.ok === true ? intentQuery.data.model : undefined;
+
+  // PATCH-20261109-3: the linked organizing flow's continuation eligibility is
+  // the backend fact this page consumes.  An ended flow keeps the reviewed
+  // summary as read-only history: no new selection, correction, re-analysis or
+  // confirmation can be offered here, and the Files journey is the only way
+  // that scope becomes work again.
+  const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+
+  // An ended preparation reads its original saved summary as read-only history
+  // through the intent's durable plan association (the backend projects it from
+  // its read-only `get_latest_manual_preview` read).  A live flow never surfaces
+  // the earlier plan here: during an in-flight re-analysis it is exactly the
+  // superseded plan that must not look current, so it only appears once the
+  // flow has actually ended.
+  const historyPlanId =
+    organizeFlowEnded && preparation?.previewId == null
+      ? (intent?.latestPlan?.previewId ?? null)
+      : null;
+  const summaryPreviewId = preparation?.previewId ?? historyPlanId ?? "";
+  /** Whether the rendered plan comes from the ended intent's saved history. */
+  const previewIsHistory = organizeFlowEnded && preparation?.previewId == null;
+  /** The intent's saved-plan association is still being read (or failed). */
+  const historyPlanPending =
+    previewIsHistory &&
+    preparation?.intentId != null &&
+    intent === undefined &&
+    !intentQuery.isError;
+  const historyPlanUnreadable = previewIsHistory && intentQuery.isError;
+
+  // The linked exact Preview — the run's own current plan, or for an ended
+  // run whose re-analysis cleared the link, the saved historical plan above.
+  // Both are read through the same bounded Preview authority; neither read
+  // creates work or grants execution authority.
+  const previewQuery = useQuery(
+    organizePreviewQueryOptions(
+      token,
+      summaryPreviewId,
+      summaryPreviewId !== "",
+    ),
+  );
+  const preview: OrganizePreviewModel | undefined =
+    previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
+
+  const executeHistoryQuery = useQuery(
+    organizeExecutionListQueryOptions(
+      token,
+      { previewId: preview?.previewId ?? "", limit: 100 },
+      preview !== undefined,
+    ),
+  );
 
   const correctionMutation = useMutation({
     mutationFn: async (options: {
@@ -228,13 +258,6 @@ export function OrganizeCreationPage() {
       );
     },
   });
-
-  // PATCH-20261109-3: the linked organizing flow's continuation eligibility is
-  // the backend fact this page consumes.  An ended flow keeps the reviewed
-  // summary as read-only history: no new selection, correction, re-analysis or
-  // confirmation can be offered here, and the Files journey is the only way
-  // that scope becomes work again.
-  const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
 
   const [selected, setSelected] = useState<readonly string[] | null>(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
@@ -500,6 +523,9 @@ export function OrganizeCreationPage() {
   useEffect(() => {
     if (
       preparation === undefined ||
+      // An ended flow never runs a Worker stage again: polling it would keep
+      // promising an analysis that can no longer happen.
+      organizeFlowEnded ||
       [
         "completed",
         "partial_success",
@@ -514,7 +540,7 @@ export function OrganizeCreationPage() {
       void preparationQuery.refetch();
     }, 1_500);
     return () => window.clearTimeout(timer);
-  }, [preparation, preparationQuery]);
+  }, [preparation, preparationQuery, organizeFlowEnded]);
 
   // A new analysis produces a new exact summary.  The earlier selection and
   // any overwrite/source-cleanup authorization belong to the superseded plan
@@ -668,52 +694,43 @@ export function OrganizeCreationPage() {
         </StatusBanner>
       ) : (
         <div className="mf-dashboard-body">
-          <StatusBanner
-            variant={
-              preparation.status === "failed"
-                ? "error"
-                : preparation.progress.incomplete
-                  ? "warning"
-                  : "info"
-            }
-            title={label(PREPARATION_STATUS_LABELS, preparation.status)}
-          >
-            <p>{preparation.nextAction}</p>
-            {preparation.progress.message !== "" ? (
-              <p>{preparation.progress.message}</p>
-            ) : null}
-            {preparation.failure !== null ? (
-              <p role="status">{preparation.failure}</p>
-            ) : null}
-            {preparation.progress.incomplete &&
-            preparation.previewId === null ? (
-              <p role="status">
-                发现未完整遍历所选范围；已记录的来源只能作为明确复核的子集，不会自动成为可执行的前
-                N 项。
-              </p>
-            ) : null}
-            {preparation.progress.materialRefusal !== null ? (
-              <p role="status">
-                本次准备达到预算或安全上限（
-                {label(
-                  REASON_LABELS,
-                  preparation.progress.materialRefusal ?? "",
-                )}
-                ），已记录的来源是被截断的前缀，不能冻结为可执行清单。
-                请缩小所选范围后重新开始一次准备。
-              </p>
-            ) : null}
-          </StatusBanner>
-
           {organizeFlowEnded ? (
+            // PATCH-20261109-3: an ended flow shows exactly one presentation:
+            // the ended fact, its recorded failure/evidence and the Files
+            // re-organize path.  The live-stage label ("正在完整分析"), the
+            // durable Worker message and any wait-for-Worker wording belong to
+            // a flow that can still run and are never shown here.
             <StatusBanner variant="warning" title="本次整理工作已结束">
               <p>
-                关联的整理流程（任务状态：
-                {preparation.organizeFlow?.status ?? "unknown"}）已结束。
-                原计划摘要保留为只读历史，不能再选择、修正或确认；失败阶段与已知效果请在任务中心对应运行详情查看。
+                关联的整理流程(任务状态:
+                {preparation.organizeFlow?.status ?? "unknown"})已结束;
+                不再运行分析,也不再提供选择、修正、重新分析或确认。
+                失败阶段、逐项结果与已知效果保持不变,请在任务中心对应运行详情查看。
               </p>
+              {preparation.failure !== null ? (
+                <p role="status">{preparation.failure}</p>
+              ) : null}
+              {preparation.progress.incomplete &&
+              preparation.previewId === null ? (
+                <p role="status">
+                  发现未完整遍历所选范围;已记录的来源只能作为明确复核的子集,不会自动成为可执行的前
+                  N 项。
+                </p>
+              ) : null}
+              {preparation.progress.materialRefusal !== null ? (
+                <p role="status">
+                  本次准备达到预算或安全上限(
+                  {label(
+                    REASON_LABELS,
+                    preparation.progress.materialRefusal ?? "",
+                  )}
+                  ),已记录的来源是被截断的前缀,不能冻结为可执行清单。
+                </p>
+              ) : null}
               <p>
-                需要再次整理其中的文件时，请从资源库文件页重新选择并发起：新工作会完整分析并生成新摘要，确认前不会修改任何媒体文件。
+                原计划摘要保留为只读历史,可在本页核对当时的条目与方案。
+                需要再次整理其中的文件时,请从资源库文件页重新选择并发起:
+                新工作会完整分析并生成新摘要,确认前不会修改任何媒体文件。
               </p>
               <div className="mf-actions">
                 <Button type="button" variant="secondary" onClick={openFiles}>
@@ -728,7 +745,44 @@ export function OrganizeCreationPage() {
                 </Link>
               </div>
             </StatusBanner>
-          ) : null}
+          ) : (
+            <StatusBanner
+              variant={
+                preparation.status === "failed"
+                  ? "error"
+                  : preparation.progress.incomplete
+                    ? "warning"
+                    : "info"
+              }
+              title={label(PREPARATION_STATUS_LABELS, preparation.status)}
+            >
+              <p>{preparation.nextAction}</p>
+              {preparation.progress.message !== "" ? (
+                <p>{preparation.progress.message}</p>
+              ) : null}
+              {preparation.failure !== null ? (
+                <p role="status">{preparation.failure}</p>
+              ) : null}
+              {preparation.progress.incomplete &&
+              preparation.previewId === null ? (
+                <p role="status">
+                  发现未完整遍历所选范围;已记录的来源只能作为明确复核的子集,不会自动成为可执行的前
+                  N 项。
+                </p>
+              ) : null}
+              {preparation.progress.materialRefusal !== null ? (
+                <p role="status">
+                  本次准备达到预算或安全上限(
+                  {label(
+                    REASON_LABELS,
+                    preparation.progress.materialRefusal ?? "",
+                  )}
+                  ),已记录的来源是被截断的前缀,不能冻结为可执行清单。
+                  请缩小所选范围后重新开始一次准备。
+                </p>
+              ) : null}
+            </StatusBanner>
+          )}
 
           <section aria-label="准备进度">
             <h3>准备进度</h3>
@@ -790,18 +844,33 @@ export function OrganizeCreationPage() {
             </StatusBanner>
           ) : null}
 
-          {preparation.previewId === null ? (
+          {preparation.previewId === null && summaryPreviewId === "" ? (
             <section className="mf-count-section">
               <h3>计划摘要</h3>
-              <p className="mf-dashboard-meta">
-                {preparation.status === "analyzing"
-                  ? "常驻处理 Worker 正在运行完整分析；完成前不会出现可执行范围。"
-                  : preparation.progress.materialRefusal !== null
-                    ? "本次准备被预算或安全上限截断，没有可确认的执行范围。请缩小范围后重新准备。"
-                    : preparation.actions.prepare.available
-                      ? "可以重新运行完整分析（例如已保存合法的识别类型等修正）。"
-                      : "准备尚未生成可确认的计划摘要；请等待处理 Worker 完成。"}
-              </p>
+              {organizeFlowEnded ? (
+                // An ended plan-less preparation states the ended truth once:
+                // it reads the saved plan when one exists (handled below by the
+                // history Preview query), and only says "never generated" when
+                // the intent's durable association really has no plan.  No
+                // Worker-waiting wording is offered for work that has ended.
+                <p className="mf-dashboard-meta">
+                  {historyPlanPending
+                    ? "本次整理已结束;正在读取它已保存的原计划摘要作为只读历史。"
+                    : historyPlanUnreadable
+                      ? "本次整理已结束,但原计划摘要暂时无法读取;本页不会重新提交整理或创建执行。请刷新后重试,或在任务中心查看运行结果。"
+                      : "本次整理已结束,且从未生成过计划摘要;下方没有可确认的内容。失败阶段与已知效果请在任务中心对应运行详情查看。需要再次整理时,请从资源库文件页重新选择并发起。"}
+                </p>
+              ) : (
+                <p className="mf-dashboard-meta">
+                  {preparation.status === "analyzing"
+                    ? "常驻处理 Worker 正在运行完整分析；完成前不会出现可执行范围。"
+                    : preparation.progress.materialRefusal !== null
+                      ? "本次准备被预算或安全上限截断，没有可确认的执行范围。请缩小范围后重新准备。"
+                      : preparation.actions.prepare.available
+                        ? "可以重新运行完整分析（例如已保存合法的识别类型等修正）。"
+                        : "准备尚未生成可确认的计划摘要；请等待处理 Worker 完成。"}
+                </p>
+              )}
               {preparation.actions.prepare.available && !organizeFlowEnded ? (
                 <div className="mf-actions">
                   <Button
@@ -870,7 +939,12 @@ export function OrganizeCreationPage() {
                       .map((scope) => scope.path)
                       .join("、")}{" "}
                 · {displayEnum(preview.status)} ·{" "}
-                {preview.current ? "当前方案" : "历史方案"} · 不会修改 Storage
+                {organizeFlowEnded
+                  ? "只读历史(本次整理已结束)"
+                  : preview.current
+                    ? "当前方案"
+                    : "历史方案"}{" "}
+                · 不会修改 Storage
               </p>
               {preparation.selection.refused.length > 0 && (
                 <div
@@ -901,9 +975,11 @@ export function OrganizeCreationPage() {
                       preparation.progress.incompleteReason ?? "",
                     )}）`
                   : "已完整遍历"}{" "}
-                · 可整理主文件 {preview.items.length} 项 · 可确认{" "}
-                {executableIds.length} 项 · 未就绪{" "}
-                {preview.items.length - executableIds.length} 项
+                · 可整理主文件 {preview.items.length} 项 ·{" "}
+                {organizeFlowEnded
+                  ? "本次整理已结束,条目只读不可选"
+                  : `可确认 ${executableIds.length} 项`}{" "}
+                · 未就绪 {preview.items.length - executableIds.length} 项
               </p>
               {preview.nextAction && (
                 <p className="mf-dashboard-meta">{preview.nextAction}</p>
@@ -937,7 +1013,7 @@ export function OrganizeCreationPage() {
                   </ul>
                 </StatusBanner>
               )}
-              {preparation.actions.prepare.available && (
+              {preparation.actions.prepare.available && !organizeFlowEnded && (
                 <div className="mf-actions">
                   <Button
                     type="button"
@@ -950,7 +1026,7 @@ export function OrganizeCreationPage() {
                       : "重新检查并更新摘要"}
                   </Button>
                   <span className="mf-dashboard-meta">
-                    只重新运行零变更分析并链接新摘要；不执行任何整理。
+                    只重新运行零变更分析并链接新摘要;不执行任何整理。
                   </span>
                 </div>
               )}
@@ -979,37 +1055,46 @@ export function OrganizeCreationPage() {
                       <span className="mf-status-badge">
                         {alreadyAdmitted
                           ? "已受理执行"
-                          : isExecutable
-                            ? "可执行"
-                            : "未就绪"}
+                          : organizeFlowEnded
+                            ? "只读历史"
+                            : isExecutable
+                              ? "可执行"
+                              : "未就绪"}
                       </span>
                     </h4>
-                    <label>
-                      <input
-                        type="checkbox"
-                        aria-label={`选择 ${item.sourceFilename ?? item.itemId}`}
-                        checked={
-                          !alreadyAdmitted &&
-                          activeSelection.includes(item.itemId)
-                        }
-                        disabled={!isExecutable || alreadyAdmitted}
-                        onChange={(event) => {
-                          setSelected(
-                            event.target.checked
-                              ? [...activeSelection, item.itemId]
-                              : activeSelection.filter(
-                                  (value) => value !== item.itemId,
-                                ),
-                          );
-                          setAllowOverwrite(false);
-                          setAllowSourceCleanup(false);
-                          setConfirmationSelectionKey(null);
-                        }}
-                      />{" "}
-                      {alreadyAdmitted
-                        ? "已受理执行，不再纳入本次创建"
-                        : "纳入此条目"}
-                    </label>
+                    {organizeFlowEnded ? (
+                      // An ended flow is read-only history: the item and plan
+                      // stay inspectable, but no checkbox or selection exists
+                      // that could imply this page can still execute them.
+                      <p className="mf-dashboard-meta">只读历史,不可选择</p>
+                    ) : (
+                      <label>
+                        <input
+                          type="checkbox"
+                          aria-label={`选择 ${item.sourceFilename ?? item.itemId}`}
+                          checked={
+                            !alreadyAdmitted &&
+                            activeSelection.includes(item.itemId)
+                          }
+                          disabled={!isExecutable || alreadyAdmitted}
+                          onChange={(event) => {
+                            setSelected(
+                              event.target.checked
+                                ? [...activeSelection, item.itemId]
+                                : activeSelection.filter(
+                                    (value) => value !== item.itemId,
+                                  ),
+                            );
+                            setAllowOverwrite(false);
+                            setAllowSourceCleanup(false);
+                            setConfirmationSelectionKey(null);
+                          }}
+                        />{" "}
+                        {alreadyAdmitted
+                          ? "已受理执行，不再纳入本次创建"
+                          : "纳入此条目"}
+                      </label>
+                    )}
                     <ItemFindings item={item} />
                     {item.failure !== null && (
                       <StatusBanner variant="error" title="条目未就绪">
@@ -1193,13 +1278,16 @@ export function OrganizeCreationPage() {
                 )}
               <h4>确认整理</h4>
               <p className="mf-dashboard-meta">
-                {preview.executeAction.available
+                {preview.executeAction.available && !organizeFlowEnded
                   ? "确认一次后，后端只会准入所选条目，并使用一次性授权；未选条目保持未执行。"
-                  : `暂不可用：${
-                      preview.executeAction.reason ?? "后端未提供执行操作"
+                  : `暂不可用:${
+                      preview.executeAction.reason ??
+                      (organizeFlowEnded
+                        ? "this summary belongs to an ended organizing flow; start a fresh organize from Files"
+                        : "后端未提供执行操作")
                     }`}
               </p>
-              {!preview.current && (
+              {!preview.current && !organizeFlowEnded && (
                 <StatusBanner variant="warning" title="摘要已不是当前方案">
                   <p>
                     此计划摘要已被更新的分析取代；请使用上方“重新检查并更新摘要”
@@ -1207,14 +1295,14 @@ export function OrganizeCreationPage() {
                   </p>
                 </StatusBanner>
               )}
-              {selectionOverlapsAdmitted && (
+              {!organizeFlowEnded && selectionOverlapsAdmitted && (
                 <StatusBanner variant="warning" title="所选条目已受理">
                   <p>
                     所选条目中已有被执行受理的项；已受理项不会重复执行。请取消选择已受理项后确认剩余就绪项。
                   </p>
                 </StatusBanner>
               )}
-              {requiresOverwrite && (
+              {!organizeFlowEnded && requiresOverwrite && (
                 <label>
                   <input
                     type="checkbox"
@@ -1227,7 +1315,7 @@ export function OrganizeCreationPage() {
                   我确认允许按已审阅方案替换现有目标文件
                 </label>
               )}
-              {requiresCleanup && (
+              {!organizeFlowEnded && requiresCleanup && (
                 <label>
                   <input
                     type="checkbox"
@@ -1241,40 +1329,44 @@ export function OrganizeCreationPage() {
                 </label>
               )}
               <div className="mf-actions">
-                <Button
-                  type="button"
-                  disabled={
-                    !preview.executeAction.available ||
-                    confirmationBlockedByHistory ||
-                    executeMutation.isPending ||
-                    unknownSubmission !== null ||
-                    activeSelection.length === 0 ||
-                    (requiresOverwrite && !effectiveAllowOverwrite) ||
-                    (requiresCleanup && !effectiveAllowSourceCleanup)
-                  }
-                  onClick={() =>
-                    executeMutation.mutate({
-                      itemIds: activeSelection,
-                      intentVersion: preview.intentVersion ?? 0,
-                      allowOverwrite:
-                        requiresOverwrite && effectiveAllowOverwrite,
-                      allowSourceCleanup:
-                        requiresCleanup && effectiveAllowSourceCleanup,
-                    })
-                  }
-                >
-                  {executeMutation.isPending
-                    ? "正在准入所选任务…"
-                    : `确认整理 ${activeSelection.length} 项`}
-                </Button>
+                {!organizeFlowEnded && (
+                  <Button
+                    type="button"
+                    disabled={
+                      !preview.executeAction.available ||
+                      confirmationBlockedByHistory ||
+                      executeMutation.isPending ||
+                      unknownSubmission !== null ||
+                      activeSelection.length === 0 ||
+                      (requiresOverwrite && !effectiveAllowOverwrite) ||
+                      (requiresCleanup && !effectiveAllowSourceCleanup)
+                    }
+                    onClick={() =>
+                      executeMutation.mutate({
+                        itemIds: activeSelection,
+                        intentVersion: preview.intentVersion ?? 0,
+                        allowOverwrite:
+                          requiresOverwrite && effectiveAllowOverwrite,
+                        allowSourceCleanup:
+                          requiresCleanup && effectiveAllowSourceCleanup,
+                      })
+                    }
+                  >
+                    {executeMutation.isPending
+                      ? "正在准入所选任务…"
+                      : `确认整理 ${activeSelection.length} 项`}
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={backToBrowse}
                 >
-                  返回文件补充或修正
+                  {organizeFlowEnded
+                    ? "返回文件重新发起"
+                    : "返回文件补充或修正"}
                 </Button>
-                {preview.intentId !== null && (
+                {preview.intentId !== null && !organizeFlowEnded && (
                   <Link
                     className="mf-button mf-button-secondary"
                     to="/operations/organize/intent/$intentId"

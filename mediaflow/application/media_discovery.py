@@ -116,6 +116,7 @@ from mediaflow.domain.storage import (
 from mediaflow.domain.task_persistence import (
     MANUAL_ORGANIZE_TASK_COMMAND,
     SETTLED_ITEM_STATUSES,
+    SETTLED_TASK_FLOW_STATUSES,
     PersistentTask,
     PersistentTaskStatus,
     RunDisplayContext,
@@ -2825,6 +2826,36 @@ class MediaDiscoveryService:
                 next_action="reload the organizing work and inspect its current state",
             ) from rejected
 
+    def _organize_flow_settled(self, discovery: MediaDiscovery) -> bool:
+        """Whether this record's linked organizing Task flow has already ended.
+
+        PATCH-20261109-3: ``completed``/``failed``/``cancelled`` (and the legacy
+        ``partial_success``) are one settled fact shared with the repository's
+        source-ownership read and the in-transaction admission fence.  A missing
+        Task row is not proof of an end nor of a live flow, so it answers
+        ``False`` and the ordinary admission fence keeps its own authority; a
+        real read failure still raises to the caller instead of being hidden.
+
+        Like ``_kernel_task_id``, this only judges runs the Task scheduling
+        kernel actually governs: compositions built without the kernel (the
+        explicit ``task_scheduling_enabled=False`` fixtures) keep their ordinary
+        legacy analysis semantics, because no kernel admission ever fenced them
+        either.  Every production composition enables the kernel.
+        """
+
+        if not self._task_scheduling_enabled:
+            return False
+        task_id = discovery.organize_task_id
+        if not isinstance(task_id, str) or not task_id:
+            return False
+        reader = getattr(self._repository, "get_task", None)
+        if not callable(reader):
+            return False
+        task = reader(task_id)
+        if task is None:
+            return False
+        return task.status in SETTLED_TASK_FLOW_STATUSES
+
     def analysis_availability(
         self, discovery: MediaDiscovery
     ) -> tuple[bool, str | None, str | None, bool]:
@@ -2843,6 +2874,24 @@ class MediaDiscoveryService:
                 False,
                 "discovery_not_frozen",
                 "wait for the bounded discovery to finish, then request the analysis",
+                False,
+            )
+        # PATCH-20261109-3: whose flow already ended as a whole may not re-enter
+        # its analysis through this record.  The durable Task flow status is the
+        # same eligibility fact the repository's source ownership, the execution
+        # admission fence and the summary confirmation consume, so the advertised
+        # ``prepare`` action and this real admission can never disagree: the
+        # ended work keeps its read-only summary, and a new organize for the same
+        # files starts from Files instead of resurrecting this record.  A record
+        # without a linked Task (or one whose Task row is gone) keeps its
+        # ordinary legacy semantics unchanged.
+        if self._organize_flow_settled(discovery):
+            return (
+                False,
+                "organize_flow_ended",
+                "this organizing flow has already ended; its read-only summary "
+                "stays available, so start a fresh organize from Files if these "
+                "files still need organizing",
                 False,
             )
         # An explicit-Finalize discovery and a single-file intent's own durable
