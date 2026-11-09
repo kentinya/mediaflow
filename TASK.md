@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Checkpoint: 99328d5d22e3110eb2f97415af436c76e5545a3a
+Implementation Checkpoint: 31211d9ad4c4aabcf7fccc1042cc8c13af5fa008
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: DEVELOPER FIXES TASK53.1 — REOPEN THE SAME DIALOG FROM EXISTING TASK LINKS
+Next Action: B REVIEWS TASK53.1 CORRECTION 31211d9a
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -235,31 +235,29 @@ Task53.1 PLANNED 可进入实施；没有 Developer 完工报告、B PASS 或 Sl
 
 ## Developer Completion Report
 
-**Status:** READY FOR B REVIEW。实现 checkpoint 为
-`99328d5d22e3110eb2f97415af436c76e5545a3a`（main，Task Base 未变）。本报告只提交
-Developer 的受影响验证，不替代 B 的 T4 全量验收；未推送、未发布、未部署。
+**Status:** READY FOR B REVIEW。修正 checkpoint 为
+`31211d9ad4c4aabcf7fccc1042cc8c13af5fa008`（main，Task Base 未变）。本报告只提交
+Developer 对 B 指出的 P1 的修正与受影响验证，不替代 B 的 T4 全量验收；未推送、未发布、
+未部署。
 
-### 实现内容
+### B P1 修正
 
-- `StorageFilesPage` 的单项／批量／文件夹整理不再跳转旧整页，而是在原页背景上打开
-  `ManualOrganizeDialog`；库、目录、选择与滚动位置保持。URL 的 `organizeDiscovery` 只携带
-  有界 discovery 身份，重新认证仍可重开同一准备；关闭只关闭弹窗，不取消耐久准入。
-- 弹窗复用共享 `ModalCardShell`（居中、背景 inert、锁滚、焦点／Escape、退出动效），
-  逐文件显示 `第 i / N 个`、文件名、来源、作品候选、来源→目标、操作／附件、危险影响与
-  当前问题；技术字段折叠诊断。按 durable `itemId` 保存草稿、纳入选择和迟到摘要锚点，
-  翻页不保存、不分析、不执行。
-- 每个文件明确的“保存并重新分析”先保存合法选择再请求既有分析；保存失败、分析失败、
-  已保存待重试分别说明阶段、持久状态和下一步。重分析期间保留上一份摘要只读核对，
-  Worker 阶段结束后轮询替换；修正了等待稳定时相同响应导致轮询停止的真实缺陷。
-- 整批复核显示准确选中数量、文件、操作、目标与覆盖／来源清理影响；仅最后
-  “确认整理 N 项”提交一次执行，在途显示“正在提交...”并用进程内锁阻止双击重复执行。
-  未知响应只提供有界 admission 核对，不自动重提；核对证明确已受理后按返回的准确
-  `taskId` 交给任务中心既有选中／详情机制。
-- 结束流程显示原计划只读历史；原摘要读取失败可单独重读，不重新分析或执行。已受理
-  兄弟项不进入新确认、不重放。
-- 任务中心详情弹窗未改动；`OrganizeCreationPage` 仅复用抽出的状态／原因文案。
-  未新增 Provider／Storage／schema／任务状态／恢复引擎，也未改 RBAC、pin、fence、审计或
-  RecognitionType C 使用命名／分类 A 的映射。
+- `/operations/organize/new` 不再渲染旧长整页。携带有效 `discoveryId` 的既有
+  “继续整理／查看只读摘要”链接现在直接挂载同一个 `ManualOrganizeDialog`，只读取原耐久
+  准备、意图与计划摘要；打开路由不提交准入、不请求分析、不执行。通用无准备地址仍保留
+  原“从资源库文件页开始整理”指引，不读取也不创建任何工作。
+- 接收路由消费原链接的有界 `resourceLibraryId`、Files 返回上下文与 `returnOps`：关闭回到
+  准确的任务中心已选运行、原 Files 目录或普通 Files 入口；确认受理后仍通过既有
+  `operationsLandingSearch` 选中返回的准确 `taskId`，打开现有运行详情。任务中心链接、
+  详情布局、内容、进度、结果与恢复 UI 未改动。
+- 已结束准备在弹窗中读取原计划只读历史；原意图读取失败会显示失败阶段与合法重读动作，
+  不再误报“从未生成计划摘要”，读取中也不再提前下结论。已结束状态仅保留“关闭”，不再
+  出现翻页、整批复核、保存并重新分析或确认整理。
+- 接收路由的关闭是真实导航；显式“放弃草稿并关闭”现在使用与任务交接相同的单次放行，
+  避免在 reduced-motion 或跳过草稿状态后仍被旧草稿 guard 阻塞。
+- 删除旧创建工作区的 1400 余行呈现与旧页测试，改为接收路由／同一弹窗的直接回归；
+  `OrganizeCreationPage` 名称保留给稳定路由。未新增 Provider／Storage／schema／任务状态／
+  恢复引擎，未改 RBAC、pin、fence、审计或 RecognitionType C 使用命名／分类 A 的映射。
 
 ### 实际验证（Developer 受影响范围）
 
@@ -269,44 +267,32 @@ src/features/operations/OrganizeCreationPage.test.tsx
 src/features/operations/OrganizeRouter.test.tsx
 src/features/operations/OrganizePlanConfirmation.test.tsx
 src/features/operations/TaskItemRecoveryPanel.test.tsx src/shared/ui/modal-card.test.tsx
-src/shared/navigation/destination-model.test.ts` → 8 files / **159 passed**。
-- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；改动文件
+src/shared/navigation/destination-model.test.ts` → 8 files / **156 passed**。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；4 个改动文件
   `npx prettier --check` → all matched。
-- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
-tests/e2e/manual-operations.spec.ts` → **55 passed**。
 - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-tests/e2e/manual-organize-dialog.python.spec.ts
 tests/e2e/operations-inventory.python.spec.ts
-tests/e2e/organize-source-history.python.spec.ts` → **48 passed**（真实临时 SQLite、
-  Local Storage、synthetic provider、真实 Worker；含 10 文件逐项候选→一次确认→准确
-  Task 详情的链路，以及未知响应核对）。
-- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-tests/e2e/automation-settings.python.spec.ts` → **15 passed**；任务中心视觉 spec →
-  **3 passed**；OpenList 专用配置 spec → **1 passed**；Unicode principal 专用配置 spec →
-  **1 passed**。
-- 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
-tests.test_manual_organize_execution tests.test_organize_source_history` → **104 tests OK**
-  （仅既有 ResourceWarning，无失败）；`python3 scripts/check_governance.py` → PASS；
-  `git diff --check` → clean。
-
-### 测试夹具与配置变化
-
-- `scripts/operations_inventory_harness.py` 在独立 `Dialog/` 目录增加 10 个双候选源和 1 个
-  单候选未知响应源；只服务本旅程，不改变既有根目录媒体。
-- `playwright.python.config.ts` 设为 `workers: 1`：一个 Python 进程共用一个临时 SQLite 和
-  真实容量，文件级并行会让不同 spec 互相占用整理名额或移动同一源文件。
-- Node fake 修复懒创建 session 的 `discoveryLimit` 默认值；`destination-model` 保留有界
-  `organizeDiscovery` 身份用于认证续转。旧 `organize=1` 标记保持不变。
+tests/e2e/manual-organize-dialog.python.spec.ts
+tests/e2e/organize-source-history.python.spec.ts` → **48 passed（1.9m）**。其中真实
+  Files→关闭→任务中心→既有“继续整理”→同一弹窗（`第 1 / 1 个`、`Two.2002.mkv`）→一次
+  确认→同一 `taskId` 运行详情，以及结束后“查看只读摘要”→同一弹窗只读原摘要，均由真实
+  临时 SQLite、Local Storage、synthetic provider 和真实 Worker 验证；并覆盖 10 文件逐项
+  候选与未知 Execute 核对。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+tests/e2e/deep-link.spec.ts` → **64 passed（38.6s）**，在最终 build 上验证 Files 弹窗与
+  通用 Organize 指引无回归。较早合并运行的 `manual-operations.spec.ts` 也通过；最终改动
+  只涉及弹窗显式放弃草稿的放行，已由上述单测与 library-files 覆盖。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean。
 
 ### 剩余风险 / 未运行
 
-- **未运行 B 的全量 T4 门禁**：Web／Python 全量回归、wheel/打包、重启、Docker 影响评估、
-  同视口桌面／390px／矮视口视觉证据与真实键盘操作验收仍由 B 执行。本报告不声称 PASS。
-- 新 Python spec 使用 synthetic provider／临时 Local Storage；未读取用户数据库、私有配置、
-  凭据或生产媒体。
-- Python 配置现为串行执行，B 的耗时可能增加；这是共享 harness 正确性要求。
-- 预存 `.DS_Store`、未跟踪调查脚本／日志／`15`／`output/` 材料均保持未动、未提交；本轮
-  只提交上述实现与测试文件，未推送或发布。
+- 未运行 B 的 T4 全量门禁：Web／Python 全量回归、wheel／打包、重启、Docker 影响评估、
+  同视口桌面／390px／矮窗口视觉证据与真实键盘操作验收仍由 B 执行。本报告不声称 PASS。
+- 接收路由使用整理上下文背景而非任务中心活列表；关闭与受理交接均回到准确任务中心
+  已选运行。视觉连续性与返回体验仍应由 B 在同视口旅程中核对。
+- 新 Python 验证使用临时 Local Storage／synthetic provider；未读取用户数据库、私有配置、
+  凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／`15`／`output/` 材料保持未动、
+  未提交；本轮未推送或发布。
 
 ## B Review Result
 
