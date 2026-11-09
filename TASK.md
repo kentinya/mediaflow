@@ -8,7 +8,7 @@ Task 内修正下述两个阻塞后重新交付。不可变 Task Base、范围�
 Task ID: PATCH-20261109-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: fe3bd99b1cf6046ac716052e5c8ee63851c80f15
 Difficulty: High
 Test Level: T4
@@ -339,8 +339,92 @@ Worker 自身发布，没有直接改写 Task／文件状态，也没有构造�
 | `PYTHONPATH=. .venv/bin/python .git/validation-evidence/1edce6655933f7f9cc5f2abc85667a0c067b57de/b-review/race_probe.py` | 确定性交错复现 B3-02：原 Task failed，旧确认202，第二 Task 最终 completed，临时目标实际产生 One 副本；`race-probe.log`。 |
 | `git diff --check fe3bd99b..1edce665`；`git diff --check` | PASS；分别核对候选范围与本轮文档更新。 |
 
-已证明产品阻塞，按工作流提前 FIX REQUIRED；未继续全量 Python／Web／默认 E2E／wheel／
-Docker 等门禁，不把未执行项写成 PASS，也不转交 Developer。失败只读页、健康摘要返回、
-混合批次的原生桌面／390px与认证续转／同版本 reopen 仍待修正候选后由 B 验收。
-本轮测试耗时约一分钟，低于本轮代码审查、复现定位和 Task 记录总耗时的一半；不靠延长等待
+已证明产品阻塞,按工作流提前 FIX REQUIRED;未继续全量 Python/Web/默认 E2E/wheel/
+Docker 等门禁,不把未执行项写成 PASS,也不转交 Developer。失败只读页、健康摘要返回、
+混合批次的原生桌面/390px与认证续转/同版本 reopen 仍待修正候选后由 B 验收。
+本轮测试耗时约一分钟,低于本轮代码审查、复现定位和 Task 记录总耗时的一半;不靠延长等待
 满足时间比例。没有新增 Task 或扩大修正范围。
+
+### Developer 同 Task 修正交付 — 2026-11-09
+
+**READY FOR B REVIEW。** 修正实现 checkpoint(实现提交)
+`d39765bfbb1cc3fbd2d7831208dc053f375743ff`,实测于 `git rev-parse HEAD`(本节随后以
+`docs(task)` 提交,两者共同构成本候选;若 SHA 与 Git 不一致以 Git 为准)。
+Task Base `fe3bd99b` 不变,
+分支 `main`,未推送。7 个变化文件全部在本 Task 范围;预存 `mediaflow/.DS_Store`、全部
+未跟踪文件与 `.git/validation-evidence/` 本地材料未纳入任何提交,规划前治理检查 PASS。
+
+**B3-01 修复(准备页读取)。** `web/src/entities/operations/discovery.ts` 的归一化改为按
+嵌套对象的真实键读取:`normalizeBoundedText(flow["taskId"], "organizeFlow.taskId", ...)`
+与 `flow["status"]`(旧代码把带点的路径当字面键读,后端真实文档必然解析失败,页面只显示
+“无法读取准备状态”)。`organizeFlow` 键缺失现在 fail closed,`continuable` 缺失或非布尔
+拒绝,`null` 仍表示无关联流;不引入第二套模型。页面/实体夹具改为带真实嵌套形状:
+`OrganizeCreationPage`/`OrganizeDiscoveryPage`/`StorageFilesPage` 的准备页文档、
+`discovery.test.ts` 的 payload 均带 `organizeFlow`,并新增 running/failed 两个真实形状
+读取用例与缺键/缺字段拒绝用例;新增准备页终态用例(计划摘要可读、无“无法读取准备状态”、
+已结束 banner、确认按钮因真实 `execute.available=false` 拒绝理由而禁用、无重新分析入口)。
+
+**B3-02 修复(事务内 Files 身份)。** `sqlite_runtime.admit_manual_execution` 在同一
+`BEGIN IMMEDIATE` 事务的 intent 校验之后新增 `_assert_files_preparation_live_locked`:
+按与 `_adopted_organize_task` 相同的查询(intent 最新 discovery 行)读取关联
+`organize_task_id` 与 Task 状态——无关联行/无 Task(仅分析 run)保持普通新建路径;
+已终态返回与应用层一致的 409 `preparation_flow_ended`(同文案同 details);
+Task 存活但 adoption 未重接(主体/引脚不一致)返回 409 `admission_changed`,绝不落入
+未关联 intent 的新建 Task 分支;关联 Task 行不可读同样 409 拒绝。应用层原来的章程前
+预检查(authorize/execute)保留,作为事务 fence 之前的服务性快拒绝;普通未关联 API/CLI
+与 recovery preparation(`preparation_id`)语义不变。
+
+**真实交错回归与遮断自证。** 新增 `ConfirmationCrossingFlowFailureTests`(均走真实入口,
+失败只由 engine 自身 `_fail_discovery` 发布,标注于 docstring):
+
+1. 摘要确认( `/previews/{id}/execute` 联合入口):authorize(健康)后,execute 自身的源检查内
+   经现有 analyze 入口触发读取失败并 drive 出 Task FAILED,随后完成确认 → 实测 409
+   `preparation_flow_ended`;无第二 Task、预授权未被准入消费(无执行行、状态非 consumed)、
+   目标零 mutation、原 waiting item 证据保留、发现文档 `organizeFlow` 健康/失败两态逐键断言。
+2. 旧授权( `/manual-previews/{id}/authorize` 健康时签发)在 `/consume` 的源检查内同一窗口
+   落后 → 409;失败已落定后再次 consume 仍 409;授权始终未被消费,同一组零效果断言。
+
+遮断自证:临时移除事务 fence 后重跑这两个新用例,均复现 202 且产生第二 Task(与 B
+`race_probe.py` 同形态);恢复 fence 后全部通过——用例不是对既有实现的镜像。fixture
+编排仅选择源检查中的时间点并驱动生产失败发布,未直接改写 Task/文件状态。
+
+**实际命令与结果(全部实测,无 skip 掩盖)。**
+
+```sh
+.venv/bin/python scripts/check_governance.py                  # PASS(实施前/文档后各一次)
+.venv/bin/python -m compileall -q mediaflow tests scripts     # OK
+.venv/bin/python -m unittest tests.test_failed_preparation_ownership \
+  tests.test_operations_task_center tests.test_manual_organize_execution   # 70 OK
+.venv/bin/python -m unittest tests.test_organize_source_history.{PartialItemIsHistoryNotOwner,
+  SupersededSingleFileOwnerHandoff,SupersededOwnerWithRemainingWork}Tests \
+  tests.test_organize_preparation.{AdmittedSourceOwnership,SourceReidentificationJourney}Tests  # 16 OK
+.venv/bin/python -m unittest tests.test_organize_preparation \
+  tests.test_processing_recovery_admission tests.test_automation_entrance_recovery  # 58 OK
+.venv/bin/python -m unittest tests.test_task_source_ownership_race      # 13 OK
+.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_persistence  # 58 OK
+.venv/bin/python -m unittest tests.test_media_discovery                # 156 OK
+.venv/bin/ruff check mediaflow/infrastructure/sqlite_runtime.py tests/test_failed_preparation_ownership.py
+.venv/bin/ruff format --check <同上两文件>                             # pass(先 ruff format 后复查)
+git diff --check                                                        # clean
+web: npm run test -- run OperationsInventory.test.tsx OrganizeCreationPage.test.tsx
+  StorageFilesPage.test.tsx run.test.ts discovery.test.ts OrganizeDiscoveryPage.test.tsx
+                                                                       # 164 OK(含新增终态/键拒绝用例)
+web: npm run typecheck / npm run lint / npx prettier --check <5 changed web files>  # pass
+```
+
+**剩余风险与行为变化(供 B 复核,未自行判定通过)。**
+
+1. 用户现场的具体失败触发形态与根因引入时间仍待 B 独立判读;本轮仍沿 engine 失败发布边界
+   组织交错,未声称复现真实 Provider 中断或 Worker 崩溃的具体形态。
+2. 行为收窄:关联 Task 存活但 adoption 不能重接(跨操作员确认他人 Files 摘要、引脚不一致)
+   现在拒绝 `admission_changed`,旧实现会静默新建第二 Task。受影响既有用例全部通过,未发现
+   依赖旧路径的测试,但是否触及既有合法多操作员旅程请 B 复核。
+3. Python 侧 `organizeFlow` 文档形状与 Web 读取器由双侧用例钉住,但真实浏览器
+   (prepare 页、任务中心返回、旧深链)仍以 B 的 python E2E 与桌面/390px 验收为准;
+   本轮未跑 E2E/T4 全门禁/wheel/Docker/同版本 reopen,按分工属 B。
+4. 预检查与事务 fence 双层:读取失败仍保持 503 `eligibility_unreadable` 的 fail-closed
+   语义,未改为宽松;`preparation_flow_ended` 出现在预检查与事务两个边界的文案保持一致。
+
+本轮总耗时约 85 分钟,其中测试执行(单测、静态检查、typecheck/lint)累计约 6 分钟,
+低于 30% 上限;测试编写与 B3-01 失败定位属实现工作,未以延长等待凑比例。未越权改
+SLICE/Roadmap/Progress,未推送,未自签 PASS。
