@@ -8,11 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) is **PASS / CLOSED** after independent A
-Final Review on 2026-11-08, unchanged Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation
-`f5409da41191c6e4bbf238bb7def601229fc59dc`. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK.
-Next Action: A SELECTS THE NEXT LARGE SLICE. No new Slice or implementation is authorized here.
-Original Slice51/50 and earlier identities, deferrals and evidence limits remain unchanged.
+[Slice53](../SLICE.md) is **ACTIVE**, fixed Base
+`95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation has not started.
+User-authorized planning/activation covers the Files organizing modal and exact Task Center handoff;
+Task Center task-detail UI stays frozen. A checkpoints scope before B formalizes [Task53.1](../TASK.md).
+There is no new acceptance or closure entry. Slice52 remains the latest accepted large Slice;
+all previous identities, deferrals and evidence limits remain unchanged.
 
 ## Latest accepted closure — Slice52
 

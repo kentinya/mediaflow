@@ -1436,6 +1436,33 @@ filters/selection through Files and recovery without a second address-bar-derive
 credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 `29a6d6d0064a5de766086446b345ae5ec2fe790f:docs/architecture.md`; it is not a second current contract.
 
+### TARGET — Manual organize dialog (Slice53 ACTIVE)
+
+[Slice53](../SLICE.md), `V2-OPS-018/019`: not delivered. CURRENT Files-admitted Task/source ownership
+above remains unchanged. This target reuses existing typed API/query, durable discovery/intent/plan,
+exact selected execution and original-request reconciliation; no new engine/schema/authority.
+
+Files hosts the modal above its preserved background. Valid preparation/readonly deep links and
+Task Center continue links retain exact discovery/library/return context through refresh and
+re-authentication; route adaptation must not guess current Active, a newer Task or a different source.
+Reuse feature-independent ModalCardShell presentation, not library/Automation fields or commands.
+
+The organizer owns itemId/preparation/summary-bound drafts, inclusion, active file, explicit
+save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. Navigation
+is read-only. Late responses cannot switch files or overwrite unrelated drafts. Summary/subset
+changes invalidate stale dangerous authorization; server gates remain authoritative.
+
+Both normal execution admission and reconciliation-proven admission use the returned exact taskId
+with the existing Task Center selected-run/detail route, closing the organizer. Missing association
+or failed detail reads retain known exact identities for reread, never fall back to a guessed Task
+or another execution submission. Existing historical execution addresses stay readable.
+
+Task Center task-detail layout/content/progress/results/recovery UI is frozen. Shared recovery
+logic may be extracted only as necessary while preserving that consumer's presentation/actions;
+existing continue/readonly links need no new Task Center UI. The organizer has no second progress/
+result center. Early task admission, legitimate pins, source ownership, five-state flow versus
+file effects, Executor-only mutation, RBAC/fences and completed/uncertain non-replay remain CURRENT.
+
 ## Automation and unattended execution
 
 The current Automation Task Definition model is scoped to a configured ResourceLibrary and bounded

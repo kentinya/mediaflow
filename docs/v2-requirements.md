@@ -501,3 +501,19 @@ The immutable [`文件页.png`](pics/文件页.png), at 1536×1024, defines the 
 and Files composition. [Files specification](file-page-visual-spec.md) owns copy/fixture/layout and
 visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md) owns its separate
 page. Shared chrome does not create another authority or imply unrelated business-page redesign.
+
+## TARGET — Manual organize dialog (Slice53 ACTIVE)
+
+User-authorized 2026-11-09 Task activation; [Slice53](../SLICE.md) fixes the scope.
+These requirements are not delivered CURRENT behavior. They refine `V2-OPS-010/012/017` presentation
+and post-confirmation navigation, without changing early durable admission or execution authority.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-OPS-018 | ResourceLibrary Files manual single/batch/folder organizing uses a readable centered modal, one primary plus attachments per page, with per-item correction and one final subset confirmation. | Preserve Files background and existing library/Automation card conventions. Show real preparation, readable identity/source/target/operation/issues, and expandable exact diagnostics. Previous/Next only browse and preserve item drafts. Explicit Save and re-analyze saves the legal decision then generates the new exact plan, without execution. For 10 ambiguous files, make 10 candidate selections and 10 save/reanalysis actions, review all 10 and confirm once with 确认整理 10 项. Unready/readonly/admitted items remain independent; only the selected eligible exact subset may execute under existing overwrite/cleanup authority. Desktop/390px/short viewport, keyboard/focus/scroll/close, failures and exact-context reopen remain usable. |
+| V2-OPS-019 | Proven manual execution admission closes the organizer and opens the exact returned Task using existing Task Center detail UI. | Show 正在提交… and prevent duplicate confirmation. Lost responses reconcile the original submission only; known admission takes the same exact-task handoff. Unavailable Task association/read preserves exact known context and reread, never guesses the newest Task or resubmits. Admission is not file success. Task Center task-detail layout/content/progress/results/recovery UI remains unchanged; existing continue/readonly links reopen the exact organizer context. Preserve pins, independent outcomes and completed/uncertain non-replay. |
+
+No new Task engine/schema/permissions/Provider or Task Center redesign is authorized. Existing
+CURRENT journeys remain authoritative until implementation and independent acceptance; the
+[TARGET journey](product-experience.md#target--manual-organize-dialog-slice53-active) supplies the
+complete operator sequence.

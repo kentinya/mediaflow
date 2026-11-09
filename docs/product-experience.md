@@ -900,6 +900,45 @@ explicitly deferred; exact pins, source checks, independent results and non-repl
 Discovery controls/progress/readiness and return-to-Files remain in the exact admitted task/
 preparation context, with no global discovery block.
 
+## TARGET — Manual organize dialog (Slice53 ACTIVE)
+
+`V2-OPS-018/019` are planned, not delivered; the preceding CURRENT manual journey remains factual.
+[Slice53](../SLICE.md) changes pre-execution presentation and handoff only. Existing early Task
+admission, exact confirmation, independent effects and the Tasks/recovery journey below remain.
+
+1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
+   a centered modal above the preserved directory/selection/scroll. Show actual admission,
+   discovery/stability/analysis status and bounded exclusions, rather than waiting to open it.
+2. **Review/action:** one primary and attachments per page; show filename/path, 第 i / N 个,
+   status, readable work match, source → target, operation/attachments and current problem.
+   Exact diagnostics are expandable. Legal corrections stay near that file. Previous/Next only
+   browse and preserve per-item drafts and inclusion; they never save, analyze or execute.
+3. **Ten ambiguous files:** on 第 1 / 10 个 select the matching candidate and click
+   保存并重新分析; after its saved choice is analyzed, inspect the new exact plan and go to the
+   next file. Repeat for all 10: ten candidate selections, ten save/reanalysis actions, no per-file
+   execution confirmations. Returning to a file retains its choice and latest result. If save or
+   analysis fails, distinguish persisted state and give the legal next action without losing siblings.
+4. **Final confirmation:** review a compact batch summary with the exact selected files,
+   destinations/operations and actual dangerous effects. When all 10 are ready and selected,
+   click 确认整理 10 项 once. A smaller eligible subset may be selected; unready items are explained,
+   never silently ignored. Existing explicit overwrite/cleanup authority remains required.
+5. **Submission/success:** the button reads 正在提交… and cannot duplicate submission. Once backend
+   evidence proves execution admission, close the organizer and navigate to Task Center, opening
+   that exact returned Task with the existing detail UI. Queued/running admission does not mean
+   files succeeded. Existing Task detail owns progress, independent results and later recovery.
+6. **Failure/recovery:** lost responses keep original-request reconciliation, without automatic
+   resubmission; proven admission uses the same handoff. Preserve exact known Task/request context
+   if association/detail reading fails, and allow reread rather than selecting a guessed Task.
+   Other failures explain stage, saved state, known effects and the legal next action.
+7. **Exit/reopen:** closing cancels no admitted work. Existing Task Center 继续整理 / 查看只读摘要
+   links and valid deep links reopen the exact preparation with its existing continue/readonly
+   boundary. Refresh/re-authentication preserves legal context; ended work cannot re-execute.
+
+Visual/interaction reference: existing Files new-library and Automation new-task cards. Stable
+header/close/footer, internal body scroll, accessible focus/background locking and narrow/short
+viewport behavior are required. **Task Center task-detail layout, content, progress, results and
+recovery UI are frozen.** The progress explanation is not a detail redesign requirement.
+
 ## Tasks, results and per-item recovery
 
 Use All/Running/Attention/Ended plus Recognition/Metadata/Classification/Conflict over the same

@@ -38,18 +38,16 @@ only in [the development workflow](development-workflow.md).
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 | 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
 | 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PASS / CLOSED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; independently accepted by A on 2026-11-08 through `f5409da41191c6e4bbf238bb7def601229fc59dc`; first-Task planning role exception retained, subsequent B review independent |
+| 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | ACTIVE | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
 
 ## Current boundary
 
-[Slice52](../SLICE.md) — **Explore, Navigation and Automation Entry Experience** — **PASS / CLOSED**.
-A independently accepted original Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation
-`f5409da41191c6e4bbf238bb7def601229fc59dc` on 2026-11-08. Four outcomes cover the seven requested corrections:
-coordinated Explore layout/scrollable detail, bounded ordinary pagination with accurate return,
-all nine main-page transitions/read handoff and both library refresh cases, and old Automation Open
-Web retirement with current cards/commands/history preserved. Requirements/journeys/architecture
-are CURRENT. [TASK.md](../TASK.md) is NO ACTIVE IMPLEMENTATION TASK; next action is
-A SELECTS THE NEXT LARGE SLICE, a separate action. Earlier acceptance, deferrals and evidence limits
-remain; development closure is distinct from Git push, release or deployment.
+[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **ACTIVE**.
+Base `95c24cd0a3cc51acd6143e37e72371445cb15a72` is fixed; implementation has not started.
+The user authorized formalizing and activating the clarified Task. A checkpoints this narrow
+Contract before B formalizes [Task53.1](../TASK.md). The new modal/handoff is TARGET, not delivered;
+Task Center task-detail layout/content/progress/results/recovery UI is explicitly frozen.
+Slice52 and prior acceptance, deferrals and evidence limits remain unchanged. No push or deployment.
 
 ## Accepted boundary references
 
