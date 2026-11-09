@@ -11,7 +11,8 @@ workflow authority. Closure rules live only in
 [Slice53](../SLICE.md) is **ACTIVE**, fixed Base
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation has not started.
 User-authorized planning/activation covers the Files organizing modal and exact Task Center handoff;
-Task Center task-detail UI stays frozen. A checkpoints scope before B formalizes [Task53.1](../TASK.md).
+Task Center task-detail UI stays frozen. Scope was checkpointed first; [Task53.1](../TASK.md) is
+PLANNED and ready for implementation.
 There is no new acceptance or closure entry. Slice52 remains the latest accepted large Slice;
 all previous identities, deferrals and evidence limits remain unchanged.
 

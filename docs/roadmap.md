@@ -44,8 +44,8 @@ only in [the development workflow](development-workflow.md).
 
 [Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **ACTIVE**.
 Base `95c24cd0a3cc51acd6143e37e72371445cb15a72` is fixed; implementation has not started.
-The user authorized formalizing and activating the clarified Task. A checkpoints this narrow
-Contract before B formalizes [Task53.1](../TASK.md). The new modal/handoff is TARGET, not delivered;
+The user authorized formalizing and activating the clarified Task. Scope was checkpointed before
+[Task53.1](../TASK.md), now PLANNED and ready for implementation. The new modal/handoff is TARGET, not delivered;
 Task Center task-detail layout/content/progress/results/recovery UI is explicitly frozen.
 Slice52 and prior acceptance, deferrals and evidence limits remain unchanged. No push or deployment.
 
