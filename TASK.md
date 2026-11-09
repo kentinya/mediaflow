@@ -1,19 +1,19 @@
 # Task PATCH-20261109-3 — 失败整理的文件释放与摘要入口一致性
 
 用户于 2026-11-09 要求“写到Task里并激活Task”，确认下述开发后体验并授权将规划草案提升为
-正式实施 Task。当前状态 PLANNED，可由 Developer 按本 Task 开始实施；本次只完成文档补充与
-激活，不自动开展产品开发或其他角色／子代理工作。不可变 Task Base、范围与测试分工保持。
+正式实施 Task。候选已由 Developer 交付，本轮 B 独立复核为 FIX REQUIRED；Developer 在同一
+Task 内修正下述两个阻塞后重新交付。不可变 Task Base、范围与测试分工保持。
 
 ```text
 Task ID: PATCH-20261109-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: fe3bd99b1cf6046ac716052e5c8ee63851c80f15
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR DEVELOPER
+Development Authorization: USER-AUTHORIZED TASK ACTIVATION — SAME TASK CORRECTION
 ```
 
 上一独立修正 PATCH-20261109-2 的 B PASS、精确 Reviewed Head／Accepted Implementation Head
@@ -282,4 +282,65 @@ One 释放、Two 仍占用、选 A 拒绝、确认 B 采纳原 Task 执行、A �
 
 ### B Review Result
 
-未开始。激活不代表已经实施或验收 PASS；B 在 Developer 提交候选后独立审查与执行验收。
+**FIX REQUIRED — 2026-11-09。** 独立审查完整 Task Base
+`fe3bd99b1cf6046ac716052e5c8ee63851c80f15` .. Reviewed Head
+`1edce6655933f7f9cc5f2abc85667a0c067b57de`（13 个变化文件，含规划、实现、测试及交付报告）。
+实际实现 SHA 为 `192d3c44c53ca43d3535349380d7bf9091030faf`；上方 Developer 报告所写
+`192d3c44e2613e7d0beb6c511475ffe14e9ad5181` 不是该实现的真实 SHA，以本次 Git 核对为准。
+本轮只维护本 Task，不修改产品实现，不重开已关闭 Slice52，不变更 SLICE／Roadmap／Progress。
+
+**交付核对。** 四个新增 Python 旅程通过，表明顺序执行时失败释放、旧摘要拒绝、混合批次及
+健康确认已有部分实现。Web 的真实准备页却无法读取记录，正常摘要和只读历史均不能完成；
+失败发布与旧确认交错时，还会另建任务并执行旧摘要。因此 AC-1–6 不能判定整体通过。
+
+| 阻塞 | 实际用户旅程及结果 | 原因与验收对应 |
+|---|---|---|
+| B3-01 — 准备页无法读取正常后端记录 | 文件页选择 One → 批量整理 → 已进入带 discoveryId 的准备页 → Worker 已分析 → 页面仍显示“无法读取准备状态”，没有计划摘要，不能确认；刷新仍读同样的数据。任务中心返回同一准备页也受影响。 | `web/src/entities/operations/discovery.ts` 的 `boundedText` 按对象键读取；新增调用却用 `organizeFlow.taskId`／`organizeFlow.status`，而后端嵌套对象实际只有 `taskId`／`status`。所有带关联 Task 的正常记录都解析失败。阻断 AC-1/2/3/6。 |
+| B3-02 — 已失败任务的在途确认另建任务并复制文件 | 同一准备摘要在两个窗口打开：窗口一确认原摘要，执行当前源检查期间，窗口二请求重新分析；Worker 的分析读取失败将原 Task 落为 failed。窗口一随后仍收到 202，新增另一 Task；运行既有执行 Worker 后，临时目标出现 One 的实际副本。 | 新增 `_assert_files_preparation_live` 在准入事务之前读取状态；之后 `_adopted_organize_task` 看到原 Task 已失败返回 None，`task_id = adopted_task_id or uuid4()` 转入新任务。`admit_manual_execution` 仅在传入 adopt_task_id 时核对原任务，未在同一事务固定 Files 关联。违反 AC-3/4 的旧摘要不能变成新任务要求。 |
+
+B3-01 由本候选实现提交于 2026-11-09 09:46:56 +08:00 新增。B3-02 的终态返回 None／
+新任务路径可追溯至 `1e46e5baa`（2026-11-01）；本轮新增的事务外检查未覆盖这个原有竞争窗口，
+它仍是本 Task 明确要求修复的范围，不是另开需求。这里的两窗口交错通过现有确认／重新分析
+入口复现；夹具只安排源检查中的时间点并在分析调用处产生读取异常，Task FAILED 由生产
+Worker 自身发布，没有直接改写 Task／文件状态，也没有构造新产品入口。未声称复现用户现场
+具体的服务中断原因或真实并行浏览器操作。
+
+### 同 Task 修正开发指导
+
+1. **先恢复准备页实际读取。** 在现有归一化函数按嵌套对象的真实键读取 `taskId`、`status`；
+   直接用后端实际响应形状覆盖 running／failed 两种记录。让正常摘要、任务中心返回与失败
+   只读摘要真正显示，不增加另一套模型或宽松兼容路径。现有页面用例也必须带该真实字段，
+   避免仅用缺少 organizeFlow 的旧夹具验证页面。
+2. **把 Files 身份带进现有准入事务。** 已关联 Files 的确认只能接回确切原 Task；在
+   `admit_manual_execution` 同一事务内读取原关联和流程状态，决定采纳或拒绝。原 Task 已结束
+   就返回既有的结束说明，不能走普通未关联 intent 的新建 Task 分支。保留普通 API／CLI
+   未关联路径及合法四类恢复的现行语义；不要仅在事务前再加一次读取。
+3. **固定真实交错回归。** 复用 `tests/test_failed_preparation_ownership.py` 的临时 Local／
+   SQLite 夹具，从现有摘要确认入口进入，在 execute 的源检查期间经现有 analyze 入口和
+   Worker 发布原 Task failed，再完成确认；断言拒绝、没有第二 Task、授权没有被准入消费、
+   目标零新效果、原失败与兄弟证据保留。另覆盖旧授权消费在同一窗口内落后的情况；同一原
+   确认先提交成功时，以该实际提交结果为准，不伪造“失败已先落定”。
+4. **交付仍是原 Task。** 修正后跑原 Developer affected tests，追加
+   `web/src/entities/operations/discovery.test.ts` 和新增竞争用例；只更新实际改动的测试／夹具。
+   原 B T4 全回归、三个真实 Python E2E、桌面／390px、同版本 reopen 和包装验收保持由 B
+   负责。无需开发新的治理或探测工具，不要求 Developer 代跑全量门禁。
+
+### B 本轮实际验证与剩余验收
+
+本地证据目录：`.git/validation-evidence/1edce6655933f7f9cc5f2abc85667a0c067b57de/b-review/`。
+证据为当前机器本地材料，不声称已上传或远程可达。
+
+| 命令／检查 | 实际结果／证据 |
+|---|---|
+| `python3 scripts/check_governance.py`（复核前／文档更新后） | PASS；main，Reviewed Head 如上，复核起点暂存区空，预存脏文件保持原样。 |
+| `.venv/bin/python -m unittest tests.test_failed_preparation_ownership` | 4 tests，OK，0 skips；`failed-preparation-tests.log`。 |
+| `npm run build`（cwd `web/`） | PASS；`web-build.log`，真实 E2E 使用本次 production build。 |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-source-history.python.spec.ts --max-failures=1`（cwd `web/`） | 1 failed，30.1s；停在原 spec 第124行等待“计划摘要”。实际页面显示“无法读取准备状态”；见 `source-history-e2e.log`、`error-context.md`、`trace.zip`。未改 spec／selector／timeout。 |
+| `PYTHONPATH=. .venv/bin/python .git/validation-evidence/1edce6655933f7f9cc5f2abc85667a0c067b57de/b-review/race_probe.py` | 确定性交错复现 B3-02：原 Task failed，旧确认202，第二 Task 最终 completed，临时目标实际产生 One 副本；`race-probe.log`。 |
+| `git diff --check fe3bd99b..1edce665`；`git diff --check` | PASS；分别核对候选范围与本轮文档更新。 |
+
+已证明产品阻塞，按工作流提前 FIX REQUIRED；未继续全量 Python／Web／默认 E2E／wheel／
+Docker 等门禁，不把未执行项写成 PASS，也不转交 Developer。失败只读页、健康摘要返回、
+混合批次的原生桌面／390px与认证续转／同版本 reopen 仍待修正候选后由 B 验收。
+本轮测试耗时约一分钟，低于本轮代码审查、复现定位和 Task 记录总耗时的一半；不靠延长等待
+满足时间比例。没有新增 Task 或扩大修正范围。
