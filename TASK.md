@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Checkpoint: 800e4fd8c694c22366597abbf41ebf2943699eb1
+Implementation Checkpoint: f1d3828472920e7d8d93fbf0bbd1200de546951a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: DEVELOPER INTEGRATES CURRENT-FILE DECISION DRAFTS WITH EXISTING CLOSE PROTECTION
+Next Action: B INDEPENDENT REVIEW OF DECISION-DRAFT CLOSE PROTECTION
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -516,6 +516,67 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
   真实键盘验收未运行；本报告不声称 PASS。
 - 旧持久 Preview 没有 `problemTaskItemId` 时仍会显示“无法证明关联”并保留原上下文；
   该文件需重新分析取得新关联，不按路径或时间猜测 TaskItem。
+- 真实回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
+  用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
+  `15`／`output/` 材料保持未动、未提交。
+
+## Developer Completion Report — 无保存决定草稿关闭保护 P1
+
+**Status:** READY FOR B REVIEW。代码 checkpoint 为
+`f1d3828472920e7d8d93fbf0bbd1200de546951a`（main；Task Base 未变），本报告随后的
+文档 checkpoint 为最终候选 HEAD。本报告不声称 PASS，不关闭 Slice，不替代 B 的 T4
+验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- 共享决定草稿现在按准确 checkpoint／决定身份携带派生 `dirty`：只有实际输入与该
+  身份已保存的决定不同才为真。未编辑、已保存或身份已失效的输入不会单独触发关闭提示。
+- 整理弹窗把 `dirty` 决定草稿与原候选草稿合并进既有 `attemptClose`／`useBlocker`／
+  Escape／右上角关闭路径，继续复用“继续编辑／放弃草稿并关闭”，没有新增保存、自动保存
+  或另一套恢复模型。页脚“有未保存的修正”同步反映当前文件的决定输入。
+- 当前摘要不再暴露某 TaskItem 原生问题时，其旧草稿按身份清理；决定保存成功（即使后续
+  分析失败）后草稿以新决定基线归零，因此成功保存后关闭是普通关闭，不是放弃提示。
+  分析失败仍保留已保存事实与合法重试，不重复保存或执行。
+- 复用原 typed recovery API、TaskItem 身份、零变更分析与最终精确确认；未改任务中心
+  详情布局、内容、进度、结果或恢复 UI，未改 RBAC、pin、fence、审计、Storage 或
+  RecognitionType C 使用命名／分类 A 的映射。
+
+### 实际验证（Developer 受影响范围）
+
+- `web/`：`NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/ui/modal-card.test.tsx src/shared/navigation/destination-model.test.ts`
+  → **8 files / 162 passed**。新增覆盖：未编辑决定表单直接关闭；编辑标题／年份后翻到
+  另一文件，Escape、右上角关闭和应用内浏览器 back 均显示同一放弃提示；继续编辑后返回
+  原文件值仍为 `DialogRename`/`2024`；失败保存保留输入；成功保存／分析后普通关闭；
+  上述浏览、关闭、失败与放弃前后零决定保存、零分析、零 Execute。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；4 个改动文件
+  `npx prettier --check` → all matched。
+- 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_organize_source_history` → **104 passed**。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **4 passed（48.7s）**。真实
+  Files→无候选修正用例 **8.0s**：填好 `DialogRename`/2024 后点击实际底部关闭，出现
+  原放弃提示；点击“继续编辑”后标题与年份仍在，随后显式搜索、保存／分析、新方案与一次
+  准确确认保持通过；确认前来源仍在、目标不存在。10 项候选、未知提交、冲突与健康兄弟
+  用例继续通过。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（38.3s）**，在最终 build 上验证
+  Files 弹窗与 manual organize 无回归。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean。
+- 本轮实际测试执行约 2.5 分钟，低于本轮总用时 30%。
+
+### 剩余风险 / 未运行
+
+- B 的 T4 全量门禁、wheel／打包、重启、Docker 影响、完整桌面／390px／矮窗口视觉与
+  真实键盘验收未运行；本报告不声称 PASS。
+- Files 宿主用 `replaceState` 保存 `organizeDiscovery`，单测通过额外的应用内历史目的地
+  验证浏览器 back 的既有 blocker；未覆盖真实跨文档卸载／刷新提示。B 的同视口浏览器
+  验收仍需核对实际返回路径。
 - 真实回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
   用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
   `15`／`output/` 材料保持未动、未提交。
