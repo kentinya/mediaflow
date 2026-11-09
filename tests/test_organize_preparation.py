@@ -1132,6 +1132,13 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertNotIn(
                 "TaskItem and Result are durable", published["failure"]["durableState"]
             )
+            # The current-file decision surface needs the exact TaskItem this
+            # problem was published on, not a path/recency guess.  The bounded
+            # plan identity is the same durable review row the Task Center reads.
+            self.assertEqual(
+                task_item.item_id, published["plan"]["problemTaskItemId"]
+            )
+            self.assertEqual(reviews[0].item_id, published["plan"]["problemTaskItemId"])
             # The exact bounded identities stay selectable on this page, so the
             # ambiguity is resolvable without inventing a provider payload.
             self.assertEqual({"201", "999"}, {value["providerId"] for value in identities})
@@ -1191,6 +1198,7 @@ class PreparationJourneyTests(_PreparationFixture):
             refreshed_item = refreshed.items[0]
             self.assertEqual("previewed", refreshed_item.status.value, refreshed_item.error)
             self.assertEqual("999", refreshed_item.plan["mediaIdentity"]["providerId"])
+            self.assertNotIn("problemTaskItemId", refreshed_item.plan)
             self.assertEqual([], value.source.mutations)
 
             # Explicit confirmation executes exactly the chosen identity.

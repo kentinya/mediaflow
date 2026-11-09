@@ -2953,7 +2953,7 @@ class ManualOrganizePreviewService:
         if not callable(projector):
             return outcome
         try:
-            projector(
+            item_id = projector(
                 task_id=problem_task_id,
                 problem=outcome.problem,
                 strategy=strategy,
@@ -2966,6 +2966,22 @@ class ManualOrganizePreviewService:
             )
         except Exception:  # noqa: BLE001 - one bounded projection, never a media fault
             return outcome
+        # The linked TaskItem is the durable subject of the operator's decision.
+        # Publish its exact identity beside the zero-mutation finding so the
+        # current-file decision surface can open that item's existing recovery
+        # authority instead of guessing an item by path or recency.
+        if (
+            isinstance(item_id, str)
+            and item_id
+            and outcome.plan is not None
+            and "problemTaskItemId" not in outcome.plan
+        ):
+            documented = {**outcome.plan, "problemTaskItemId": _bounded(item_id, 256)}
+            return replace(
+                outcome,
+                plan=documented,
+                plan_fingerprint=_fingerprint(documented),
+            )
         return outcome
 
     def _persist_create(self, preview):

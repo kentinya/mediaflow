@@ -49,6 +49,46 @@ function completedRecovery(
   return value;
 }
 
+function conflictRecovery(resolved = false): Record<string, unknown> {
+  return {
+    task_id: "task-1",
+    item_id: "item-1",
+    checkpoint: {
+      status: resolved ? "pending" : "waiting_conflict",
+      stage: resolved ? "queued" : "waiting_conflict",
+      raw_stage: resolved ? "conflict_resolved" : "waiting_conflict",
+      effects: { certainty: "none" },
+      retry_safety: resolved ? "safe" : "unsafe",
+      checkpoint_version: checkpointVersion,
+      blocker: resolved ? null : { kind: "conflict", blocker_id: "conflict-1" },
+      permitted_action_ids: resolved
+        ? ["retry"]
+        : ["resolve_conflict", "ignore"],
+      refusal_reason: null,
+      next_action: resolved
+        ? "continue safe analysis"
+        : "choose a conflict strategy",
+    },
+    decision: resolved
+      ? null
+      : {
+          kind: "conflict",
+          review_id: "conflict-1",
+          status: "pending",
+          configured_strategy: "manual",
+          allowed_strategies: ["skip", "rename"],
+          conflict_types: ["DESTINATION_EXISTS"],
+          source_path: "Movies/Two.2002.mkv",
+          target_path: "Movies/Two (2002)/Two (2002).mkv",
+        },
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: resolved
+      ? "continue safe analysis"
+      : "choose a conflict strategy",
+  };
+}
+
 function recognitionRecovery(resolved = false): Record<string, unknown> {
   return {
     task_id: "task-1",
@@ -207,6 +247,140 @@ describe("TaskItemRecoveryPanel", () => {
       recognitionTypeId: "C",
       expectedCheckpointVersion: checkpointVersion,
     });
+    expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
+  });
+
+  it("reports a conflict decision failure without continuing or executing", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    const calls: { method: string; path: string }[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, path: url });
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(conflictRecovery()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          return new Response(
+            JSON.stringify({ error: { code: "stale_checkpoint" } }),
+            { status: 409 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+        mode="decision"
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    expect(await within(panel).findByText(/目标已有文件/)).toBeVisible();
+    await user.click(within(panel).getByLabelText("重命名目标(保留现有文件)"));
+    await user.click(
+      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+    );
+
+    expect(await within(panel).findByText(/条目已变化/)).toBeVisible();
+    expect(
+      calls.filter((call) => call.method === "POST").map((call) => call.path),
+    ).toEqual(["/api/v1/tasks/task-1/items/item-1/recovery/decision"]);
+    expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
+  });
+
+  it("keeps a saved conflict decision when the analysis request fails", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = conflictRecovery();
+    const calls: { method: string; path: string }[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, path: url });
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          currentRecovery = conflictRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          return new Response(
+            JSON.stringify({ error: { code: "queue_full" } }),
+            { status: 409 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+        mode="decision"
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(
+      await within(panel).findByLabelText("重命名目标(保留现有文件)"),
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+    );
+
+    expect(await within(panel).findByText(/共享队列已满/)).toBeVisible();
+    expect(
+      calls.filter((call) => call.method === "POST").map((call) => call.path),
+    ).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
 

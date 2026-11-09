@@ -178,6 +178,15 @@ export interface TaskItemRecoveryPanelProps {
   readonly analysisDepth?: number;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
+  /**
+   * `full` is the Task Center panel. `decision` is the same typed decision and
+   * analysis session rendered compactly inside the manual-organize card; it
+   * deliberately hides the recovery-summary/execution sections so the card
+   * keeps its single final confirmation.
+   */
+  readonly mode?: "full" | "decision";
+  /** Called after this exact item's analysis continuation was accepted. */
+  readonly onAnalysisRequested?: () => void;
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -189,7 +198,10 @@ export function TaskItemRecoveryPanel({
   analysisDepth = 0,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
+  mode = "full",
+  onAnalysisRequested,
 }: TaskItemRecoveryPanelProps) {
+  const decisionMode = mode === "decision";
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const query = useQuery(
@@ -362,6 +374,7 @@ export function TaskItemRecoveryPanel({
           repeatLocked: false,
         });
         refreshLinkedReads();
+        onAnalysisRequested?.();
         return true;
       }
       await reportUnknown(result.code, result.status);
@@ -662,6 +675,127 @@ export function TaskItemRecoveryPanel({
     model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
+
+  if (decisionMode) {
+    return (
+      <section className="mf-count-section" aria-label="条目审核与恢复">
+        <div className="mf-run-items-head">
+          <h5>当前文件的合法决定</h5>
+          <RefreshControl
+            onRefresh={() => query.refetch({ cancelRefetch: false })}
+          />
+        </div>
+        {busy && pendingAction !== null && (
+          <StatusBanner variant="info" title="操作请求仍在进行">
+            <p>
+              “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
+              ”请求尚未返回；结果返回前不会重复提交，保存也不会执行整理。
+            </p>
+          </StatusBanner>
+        )}
+        {message && (
+          <StatusBanner
+            variant={repeatLocked ? "warning" : "info"}
+            title="决定与重新分析状态"
+          >
+            <p>{message}</p>
+          </StatusBanner>
+        )}
+        {owesRecoveryAction && decision !== null && (
+          <DecisionForm
+            decision={decision}
+            selectedChoice={selectedChoice}
+            onSelectChoice={setSelectedChoice}
+            searchText={searchText}
+            onSearchText={setSearchText}
+            correctedYear={correctedYear}
+            onCorrectedYear={setCorrectedYear}
+            mediaType={mediaType}
+            onMediaType={setMediaType}
+            selectedProviderId={selectedProviderId}
+            onSelectProvider={setSelectedProviderId}
+            metadataResult={metadataResult}
+            conflictStrategy={conflictStrategy}
+            onConflictStrategy={setConflictStrategy}
+            confirmOverwrite={confirmOverwrite}
+            onConfirmOverwrite={setConfirmOverwrite}
+            disabled={busy || repeatLocked}
+            onSearch={() => void searchMetadata()}
+            onSave={() => {
+              if (decision.kind === "recognition") {
+                void saveDecision("recognition", {
+                  recognitionTypeId: selectedChoice,
+                });
+              } else if (decision.kind === "metadata") {
+                void saveDecision("metadata", {
+                  candidateRank: Number(selectedChoice),
+                });
+              } else if (decision.kind === "metadata_correction") {
+                void saveDecision("metadata_correction", {
+                  query: searchText,
+                  year: correctedYear === "" ? null : Number(correctedYear),
+                  mediaType,
+                  ...(selectedProviderId === ""
+                    ? {}
+                    : { providerId: selectedProviderId }),
+                });
+              } else if (decision.kind === "classification") {
+                void saveDecision("classification", {
+                  choiceRank: Number(selectedChoice),
+                });
+              } else {
+                void saveDecision("conflict", {
+                  strategy: conflictStrategy,
+                  confirmOverwrite:
+                    conflictStrategy === "overwrite" && confirmOverwrite,
+                });
+              }
+            }}
+            onIgnore={() => void ignoreDecision()}
+            canIgnore={false}
+            permitted={permitted}
+            busy={busy}
+            presentation="dialog"
+          />
+        )}
+        {owesRecoveryAction && decision === null && (
+          <p className="mf-dashboard-meta">
+            此文件当前没有可保存的审核决定；请按上方当前问题与下一步处理。
+            这里不会重新提交整理，也不会执行任何文件操作。
+          </p>
+        )}
+        {repeatLocked && (
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => void reconcile()}
+              disabled={query.isFetching}
+            >
+              {query.isFetching ? "正在重新读取…" : "重新读取条目后再继续"}
+            </button>
+          </div>
+        )}
+        {owesRecoveryAction && permitted.has("retry") && (
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button"
+              disabled={busy || repeatLocked}
+              onClick={() =>
+                checkpoint && void continueAt(checkpoint.checkpointVersion)
+              }
+            >
+              {busy ? "正在提交…" : "继续此条目的安全分析"}
+            </button>
+            <p className="mf-dashboard-meta">
+              仅重新运行此 Task 的零变更分析；不执行文件操作，也不修改 Storage。
+            </p>
+          </div>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="mf-count-section" aria-label="条目审核与恢复">
@@ -1023,6 +1157,8 @@ function DecisionForm(props: {
   readonly canIgnore: boolean;
   readonly permitted: ReadonlySet<string>;
   readonly busy: boolean;
+  /** `dialog` uses the current-file wording; Task Center keeps its own copy. */
+  readonly presentation?: "full" | "dialog";
 }) {
   const { decision } = props;
   const canSave =
@@ -1039,7 +1175,7 @@ function DecisionForm(props: {
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
     >
       <h6>待处理的{DECISION_LABELS[decision.kind]}决策</h6>
-      {decision.status && (
+      {decision.status && props.presentation !== "dialog" && (
         <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
       )}
       {decision.kind === "recognition" &&
@@ -1164,11 +1300,25 @@ function DecisionForm(props: {
         ))}
       {decision.kind === "conflict" && (
         <>
-          <p>
-            冲突：{decision.conflictTypes.join("、") || "未提供"}。来源：
-            {decision.sourcePath ?? "不可用"}；目标：
-            {decision.targetPath ?? "不可用"}。
-          </p>
+          {props.presentation === "dialog" ? (
+            <>
+              <p>
+                <strong>目标已有文件</strong>：来源{" "}
+                {decision.sourcePath ?? "不可用"} 的目标{" "}
+                {decision.targetPath ?? "不可用"} 已存在，当前文件不能纳入确认。
+              </p>
+              <p className="mf-dashboard-meta">
+                下一步：选择一种合法的冲突处理方式，然后保存并重新分析。
+                保存只记录决定，不会执行任何整理；新的精确方案就绪后再由你最终确认。
+              </p>
+            </>
+          ) : (
+            <p>
+              冲突：{decision.conflictTypes.join("、") || "未提供"}。来源：
+              {decision.sourcePath ?? "不可用"}；目标：
+              {decision.targetPath ?? "不可用"}。
+            </p>
+          )}
           {decision.allowedStrategies.map((strategy) => (
             <label key={strategy} className="mf-list-choice">
               <input

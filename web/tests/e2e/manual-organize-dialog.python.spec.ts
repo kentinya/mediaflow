@@ -92,6 +92,31 @@ async function driveDiscovery(
   return null;
 }
 
+async function driveDiscoveryFor(
+  page: Page,
+  request: APIRequestContext,
+  discoveryId: string,
+): Promise<string> {
+  for (let step = 0; step < 30; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+        discoveryId,
+      )}`,
+    );
+    expect(advanced.ok()).toBe(true);
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) return body.previewId;
+    // Let the card's real interval observe the durable stage change before the
+    // next bounded Worker pass, exactly like a resident Worker running beside
+    // an open page.
+    await page.waitForTimeout(1_700);
+  }
+  throw new Error("the exact discovery linked no plan summary");
+}
+
 async function selectFiles(
   page: Page,
   files: readonly string[],
@@ -289,4 +314,163 @@ test("an unknown Execute response is reconciled into the exact Task without a re
     status: "completed",
     itemCount: 1,
   });
+});
+
+test("a real destination conflict is decided, re-analyzed and confirmed on the current file", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const conflictFile = "DialogConflict.2022.mkv";
+  const conflictStateFile = `Dialog/${conflictFile}`;
+  const fileState = async () => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        conflictStateFile,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // First pass: an explicit COPY keeps the source and creates the real target.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, [conflictFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  let card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await driveDiscovery(request, true);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+
+  await card
+    .getByLabel(`识别类型 ${conflictFile}`)
+    .selectOption({ label: "Copy fixture" });
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(card.getByText(/选择已保存,正在按固定配置重新分析/)).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await driveDiscovery(request, true);
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const firstTaskId = new URL(page.url()).searchParams.get("run");
+  expect(firstTaskId).toBeTruthy();
+  const copyWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(copyWorker.ok()).toBe(true);
+  expect(await copyWorker.json()).toMatchObject({
+    completed: true,
+    taskId: firstTaskId,
+    status: "completed",
+    itemCount: 1,
+  });
+  const copied = await fileState();
+  expect(copied.sourceExists).toBe(true);
+  expect(copied.destinationTargets).toHaveLength(1);
+  const originalTarget = copied.destinationTargets[0] ?? "";
+  expect(originalTarget).not.toBe("");
+
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
+
+  // Second pass: the ordinary MOVE now finds that exact target occupied.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, [conflictFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const secondDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(secondDiscoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, secondDiscoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+  expect(executePosts()).toHaveLength(1);
+
+  await card.getByLabel("重命名目标(保留现有文件)").check();
+  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
+  await expect(
+    card.getByText(/当前文件的决定已保存并请求重新分析/),
+  ).toBeVisible({ timeout: 30_000 });
+  // Saving the decision and re-analyzing has changed no media effect yet.
+  expect(await fileState()).toEqual(copied);
+  expect(executePosts()).toHaveLength(1);
+
+  await driveDiscoveryFor(page, request, secondDiscoveryId as string);
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  const decisionPosts = commands.filter(
+    (command) =>
+      command.method === "POST" &&
+      /\/items\/[^/]+\/recovery\/decision$/.test(command.path),
+  );
+  expect(decisionPosts).toHaveLength(1);
+  expect(decisionPosts[0]?.body).toMatchObject({ strategy: "rename" });
+  const continuePosts = commands.filter(
+    (command) =>
+      command.method === "POST" &&
+      /\/items\/[^/]+\/recovery\/continue$/.test(command.path),
+  );
+  expect(continuePosts).toHaveLength(1);
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const secondTaskId = new URL(page.url()).searchParams.get("run");
+  expect(secondTaskId).toBeTruthy();
+  expect(secondTaskId).not.toBe(firstTaskId);
+  expect(executePosts()).toHaveLength(2);
+
+  const moveWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(moveWorker.ok()).toBe(true);
+  expect(await moveWorker.json()).toMatchObject({
+    completed: true,
+    taskId: secondTaskId,
+    status: "completed",
+    itemCount: 1,
+  });
+  const moved = await fileState();
+  expect(moved.sourceExists).toBe(false);
+  expect(moved.destinationTargets).toContain(originalTarget);
+  expect(moved.destinationTargets).toHaveLength(2);
+  expect(
+    moved.destinationTargets.find((value) => value !== originalTarget),
+  ).toBeTruthy();
 });

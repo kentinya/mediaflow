@@ -64,6 +64,7 @@ import {
   destructiveStatement,
   displayEnum,
 } from "./organize-summary";
+import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
 
 /** One admitted Files organize selection the dialog follows. */
 export type ManualOrganizeDialogSession =
@@ -103,6 +104,19 @@ const metadataKey = (value: {
 /** The compact operation wording an operator reads on one reviewed file. */
 function operationLabel(value: string | null): string {
   return value === null ? "—" : displayEnum(value);
+}
+
+/** The known destination-conflict kinds, in the operator's own words. */
+function conflictTypeLabel(value: string | null): string {
+  const labels: Readonly<Record<string, string>> = {
+    DESTINATION_EXISTS: "目标已有文件",
+    TARGET_COLLISION: "目标与另一整理目标冲突",
+    DUPLICATE_MEDIA: "目标已有相同媒体",
+    INVALID_DESTINATION: "目标路径不可用",
+    UNKNOWN: "未知冲突",
+  };
+  if (value === null || value === "") return "未知冲突";
+  return labels[value.toUpperCase()] ?? displayEnum(value);
 }
 
 export function ManualOrganizeDialog({
@@ -1148,6 +1162,21 @@ export function ManualOrganizeDialog({
     const item = currentItem;
     const filename = item.sourceFilename ?? item.itemId;
     const notice = currentNotice;
+    const organizeTaskId = preparation?.organizeTaskId ?? null;
+    const firstConflict = item.conflicts[0] ?? null;
+    const decisionAnalysisRequested = () => {
+      setNotices((previous) => ({
+        ...previous,
+        [item.itemId]: {
+          kind: "success",
+          text: "当前文件的决定已保存并请求重新分析;保存不会执行整理,新的精确方案就绪后会自动显示。",
+          retryAnalysis: false,
+        },
+      }));
+      void preparationQuery.refetch();
+      void intentQuery.refetch();
+      void previewQuery.refetch();
+    };
     return (
       <>
         <header className="mf-organize-file-head">
@@ -1413,22 +1442,63 @@ export function ManualOrganizeDialog({
 
         <section aria-label="当前问题">
           <h4>当前问题</h4>
-          {item.failure !== null ? (
+          {item.conflicts.length > 0 ? (
+            <>
+              <p role="status">
+                <strong>
+                  {item.conflicts
+                    .map((value) => conflictTypeLabel(value.type))
+                    .join("、")}
+                </strong>
+                ：来源{" "}
+                <span className="mf-exact-identity">
+                  {item.sourceStorageId ?? "—"}:
+                  {firstConflict?.source ?? item.sourcePath ?? "—"}
+                </span>{" "}
+                的目标{" "}
+                <span className="mf-exact-identity">
+                  {item.targetStorageId ?? "—"}:
+                  {firstConflict?.destination ??
+                    item.targetPath ??
+                    item.destination?.storageRelativePath ??
+                    "—"}
+                </span>{" "}
+                已存在。
+              </p>
+              <p className="mf-dashboard-meta">
+                当前文件在冲突决定被保存并由真实分析取代前不能纳入确认；
+                这里不会自动覆盖、跳过或移动任何文件。
+              </p>
+              {!organizeFlowEnded &&
+              organizeTaskId !== null &&
+              item.problemTaskItemId !== null ? (
+                <TaskItemRecoveryPanel
+                  key={`${organizeTaskId}:${item.problemTaskItemId}:${token ?? "disconnected"}`}
+                  taskId={organizeTaskId}
+                  itemId={item.problemTaskItemId}
+                  runId={organizeTaskId}
+                  active={false}
+                  mode="decision"
+                  onAnalysisRequested={decisionAnalysisRequested}
+                />
+              ) : (
+                <StatusBanner
+                  variant="error"
+                  title="无法打开当前文件的冲突决定"
+                >
+                  <p role="status">
+                    尚未证明当前文件与本整理任务的审核条目关联；没有保存决定，
+                    也没有修改任何文件。请重新读取当前摘要，或关闭后从任务中心
+                    对应任务的冲突处理入口核对同一文件。
+                  </p>
+                </StatusBanner>
+              )}
+            </>
+          ) : item.failure !== null ? (
             <StatusBanner variant="error" title="条目未就绪">
               <p>{item.failure.message}</p>
               <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
             </StatusBanner>
-          ) : null}
-          {item.conflicts.length > 0 ? (
-            <p role="status">
-              冲突:
-              {item.conflicts
-                .map((value) => displayEnum(value.type ?? "冲突"))
-                .join("、")}
-              {item.conflicts[0]?.destination != null
-                ? ` · 目标:${item.conflicts[0]?.destination ?? ""}`
-                : ""}
-            </p>
           ) : null}
           {item.warnings.length > 0 ? (
             <p className="mf-dashboard-meta">提示:{item.warnings.join(";")}</p>
@@ -1500,6 +1570,16 @@ export function ManualOrganizeDialog({
         <details className="mf-organize-diagnostics">
           <summary>展开技术诊断</summary>
           <ItemFindings item={item} />
+          {item.failure !== null ? (
+            <dl>
+              <dt>后端失败分类</dt>
+              <dd>{item.failure.category}</dd>
+              <dt>后端失败说明</dt>
+              <dd>{item.failure.message}</dd>
+              <dt>后端下一步</dt>
+              <dd>{item.failure.nextAction}</dd>
+            </dl>
+          ) : null}
           {currentIntentItem !== undefined ? (
             <dl>
               <dt>意图条目版本</dt>

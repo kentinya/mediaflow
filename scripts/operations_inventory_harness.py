@@ -382,6 +382,14 @@ def build_managed_fixture(
     (dialog_root / "DialogUnknown.2021.mkv").write_bytes(
         b"slice53 unknown admission synthetic media"
     )
+    # Slice53 conflict regression: an isolated source whose first explicit COPY
+    # leaves a target, so the next ordinary MOVE produces a real destination
+    # conflict without borrowing another journey's file.
+    (dialog_root / "DialogConflict.2022.mkv").write_bytes(
+        b"slice53 conflict synthetic media"
+    )
+    conflict_time = time.time() - 86400
+    os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -570,7 +578,9 @@ def build_managed_fixture(
                     {
                         "field": "filename",
                         "operator": "regex",
-                        "value": r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021)\.mkv$",
+                        "value": (
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022)\.mkv$"
+                        ),
                     },
                 ],
             },
@@ -988,6 +998,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogUnknown",
                         year=2021,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "702",
+                        MediaType.MOVIE,
+                        "DialogConflict",
+                        year=2022,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3629,10 +3648,11 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Ninth.2009.mkv",
         "Tenth.2010.mkv",
         "Eleventh.2011.mkv",
+        "Dialog/DialogConflict.2022.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")
-    stem = filename.split(".")[0]
+    stem = Path(filename).name.split(".")[0]
     source = state.managed.root / "source" / filename
     destination = state.managed.root / "destination"
     targets = sorted(

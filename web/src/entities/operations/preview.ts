@@ -307,6 +307,8 @@ export interface ManualPreviewItemModel {
   readonly warnings: readonly string[];
   readonly capabilities: ManualPreviewCapabilitiesModel | null;
   readonly history: ManualPreviewHistoryModel | null;
+  /** The exact owning TaskItem of this native problem, or `null` when none was published. */
+  readonly problemTaskItemId: string | null;
 }
 
 /** The server-generated prior-outcome warning of one item (Slice 47 RO-6).
@@ -957,6 +959,8 @@ export interface ManualPreviewPlanModel {
   readonly warnings: readonly string[];
   readonly capabilities: ManualPreviewCapabilitiesModel | null;
   readonly history: ManualPreviewHistoryModel | null;
+  /** The exact owning TaskItem of this native problem, or `null` when none was published. */
+  readonly problemTaskItemId: string | null;
 }
 
 function normalizeHistory(value: unknown): ManualPreviewHistoryModel | null {
@@ -1032,6 +1036,8 @@ function normalizePlanFields(
     ),
     capabilities: normalizeCapabilities(plan?.["capabilities"] ?? null),
     history: normalizeHistory(plan?.["history"] ?? null),
+    problemTaskItemId:
+      plan === null ? null : optionalText(plan, "problemTaskItemId"),
   };
 }
 

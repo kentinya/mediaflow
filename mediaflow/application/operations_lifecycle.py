@@ -1348,6 +1348,10 @@ def _bounded_preview_plan(
         "conflicts": _bounded_conflict_list(plan.get("conflicts")),
         "warnings": _bounded_text_list(plan.get("warnings")),
         "planStatus": _bounded_evidence_text(plan.get("planStatus"), limit=64),
+        # The exact TaskItem the live analysis published this problem on.  It is
+        # the identity the current-file decision control opens; the raw review
+        # row, provider payload and occurrence evidence stay out of the document.
+        "problemTaskItemId": _bounded_identifier(plan.get("problemTaskItemId")),
         "destructiveImplications": _bounded_destructive_implications(plan),
         "history": _bounded_preview_history(plan.get("history")),
         "zeroMutation": True,
