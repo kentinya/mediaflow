@@ -1,22 +1,15 @@
 /**
- * Operator journey for the in-context creation workspace (Task 45.2 RO-2).
+ * Slice53 RO-3 (`V2-OPS-019`): the stable Organize receiving route.
  *
- * These tests drive the real `/operations/organize/new` route with a stubbed
- * API boundary.  The Preview and action-matrix payloads are the exact
- * contract-captured documents the real Python API returns, so these tests
- * exercise the real route tree, query boundaries and normalizers together.
- * They prove the same-page preparation journey:
- *
- * - a full preparation shows its durable progress and links the exact plan
- *   summary on the same page;
- * - the confirmation button counts exactly the selected ready subset;
- * - a material budget refusal never offers an executable prefix;
- * - an ambiguous Execute response is never retried automatically and only the
- *   bounded admission-outcome read resolves it.
+ * The Task Center's existing `继续整理` / `查看只读摘要` links still address
+ * `/operations/organize/new`. These tests enter through that real route and
+ * prove it now opens the same per-file dialog the Files page uses, reads only
+ * the exact durable preparation, preserves the read-only ended boundary and
+ * never starts admission, analysis or execution by being opened.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -25,8 +18,9 @@ import fixture from "../../entities/operations/__fixtures__/manual-operations.js
 type Json = Record<string, unknown>;
 
 const documents = fixture as unknown as Record<string, Json>;
-const TOKEN = "creation-token";
+const TOKEN = "receive-route-token";
 const DISCOVERY_ID = "prep-1";
+const INTENT_ID = "intent-1";
 const PREVIEW_ID = "preview-1";
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -40,25 +34,18 @@ function clone(name: string): Json {
   return JSON.parse(JSON.stringify(documents[name])) as Json;
 }
 
-/** The exact contract Preview detail, retargeted to this workspace's ids. */
-function previewDocument(): Json {
-  const value = clone("organizePreviewDetail");
-  value["previewId"] = PREVIEW_ID;
-  value["intentId"] = "intent-1";
-  value["executionCandidateItemIds"] = ["item-1"];
-  const items = value["items"] as Json[];
-  const first = items[0]!;
-  first["itemId"] = "item-1";
-  first["previewItemId"] = "pitem-1";
-  const source = first["source"] as Json;
-  source["path"] = "Movies/One.2001.mkv";
-  source["filename"] = "One.2001.mkv";
-  (value["selection"] as Json)["selectedItemIds"] = ["item-1"];
-  (value["selection"] as Json)["unselectedItemIds"] = [];
-  const execute = (value["actions"] as Json)["execute"] as Json;
-  execute["path"] =
-    `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`;
-  return value;
+function action() {
+  return {
+    available: false,
+    method: "POST",
+    path: null,
+    requiresVersion: true,
+    sideEffects: "none",
+    refusal: null,
+    pendingReason: null,
+    reason: null,
+    nextAction: null,
+  };
 }
 
 function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
@@ -74,13 +61,15 @@ function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
     updatedAt: "2026-01-01T00:00:00+00:00",
     selection: {
       scopeCount: 1,
-      scopes: [{ kind: "directory", path: "Movies" }],
+      scopes: [{ kind: "file", path: "Movies/One.2001.mkv" }],
+      existing: [],
+      refused: [],
     },
     budgets: {},
     progress: {
       phase: "prepared",
-      visitedEntries: 2,
-      visitedDirectories: 1,
+      visitedEntries: 1,
+      visitedDirectories: 0,
       pageFetches: 1,
       primarySources: 1,
       excludedEntries: 0,
@@ -96,8 +85,6 @@ function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
       message: "the exact zero-mutation plan summary is ready",
     },
     primarySourceCount: 1,
-    // The backend always publishes this nested document for a linked flow;
-    // the ordinary healthy run is unfinished and continuable.
     organizeFlow: {
       taskId: "organize-task-1",
       status: "running",
@@ -107,7 +94,7 @@ function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
     autoPrepare: true,
     prepared: true,
     previewId: PREVIEW_ID,
-    intentId: "intent-1",
+    intentId: INTENT_ID,
     frozen: true,
     frozenAt: "2026-01-01T00:00:00+00:00",
     pauseRequested: false,
@@ -136,799 +123,336 @@ function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
   };
 }
 
-function action() {
-  return {
-    available: false,
-    method: "POST",
-    path: null,
-    requiresVersion: true,
-    sideEffects: "none",
-    refusal: null,
-    pendingReason: null,
-    reason: null,
-    nextAction: null,
-  };
+function previewDocument(): Json {
+  const value = clone("organizePreviewDetail");
+  value["previewId"] = PREVIEW_ID;
+  value["intentId"] = INTENT_ID;
+  value["current"] = true;
+  const items = value["items"] as Json[];
+  const first = items[0]!;
+  first["itemId"] = "item-1";
+  first["previewItemId"] = "pitem-1";
+  const source = first["source"] as Json;
+  source["path"] = "Movies/One.2001.mkv";
+  source["filename"] = "One.2001.mkv";
+  (value["selection"] as Json)["selectedItemIds"] = ["item-1"];
+  (value["selection"] as Json)["unselectedItemIds"] = [];
+  value["executionCandidateItemIds"] = ["item-1"];
+  const execute = (value["actions"] as Json)["execute"] as Json;
+  execute["path"] =
+    `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`;
+  return value;
 }
 
-describe("organize creation workspace", () => {
+function intentDocument(): Json {
+  const value = clone("organizeIntentChoice");
+  value["intentId"] = INTENT_ID;
+  const items = value["items"] as Json[];
+  const first = items[0]!;
+  first["itemId"] = "item-1";
+  const source = first["source"] as Json;
+  source["path"] = "Movies/One.2001.mkv";
+  source["filename"] = "One.2001.mkv";
+  const choice = (value["actions"] as Json)["choice"] as Json;
+  choice["path"] =
+    `/api/v1/operations/organize/intents/${INTENT_ID}/items/{itemId}/choice`;
+  // The backend's read-only latest-plan association of the ended work.
+  value["latestPlan"] = {
+    previewId: PREVIEW_ID,
+    status: "previewed",
+    current: true,
+    intentVersion: 2,
+    createdAt: "2026-01-01T00:00:00+00:00",
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    truncated: false,
+  };
+  return value;
+}
+
+interface BackendState {
+  intentUnavailable: boolean;
+}
+
+function stubBackend(
+  state: BackendState,
+  discoveryOverrides: Record<string, unknown> = {},
+) {
+  const calls = {
+    discoveryPosts: [] as string[],
+    analyzePosts: [] as string[],
+    executePosts: [] as string[],
+    intentReads: 0,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (
+        url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}` &&
+        method === "GET"
+      ) {
+        return jsonResponse(discoveryDocument(discoveryOverrides));
+      }
+      if (
+        /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(url) &&
+        method === "POST"
+      ) {
+        calls.analyzePosts.push(url);
+        return jsonResponse(discoveryDocument(discoveryOverrides));
+      }
+      if (
+        url === `/api/v1/operations/organize/intents/${INTENT_ID}` &&
+        method === "GET"
+      ) {
+        calls.intentReads += 1;
+        if (state.intentUnavailable) {
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
+        return jsonResponse(intentDocument());
+      }
+      if (
+        url === `/api/v1/operations/organize/previews/${PREVIEW_ID}` &&
+        method === "GET"
+      ) {
+        return jsonResponse(previewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/organize/executions")) {
+        return jsonResponse({
+          items: [],
+          total: 0,
+          limit: 100,
+          truncated: false,
+        });
+      }
+      if (/\/operations\/organize\/previews\/[^/]+\/execute$/.test(url)) {
+        calls.executePosts.push(url);
+        return jsonResponse({ executionId: "exec-1", taskId: "task-1" }, 202);
+      }
+      if (
+        /\/resource-libraries\/[^/]+\/files\/discoveries$/.test(url) &&
+        method === "POST"
+      ) {
+        calls.discoveryPosts.push(url);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    }),
+  );
+  return calls;
+}
+
+function renderPreparedRoute(extra = ""): void {
+  authStore.setToken(TOKEN);
+  renderApp(
+    `/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}` +
+      `&resourceLibraryId=library${extra}`,
+  );
+}
+
+describe("Organize receiving route", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     authStore.clearToken();
   });
 
-  it("shows the linked plan summary and confirms only the selected ready subset", async () => {
-    const user = userEvent.setup();
-    let executeBody: Record<string, unknown> | null = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(discoveryDocument());
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          const value = previewDocument();
-          const first = (value["items"] as Json[])[0]!;
-          const second = JSON.parse(JSON.stringify(first)) as Json;
-          second["itemId"] = "item-2";
-          second["previewItemId"] = "pitem-2";
-          second["position"] = 1;
-          (second["source"] as Json)["filename"] = "Two.2002.mkv";
-          (second["source"] as Json)["path"] = "Movies/Two.2002.mkv";
-          value["items"] = [first, second];
-          value["executionCandidateItemIds"] = ["item-1", "item-2"];
-          (value["selection"] as Json)["selectedItemIds"] = [
-            "item-1",
-            "item-2",
-          ];
-          return jsonResponse(value);
-        }
-        if (
-          url === `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`
-        ) {
-          executeBody = JSON.parse(String(init?.body ?? "{}")) as Record<
-            string,
-            unknown
-          >;
-          return jsonResponse(
-            {
-              executionId: "exec-1",
-              taskId: "task-1",
-              status: "admitted",
-              selectedItemCount: 1,
-            },
-            202,
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
+  it("guides a generic creation URL to Files without starting work", async () => {
+    const calls = stubBackend({ intentUnavailable: false });
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+    renderApp("/ui-v2/operations/organize/new");
 
-    await screen.findByRole("heading", { name: "新建整理任务" });
-    // The same page shows the exact plan summary without a Preview jump.
-    await screen.findByRole("heading", { name: "计划摘要" });
-    await screen.findByText("One.2001.mkv");
-    // Deselect one ready item: the confirmation must count exactly one.
+    expect(
+      await screen.findByRole("heading", { name: "从资源库文件页开始整理" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "返回任务中心" })).toHaveAttribute(
+      "href",
+      "/ui-v2/operations",
+    );
+    expect(calls.discoveryPosts).toHaveLength(0);
+    expect(calls.analyzePosts).toHaveLength(0);
+    expect(calls.executePosts).toHaveLength(0);
+  });
+
+  it("opens the exact prepared work in the same per-file dialog by read-only navigation", async () => {
+    const calls = stubBackend({ intentUnavailable: false });
+    renderPreparedRoute("&returnOps=run%3Dorganize-task-1");
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    expect(
+      await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ }),
+    ).toBeVisible();
+    expect(within(dialog).getAllByText("One.2001.mkv").length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(dialog).getByRole("button", { name: /整批复核/ }),
+    ).toBeVisible();
+    // Opening a preparation link is a pure read: no admission, no analysis,
+    // no execution.
+    expect(calls.discoveryPosts).toHaveLength(0);
+    expect(calls.analyzePosts).toHaveLength(0);
+    expect(calls.executePosts).toHaveLength(0);
+  });
+
+  it("leaves the route after an explicit unsaved-draft discard", async () => {
+    const user = userEvent.setup();
+    const calls = stubBackend({ intentUnavailable: false });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      `/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}` +
+        `&resourceLibraryId=library&returnOps=${encodeURIComponent("run=organize-task-1")}`,
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    await user.selectOptions(
+      await within(dialog).findByLabelText("识别类型 One.2001.mkv"),
+      "B",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(
+      await within(dialog).findByText(/有尚未保存的逐文件修正草稿/),
+    ).toBeVisible();
     await user.click(
-      screen.getByRole("checkbox", { name: "选择 Two.2002.mkv" }),
+      within(dialog).getByRole("button", { name: "放弃草稿并关闭" }),
     );
-    const confirm = await screen.findByRole("button", {
-      name: "确认整理 1 项",
-    });
-    await user.click(confirm);
-    await waitFor(() => expect(executeBody).not.toBeNull());
-    expect(executeBody?.["itemIds"]).toEqual(["item-1"]);
-    expect(executeBody?.["confirmation"]).toBe(true);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations"),
+    );
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "organize-task-1",
+    );
+    // Browsing, editing a draft and leaving never saved, analyzed or executed.
+    expect(calls.analyzePosts).toHaveLength(0);
+    expect(calls.executePosts).toHaveLength(0);
   });
 
-  it("keeps an ended flow's summary readable but never confirmable", async () => {
-    // Real failed-flow shape: the page must still read the preparation (no
-    // "无法读取准备状态"), show the plan summary and the ended banner, and
-    // offer no confirmation or re-analysis entry for the ended work.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              organizeFlow: {
-                taskId: "organize-task-1",
-                status: "failed",
-                continuable: false,
-              },
-              actions: {
-                cancel: action(),
-                resume: action(),
-                finalize: action(),
-                prepare: {
-                  available: true,
-                  method: "POST",
-                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
-                  requiresVersion: true,
-                  sideEffects: "none",
-                  refusal: null,
-                },
-              },
-            }),
-          );
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          // Exact ended-flow preview shape: the backend closes the execute
-          // action with its own bounded reason.
-          const value = previewDocument();
-          const execute = (value["actions"] as Json)["execute"] as Json;
-          execute["available"] = false;
-          execute["reason"] =
-            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
-          return jsonResponse(value);
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "新建整理任务" });
-    // The summary itself stays readable as read-only history.
-    await screen.findByRole("heading", { name: "计划摘要" });
-    expect(
-      screen.queryByRole("heading", { name: "无法读取准备状态" }),
-    ).toBeNull();
-    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    expect(screen.getByText(/任务状态:\s*failed/)).toBeVisible();
-    // The ended state is read-only: the backend's bounded refusal reason is
-    // shown under 确认整理, but no executable confirmation button exists and
-    // no checkbox exists that could imply selectable history.
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.getByText(/start a fresh organize from Files/)).toBeVisible();
-    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
-    expect(screen.getByText("只读历史,不可选择")).toBeVisible();
-    // The real same-page re-analysis entry is named 重新检查并更新摘要; even a
-    // stale action bit saying `available` must not render it for an ended flow.
-    expect(
-      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
-    ).toBeNull();
-    // An ended flow never presents a live-stage prompt.
-    expect(screen.queryByText(/正在完整分析并生成计划摘要/)).toBeNull();
-    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
-    // The failed run's preparation identity stays visible for the task-center
-    // handoff; nothing was executable on this page.
-    expect(screen.getByRole("heading", { name: "计划摘要" })).toBeVisible();
-  });
-
-  it("reopens the ended run's original summary as read-only history, without a fake wait", async () => {
-    // The real failed-re-analysis journey: an explicit re-check cleared the
-    // run's own preview link, the analysis pass then failed and the Worker
-    // published the organizing Task as failed (discovery stays `analyzing`).
-    // The saved plan behind the intent's durable association — the backend's
-    // `get_latest_manual_preview` projection — must render as read-only history.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              status: "analyzing",
-              previewId: null,
-              prepared: false,
-              organizeFlow: {
-                taskId: "organize-task-1",
-                status: "failed",
-                continuable: false,
-              },
-              nextAction:
-                "this organizing flow has already ended; its read-only summary and recorded results stay available in Task Center, and these files re-enter through a fresh organize from Files",
-              actions: {
-                cancel: action(),
-                resume: action(),
-                finalize: action(),
-                prepare: {
-                  available: true,
-                  method: "POST",
-                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
-                  requiresVersion: true,
-                  sideEffects: "none",
-                  refusal: null,
-                },
-              },
-            }),
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-          const value = clone("organizeIntentChoice");
-          value["intentId"] = "intent-1";
-          ((value["actions"] as Json)["choice"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          // The real latest-plan association the backend reads through its
-          // read-only get_latest_manual_preview projection.
-          value["latestPlan"] = {
-            previewId: PREVIEW_ID,
-            status: "previewed",
-            current: true,
-            intentVersion: 2,
-            createdAt: "2026-01-01T00:00:00+00:00",
-            updatedAt: "2026-01-01T00:00:00+00:00",
-            truncated: false,
-          };
-          return jsonResponse(value);
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          const value = previewDocument();
-          const execute = (value["actions"] as Json)["execute"] as Json;
-          execute["available"] = false;
-          execute["reason"] =
-            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
-          return jsonResponse(value);
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    // The original plan content is actually readable — not a placeholder.
-    await screen.findByRole("heading", { name: "计划摘要" });
-    await screen.findByText("One.2001.mkv");
-    expect(screen.getByText(/只读历史\(本次整理已结束\)/)).toBeVisible();
-    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    // No fake waiting: neither the live-stage label nor the Worker prompt plus
-    // any re-analysis entry appears for the ended flow.
-    expect(screen.queryByText(/正在完整分析并生成计划摘要/)).toBeNull();
-    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
-    expect(screen.getByText("只读历史,不可选择")).toBeVisible();
-    // The bounded refusal reason of the confirmation section stays visible so
-    // the read-only end is explained where the action used to be.
-    await screen.findByText(/start a fresh organize from Files/);
-
-    // Refresh / same-version reopen: a fresh mount from the same durable
-    // documents renders the same read-only history, again without any fake wait.
-    cleanup();
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-    await screen.findByRole("heading", { name: "计划摘要" });
-    await screen.findByText("One.2001.mkv");
-    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
-    ).toBeNull();
-  });
-
-  it("reports a failed history read as a failure and recovers it in the page", async () => {
-    // Real B3-05 journey: the read-only summary page reads the ended run's
-    // intent/latestPlan association once and that single GET answers 503 (the
-    // client returns `{ok:false}` instead of throwing).  The page must show the
-    // read as failed — never an endless "reading" wait and never the "never
-    // generated" text — and the existing page recovery actions must issue the
-    // intent GET again so the saved summary becomes readable without a reload.
+  it("closes an originated continuation back to the exact task-center run", async () => {
     const user = userEvent.setup();
-    let intentReads = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              status: "analyzing",
-              previewId: null,
-              prepared: false,
-              organizeFlow: {
-                taskId: "organize-task-1",
-                status: "failed",
-                continuable: false,
-              },
-            }),
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-          intentReads += 1;
-          if (intentReads <= 2) {
-            // The honest bounded failure the client produces for a 503.
-            return jsonResponse({ error: { code: "unavailable" } }, 503);
-          }
-          const value = clone("organizeIntentChoice");
-          value["intentId"] = "intent-1";
-          ((value["actions"] as Json)["choice"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          value["latestPlan"] = {
-            previewId: PREVIEW_ID,
-            status: "previewed",
-            current: true,
-            intentVersion: 2,
-            createdAt: "2026-01-01T00:00:00+00:00",
-            updatedAt: "2026-01-01T00:00:00+00:00",
-            truncated: false,
-          };
-          return jsonResponse(value);
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          const value = previewDocument();
-          const execute = (value["actions"] as Json)["execute"] as Json;
-          execute["available"] = false;
-          execute["reason"] =
-            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
-          return jsonResponse(value);
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
+    const calls = stubBackend({ intentUnavailable: false });
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+    const { router } = renderApp(
+      `/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}` +
+        `&resourceLibraryId=library&returnOps=${encodeURIComponent("run=organize-task-1")}`,
+    );
 
-    // 1st read failed: the page says the read failed, with its bounded reason.
-    await screen.findByText(/原计划摘要暂时无法读取/);
-    expect(screen.getByText(/读取失败:Operations unavailable/)).toBeVisible();
-    expect(intentReads).toBe(1);
-    // Not an endless wait, and distinct from a genuinely absent summary.
-    expect(screen.queryByText(/正在读取它已保存的原计划摘要/)).toBeNull();
-    expect(screen.queryByText(/从未生成过计划摘要/)).toBeNull();
-    // No fake live waiting for work that can no longer run.
-    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
 
-    // 2nd read, through the page's own history-recovery action, fails again:
-    // the failure state is entered again instead of staying "reading".
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations"),
+    );
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "organize-task-1",
+    );
+    // Closing the card never cancels, replays or starts durable work.
+    expect(calls.discoveryPosts).toHaveLength(0);
+    expect(calls.analyzePosts).toHaveLength(0);
+    expect(calls.executePosts).toHaveLength(0);
+  });
+
+  it("opens ended work as the same dialog's read-only original summary", async () => {
+    const calls = stubBackend(
+      { intentUnavailable: false },
+      {
+        status: "completed",
+        organizeFlow: {
+          taskId: "organize-task-1",
+          status: "completed",
+          continuable: false,
+        },
+      },
+    );
+    renderPreparedRoute();
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    expect(await within(dialog).findByText(/本次整理工作已结束/)).toBeVisible();
+    const history = await within(dialog).findByRole("region", {
+      name: "只读原计划摘要",
+    });
+    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getAllByText(/One\.2001\.mkv/).length,
+    ).toBeGreaterThan(0);
+    // Ended work has no paging, batch review or confirmation affordance.
+    expect(
+      within(dialog).queryByRole("button", { name: /确认整理/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /整批复核/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /保存并重新分析/ }),
+    ).toBeNull();
+    expect(calls.analyzePosts).toHaveLength(0);
+    expect(calls.executePosts).toHaveLength(0);
+  });
+
+  it("reports a failed original-summary read and retries it in place", async () => {
+    const user = userEvent.setup();
+    const state = { intentUnavailable: true };
+    const calls = stubBackend(state, {
+      status: "analyzing",
+      prepared: false,
+      previewId: null,
+      organizeFlow: {
+        taskId: "organize-task-1",
+        status: "failed",
+        continuable: false,
+      },
+    });
+    renderPreparedRoute();
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    expect(
+      await within(dialog).findByText(/原计划摘要暂时无法读取/),
+    ).toBeVisible();
+    // The failure is a read failure, never "this work never had a summary".
+    expect(within(dialog).queryByText(/从未生成过计划摘要/)).toBeNull();
+
+    state.intentUnavailable = false;
     await user.click(
-      screen.getByRole("button", { name: "重新读取原计划摘要" }),
+      within(dialog).getByRole("button", { name: "重新读取原计划摘要" }),
     );
-    await screen.findByText(/原计划摘要暂时无法读取/);
-    expect(intentReads).toBe(2);
-    expect(screen.queryByText(/正在读取它已保存的原计划摘要/)).toBeNull();
-
-    // 3rd read, through the existing page Refresh, succeeds and the original
-    // summary renders as read-only history — still never confirmable.
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(intentReads).toBe(3));
-    // The recovered association drives the read-only Preview read in turn.
-    await screen.findByText("One.2001.mkv", {}, { timeout: 5_000 });
-    expect(screen.queryByText(/原计划摘要暂时无法读取/)).toBeNull();
-    expect(screen.getByText(/只读历史\(本次整理已结束\)/)).toBeVisible();
-    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
+    await vi.waitFor(() => expect(calls.intentReads).toBeGreaterThan(1));
     expect(
-      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
-    ).toBeNull();
+      await within(dialog).findByRole("region", { name: "只读原计划摘要" }),
+    ).toBeVisible();
   });
 
-  it("states plainly when an ended run never generated any summary", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              status: "analyzing",
-              previewId: null,
-              prepared: false,
-              organizeFlow: {
-                taskId: "organize-task-1",
-                status: "failed",
-                continuable: false,
-              },
-              actions: {
-                cancel: action(),
-                resume: action(),
-                finalize: action(),
-                prepare: {
-                  ...action(),
-                  reason: "organize_flow_ended",
-                  nextAction:
-                    "this organizing flow has already ended; start a fresh organize from Files",
-                },
-              },
-            }),
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-          const value = clone("organizeIntentChoice");
-          value["intentId"] = "intent-1";
-          ((value["actions"] as Json)["choice"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          value["latestPlan"] = null;
-          return jsonResponse(value);
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
+  it("states plainly when ended work never generated a summary", async () => {
+    stubBackend(
+      { intentUnavailable: false },
+      {
+        status: "failed",
+        prepared: false,
+        previewId: null,
+        intentId: null,
+        organizeFlow: {
+          taskId: "organize-task-1",
+          status: "failed",
+          continuable: false,
+        },
+      },
     );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+    renderPreparedRoute();
 
-    // The absence is explicit and truth-telling — no fake wait, no invented
-    // summary, no re-analysis or confirmation entry.
-    await screen.findByText(/从未生成过计划摘要/);
-    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
-    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "重新分析并生成摘要" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-  });
-
-  it("never offers an executable prefix after a material budget refusal", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              status: "partial_success",
-              previewId: null,
-              prepared: false,
-              progress: {
-                phase: "partial",
-                visitedEntries: 5,
-                visitedDirectories: 1,
-                pageFetches: 1,
-                primarySources: 2,
-                excludedEntries: 0,
-                unstableEntries: 0,
-                errorEntries: 0,
-                activeSeconds: 0.1,
-                incomplete: true,
-                incompleteReason: "primary_limit",
-                refusalReasons: ["primary_limit"],
-                materialRefusal: "primary_limit",
-                findings: [],
-                reasons: [],
-                message: "bounded discovery stopped at a limit",
-              },
-              nextAction: "narrow the selected scope",
-            }),
-          );
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "新建整理任务" });
-    await screen.findByText(/不能冻结为可执行清单/);
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-  });
-
-  it("offers a same-page re-check whenever the backend advertises it", async () => {
-    const user = userEvent.setup();
-    let analyzePosts = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(
-            discoveryDocument({
-              actions: {
-                pause: action(),
-                resume: action(),
-                cancel: action(),
-                finalize: action(),
-                prepare: {
-                  ...action(),
-                  available: true,
-                  method: "POST",
-                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
-                },
-              },
-            }),
-          );
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          return jsonResponse(previewDocument());
-        }
-        if (
-          url ===
-          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
-        ) {
-          analyzePosts += 1;
-          return jsonResponse(
-            discoveryDocument({
-              status: "analyzing",
-              previewId: null,
-              prepared: false,
-            }),
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "计划摘要" });
-    const recheck = await screen.findByRole("button", {
-      name: "重新检查并更新摘要",
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
     });
-    await user.click(recheck);
-    await waitFor(() => expect(analyzePosts).toBe(1));
-  });
-
-  it("keeps the unselected sibling confirmable after a selected item was admitted", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(discoveryDocument());
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          const value = previewDocument();
-          const first = (value["items"] as Json[])[0]!;
-          const second = JSON.parse(JSON.stringify(first)) as Json;
-          second["itemId"] = "item-2";
-          second["previewItemId"] = "pitem-2";
-          second["position"] = 1;
-          (second["source"] as Json)["filename"] = "Two.2002.mkv";
-          (second["source"] as Json)["path"] = "Movies/Two.2002.mkv";
-          value["items"] = [first, second];
-          value["executionCandidateItemIds"] = ["item-1", "item-2"];
-          (value["selection"] as Json)["selectedItemIds"] = [
-            "item-1",
-            "item-2",
-          ];
-          return jsonResponse(value);
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          // item-1 was already admitted to one durable execution.
-          const value = clone("organizeExecutionList");
-          const first = (value["items"] as Json[])[0]!;
-          first["previewId"] = PREVIEW_ID;
-          first["intentId"] = "intent-1";
-          first["executionId"] = "exec-1";
-          first["taskId"] = "task-1";
-          const actions = first["actions"] as Json;
-          (actions["detail"] as Json)["path"] =
-            "/api/v1/operations/organize/executions/exec-1";
-          (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
-          first["selectedItemIds"] = ["item-1"];
-          first["unselectedItemIds"] = ["item-2"];
-          first["selectedItemCount"] = 1;
-          first["unselectedItemCount"] = 1;
-          return jsonResponse(value);
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "计划摘要" });
-    // The admitted item is shown as already accepted and cannot be re-selected.
-    await screen.findByText("已受理执行，不再纳入本次创建");
+    expect(await within(dialog).findByText(/从未生成过计划摘要/)).toBeVisible();
     expect(
-      screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
-    ).toBeDisabled();
-    // The unselected sibling keeps its own confirmable state.
-    const confirm = await screen.findByRole("button", {
-      name: "确认整理 1 项",
-    });
-    await waitFor(() => expect(confirm).toBeEnabled());
-  });
-
-  it("shows grounded metadata candidates and saves a same-page identity choice", async () => {
-    const user = userEvent.setup();
-    let choiceBody: Record<string, unknown> | null = null;
-    let analyzePosts = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(discoveryDocument());
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          const value = previewDocument();
-          value["executionCandidateItemIds"] = [];
-          const first = (value["items"] as Json[])[0]!;
-          first["status"] = "blocked";
-          first["executionState"] = "not_available_in_this_task";
-          first["failure"] = {
-            category: "metadata_failure",
-            durableState:
-              "this is a zero-mutation preparation finding; no execution TaskItem or Result was created",
-            message: "metadata failure: no durable media identity was selected",
-            nextAction:
-              "choose one of this source's grounded metadata candidates on this page, then rerun the analysis",
-            retrySafe: true,
-            sideEffects: "none",
-          };
-          first["nextAction"] =
-            "choose one of this source's grounded metadata candidates on this page, then rerun the analysis";
-          (value["selection"] as Json)["selectedItemIds"] = [];
-          (value["actions"] as Json)["execute"] = {
-            ...((value["actions"] as Json)["execute"] as Json),
-            available: false,
-            reason: "no Preview item is current, complete and executable",
-          };
-          return jsonResponse(value);
-        }
-        if (
-          url ===
-          `/api/v1/operations/organize/intents/intent-1/items/item-1/choice`
-        ) {
-          choiceBody = JSON.parse(String(init?.body ?? "{}")) as Record<
-            string,
-            unknown
-          >;
-          const value = clone("organizeIntentChoice");
-          value["intentId"] = "intent-1";
-          const actions = value["actions"] as Json;
-          (actions["choice"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          return jsonResponse(value);
-        }
-        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-          const value = clone("organizeIntent");
-          value["intentId"] = "intent-1";
-          value["status"] = "open";
-          const actions = value["actions"] as Json;
-          (actions["choice"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          const item = (value["items"] as Json[])[0]!;
-          item["itemId"] = "item-1";
-          (item["source"] as Json)["path"] = "Movies/One.2001.mkv";
-          (item["source"] as Json)["filename"] = "One.2001.mkv";
-          item["allowedMetadataIdentities"] = [
-            {
-              mediaType: "movie",
-              provider: "tmdb",
-              providerId: "201",
-              title: "One",
-              year: 2001,
-            },
-            {
-              mediaType: "movie",
-              provider: "tmdb",
-              providerId: "999",
-              title: "One",
-              year: 2001,
-            },
-          ];
-          return jsonResponse(value);
-        }
-        if (
-          url ===
-          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
-        ) {
-          analyzePosts += 1;
-          return jsonResponse(
-            discoveryDocument({ status: "analyzing", version: 6 }),
-          );
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "计划摘要" });
-    // The ambiguous candidates are explained on the same page.
-    await screen.findByText("未就绪");
-    // Both grounded candidates are offered as real, legal options.
-    const select = await screen.findByRole("combobox", {
-      name: "元数据身份 One.2001.mkv",
-    });
-    expect(
-      Array.from(select.querySelectorAll("option")).map((option) =>
-        option.getAttribute("value"),
-      ),
-    ).toContain("tmdb/999/movie");
-    await user.selectOptions(select, "tmdb/999/movie");
-    await waitFor(() => expect(choiceBody).not.toBeNull());
-    const body = choiceBody as unknown as Record<string, unknown>;
-    expect((body["metadata"] as Record<string, unknown>)["providerId"]).toBe(
-      "999",
-    );
-    // Saving a candidate re-enters the durable analysis on the same page.
-    await waitFor(() => expect(analyzePosts).toBe(1));
-  });
-
-  it("treats an ambiguous Execute response as unknown and reconciles without replay", async () => {
-    const user = userEvent.setup();
-    let executePosts = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
-          return jsonResponse(discoveryDocument());
-        }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
-          return jsonResponse(previewDocument());
-        }
-        if (
-          url === `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`
-        ) {
-          executePosts += 1;
-          throw new TypeError("simulated lost execute response");
-        }
-        if (
-          url.startsWith(
-            `/api/v1/operations/organize/previews/${PREVIEW_ID}/admission`,
-          )
-        ) {
-          return jsonResponse({
-            outcome: "known",
-            executionId: "exec-9",
-            taskId: "task-9",
-          });
-        }
-        if (url.startsWith("/api/v1/operations/organize/executions")) {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            limit: 100,
-            truncated: false,
-          });
-        }
-        return jsonResponse({ error: { code: "not_found" } }, 404);
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "计划摘要" });
-    await user.click(
-      await screen.findByRole("button", { name: "确认整理 1 项" }),
-    );
-    // The ambiguous outcome is shown, never silently retried.
-    await screen.findByText("执行结果未知");
-    expect(executePosts).toBe(1);
-    // The bounded reconciliation read proves the durable admission.
-    await user.click(screen.getByRole("button", { name: "核对提交结果" }));
-    await waitFor(() => expect(executePosts).toBe(1));
+      within(dialog).queryByRole("region", { name: "只读原计划摘要" }),
+    ).toBeNull();
   });
 });

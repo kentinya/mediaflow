@@ -132,6 +132,24 @@ export function ManualOrganizeDialog({
   const intent =
     intentQuery.data?.ok === true ? intentQuery.data.model : undefined;
   const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+  // An ended preparation whose linked Preview was cleared (for example a
+  // failed re-analysis) reads its original saved plan through the intent's
+  // durable association.  The read itself may still be pending or may have
+  // failed; neither state may be misreported as "this work never generated a
+  // summary".
+  const intentReadFailed =
+    intent === undefined &&
+    !intentQuery.isFetching &&
+    (intentQuery.isError || intentQuery.data?.ok === false);
+  const historyPlanPending =
+    organizeFlowEnded &&
+    preparation?.previewId == null &&
+    preparation?.intentId != null &&
+    intentQuery.isEnabled &&
+    intent === undefined &&
+    !intentReadFailed;
+  const intentReadFailure =
+    intentQuery.data?.ok === false ? intentQuery.data.failure : null;
   // A re-analysis temporarily clears the linked Preview while the resident
   // Worker plans again.  The intent's own latest saved plan stays readable as
   // the superseded review during that window, so the card never hides the file
@@ -692,6 +710,11 @@ export function ManualOrganizeDialog({
   };
   const commitClose = () => {
     setDiscardArmed(false);
+    // The operator explicitly discarded the unsaved drafts: the deliberate
+    // leave must not be blocked again by the now-stale draft guard.  A route
+    // host's `onClose` is a real navigation, so the same one-shot bypass the
+    // task handoff uses is required here too.
+    handoffBypassRef.current = true;
     if (blocker.status === "blocked") {
       const proceed = blocker.proceed;
       beginClose(() => proceed());
@@ -881,10 +904,41 @@ export function ManualOrganizeDialog({
             </p>
           </StatusBanner>
           {summaryPreviewId === "" ? (
-            <p className="mf-dashboard-meta" role="status">
-              本次整理从未生成过计划摘要,因此没有可读取的只读历史。
-              失败阶段与已知效果请在任务中心对应任务中核对。
-            </p>
+            historyPlanPending ? (
+              <div
+                className="mf-modal-card-status"
+                role="status"
+                aria-busy="true"
+              >
+                <p>正在读取原计划摘要作为只读历史…</p>
+              </div>
+            ) : intentReadFailed ? (
+              <StatusBanner variant="error" title="无法读取原计划摘要">
+                <p role="status">
+                  原计划摘要暂时无法读取;没有重新分析、没有创建执行,也没有修改文件。
+                </p>
+                {intentReadFailure !== null ? (
+                  <p role="status">
+                    读取失败:{intentReadFailure.title};
+                    {intentReadFailure.nextAction}
+                  </p>
+                ) : null}
+                <div className="mf-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void intentQuery.refetch()}
+                  >
+                    重新读取原计划摘要
+                  </Button>
+                </div>
+              </StatusBanner>
+            ) : (
+              <p className="mf-dashboard-meta" role="status">
+                本次整理从未生成过计划摘要,因此没有可读取的只读历史。
+                失败阶段与已知效果请在任务中心对应任务中核对。
+              </p>
+            )
           ) : previewQuery.isError || previewQuery.data?.ok === false ? (
             <StatusBanner variant="error" title="无法读取原计划摘要">
               <p role="status">
@@ -1785,84 +1839,97 @@ export function ManualOrganizeDialog({
     );
 
   // ---- footer ---------------------------------------------------------
-  const footer =
-    step === "review" ? (
-      <>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={pageInfo <= 0 || items.length === 0}
-          onClick={() => goTo(pageInfo - 1)}
-        >
-          上一项
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={pageInfo >= items.length - 1}
-          onClick={() => goTo(pageInfo + 1)}
-        >
-          下一项
-        </Button>
-        <span className="mf-dashboard-meta">
-          第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
-          {currentItemId !== null && draftDirty ? " · 有未保存的修正" : ""}
-        </span>
-        <span className="mf-modal-footer-spacer" />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
-        <Button
-          type="button"
-          disabled={items.length === 0}
-          onClick={() => setStep("confirm")}
-        >
-          整批复核(已选 {activeSelection.length} 项)
-        </Button>
-      </>
-    ) : (
-      <>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() => setStep("review")}
-        >
-          返回逐项复核
-        </Button>
-        <span className="mf-modal-footer-spacer" />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
-        <Button
-          type="button"
-          disabled={executeDisabled}
-          aria-busy={executeMutation.isPending}
-          onClick={() =>
-            executeMutation.mutate({
-              itemIds: activeSelection,
-              intentVersion: preview?.intentVersion ?? 0,
-              allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
-              allowSourceCleanup:
-                requiresCleanup && effectiveAllowSourceCleanup,
-            })
-          }
-        >
-          {executeMutation.isPending
-            ? "正在提交..."
-            : `确认整理 ${activeSelection.length} 项`}
-        </Button>
-      </>
-    );
+  // Ended work is read-only history: it keeps one ordinary close action and
+  // never offers paging over a live plan, a batch confirmation or a second
+  // re-analysis entry.
+  const footer = organizeFlowEnded ? (
+    <>
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+    </>
+  ) : step === "review" ? (
+    <>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={pageInfo <= 0 || items.length === 0}
+        onClick={() => goTo(pageInfo - 1)}
+      >
+        上一项
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={pageInfo >= items.length - 1}
+        onClick={() => goTo(pageInfo + 1)}
+      >
+        下一项
+      </Button>
+      <span className="mf-dashboard-meta">
+        第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
+        {currentItemId !== null && draftDirty ? " · 有未保存的修正" : ""}
+      </span>
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+      <Button
+        type="button"
+        disabled={items.length === 0}
+        onClick={() => setStep("confirm")}
+      >
+        整批复核(已选 {activeSelection.length} 项)
+      </Button>
+    </>
+  ) : (
+    <>
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={() => setStep("review")}
+      >
+        返回逐项复核
+      </Button>
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+      <Button
+        type="button"
+        disabled={executeDisabled}
+        aria-busy={executeMutation.isPending}
+        onClick={() =>
+          executeMutation.mutate({
+            itemIds: activeSelection,
+            intentVersion: preview?.intentVersion ?? 0,
+            allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
+            allowSourceCleanup: requiresCleanup && effectiveAllowSourceCleanup,
+          })
+        }
+      >
+        {executeMutation.isPending
+          ? "正在提交..."
+          : `确认整理 ${activeSelection.length} 项`}
+      </Button>
+    </>
+  );
 
   return (
     <ModalCardShell
