@@ -58,9 +58,11 @@ directory read error directly. Ordinary browsing does not query/poll organizing 
 organizing submission still reconciles its exact request before returning to the admitted preparation.
 After selecting files and generating a summary, the operator may leave and reopen the original
 Task from Task Center's Running/All views. Its `继续整理` action returns to the same preparation/
-summary after reload or re-authentication; explicit confirmation and original execution/results remain
-there. [B acceptance](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
-records this standalone correction. Ordinary-operation status retains its separate local modal.
+summary after reload or re-authentication while that work remains continuable. Ended work instead
+opens its read-only summary and offers Files for a new selection. A failed file can be selected again
+without cancelling the failed Task; healthy waiting siblings retain their old confirmation.
+The [manual journey](product-experience.md#manual-organize) owns history read recovery and explicit
+new confirmation; original results remain factual. Ordinary-operation status keeps its local modal.
 
 ## Shared Library Selector Presentation — 2026-09-24 A Revision
 

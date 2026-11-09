@@ -831,6 +831,20 @@ results and audit; no existing runtime data or media is cleared.
   partial/unknown effect explains durable state per item. Re-analyze the legal scope and obtain fresh
   intent when necessary; completed/ignored/uncertain siblings are not re-executed.
 
+Task Center offers `继续整理` only while the linked Files work remains continuable. A healthy
+unconfirmed summary stays reachable from Running/All after leaving, reload or re-authentication.
+Ended work instead offers `查看只读摘要` and `从文件页重新发起`: its old link retains the original
+plan, failure stage and known effects without selection, correction, re-analysis or confirmation.
+If no plan was generated, say so; if its history cannot be read, show the read failure and let the
+operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
+
+A failed file can be selected again in Files without cancelling a failed Task or clearing records.
+For A failed and B/C still waiting in a legitimate flow, A is read-only and unselectable in the old
+summary; B/C keep their original selected confirmation. A's new work uses current configuration,
+complete analysis and a new explicitly confirmed summary. If the entire flow has ended, none of its
+old items can execute from that summary. Old results and completed/uncertain effects remain under
+the [source-history journey](#current--new-organizing-after-failedpartial-history-slice47).
+
 Each new organizing request identifies its live source again under its pinned query type, without
 automatically copying a historical Provider ID/type into the new choice. History remains factual;
 normal NFO/external-ID lookup and Provider caching retain their existing behavior. A new ambiguity

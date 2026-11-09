@@ -49,11 +49,13 @@ completion neither proves file success nor grants replay.
 
 Files opens directly into the selected library's directory loading, listing or read error; its
 former organizing-history panel is removed. Select files → prepare the exact summary → leave →
-open the original Task in Task Center → `继续整理` returns to that same summary, including after
-reload/re-authentication. Explicit confirmation still starts execution only once; the original Task
-keeps its results. [PATCH-20261109-1 B acceptance](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
-records the accepted implementation and T3 validation; [Release validation](docs/release.md#current-v2-validation-boundary)
-distinguishes this acceptance from earlier full regression and packaging evidence.
+open the original Task in Task Center → `继续整理` returns to the same still-continuable summary,
+including after reload/re-authentication. Ended work offers `查看只读摘要` and a Files entry for
+deliberate new organizing. Failed files can start again from Files without cancelling the ended Task;
+healthy siblings still waiting for confirmation keep their original summary. History read failures
+have an in-page reread action. Explicit confirmation precedes each new execution; original results
+remain factual. The [manual journey](docs/product-experience.md#manual-organize) explains these paths;
+[Release validation](docs/release.md#current-v2-validation-boundary) records their acceptance and limits.
 
 TMDB policies use query type alone; candidate/result movie or TV types still drive detail lookup,
 naming and classification. Each new organize identifies the source again. Within the current Task,

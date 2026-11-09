@@ -1394,6 +1394,11 @@ Source ownership is independent of short-lived execution leases:
   `dry_run/success/skipped/cancelled/failed/ignored` items do not create perpetual history locks;
   partial/uncertain effects retain their non-replay protections. Legal continuations exclude their
   own persisted lineage, without exempting other work of the same library.
+- Discovery/preparation existence does not retain ownership after its linked flow or exact file
+  has ended. Discovery completion alone does not end a healthy unconfirmed organizing Task.
+  A failed item in a live mixed batch releases only that item; eligible siblings keep their pin,
+  ownership and confirmation. New admission and old-summary authority/confirmation use the same
+  committed eligibility in their transactions; ended Files work cannot become an unlinked new Task.
 - Direct-file ownership is re-proved in the same `BEGIN IMMEDIATE` transaction as admission.
   Folder tasks precede traversal; each discovered concrete source is atomically reserved with its
   manifest/item publication. Manual, scheduled, Run once and continuation entrances share the
@@ -1408,11 +1413,20 @@ Source ownership is independent of short-lived execution leases:
 `GET /api/v1/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
 history and exact `requestId` reconciliation. Files uses the exact-request read for unknown admission;
 ordinary directory browsing has no organizing-history panel or history polling. The selected Task
-Center run read exposes optional `filesPreparation {discoveryId, resourceLibraryId}` from the
-discovery durably linked to that exact Task. Its `继续整理` link opens the existing
+Center run read exposes optional `filesPreparation {discoveryId, resourceLibraryId, continuable}`
+from the discovery durably linked to that exact Task. Its eligible `继续整理` link opens the existing
 `/operations/organize/new` preparation with `discoveryId`, `resourceLibraryId` and validated `returnOps`.
 This read-only association carries no execution authority; the original preparation retains its
 pin/context, summary, explicit confirmation and execution readback after reload/re-authentication.
+
+The backend projects the linked Task's existing flow as `organizeFlow {taskId, status, continuable}`
+for the preparation/intent/summary. These response fields add no stored state or schema.
+Ended work's center link is `查看只读摘要`; its original plan remains readable through the existing
+intent `latestPlan.previewId` association even when re-analysis cleared the current preview link.
+The page distinguishes pending history reads, failed reads with page-local reread/Refresh, and a
+successful read with no saved plan. Historical reads do not analyze, issue authority or execute.
+The Files entry starts deliberate new work under the existing source-history contract.
+
 Generic new-organize routes guide to Files without another picker or work. Ordinary initial summary
 confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
 population and four-type lineage described above.

@@ -81,7 +81,7 @@ The fixed report retains exact commands and local evidence location. These local
 fake-Provider checks do not extend the earlier OpenList full regression, wheel or Docker results to
 this later source. No production external-service or full release matrix was run for this correction.
 
-The latest [query-type and candidate-continuation correction](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)
+The [query-type and candidate-continuation correction](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)
 passed independent B T4 review on 2026-11-09: Base
 `233f6a25769856087d10cb4483c0f1a621a76546`, reviewed Head
 `fbabe7f80614dd35faa096dcb55198d183784501`, implementation
@@ -101,6 +101,27 @@ The fixed report retains exact commands, fixture limits and local evidence at
 Storage/fake Providers; it adds no Docker, production-service, deployment or cross-version claim.
 Schema and historical records remain unchanged. Subsequent documentation-only reconciliation does
 not change the validated executable inputs.
+
+The latest [failed-file ownership and summary-continuation correction](https://github.com/kentinya/mediaflow/blob/379c3746de2c4cd31ed8a1f558f42c3d2175c2dd/TASK.md#b-final-review--pass)
+passed independent B T4 review on 2026-11-09: Base
+`fe3bd99b1cf6046ac716052e5c8ee63851c80f15`, reviewed Head
+`9d05396b02f5f1375819f630a4e7d5a5a7c2c77a`, implementation
+`7abfca505d13239b1030fee94327c18437858d48`. Python ran 2678 tests (OK, seven existing
+external/endurance skips); Web unit tests had 1476 passed and default browser E2E 268 passed.
+Real Python/SQLite/Worker journeys verified failed-file new admission, mixed-batch independent
+confirmation and actual moves, ended-summary read recovery, desktop/390px and same-version restart.
+Wheel/installed consumers passed; the exact Docker image built and ran 71 relevant installed-package
+tests successfully. No table, column, migration or state enum was added.
+
+Two broad checks were not green: the three assigned real-Python specs had 48 passed/one row-selector
+failure; the Docker release-security smoke stopped before execution on its metadata fixture's
+`400 metadata_unverified`. Each failure was reproduced at the immutable Task Base with the same
+cause. The current task-flow spec passed all three cases in isolation. Docker startup, static/RBAC
+and Active-snapshot Worker-restart stages passed, but later release-smoke stages were not completed.
+These limits remain in the fixed review with artifact digests and local evidence at
+`.git/validation-evidence/9d05396b02f5f1375819f630a4e7d5a5a7c2c77a/b-review/`.
+This acceptance supplies no all-green release, production-service or cross-version claim.
+The subsequent documentation reconciliation changes no executable inputs.
 
 Use [Deployment](deployment.md) for current executable startup, health, backup and same-version
 recovery. Earlier V1 upgrade acceptance below remains historical; it is not a current `main` gate
