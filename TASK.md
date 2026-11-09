@@ -521,3 +521,123 @@ Implementation Head: `d39765bfbb1cc3fbd2d7831208dc053f375743ff`。
 
 本轮并行测试的墙钟占用约6分钟，低于本轮审查、真实链路定位、Base对照和记录总时间的
 50%；未以延长等待凑比例。B 本轮只维护本 Task 和本地证据，预存工作区文件保持，未推送。
+
+### Developer 同 Task 修正交付 2 — B3-03/B3-04(B3-01/B3-02 保持)
+
+**READY FOR B REVIEW。** 实现提交 `c8e58c5a0d9de97f7a1748cab6098848babe7fc0`
+(父提交为本 Task 文档 HEAD `a7fc6f6a`;本节随后以 `docs(task)` 提交,两者构成本候选,
+若 SHA 与 Git 不一致以 Git 为准)。Task Base `fe3bd99b` 不变,分支 `main`,未推送。
+1 个提交、8 个变化文件全部在本 Task 范围;预存 `mediaflow/.DS_Store`、全部未跟踪
+文件与 `.git/validation-evidence/` 本地材料均未纳入任何提交;实施前后
+`python3 scripts/check_governance.py` 均 PASS,暂存区在加文件前为空。
+
+**B3-03 修复(已结束准备页的真实历史与动作一致性)。**
+
+- 单一后端资格事实下沉到真正入口:`media_discovery.analysis_availability`
+  (文档 `prepare` 动作与真实 `POST .../analyze`/intent 分析入口共用的同一谓词)新增
+  `_organize_flow_settled`——读取该 discovery 关联 Task 的
+  `SETTLED_TASK_FLOW_STATUSES` 终态集合;已结束则返回 409 `organize_flow_ended`
+  (advertised == enforced,不再出现 Base 上"广告可用、requeue 才 409
+  `analysis_rejected`"的不一致),在触碰持久记录前拒绝且版本零推进。该判断与
+  `_kernel_task_id` 同缝:仅对 Task scheduling kernel 治理的 run 生效
+  (`task_scheduling_enabled=False` 的既有 RO-2 夹具组合从未有 kernel fence,
+  保持 Base 语义——见下面风险 1)。
+- `service_api._discovery_document`:对已结束 flow 的 discovery 文档,将
+  `_discovery_next_action` 的走查/等 Worker 文案替换为结束事实与 Files 重入指引
+  (纯投影,不改写任何 discovery 行);`organizeFlow` 文档同源复用。
+- `OrganizeCreationPage`:已结束时只渲染一个"本次整理工作已结束"状态横幅,
+  不再并列显示"正在完整分析并生成计划摘要"/durable Worker 消息;停止等待轮询;
+  `previewId` 已被重分析清空时,经 intent 既有 `latestPlan`(后端
+  `latest_readonly` → `get_latest_manual_preview`,B 指定复用的只读读取)取得
+  原摘要 id 并按同一 Preview 权威读出渲染为**只读历史**:条目/方案/证据可见,
+  无 checkbox、无确认按钮、无修正、无"重新检查并更新摘要"(即使陈旧
+  `prepare.available=true` 也不渲染);intent 尚在读取/读取失败/从未生成三种
+  状态各有明确文案,其中"从未生成过计划摘要"明确非假等待;刷新/同版本重开由
+  同一批持久文档重放同一状态(测试内以全新 mount 断言)。正常未确认摘要与
+  A失败/B待确认的原批次行为不变;上一轮已通过的事务 fence 未改动。
+
+**B3-04 修复(合同与直接夹具同步)。**
+
+- `MEDIAFLOW_UPDATE_FIXTURES=1 .venv/bin/python -m unittest tests.test_manual_operations_contract`
+  重新生成 `manual-operations.json`,**审阅后的差异恰为两处真实响应新增的
+  `"organizeFlow": null`**(organizePreview/organizePreviewDetail,无关联即 null),
+  随后普通运行比对通过。
+- `web/tests/fake-server.mjs` 的 `organizeDiscoveryDocument` 始终发布
+  `organizeFlow: null`(fake 无关联 Task 的真实语义,不再缺必需键导致准备页读取失败)。
+- `operations-inventory.python.spec.ts` 已完成态期望由"继续整理"改为"查看只读摘要",
+  并断言只读内容:结束横幅可见、无"重新检查并更新摘要"、无 `确认整理` 按钮、
+  "已有受理的兄弟项"与"查看已有执行"仍在;第 3843 行健康未确认返回同一 Task 的
+  "继续整理"验证原样保留。
+
+**新增/更新回归(全部走真实入口)。** `tests/test_failed_preparation_ownership.py`
+新增 `test_ended_flow_refuses_reanalysis_and_keeps_the_saved_plan_readable`:
+真实 analyze 进入后由 engine `_fail_discovery` 生产发布失败 → 同一 analyze 入口
+409 `organize_flow_ended` 且 discovery 版本零推进 → 文档
+`organizeFlow/prepare.reason/nextAction` 三处同一事实(无"running the complete
+analysis")→ intent `latestPlan.previewId` 与 Preview 详情双双仍可读(历史关联)、
+零 Storage mutation、无第二 Task。`OrganizeCreationPage.test.tsx` 更新既有已结束
+用例(改用真实按钮名"重新检查并更新摘要"检查只读性、确认按钮为不存在而非仅禁用),
+新增两条:重分析失败后的原摘要历史渲染(含假等待断言缺失、陈旧 available 不渲染、
+refresh/重开幂等)与"从未生成摘要"明确文案。
+
+**实际命令与结果(全部实测,无 skip 掩盖;判读为实现工作之外的测试墙钟合计约 6 分钟)。**
+
+```sh
+python3 scripts/check_governance.py                     # PASS(实施前/提交前各一次)
+.venv/bin/python -m compileall -q mediaflow tests scripts  # OK
+MEDIAFLOW_UPDATE_FIXTURES=1 .venv/bin/python -m unittest tests.test_manual_operations_contract
+                                                        # 4 OK(生成),diff 仅两处 organizeFlow: null
+.venv/bin/python -m unittest tests.test_manual_operations_contract   # 4 OK(比对)
+.venv/bin/python -m unittest tests.test_failed_preparation_ownership \
+  tests.test_operations_task_center tests.test_manual_organize_execution \
+  tests.test_organize_source_history tests.test_media_discovery       # 250 OK
+.venv/bin/python -m unittest tests.test_organize_preparation \
+  tests.test_processing_recovery_admission tests.test_automation_entrance_recovery  # 58 OK
+.venv/bin/python -m unittest tests.test_task_source_ownership_race \
+  tests.test_manual_task_engine tests.test_task_persistence           # 71 OK
+.venv/bin/ruff check mediaflow/application/media_discovery.py \
+  mediaflow/interfaces/service_api.py tests/test_failed_preparation_ownership.py
+.venv/bin/ruff format --check <同上三文件>               # pass;git diff --check clean
+web: npm run typecheck / npm run lint / npx prettier --check <5 changed web files>  # pass
+web: npm run test -- run OrganizeCreationPage.test.tsx       # 9 OK(含 3 条本轮回退/新增)
+web: npm run test -- run OperationsInventory OrganizeDiscoveryPage StorageFilesPage \
+  run discovery manual-operations-contract preview organize  # 195 OK
+web: npm run test -- run OrganizePlanConfirmation RunDetailTabs AutomationRunOncePage \
+  TaskItemRecoveryPanel OrganizeRouter manual-actions        # 79 OK(fixture 消费者)
+web: npm run build                                           # OK(真实 E2E 使用本次 build)
+web: npm run test:e2e -- --config=playwright.python.config.ts \
+  tests/e2e/operations-inventory.python.spec.ts --grep "initial manual preparation remains reachable"
+                                                        # 1 passed, 8.5s(改后的真实 Python 旅程)
+web: npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/deep-link.spec.ts
+                                                        # 64 passed(默认夹具准备旅程恢复)
+web: npm run test:e2e -- tests/e2e/medialib-files.spec.ts tests/e2e/manual-operations.spec.ts \
+  tests/e2e/manual-organize.spec.ts tests/e2e/operations.spec.ts   # 61 passed
+```
+
+定位过程中曾复现一次失败:`test_selected_execution_does_not_block_the_unselected_sibling`
+(选定项执行完成后,未选兄弟在原准备上修正+重新分析)。根因是本轮回退实现最初未区分
+kernel 治理,已将资格判断收敛到与 `_kernel_task_id` 同一接缝后该用例与全部相关直接受
+影响用例通过;该失败未被删除或绕过,保留在本报告中作为修正证据。
+
+**剩余风险与行为变化(供 B 复核,未自行判定通过)。**
+
+1. 资格门槛绑定 `task_scheduling_enabled`:生产组合(`service_api`、`final_cli`)
+   均为 True,故 B3-03/B3-04 的真实入口语义全部生效;`False` 的既有夹具组合保持
+   Base 分析语义(它们本来就没有 kernel 准入 fence)。是否接受该接缝由 B 判定。
+2. 错误码变化:已结束 flow 的真实 analyze 由迟到的 `analysis_rejected`(kernel
+   requeue 拒绝)提前为 `organize_flow_ended`(同一谓词)。仓库内无断言旧码的测试,
+   但 B 的外部探针/清单可能引用旧码。
+3. 已结束页的确认按钮从"禁用"变为"不渲染(理由文案保留)";既有该用例已按真实
+   只读旅程更新,请 B 复核是否符合"无误导入口"的验收口径。
+4. ended 历史摘要的关联仍走 intent `latestPlan`(既有后端投影),discovery 文档
+   未新增字段;若 B 要求把历史关联直接发布在 run 文档上,属合同决定,请裁定。
+5. Python 侧未新增 schema/迁移/状态枚举;`organizeFlow` 仍为既有状态的响应投影。
+   真实浏览器桌面/390px 只读历史、三条 python E2E 全量、默认 E2E 全量、T4
+   全回归、wheel/Docker 同版本验收按分工未由 Developer 执行。
+6. 本轮用户现场的最初失败触发形态与引入时间仍待 B 独立判读;本轮仍沿 engine
+   失败发布边界组织复现,未声称复现真实 Provider 中断或 Worker 崩溃形态。
+
+本轮为连续开发会话:自接续 B 交接(上一 `docs(task)` 提交 2026-11-09 11:34:53
++08:00)至本报告完成约 55 分钟(以 git 提交时间与本机命令时间戳推算);上列全部
+测试/静态检查命令的墙钟合计约 6 分钟(约 11%),低于 30% 上限,未以延长等待凑比例。
+未越权改 SLICE/Roadmap/Progress,未推送,未自签 PASS。
