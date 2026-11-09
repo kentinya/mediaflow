@@ -390,7 +390,8 @@ Task53.1 为 FIX REQUIRED，Slice53 保持原合同；不交 Closure Packet、�
 ## Developer Completion Report — P1 修正
 
 **Status:** READY FOR B REVIEW。修正实现 checkpoint 为
-`16b949fcd649498b03bd8d0c15289817d471cfa3`（main；Task Base 未变）。本报告不声称
+`16b949fcd649498b03bd8d0c15289817d471cfa3`，测试/夹具补强 checkpoint 为
+`98596bb2a2feabf1fbd143ff647514de90c65030`（main；Task Base 未变）。本报告不声称
 PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未部署。
 
 ### 本轮改动
@@ -430,12 +431,13 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
   新增断言证明问题计划的 `problemTaskItemId` 与同一 TaskItem 完全一致，解决后新摘要
   不再携带该关联。
 - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/manual-organize-dialog.python.spec.ts` → **3 passed（40.1s）**；最终 UI
-  调整后再次单跑真实冲突用例 → **1 passed（10.6s）**。真实链路验证：第一次
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **3 passed（40.1s）**（含健康
+  兄弟断言后的完整复跑）；真实冲突用例该轮 **10.5s**。真实链路验证：第一次
   `Copy fixture` 保留来源并生成一个目标；第二次默认移动产生 `DESTINATION_EXISTS`；
   当前文件显示中文目标冲突并保存 `rename` 决定；决定保存与重新分析前后文件效果不变；
-  新摘要后可确认，最终 Worker 保留原目标、移除来源并生成第二个重命名目标，任务中心
-  打开本次返回的准确 Task。
+  新摘要后可确认。第二次同时选择健康兄弟 `DialogSibling.2023.mkv`，最终只确认冲突
+  文件一项；Worker 保留原目标、移除来源并生成第二个重命名目标，健康兄弟的源文件与
+  目标不变，任务中心打开本次返回的准确 Task。
 - `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
   tests/e2e/manual-organize.spec.ts` → **63 passed（38.6s）**。
 - 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean；
