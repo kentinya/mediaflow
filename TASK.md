@@ -723,3 +723,90 @@ Python/Web通过，默认全E2E、三个真实spec全量及混合批次完整原
 
 本轮测试执行墙钟约7分钟；从开始复核到记录超过16分钟，测试低于本轮时间50%。代码审查、
 用户旅程定位与证据判读持续进行，未以空等凑比例。仅更新本 Task 和本地证据，预存文件保持。
+
+### Developer 同 Task 修正交付 3 — B3-05（B3-01～B3-04 保持）
+
+**READY FOR B REVIEW。** 实现提交 `7abfca505d13239b1030fee94327c18437858d48`
+（父提交为本 Task 文档 HEAD `1074abea`；本节随后以 `docs(task)` 提交，两者构成本候选，
+若 SHA 与 Git 不一致以 Git 为准）。Task Base `fe3bd99b` 不变，分支 `main`，未推送。
+1 个实现提交、2 个变化文件（`OrganizeCreationPage.tsx`／`.test.tsx`）全部在本 Task 范围；
+预存 `mediaflow/.DS_Store`、全部未跟踪文件与 `.git/validation-evidence/` 本地材料均未纳入
+任何提交；实施前后 `python3 scripts/check_governance.py` 均 PASS，暂存区在加文件前为空。
+
+**B3-05 修复（历史关联读取失败的失败呈现与页内恢复）。**
+
+- `OrganizeCreationPage` 对已结束流程的历史关联读取新增统一失败事实
+  `intentReadFailed`：`fetchOrganizeIntent` 对断网、404、5xx 返回 `{ok:false}`
+  而不抛错，仅看 query `isError` 永远观察不到这些失败；现在"无模型且无请求在跑
+  （或未跑）"才判失败——query 异常与有界 `{ok:false}` 拒绝都进入失败呈现并展示
+  该读取的确切有界原因（`failure.title`／`nextAction`）与后续动作，与
+  "从未生成过计划摘要"（仅成功且 `latestPlan=null` 时出现）明确区分；请求在途时
+  保持普通"正在读取"文案，不伪造等待也不虚报失败。
+- 页内恢复：失败态新增"重新读取原计划摘要"按钮（复用现有 `intentQuery.refetch()`，
+  无新状态系统、无授权或整理重发）；页头现有 Refresh 同步重读实际失败的 intent
+  关联（`intentQuery.isEnabled` 时 `refetch()`），`refreshing` 计入 intent 在途状态。
+  恢复后沿同一 `latestPlan.previewId` 经既有 Preview 权威读出原摘要，仍为只读历史：
+  无 checkbox、无确认、无修正、无"重新检查并更新摘要"，确认拒绝理由来自后端
+  `execute.available=false` 的真实有界原因。
+- 失败文案更新为"请重新读取,或刷新页面、在任务中心查看运行结果"，与新增页内
+  恢复动作一致。正常未确认摘要、A失败/B待确认批次与已通过的事务 fence 均未改动。
+
+**新增回归（真实入口）。** `OrganizeCreationPage.test.tsx` 新增
+`reports a failed history read as a failure and recovers it in the page`：真实页面 +
+stub fetch，第 1 次 intent GET 返回 503（客户端产生 `{ok:false, unavailable}`）→
+断言失败文案与有界原因可见、`intentReads===1`、无"正在读取"假等待、无"从未生成"
+文案、无 Worker 等待；点击页内"重新读取原计划摘要"再次失败 → 失败态重新进入
+（`intentReads===2`）；点击页头 Refresh 第 3 次读取成功 → 断言 intent GET 重发、
+原摘要"One.2001.mkv"按只读历史渲染、结束横幅可见、无确认按钮/选择框/重新检查入口。
+既有"从未生成过计划摘要"用例（成功且 `latestPlan=null`）保持，与失败态形成真实区分。
+
+**本轮定位记录（诚实披露）。** 首次运行新用例失败于 Refresh 恢复后历史不渲染。
+经隔离诊断（临时诊断 spec 已删除）确认根因是**测试夹具遗漏而非产品缺陷**：intent
+`actions.choice.path` 为 objectBound 校验，夹具原值含 `<uuid>` 占位符，第 3 次响应
+未像既有用例那样覆写为绑定 `intent-1` 的真实形状 → `normalizeOrganizeIntent`
+fail-closed 抛 malformed → React Query 保留旧 `{ok:false}` data + isError → 页面
+正确保持失败态。产品行为（拒绝未绑定对象身份的 action path、保留上一次有界失败）
+符合现有合同；已按真实后端文档形状补覆写夹具后全部通过。此前"读取失败被显示为
+永远加载"的产品缺陷本身即本轮所修，B 的探针旅程可直接复验。
+
+**实际命令与结果（全部实测，无 skip 掩盖）。**
+
+```sh
+python3 scripts/check_governance.py                          # PASS(实施前/提交前各一次)
+git diff --check                                             # clean
+web: npm run test -- run OrganizeCreationPage.test.tsx       # 10 passed(含新增恢复旅程)
+web: npm run test -- run OperationsInventory.test.tsx
+  OrganizeDiscoveryPage.test.tsx StorageFilesPage.test.tsx run.test.ts discovery.test.ts
+                                                             # 5 files, 157 passed
+web: npm run typecheck                                       # pass
+web: npm run lint                                            # pass
+web: npx prettier --check src/features/operations/OrganizeCreationPage.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx      # pass
+.venv/bin/python -m unittest tests.test_failed_preparation_ownership
+  tests.test_operations_task_center tests.test_manual_organize_execution   # 71 OK
+.venv/bin/python -m unittest tests.test_organize_source_history.{PartialItemIsHistoryNotOwner,
+  SupersededSingleFileOwnerHandoff,SupersededOwnerWithRemainingWork}Tests
+  tests.test_organize_preparation.{AdmittedSourceOwnership,SourceReidentificationJourney}Tests
+                                                             # 16 OK
+```
+
+本轮无 Python 产品代码改动；上列 Python 用例为 Task 原 affected plan 的候选完整性复核
+（B 在 c02c3ad9 已验证 2678 全量 OK）。
+
+**剩余风险与边界（供 B 复核，未自行判定通过）。**
+
+1. 断网形态仅以 503 `{ok:false}` 覆盖；真实浏览器一次网络中断 → 页内恢复 → 整页刷新
+   对照的复现仍按 B 指导由其 history-probe 旅程独立复验。
+2. 读取失败时若 intent query 因 401/403 抛 `OperationsApiError`，仍走既有全局认证处理，
+   未纳入本用例（既有行为未改）。
+3. `intentReadFailed` 对"intentId 为 null 的已结束流程"（无关联 intent）不判失败，
+   维持"从未生成过计划摘要"文案；该组合未新增专属用例（与既有 never-generated 用例
+   同路径）。
+4. E2E（organize-source-history / operations-inventory / task-flow python specs）、
+   桌面/390px 原生验收、同版本 reopen、T4 全回归、wheel/Docker 门禁按分工未由
+   Developer 执行，保持 B 责任。
+
+本轮为连续开发会话约 35 分钟；测试执行墙钟（vitest 单测/受影响集、typecheck/lint/
+prettier、Python 受影响用例、治理与 diff check）累计约 4 分钟，低于 30% 上限；
+测试编写、失败定位（夹具根因诊断）与实现属开发工作，未以延长等待凑比例。
+未越权改 SLICE/Roadmap/Progress，未推送，未自签 PASS。
