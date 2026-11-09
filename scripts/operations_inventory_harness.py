@@ -388,8 +388,12 @@ def build_managed_fixture(
     (dialog_root / "DialogConflict.2022.mkv").write_bytes(
         b"slice53 conflict synthetic media"
     )
+    (dialog_root / "DialogSibling.2023.mkv").write_bytes(
+        b"slice53 conflict sibling synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -579,7 +583,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023)\.mkv$"
                         ),
                     },
                 ],
@@ -1007,6 +1011,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogConflict",
                         year=2022,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "703",
+                        MediaType.MOVIE,
+                        "DialogSibling",
+                        year=2023,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3649,6 +3662,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Tenth.2010.mkv",
         "Eleventh.2011.mkv",
         "Dialog/DialogConflict.2022.mkv",
+        "Dialog/DialogSibling.2023.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")

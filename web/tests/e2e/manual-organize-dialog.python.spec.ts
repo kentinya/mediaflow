@@ -322,11 +322,11 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
 }) => {
   test.setTimeout(240_000);
   const conflictFile = "DialogConflict.2022.mkv";
-  const conflictStateFile = `Dialog/${conflictFile}`;
-  const fileState = async () => {
+  const siblingFile = "DialogSibling.2023.mkv";
+  const stateFor = async (name: string) => {
     const response = await request.get(
       `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
-        conflictStateFile,
+        `Dialog/${name}`,
       )}`,
     );
     expect(response.ok()).toBe(true);
@@ -335,6 +335,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
       readonly destinationTargets: readonly string[];
     };
   };
+  const fileState = () => stateFor(conflictFile);
 
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
@@ -391,9 +392,10 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   await page.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
 
-  // Second pass: the ordinary MOVE now finds that exact target occupied.
+  // Second pass: the ordinary MOVE now finds that exact target occupied,
+  // beside a healthy sibling that must never be replayed by this confirmation.
   await openDialogDirectory(page, conflictFile);
-  await selectFiles(page, [conflictFile]);
+  await selectFiles(page, [conflictFile, siblingFile]);
   await page.getByRole("button", { name: "批量整理" }).click();
   card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
@@ -403,9 +405,19 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   );
   expect(secondDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, secondDiscoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await expect(
+    card.getByRole("heading", { name: /第 [12] \/ 2 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  if (
+    !(await card
+      .getByText(conflictFile)
+      .first()
+      .isVisible()
+      .catch(() => false))
+  ) {
+    await card.getByRole("button", { name: "下一项" }).click();
+  }
+  await expect(card.getByText(conflictFile).first()).toBeVisible();
   await expect(card.getByText("目标已有文件").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -430,6 +442,17 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
+  // Leave the healthy sibling out of the single execution confirmation.
+  const siblingInclusion = card.getByRole("checkbox", {
+    name: `纳入 ${siblingFile}`,
+  });
+  if (!(await siblingInclusion.isVisible().catch(() => false))) {
+    await card.getByRole("button", { name: "下一项" }).click();
+  }
+  await expect(siblingInclusion).toBeVisible();
+  if (await siblingInclusion.isChecked()) await siblingInclusion.uncheck();
+  await card.getByRole("button", { name: "上一项" }).click();
+  await expect(card.getByText(conflictFile).first()).toBeVisible();
   const decisionPosts = commands.filter(
     (command) =>
       command.method === "POST" &&
@@ -473,4 +496,8 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   expect(
     moved.destinationTargets.find((value) => value !== originalTarget),
   ).toBeTruthy();
+  expect(await stateFor(siblingFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
 });
