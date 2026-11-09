@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 99328d5d22e3110eb2f97415af436c76e5545a3a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: B REVIEWS TASK53.1 CANDIDATE 99328d5d
+Next Action: DEVELOPER FIXES TASK53.1 — REOPEN THE SAME DIALOG FROM EXISTING TASK LINKS
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -264,28 +264,28 @@ Developer 的受影响验证，不替代 B 的 T4 全量验收；未推送、未
 ### 实际验证（Developer 受影响范围）
 
 - `web/`：`NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
-  src/features/operations/ManualOrganizeDialog.test.tsx
-  src/features/operations/OrganizeCreationPage.test.tsx
-  src/features/operations/OrganizeRouter.test.tsx
-  src/features/operations/OrganizePlanConfirmation.test.tsx
-  src/features/operations/TaskItemRecoveryPanel.test.tsx src/shared/ui/modal-card.test.tsx
-  src/shared/navigation/destination-model.test.ts` → 8 files / **159 passed**。
+src/features/operations/ManualOrganizeDialog.test.tsx
+src/features/operations/OrganizeCreationPage.test.tsx
+src/features/operations/OrganizeRouter.test.tsx
+src/features/operations/OrganizePlanConfirmation.test.tsx
+src/features/operations/TaskItemRecoveryPanel.test.tsx src/shared/ui/modal-card.test.tsx
+src/shared/navigation/destination-model.test.ts` → 8 files / **159 passed**。
 - `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；改动文件
   `npx prettier --check` → all matched。
 - `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
-  tests/e2e/manual-operations.spec.ts` → **55 passed**。
+tests/e2e/manual-operations.spec.ts` → **55 passed**。
 - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/manual-organize-dialog.python.spec.ts
-  tests/e2e/operations-inventory.python.spec.ts
-  tests/e2e/organize-source-history.python.spec.ts` → **48 passed**（真实临时 SQLite、
+tests/e2e/manual-organize-dialog.python.spec.ts
+tests/e2e/operations-inventory.python.spec.ts
+tests/e2e/organize-source-history.python.spec.ts` → **48 passed**（真实临时 SQLite、
   Local Storage、synthetic provider、真实 Worker；含 10 文件逐项候选→一次确认→准确
   Task 详情的链路，以及未知响应核对）。
 - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/automation-settings.python.spec.ts` → **15 passed**；任务中心视觉 spec →
+tests/e2e/automation-settings.python.spec.ts` → **15 passed**；任务中心视觉 spec →
   **3 passed**；OpenList 专用配置 spec → **1 passed**；Unicode principal 专用配置 spec →
   **1 passed**。
 - 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
-  tests.test_manual_organize_execution tests.test_organize_source_history` → **104 tests OK**
+tests.test_manual_organize_execution tests.test_organize_source_history` → **104 tests OK**
   （仅既有 ResourceWarning，无失败）；`python3 scripts/check_governance.py` → PASS；
   `git diff --check` → clean。
 
@@ -310,4 +310,76 @@ Developer 的受影响验证，不替代 B 的 T4 全量验收；未推送、未
 
 ## B Review Result
 
-PENDING — 等待 Developer 的精确候选；尚无独立验收或 PASS。
+**FIX REQUIRED — 2026-11-09，B 独立复核。** 保留 Task53.1、原 Base 和 T4 等级，
+在本 Task 内修正后重新提交 READY FOR B REVIEW。没有 Task PASS、下一 Task 或 Slice 关闭。
+
+### 审查范围与结论
+
+- Branch：`main`；Task／Slice Base：`95c24cd0a3cc51acd6143e37e72371445cb15a72`。
+- Reviewed Head：`afc402a7b7d798d281c01aea3316920fb4dcef21`；实现 checkpoint：
+  `99328d5d22e3110eb2f97415af436c76e5545a3a`。审查覆盖完整 Base..Head 的文件清单、
+  产品实现、测试及合同文档；后继报告提交没有改变产品代码。
+- 初次 Files 弹窗及两条提交交接已有实际通过证据；**关闭后从原任务继续整理仍进入旧整页**，
+  未达到 Complete journey §6、AC-8 与 Slice RO-3／`V2-OPS-019`。
+- 任务中心详情产品代码没有纳入本次改造；下面的修正继续遵守其冻结边界。
+
+### P1：从任务中心继续整理，没有重开逐文件弹窗
+
+**完整复现：** 在真实 Python 临时库中登录，进入文件页，选择 `Unified media source`，
+勾选 `Two.2002.mkv` 后点“批量整理”。准备完成后能看到新弹窗及“第 1 / 1 个”。
+关闭弹窗，进入任务中心，打开该准备对应的准确任务，再点现有“继续整理”。
+用户此时看到“新建整理任务／准备进度／计划摘要／来源选择修正／确认整理”的旧长整页，
+没有“整理所选文件”弹窗，无法沿用刚才的逐文件复核体验。
+
+浏览器实际落点为既有 `/ui-v2/operations/organize/new`，携带原 `discoveryId`、
+`resourceLibraryId` 和 `returnOps`；地址直接来自任务详情现有链接。
+`web/src/routes/router.tsx` 的 `organizeNewRoute` 仍直接渲染 `OrganizeCreationPage`；
+该页面在本次实现里只提取了状态文案，没有接入新弹窗。
+
+现有 `operations-inventory.python.spec.ts` 的同一真实旅程仍断言旧“计划摘要”标题；
+结束后“查看只读摘要”也仍断言“新建整理任务”。这些断言能证明旧链接可读，不能证明
+Slice53 要求的同一新整理上下文已接通。只读入口本轮未独立重跑，修正时一并覆盖同一接收路径。
+
+### Developer 修正指导
+
+1. 在**整理侧接收路由／共享整理内容**接入同一逐文件弹窗，消费原链接的准确准备身份、
+   资源库与返回上下文。复用现有 `ManualOrganizeDialog` 能力；打开原工作只读取原准备，
+   不再次发起 Files 准入。保持任务中心链接、详情布局、内容及恢复 UI 原样。
+2. 可继续的准备打开逐文件复核；已结束准备打开其原摘要的只读内容。保留关闭、返回、
+   刷新及认证续转的准确上下文；确认后的交接继续选中原 Task。旧执行历史仍按原范围可读。
+3. 修改现有真实 `operations-inventory.python.spec.ts` 旅程：从 Files 建立准备并关闭，
+   在任务中心打开同一任务，**点击现有“继续整理”链接**后断言同一新弹窗、文件及准备身份，
+   再完成确认并回到同一任务；完成后点击现有“查看只读摘要”，断言同一弹窗的只读原摘要。
+   保留原先的导航零 POST、一次执行、源／目标效果及原任务归属断言。通过正常入口取得
+   刷新／认证测试地址，不改成手工拼 URL 或只断言页面有内容。
+4. 补上接收路由的直接单元回归，运行改动及直接受影响测试和静态检查，提交同一 Task 的
+   修正 checkpoint 与实际结果。全量 T4 验收仍由 B 在修正候选上执行。
+
+### B 本轮实际验证与证据
+
+- 仓库根 `python3 scripts/check_governance.py`：PASS（审查前及记录结论后）。
+- `web/` 的 `npm run build`：PASS，297 modules；只有既有构建体积提示。
+- `web/` 的 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts`：
+  **2 passed（29.9s）**。覆盖 10 项独立候选确认→一次准确 Task 交接，以及未知 Execute
+  响应→核对原提交→准确 Task 交接。使用临时 SQLite／Local Storage／假 Provider／真实 Worker。
+- 使用上述构建产物和同类隔离 Python harness，沿实际 Files→关闭→任务中心→继续整理
+  完整操作，复现上述 P1；未读写用户媒体或用户数据库。
+- 本地证据目录：`.git/validation-evidence/afc402a7/b53-review/`；
+  `files-review-desktop.png` 与 `continue-old-page.png` 为同一 1536×1000 视口，
+  分别记录初次新弹窗和继续整理后的旧整页。该目录是本地证据，不是远程可访问附件。
+- Developer 报告中的其他通过数量未由本轮独立重跑，不作为 B 全量通过记录。
+- 已有确定阻塞，按 Workflow §6 提前返回 FIX REQUIRED：尚未完成 T4 全量回归、
+  wheel／重启等适用门禁，390px／矮窗口／完整键盘与四类修正验收仍待修正候选核对。
+  本轮以代码／合同审查为主，测试用时低于本轮总用时的 50%；没有启动昂贵全量套件。
+
+### 全部 Slice 结果重评
+
+| 结果                        | 本轮判断                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| RO-1 逐文件整理弹窗         | 初次 Files 入口与桌面画面已核对；全部入口、窄／矮窗口和交互验收尚未完成。           |
+| RO-2 当前文件修正与集中确认 | 10 项候选逐项保存／分析及一次集中确认通过；四类决定与全部异常／兄弟项验收尚未完成。 |
+| RO-3 精确任务中心交接       | 正常／未知提交交接通过；从任务中心继续未重开新弹窗，P1 阻塞。                       |
+
+因此继续本 Task 修正，不规划新 Task，不提交 Closure Packet，不更新 A 的 Slice／Roadmap
+边界或已接受 Progress。预存 `.DS_Store`、调查脚本／日志、`15`、`output/` 均保持未动，
+本轮产品代码零修改；只提交本 Task 的 B 审查结论，不推送或部署。
