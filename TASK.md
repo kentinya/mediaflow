@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 16b949fcd649498b03bd8d0c15289817d471cfa3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: B REVIEWS THE CURRENT-FILE CONFLICT FIX CANDIDATE
+Next Action: DEVELOPER COMPLETES CURRENT-FILE LEGAL DECISIONS IN TASK53.1
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -296,96 +296,91 @@ tests/e2e/deep-link.spec.ts` → **64 passed（38.6s）**，在最终 build 上�
 
 ## B Review Result
 
-**FIX REQUIRED — B 独立复核，2026-11-09。** 上一轮继续／只读摘要路由阻塞已修复；
-本轮确认当前文件内的冲突决定尚未交付。继续 Task53.1，Base、范围与 T4 不变。
+**FIX REQUIRED — B 独立复核，2026-11-09。** 当前文件的冲突决定修正通过；原 AC-4
+要求的无候选元数据修正仍未接入当前弹窗。继续 Task53.1，Base、范围与 T4 不变。
 
 ### 审查范围与已通过修正
 
 - Branch：`main`；固定 Base：`95c24cd0a3cc51acd6143e37e72371445cb15a72`；
-  Reviewed Head：`56e3313c4aa30d58988e83f67b0803fe8e96b0de`；
-  修正实现：`31211d9ad4c4aabcf7fccc1042cc8c13af5fa008`。
-- 本轮对完整 Base..Head 清单重新核对，并在上轮完整审查上逐项审查新增的 5 文件差异，
-  包括旧整页删除、同一弹窗接收路由、只读历史读取和测试替换。未改产品代码。
-- 真实入口 **Files→打开整理→关闭→任务中心同一任务→继续整理→同一逐文件弹窗→
-  一次确认→同一任务详情→结束后查看只读摘要** 独立测试通过；导航零 POST、一次执行、
-  原任务归属及实际文件效果断言保留。上一轮路由 P1 解除。
-- 任务中心详情产品代码保持未改；此次待修正内容仍在整理侧，不改变冻结边界。
+  Reviewed Head：`6a5c10c87639535d6219f86d4db1c9827a3902fc`；
+  修正实现：`16b949fcd649498b03bd8d0c15289817d471cfa3`；
+  测试补强：`98596bb2a2feabf1fbd143ff647514de90c65030`。
+- 结合此前完整审查，重新核对完整 Base..Head 清单，并审查新增 10 文件差异：原生问题
+  条目关联、投影、typed normalization、共享决定组件、弹窗挂载、测试与夹具。未改产品代码。
+- 真实 Python 回归 **3 passed**：10 项候选保存与一次精确交接、未知提交核对、真实目标
+  冲突重命名。冲突用例验证决定／分析不执行、最终确认后保留原目标并生成重命名目标，
+  未选中的健康兄弟源／目标不变，打开准确任务详情。上一轮冲突 P1 解除。
+- 继续／只读摘要入口的前轮通过记录保留；共享恢复组件默认 full 模式仍保留任务中心
+  原有呈现，本 Task 的任务详情冻结边界不变。
 
-### P1：有真实目标冲突时，当前文件没有处理动作
+### P1：找不到作品时，当前文件无法修正元数据并继续
 
 对应 RO-2、Complete journey §3、Implementation step 4、AC-4、`V2-OPS-018`。
 
-**完整操作与实际结果：** 使用隔离 Python harness 的现有文件和配置，通过 Files 选择
-`Unified media source / Two.2002.mkv` 并批量整理。在弹窗选择现有 `Copy fixture`，
-点击“保存并重新分析”，完成整批复核及“确认整理 1 项”，真实 Worker 成功复制。
-此时来源保留、目标已有一个文件。再从 Files 选择同一来源发起默认移动整理，真实分析
-产生目标已存在的冲突。
+**完整操作与实际结果：** 在现有隔离 Python harness 中，从 Files 打开
+`Unified media source`，使用已有右键“重命名”，将 `Four.2004.mkv` 改为
+`MissingFilm.2004.mkv`。选择该文件→批量整理→在当前弹窗选择已有 `Normal Movie / A`
+识别类型→保存并重新分析→真实 Worker 完成分析。
 
-新弹窗此时显示“第 1 / 1 个／未就绪”、目标冲突与禁用的“纳入本次整理”，
-却没有跳过、重命名等冲突决定操作；未改变识别／作品时“保存并重新分析”也禁用。
-“当前问题”显示英文 `scheduled organization failed at a bounded workflow boundary`
-和 `request a fresh Preview for this item`，没有对应可执行的下一步。
-用户因此不能在当前文件完成决定→重新分析→核对新方案→最终确认。
+弹窗此时显示“当前没有可读的元数据候选”，却没有搜索标题、年份、媒体类型或 Provider
+搜索动作；未再改识别类型时保存按钮禁用，文件未就绪、不可纳入，整批已选 0 项。
+“当前问题”只有英文通用失败与“request a fresh Preview for this item”，无法指导继续。
+用户不能在当前文件完成修正→分析→新方案→最终确认。
 
-随后经现有任务中心“冲突处理→查看问题文件→同一文件”入口核对，**同一 Task** 的原有
-审核区确实提供“跳过此条目”“重命名目标(保留现有文件)”及“保存决策并继续安全分析”。
-这证明合法决定已经存在，缺口是新弹窗没有接入。任务中心详情正常工作不等于完成本 Task
-约定的当前文件内处理。该过程没有手工构造产品入口或注入冲突记录。
+关闭弹窗，经现有任务中心“元数据恢复→查看问题文件→同一文件”入口，**同一 Task** 的
+既有审核区显示“等待元数据修正”，提供“搜索标题”“媒体类型”“年份(可留空)”、
+“显式搜索 Metadata Provider”及“保存决策并继续安全分析”。原有能力存在，缺口在弹窗
+接入；复现没有构造产品 URL、注入故障记录或改 Provider 响应。
 
-代码根因：`ManualOrganizeDialog` 只使用 `updateOrganizeChoice` 保存识别类型／固定作品，
-“当前问题”仅展示 failure／conflicts；没有消费原 TaskItem 的恢复决定与分析能力。
-`TaskItemRecoveryPanel`／`task-item-recovery-session`、`run-detail-query` 和 typed API
-已有相应能力，`ManualOrganizePreviewService` 也会消费该 Task 自己的合法已保存决定。
+代码根因：`ManualOrganizeDialog.tsx:1445` 仅在 `item.conflicts.length > 0` 分支挂载
+`TaskItemRecoveryPanel mode="decision"`。本例 Preview 已提供准确 `problemTaskItemId`，
+但 conflicts 为空，因此走通用 failure 展示。后端 NOT_FOUND 已发布 `metadata_correction`，
+共享决定模式也已有该表单与保存／分析能力。缺口始于 `99328d5d` 的新弹窗实现；
+`16b949fc` 接通了冲突分支，未完成原 Task 的其余当前文件决定范围，并非新增需求。
 
 ### Developer 修正指导与验收
 
-1. 将该准备所关联 Task／TaskItem 的合法冲突决定接入**当前逐文件容器**，复用既有
-   typed API、决定／分析会话及精确关联。保留后端提供的策略和权限；保存决定后重新分析，
-   仍在当前文件显示新的精确摘要，再参加最后一次子集确认。共享业务逻辑可作必要提取，
-   任务中心消费者的布局、文案和操作保持原样。
-2. 当前问题直接说明“目标已有文件”、来源与目标、合法选择及下一步，技术错误放入诊断。
-   例如本次允许重命名时，用户能在该文件选择保留现有文件并重命名新目标，点击明确的
-   保存／分析动作后检查新目标。执行仍由最后的“确认整理 N 项”发起。
-3. 按原 AC-4 一并核对本次准备中可达的识别／元数据／分类／冲突决定，复用原能力完成
-   同一容器的处理；本轮独立复现的阻塞是冲突，分类等尚未完成的验收保持待核对。
-4. 在现有真实 Python 旅程中补上上述 **先复制保留来源→从 Files 再整理→产生冲突→
-   在当前文件选择重命名→保存／分析→核对新目标→最终确认→准确 Task 详情** 的回归。
-   冲突由现有操作形成，断言决定／分析前后零新增媒体效果，最终确认才执行，原目标保留、
-   来源／新目标符合操作，兄弟项与任务归属准确。补上决定失败／分析失败的直接组件回归。
-5. Developer 运行新改与直接受影响测试、静态检查并提交同一 Task 的修正候选。
-   B 在修正候选继续全部结果验收及 T4 门禁；本次不规划新 Task。
+1. 按当前文件与原生问题条目的准确关联及后端合法决定接入共享决定模式，不以冲突数量
+   作为全部决定的入口条件。复用已有识别／元数据／分类／冲突能力，在同一逐文件容器
+   完成原 AC-4；本轮独立复现的是无候选元数据修正，分类等可达分支仍须按原范围核对。
+2. 无候选时直接说明未找到作品，在当前文件提供原有搜索标题／年份／类型及显式搜索、
+   合法选择、保存／分析操作。保存后继续显示该文件的新精确摘要，最终统一确认执行。
+   原始异常放诊断；任务中心消费者的布局、文案和操作保持现状。
+3. 补真实入口回归：Files 正常重命名形成无匹配文件→批量整理→选识别类型→无候选→
+   在当前弹窗修正为夹具已有作品的标题／年份并搜索→保存／重新分析→核对新目标→
+   最终一次确认→准确任务详情。断言确认前零媒体效果、文件／决定关联准确，保留已通过
+   的冲突与健康未选兄弟用例；补直接受影响的保存失败／分析失败及逐文件输入回归。
+4. Developer 运行新改与直接受影响测试、静态检查，提交同一 Task 的完整修正候选。
+   B 继续验收全部 Slice 结果并承担 T4 全量门禁；不拆成逐字段新 Task。
 
 ### B 本轮实际验证与证据
 
 - 仓库根 `python3 scripts/check_governance.py`：PASS（审查前）；
-  `git diff --check 95c24cd..56e3313c`：clean。
+  `git diff --check 95c24cd..6a5c10c8`：clean。
 - `web/`：`npm run build`：PASS（297 modules，既有体积提示）。
-- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable'`：
-  **1 passed（10.3s，测试本身 8.9s）**，覆盖上面的继续／只读摘要完整链路。
-- 使用该构建产物、现有隔离 Python harness、临时 SQLite／Local Storage／假 Provider／
-  真实 Worker，从 Files 与任务中心入口独立完成上述冲突复现。复制后及冲突分析后实际
-  文件状态均为来源存在、一个目标；第二次工作未执行媒体操作。
-- 本地证据：`.git/validation-evidence/56e3313c/b53-review/`，包含 `build.log`、
-  `reopen-e2e.log`、`conflict-reproduction.json`、`conflict-current-file-desktop.png`、
-  `conflict-current-issue-desktop.png`、`existing-conflict-decision.png` 和同任务详情截图。
-  截图为 1536×1000；JSON 记录真实操作、准确任务关联、可见动作与文件状态。
-- 上轮 10 项候选／未知提交测试通过记录见 `604ab44b:TASK.md`；本次未重跑，
-  Developer 报告亦不替代 B 的候选全量验收。上一轮结论保留在 Git。
-- 已有确定 P1，按 Workflow §6 提前 FIX REQUIRED。全量 Python／Web／E2E、wheel／重启
-  等适用 T4 门禁以及完整桌面／390px／矮窗口／键盘验收未完成，继续由 B 承担。
-  本轮测试与浏览器验证用时低于本轮总用时的 50%，未启动昂贵全量套件。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts`：
+  **3 passed（40.9s）**，覆盖上述 10 项候选、未知提交与冲突／健康兄弟完整旅程。
+- 使用该构建产物、现有隔离 harness、临时 SQLite／Local Storage／假 Provider／真实
+  Worker，独立完成上述元数据复现及同任务既有修正入口核对，未执行该问题文件。
+- 本地证据 `.git/validation-evidence/6a5c10c8/b53-review/`：`build.log`、
+  `dialog-e2e.log`、`metadata-reproduction.json`、`metadata-current-file.png`、
+  `existing-metadata-correction.png`。截图为 1536×1000；JSON 保留准确发现／任务／条目
+  关联、原 Preview 和既有修正区内容。详细前轮结论保留在 Git。
+- 已有确定 P1，按 Workflow §6 提前 FIX REQUIRED。完整 Python／Web／E2E、wheel／重启
+  等适用 T4 门禁及完整桌面／390px／矮窗口／键盘验收仍由 B 继续，未声称已通过。
+  本轮测试与浏览器验证用时低于本轮总用时 50%，没有启动昂贵全量套件。
 
 ### 全部 Slice 结果重评
 
-| 结果                        | 当前判断                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------ |
-| RO-1 逐文件弹窗             | Files 初次入口和桌面已核对；完整视觉与窄／矮窗口／键盘验收待完成。             |
-| RO-2 当前文件修正与集中确认 | 候选选择／集中确认已有证据；实际冲突缺少当前文件内的处理动作，未满足。         |
-| RO-3 精确任务中心交接       | 继续及只读摘要链路本轮通过；正常／未知交接已有前轮证据，最终候选仍待完整回归。 |
+| 结果                        | 当前判断                                                                 |
+| --------------------------- | ------------------------------------------------------------------------ |
+| RO-1 逐文件弹窗             | Files 初次入口及桌面已核对；完整视觉、窄／矮窗口和键盘验收待完成。       |
+| RO-2 当前文件修正与集中确认 | 候选与冲突决定通过；无候选元数据修正缺少弹窗入口，未满足。               |
+| RO-3 精确任务中心交接       | 正常与未知提交本轮通过；继续／只读摘要已有前轮证据，最终候选待完整回归。 |
 
-Task53.1 为 FIX REQUIRED，Slice53 保持原合同；不交 Closure Packet、不关闭 Slice。
-本轮只更新 Task 审查结论，预存 `.DS_Store`、调查脚本／日志、`15`、`output/` 保留；
-隔离 harness 与浏览器已结束，未读取用户媒体／数据库，未推送或部署。
+Task53.1 为 FIX REQUIRED；不交 Closure Packet、不关闭 Slice、不规划新 Task。
+本轮只更新 TASK，预存 `.DS_Store`、调查脚本／日志、`15`、`output/` 保留；隔离 harness
+与浏览器已结束，未读取用户媒体／数据库，未推送或部署。
 
 ## Developer Completion Report — P1 修正
 
