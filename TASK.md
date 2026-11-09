@@ -590,3 +590,101 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
 - 真实回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
   用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
   `15`／`output/` 材料保持未动、未提交。
+
+## Developer Completion Report — 统一当前文件修正呈现 P1
+
+**Status:** READY FOR B REVIEW。实现 checkpoint 为
+`f58c25d83bddc71d96dd90276e99e67395e3ac7f`（main；Task Base 未变），本报告及
+状态更新的文档 checkpoint 为最终候选 HEAD。本报告不声称 PASS，不关闭 Slice，
+不替代 B 的 T4 验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- **同一文件只保留一套选择与保存。** 只要本摘要的当前条目携带精确
+  `problemTaskItemId`，整理弹窗不再同时挂载旧的意图修正表单（识别类型／元数据身份
+  下拉框加“保存并重新分析”）。该文件只在“当前问题”中显示一个现有 TaskItem 决定卡、
+  一份按准确 checkpoint／决定身份保存的草稿和一个“保存并重新分析”动作。旧的意图
+  修正表单仅在摘要没有可证明的原生决定时作为回退，不再与原生决定并列。
+- **四类决定统一为整理弹窗卡片。** `decision` 呈现新增 scoped dialog 版本：
+  识别、元数据候选、元数据修正、分类和冲突都使用同一标签在上、字段成组、选项为
+  可读单选卡、一个主保存动作的结构；候选标题／年份／电影或剧集可读，搜索标题、
+  媒体类型、年份（可留空）分组显示。Provider ID、候选标识、审核 ID、固定策略、
+  目标库 ID、原始决定类型等进入“展开技术诊断”。默认层级不再把 `movie`、
+  `Executor` 或原始 Provider 身份放在普通说明的主要位置。
+- **Task Center 默认 full 呈现保持不变。** 全量决定表单分支保留原 markup、标签、
+  保存按钮和提示；只对 `mode="decision"` 的整理弹窗使用新卡片。任务中心详情布局、
+  内容、进度、结果、恢复 UI 与继续／只读摘要入口均未改。
+- **单一决定读取的等待／失败有明确下一步。** 整理弹窗读取原生决定时显示真实读取
+  状态；读取失败显示“无法读取当前文件的决定”、零保存／零执行和“重新读取当前文件
+  的决定”，不会因为隐藏旧表单而留下无入口的空白。
+- **信息层次收口。** “作品匹配”默认显示可读当前作品与识别类型名称；原始元数据
+  身份和匹配依据移入“展开技术诊断”。可读候选列表保留在可展开区域，技术身份与评分
+  仍可核对，但不占据普通选择。旧的意图表单回退也使用同一字段布局。
+- **测试同步到真实入口。** 10 文件真实 Python 旅程现在逐文件点击原生“候选 2”并
+  保存／分析，断言没有并行的意图 choice 表单或 POST；新增单测证明一个原生元数据
+  决定只有一组 radio、一份草稿和一个保存按钮，选择候选 2 只发出一次 recovery
+  decision + continue，零 execute。既有 10 项、冲突、健康兄弟、无候选修正、关闭
+  草稿和未知提交覆盖保留。
+- 直接受影响的 `operations-inventory` 歧义来源旅程改为同一原生候选卡路径，并断言
+  旧“元数据身份”下拉框不存在；该旅程的最终精确确认与执行边界未放宽。
+
+### 实际验证（Developer 受影响范围）
+
+- `web/`：`NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/ui/modal-card.test.tsx src/shared/navigation/destination-model.test.ts`
+  → **8 files / 163 passed**。新增覆盖：原生元数据候选只有一套选择／保存、候选 2
+  只保存一次、旧身份下拉框不在同文件出现、选择前保存禁用、保存前后零 execute；
+  既有 10 项候选、冲突、无候选修正、关闭保护、未知提交与焦点覆盖保留。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed（仅既有
+  体积提示）；7 个改动文件 `npx prettier --check` → all matched。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **4 passed（30.7s）**。10 文件
+  真实用例 8.4s：每项在同一卡片选择候选 2、保存并重新分析，10 次 recovery decision
+  + 10 次 continue，最终只提交一次 10 项 execute；未知提交 3.1s、冲突 10.4s、无候选
+  修正 8.0s 继续通过。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep "brand-new ambiguous"`
+  → **1 passed（5.4s）**，真实歧义来源走同一原生候选卡并完成一次精确执行。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/organize-source-history.python.spec.ts` → **1 passed（3.2s）**。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（38.6s）**，Files 弹窗与既有
+  manual organize 假服务回归无变化。
+- 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_organize_source_history`
+  → **104 passed（7.7s）**；`python3 scripts/check_governance.py` → PASS；
+  `git diff --check` → clean。
+- 自动化测试命令实际执行合计约 4.5 分钟，低于本轮总用时 30%；另在现有隔离 Python
+  harness 中完成真实浏览器视觉采集（详见下节）。
+
+### 真实画面与证据（实现 checkpoint `f58c25d8`）
+
+- 本地证据目录：`.git/validation-evidence/f58c25d83bddc71d96dd90276e99e67395e3ac7f/developer-b53-p1/`。
+- 视口与画面：候选决定在 1536×1000、390×844、1536×700；无候选修正字段在
+  1536×1000 与 390×844；真实目标冲突出现在 1536×1000；既有“新建自动化任务”卡片在
+  1536×1000 与 390×844 作同视口对照。文件为
+  `candidate-desktop-top/decision.png`、`candidate-390-top/decision/action.png`、
+  `candidate-short-top/decision.png`、`correction-desktop.png`、`correction-390.png`、
+  `conflict-desktop.png`、`automation-desktop.png`、`automation-390.png`，以及
+  `review-observations.json`。
+- 实际观察：同一文件只有“选择正确的作品”一组候选卡和一个“保存并重新分析”；
+  技术身份只在“展开技术诊断”内。390 宽度下候选卡、保存按钮和提示均在独立滚动
+  正文内（保存按钮 y=472.8、正文底 y=726），文档与正文横向溢出均为 0；短窗口
+  下固定底栏保持可达。候选与自动化参考卡一样使用标签在上、成组字段、40px 输入与
+  下方提示；修正区的搜索标题／媒体类型／年份不再挤在同一行标签里。
+
+### 剩余风险 / 未运行
+
+- B 仍承担完整 T4 门禁：Python／Web 全量、wheel／打包、重启、Docker 影响、完整
+  键盘／返回／reduced-motion 验收及全部 Slice 结果重评。本报告不声称 PASS。
+- 当前 Dialog harness 目录没有字幕／NFO sidecar，因此上述真实画面没有附件行；附件
+  规划／执行由既有 `tests.test_manual_organize_execution` 覆盖，本 checkpoint 未改
+  附件语义。若 B 要求同视口附件画面，需要另加隔离 sidecar 夹具，不应以猜测补齐。
+- 视觉证据来自临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
+  用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
+  `15`／`output/` 材料保持未动、未提交；本轮未推送或发布。
