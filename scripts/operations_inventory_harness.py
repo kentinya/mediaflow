@@ -391,9 +391,17 @@ def build_managed_fixture(
     (dialog_root / "DialogSibling.2023.mkv").write_bytes(
         b"slice53 conflict sibling synthetic media"
     )
+    # Slice53 metadata-correction regression: the browser renames this valid
+    # source to a name no Provider candidate matches, then corrects the search
+    # and target inside the current-file card.  Its own candidate keeps the
+    # final target isolated from every other journey.
+    (dialog_root / "DialogRename.2024.mkv").write_bytes(
+        b"slice53 metadata correction synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogRename.2024.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -1020,6 +1028,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogSibling",
                         year=2023,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "704",
+                        MediaType.MOVIE,
+                        "DialogRename",
+                        year=2024,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3663,6 +3680,8 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Eleventh.2011.mkv",
         "Dialog/DialogConflict.2022.mkv",
         "Dialog/DialogSibling.2023.mkv",
+        "Dialog/DialogNoMatch.2024.mkv",
+        "Dialog/DialogRename.2024.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")

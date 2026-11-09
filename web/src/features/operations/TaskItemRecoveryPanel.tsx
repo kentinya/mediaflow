@@ -170,6 +170,52 @@ function candidateSummary(value: {
     .join(" · ");
 }
 
+/** Operator inputs for one live decision form, kept per exact TaskItem. */
+export interface TaskItemDecisionDraft {
+  /** The exact checkpoint/decision identity these inputs belong to. */
+  readonly decisionKey: string;
+  readonly selectedChoice: string;
+  readonly searchText: string;
+  readonly correctedYear: string;
+  readonly mediaType: string;
+  readonly selectedProviderId: string;
+  readonly metadataResult: MetadataSearchModel | null;
+  readonly conflictStrategy: string;
+  readonly confirmOverwrite: boolean;
+}
+
+const EMPTY_DECISION_KEY = JSON.stringify([null, null]);
+
+function decisionDraftFrom(
+  decision: TaskItemDecision | null,
+  decisionKey: string,
+): TaskItemDecisionDraft {
+  if (decision === null) {
+    return {
+      decisionKey,
+      selectedChoice: "",
+      searchText: "",
+      correctedYear: "",
+      mediaType: "movie",
+      selectedProviderId: "",
+      metadataResult: null,
+      conflictStrategy: "",
+      confirmOverwrite: false,
+    };
+  }
+  return {
+    decisionKey,
+    selectedChoice: "",
+    searchText: decision.query ?? "",
+    correctedYear: decision.year === null ? "" : String(decision.year),
+    mediaType: decision.mediaType ?? "movie",
+    selectedProviderId: "",
+    metadataResult: null,
+    conflictStrategy: decision.allowedStrategies[0] ?? "",
+    confirmOverwrite: false,
+  };
+}
+
 export interface TaskItemRecoveryPanelProps {
   readonly taskId: string;
   readonly itemId: string;
@@ -187,6 +233,14 @@ export interface TaskItemRecoveryPanelProps {
   readonly mode?: "full" | "decision";
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
+  /**
+   * Decision-mode inputs keyed by the caller's exact TaskItem. The manual
+   * organize card stores this draft outside the paged panel so moving to
+   * another file and back keeps the operator's unsaved title/year/type and
+   * search result. Task Center omits it and keeps the panel's local state.
+   */
+  readonly decisionDraft?: TaskItemDecisionDraft;
+  readonly onDecisionDraftChange?: (draft: TaskItemDecisionDraft) => void;
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -200,6 +254,8 @@ export function TaskItemRecoveryPanel({
   onOpenRecoveryExecution,
   mode = "full",
   onAnalysisRequested,
+  decisionDraft,
+  onDecisionDraftChange,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
   const token = useAuthToken();
@@ -244,15 +300,6 @@ export function TaskItemRecoveryPanel({
     });
   const finishAction = () =>
     updateRecoverySession({ busy: false, pendingAction: null });
-  const [selectedChoice, setSelectedChoice] = useState("");
-  const [searchText, setSearchText] = useState("");
-  const [correctedYear, setCorrectedYear] = useState("");
-  const [mediaType, setMediaType] = useState("movie");
-  const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [metadataResult, setMetadataResult] =
-    useState<MetadataSearchModel | null>(null);
-  const [conflictStrategy, setConflictStrategy] = useState("");
-  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [preparation, setPreparation] = useState<{
     readonly preparationId: string;
     readonly previewId: string;
@@ -304,28 +351,35 @@ export function TaskItemRecoveryPanel({
     checkpoint?.checkpointVersion ?? null,
     decision?.kind ?? null,
   ]);
+  const [internalDecisionDraft, setInternalDecisionDraft] =
+    useState<TaskItemDecisionDraft>(() =>
+      decisionDraftFrom(null, EMPTY_DECISION_KEY),
+    );
   const [resetDecisionKey, setResetDecisionKey] = useState(decisionKey);
   if (resetDecisionKey !== decisionKey) {
     setResetDecisionKey(decisionKey);
-    if (decision === null) {
-      setSelectedChoice("");
-      setSearchText("");
-      setCorrectedYear("");
-      setSelectedProviderId("");
-      setConflictStrategy("");
-      setConfirmOverwrite(false);
-      setMetadataResult(null);
-    } else {
-      setSelectedChoice("");
-      setSearchText(decision.query ?? "");
-      setCorrectedYear(decision.year === null ? "" : String(decision.year));
-      setMediaType(decision.mediaType ?? "movie");
-      setSelectedProviderId("");
-      setConflictStrategy(decision.allowedStrategies[0] ?? "");
-      setConfirmOverwrite(false);
-      setMetadataResult(null);
-    }
+    setInternalDecisionDraft(decisionDraftFrom(decision, decisionKey));
   }
+  // A draft belongs to one exact checkpoint/decision.  While the first model
+  // read is still pending (the empty identity) the caller's draft is shown so
+  // returning to a file never flashes an empty form; once the real identity is
+  // known, only its own draft can replace the current server decision.
+  const callerDraftMatches =
+    decisionDraft !== undefined &&
+    (decisionKey === EMPTY_DECISION_KEY ||
+      decisionDraft.decisionKey === decisionKey);
+  const effectiveDecisionDraft = callerDraftMatches
+    ? decisionDraft
+    : internalDecisionDraft;
+  const updateDecisionDraft = (patch: Partial<TaskItemDecisionDraft>) => {
+    const next = {
+      ...effectiveDecisionDraft,
+      ...patch,
+      decisionKey,
+    };
+    if (!callerDraftMatches) setInternalDecisionDraft(next);
+    onDecisionDraftChange?.(next);
+  };
 
   const refreshLinkedReads = () => {
     void queryClient.invalidateQueries({
@@ -454,12 +508,14 @@ export function TaskItemRecoveryPanel({
     try {
       const result = await searchTaskItemMetadata(token, taskId, itemId, {
         expectedCheckpointVersion: checkpoint.checkpointVersion,
-        query: searchText,
-        mediaType,
+        query: effectiveDecisionDraft.searchText,
+        mediaType: effectiveDecisionDraft.mediaType,
       });
       if (result.ok) {
-        setMetadataResult(result.model);
-        setSelectedProviderId("");
+        updateDecisionDraft({
+          metadataResult: result.model,
+          selectedProviderId: "",
+        });
         updateRecoverySession({
           message:
             result.model.candidates.length === 0
@@ -704,50 +760,69 @@ export function TaskItemRecoveryPanel({
         {owesRecoveryAction && decision !== null && (
           <DecisionForm
             decision={decision}
-            selectedChoice={selectedChoice}
-            onSelectChoice={setSelectedChoice}
-            searchText={searchText}
-            onSearchText={setSearchText}
-            correctedYear={correctedYear}
-            onCorrectedYear={setCorrectedYear}
-            mediaType={mediaType}
-            onMediaType={setMediaType}
-            selectedProviderId={selectedProviderId}
-            onSelectProvider={setSelectedProviderId}
-            metadataResult={metadataResult}
-            conflictStrategy={conflictStrategy}
-            onConflictStrategy={setConflictStrategy}
-            confirmOverwrite={confirmOverwrite}
-            onConfirmOverwrite={setConfirmOverwrite}
+            selectedChoice={effectiveDecisionDraft.selectedChoice}
+            onSelectChoice={(value) =>
+              updateDecisionDraft({ selectedChoice: value })
+            }
+            searchText={effectiveDecisionDraft.searchText}
+            onSearchText={(value) => updateDecisionDraft({ searchText: value })}
+            correctedYear={effectiveDecisionDraft.correctedYear}
+            onCorrectedYear={(value) =>
+              updateDecisionDraft({ correctedYear: value })
+            }
+            mediaType={effectiveDecisionDraft.mediaType}
+            onMediaType={(value) => updateDecisionDraft({ mediaType: value })}
+            selectedProviderId={effectiveDecisionDraft.selectedProviderId}
+            onSelectProvider={(providerId, candidateMediaType) =>
+              updateDecisionDraft({
+                selectedProviderId: providerId,
+                mediaType: candidateMediaType,
+              })
+            }
+            metadataResult={effectiveDecisionDraft.metadataResult}
+            conflictStrategy={effectiveDecisionDraft.conflictStrategy}
+            onConflictStrategy={(value) =>
+              updateDecisionDraft({ conflictStrategy: value })
+            }
+            confirmOverwrite={effectiveDecisionDraft.confirmOverwrite}
+            onConfirmOverwrite={(value) =>
+              updateDecisionDraft({ confirmOverwrite: value })
+            }
             disabled={busy || repeatLocked}
             onSearch={() => void searchMetadata()}
             onSave={() => {
               if (decision.kind === "recognition") {
                 void saveDecision("recognition", {
-                  recognitionTypeId: selectedChoice,
+                  recognitionTypeId: effectiveDecisionDraft.selectedChoice,
                 });
               } else if (decision.kind === "metadata") {
                 void saveDecision("metadata", {
-                  candidateRank: Number(selectedChoice),
+                  candidateRank: Number(effectiveDecisionDraft.selectedChoice),
                 });
               } else if (decision.kind === "metadata_correction") {
                 void saveDecision("metadata_correction", {
-                  query: searchText,
-                  year: correctedYear === "" ? null : Number(correctedYear),
-                  mediaType,
-                  ...(selectedProviderId === ""
+                  query: effectiveDecisionDraft.searchText,
+                  year:
+                    effectiveDecisionDraft.correctedYear === ""
+                      ? null
+                      : Number(effectiveDecisionDraft.correctedYear),
+                  mediaType: effectiveDecisionDraft.mediaType,
+                  ...(effectiveDecisionDraft.selectedProviderId === ""
                     ? {}
-                    : { providerId: selectedProviderId }),
+                    : {
+                        providerId: effectiveDecisionDraft.selectedProviderId,
+                      }),
                 });
               } else if (decision.kind === "classification") {
                 void saveDecision("classification", {
-                  choiceRank: Number(selectedChoice),
+                  choiceRank: Number(effectiveDecisionDraft.selectedChoice),
                 });
               } else {
                 void saveDecision("conflict", {
-                  strategy: conflictStrategy,
+                  strategy: effectiveDecisionDraft.conflictStrategy,
                   confirmOverwrite:
-                    conflictStrategy === "overwrite" && confirmOverwrite,
+                    effectiveDecisionDraft.conflictStrategy === "overwrite" &&
+                    effectiveDecisionDraft.confirmOverwrite,
                 });
               }
             }}
@@ -948,50 +1023,67 @@ export function TaskItemRecoveryPanel({
       {owesRecoveryAction && decision !== null && (
         <DecisionForm
           decision={decision}
-          selectedChoice={selectedChoice}
-          onSelectChoice={setSelectedChoice}
-          searchText={searchText}
-          onSearchText={setSearchText}
-          correctedYear={correctedYear}
-          onCorrectedYear={setCorrectedYear}
-          mediaType={mediaType}
-          onMediaType={setMediaType}
-          selectedProviderId={selectedProviderId}
-          onSelectProvider={setSelectedProviderId}
-          metadataResult={metadataResult}
-          conflictStrategy={conflictStrategy}
-          onConflictStrategy={setConflictStrategy}
-          confirmOverwrite={confirmOverwrite}
-          onConfirmOverwrite={setConfirmOverwrite}
+          selectedChoice={effectiveDecisionDraft.selectedChoice}
+          onSelectChoice={(value) =>
+            updateDecisionDraft({ selectedChoice: value })
+          }
+          searchText={effectiveDecisionDraft.searchText}
+          onSearchText={(value) => updateDecisionDraft({ searchText: value })}
+          correctedYear={effectiveDecisionDraft.correctedYear}
+          onCorrectedYear={(value) =>
+            updateDecisionDraft({ correctedYear: value })
+          }
+          mediaType={effectiveDecisionDraft.mediaType}
+          onMediaType={(value) => updateDecisionDraft({ mediaType: value })}
+          selectedProviderId={effectiveDecisionDraft.selectedProviderId}
+          onSelectProvider={(providerId, candidateMediaType) =>
+            updateDecisionDraft({
+              selectedProviderId: providerId,
+              mediaType: candidateMediaType,
+            })
+          }
+          metadataResult={effectiveDecisionDraft.metadataResult}
+          conflictStrategy={effectiveDecisionDraft.conflictStrategy}
+          onConflictStrategy={(value) =>
+            updateDecisionDraft({ conflictStrategy: value })
+          }
+          confirmOverwrite={effectiveDecisionDraft.confirmOverwrite}
+          onConfirmOverwrite={(value) =>
+            updateDecisionDraft({ confirmOverwrite: value })
+          }
           disabled={busy || repeatLocked}
           onSearch={() => void searchMetadata()}
           onSave={() => {
             if (decision.kind === "recognition") {
               void saveDecision("recognition", {
-                recognitionTypeId: selectedChoice,
+                recognitionTypeId: effectiveDecisionDraft.selectedChoice,
               });
             } else if (decision.kind === "metadata") {
               void saveDecision("metadata", {
-                candidateRank: Number(selectedChoice),
+                candidateRank: Number(effectiveDecisionDraft.selectedChoice),
               });
             } else if (decision.kind === "metadata_correction") {
               void saveDecision("metadata_correction", {
-                query: searchText,
-                year: correctedYear === "" ? null : Number(correctedYear),
-                mediaType,
-                ...(selectedProviderId === ""
+                query: effectiveDecisionDraft.searchText,
+                year:
+                  effectiveDecisionDraft.correctedYear === ""
+                    ? null
+                    : Number(effectiveDecisionDraft.correctedYear),
+                mediaType: effectiveDecisionDraft.mediaType,
+                ...(effectiveDecisionDraft.selectedProviderId === ""
                   ? {}
-                  : { providerId: selectedProviderId }),
+                  : { providerId: effectiveDecisionDraft.selectedProviderId }),
               });
             } else if (decision.kind === "classification") {
               void saveDecision("classification", {
-                choiceRank: Number(selectedChoice),
+                choiceRank: Number(effectiveDecisionDraft.selectedChoice),
               });
             } else {
               void saveDecision("conflict", {
-                strategy: conflictStrategy,
+                strategy: effectiveDecisionDraft.conflictStrategy,
                 confirmOverwrite:
-                  conflictStrategy === "overwrite" && confirmOverwrite,
+                  effectiveDecisionDraft.conflictStrategy === "overwrite" &&
+                  effectiveDecisionDraft.confirmOverwrite,
               });
             }
           }}
@@ -1144,7 +1236,7 @@ function DecisionForm(props: {
   readonly mediaType: string;
   readonly onMediaType: (value: string) => void;
   readonly selectedProviderId: string;
-  readonly onSelectProvider: (value: string) => void;
+  readonly onSelectProvider: (providerId: string, mediaType: string) => void;
   readonly metadataResult: MetadataSearchModel | null;
   readonly conflictStrategy: string;
   readonly onConflictStrategy: (value: string) => void;
@@ -1263,10 +1355,12 @@ function DecisionForm(props: {
                     name="metadata-search-candidate"
                     checked={props.selectedProviderId === candidate.providerId}
                     disabled={props.disabled}
-                    onChange={() => {
-                      props.onSelectProvider(candidate.providerId);
-                      props.onMediaType(candidate.mediaType);
-                    }}
+                    onChange={() =>
+                      props.onSelectProvider(
+                        candidate.providerId,
+                        candidate.mediaType,
+                      )
+                    }
                   />
                   {candidate.title}
                   {candidate.originalTitle

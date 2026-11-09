@@ -72,6 +72,12 @@ function makeBackend() {
     // waiting state before the plan links.
     waitingReads: 0 as number,
     discoveryReads: 0 as number,
+    // A real no-candidate problem on the first file, plus the durable
+    // metadata-correction decision the same TaskItem exposes after analysis.
+    metadataProblem: false as boolean,
+    metadataProblemResolved: false as boolean,
+    failMetadataDecision: false as boolean,
+    failMetadataContinue: false as boolean,
   };
   const calls = {
     discoveryPosts: [] as Json[],
@@ -79,6 +85,9 @@ function makeBackend() {
     analyzePosts: [] as Json[],
     executePosts: [] as Json[],
     admissionReads: 0,
+    metadataSearchPosts: [] as Json[],
+    recoveryDecisionPosts: [] as Json[],
+    recoveryContinuePosts: [] as Json[],
   };
   /** A deliberately stuck Execute response the test releases by hand. */
   let releasedExecute: ((response: Response) => void) | null = null;
@@ -121,6 +130,7 @@ function makeBackend() {
       message: "the exact zero-mutation plan summary is ready",
     },
     primarySourceCount: FILE_COUNT,
+    organizeTaskId: state.endedFlow ? null : "organize-task-1",
     organizeFlow: {
       taskId: "organize-task-1",
       status: state.endedFlow ? "completed" : "running",
@@ -305,11 +315,88 @@ function makeBackend() {
       selectedItemIds: order.map((index) => `item-${index + 1}`),
       unselectedItemIds: [],
     };
+    if (state.metadataProblem && !state.metadataProblemResolved) {
+      const problem = (value["items"] as Json[]).find(
+        (item) => item["itemId"] === "item-1",
+      );
+      if (problem !== undefined) {
+        problem["failure"] = {
+          category: "metadata_failure",
+          message:
+            "metadata identity was not found under the pinned MetadataPolicy",
+          nextAction:
+            "correct the metadata search title/year or choose a Provider identity",
+        };
+        const plan = problem["plan"] as Json;
+        plan["problemTaskItemId"] = "problem-item-1";
+        const analysis = plan["analysis"] as Json;
+        const metadata = analysis["metadata"] as Json;
+        metadata["available"] = false;
+        metadata["status"] = "not_found";
+        const match = metadata["match"] as Json;
+        match["status"] = "not_found";
+        match["candidateCount"] = 0;
+        match["candidates"] = [];
+      }
+      value["executionCandidateItemIds"] = (
+        value["executionCandidateItemIds"] as string[]
+      ).filter((itemId) => itemId !== "item-1");
+      value["selection"] = {
+        selectedItemIds: (
+          (value["selection"] as Json)["selectedItemIds"] as string[]
+        ).filter((itemId) => itemId !== "item-1"),
+        unselectedItemIds: ["item-1"],
+      };
+    }
     const execute = (value["actions"] as Json)["execute"] as Json;
     execute["path"] =
       `/api/v1/operations/organize/previews/${previewId}/execute`;
     return value;
   };
+
+  const metadataCorrectionRecovery = (resolved: boolean): Json => ({
+    task_id: "organize-task-1",
+    item_id: "problem-item-1",
+    checkpoint: {
+      status: resolved ? "pending" : "waiting_metadata_correction",
+      stage: resolved ? "queued" : "waiting_metadata_correction",
+      raw_stage: resolved
+        ? "metadata_correction_resolved"
+        : "waiting_metadata_correction",
+      effects: { certainty: "none" },
+      retry_safety: resolved ? "safe" : "unsafe",
+      checkpoint_version: "b".repeat(64),
+      blocker: resolved
+        ? null
+        : { kind: "metadata_correction", blocker_id: "correction-1" },
+      permitted_action_ids: resolved
+        ? ["retry"]
+        : ["resolve_metadata_correction", "ignore"],
+      refusal_reason: null,
+      next_action: resolved
+        ? "continue safe analysis"
+        : "correct the metadata search",
+    },
+    decision: resolved
+      ? null
+      : {
+          kind: "metadata_correction",
+          review_id: "correction-1",
+          status: "pending",
+          query: "Movie.01",
+          year: 2001,
+          media_type: "movie",
+          can_search: true,
+          choices: [],
+          allowed_strategies: [],
+          conflict_types: [],
+        },
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: resolved
+      ? "continue safe analysis"
+      : "correct the metadata search",
+  });
 
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -446,6 +533,79 @@ function makeBackend() {
           return jsonResponse(waiting);
         }
         return jsonResponse(discoveryDocument());
+      }
+
+      if (
+        url === `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery` &&
+        method === "GET"
+      ) {
+        return jsonResponse(
+          metadataCorrectionRecovery(state.metadataProblemResolved),
+        );
+      }
+
+      if (
+        url ===
+          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/metadata-search` &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Json;
+        calls.metadataSearchPosts.push(body);
+        return jsonResponse({
+          task_id: "organize-task-1",
+          item_id: "problem-item-1",
+          checkpoint_version: "b".repeat(64),
+          provider: "tmdb",
+          media_type: "movie",
+          query: body["query"] ?? "",
+          candidates: [
+            {
+              rank: 1,
+              provider_id: "704",
+              media_type: "movie",
+              title: "DialogRename",
+              original_title: null,
+              year: 2024,
+              release_date: "2024-01-01",
+              original_language: "en",
+            },
+          ],
+          truncated: false,
+          next_action: "choose one candidate and save the decision",
+        });
+      }
+
+      if (
+        url ===
+          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/decision` &&
+        method === "POST"
+      ) {
+        calls.recoveryDecisionPosts.push(
+          JSON.parse(String(init?.body ?? "{}")) as Json,
+        );
+        if (state.failMetadataDecision) {
+          return jsonResponse({ error: { code: "stale_checkpoint" } }, 409);
+        }
+        state.metadataProblemResolved = true;
+        return jsonResponse(metadataCorrectionRecovery(true));
+      }
+
+      if (
+        url ===
+          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/continue` &&
+        method === "POST"
+      ) {
+        calls.recoveryContinuePosts.push(
+          JSON.parse(String(init?.body ?? "{}")) as Json,
+        );
+        if (state.failMetadataContinue) {
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
+        return jsonResponse({
+          sideEffects: "none",
+          next_action: "wait for the Worker and inspect its linked result",
+          nativeAnalysis: { taskId: "organize-task-1" },
+        });
       }
 
       if (
@@ -815,6 +975,116 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.router.state.location.search).toMatchObject({
       run: "task-handoff-1",
     });
+  }, 30_000);
+
+  it("lets the current file correct a missing metadata candidate and keeps unsaved correction inputs across paging", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    // The backend published this exact file's metadata-correction problem on
+    // its own TaskItem. The card must offer that native decision instead of a
+    // dead generic failure.
+    expect(within(card()).getByText(/没有找到匹配的作品/)).toBeVisible();
+    const title = screen.getByLabelText("搜索标题");
+    expect(title).toHaveValue("Movie.01");
+    await user.clear(title);
+    await user.type(title, "DialogRename");
+    const year = screen.getByLabelText("年份(可留空)");
+    await user.clear(year);
+    await user.type(year, "2024");
+
+    // Paging is browse-only and must keep this file's unsaved correction.
+    await user.click(screen.getByRole("button", { name: "下一项" }));
+    await screen.findByRole("heading", { name: /第 2 \/ 10 个/ });
+    await user.click(screen.getByRole("button", { name: "上一项" }));
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await waitFor(() =>
+      expect(screen.getByLabelText("搜索标题")).toHaveValue("DialogRename"),
+    );
+    expect(screen.getByLabelText("年份(可留空)")).toHaveValue(2024);
+    expect(backend.calls.metadataSearchPosts).toHaveLength(0);
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    // The explicit Provider search is a read; choosing its grounded candidate
+    // and saving the decision re-analyzes without executing anything.
+    await user.click(
+      screen.getByRole("button", { name: "显式搜索 Metadata Provider" }),
+    );
+    await waitFor(() =>
+      expect(backend.calls.metadataSearchPosts).toHaveLength(1),
+    );
+    expect(backend.calls.metadataSearchPosts[0]).toMatchObject({
+      query: "DialogRename",
+      mediaType: "movie",
+    });
+    await user.click(
+      await screen.findByRole("radio", { name: /DialogRename/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "保存决策并继续安全分析" }),
+    );
+
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    expect(backend.calls.recoveryDecisionPosts[0]).toMatchObject({
+      kind: "metadata_correction",
+      query: "DialogRename",
+      year: 2024,
+      mediaType: "movie",
+      providerId: "704",
+    });
+    await waitFor(() =>
+      expect(backend.calls.recoveryContinuePosts).toHaveLength(1),
+    );
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(
+      await screen.findByText(/当前文件的决定已保存并请求重新分析/),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(within(card()).getAllByText("纳入本次整理")[0]).toBeVisible(),
+    );
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("reports metadata decision save and analysis failures without executing or replaying", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+      value.state.failMetadataDecision = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    const save = await screen.findByRole("button", {
+      name: "保存决策并继续安全分析",
+    });
+
+    // A rejected decision stays on the current file; no analysis is requested
+    // and no file operation happens.
+    await user.click(save);
+    expect(await screen.findByText(/条目已变化/)).toBeVisible();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(screen.getByLabelText("搜索标题")).toHaveValue("Movie.01");
+
+    // The durable decision succeeds but the Worker analysis request does not.
+    // The card names that split instead of claiming either a failed save or a
+    // successful re-analysis.
+    backend.state.failMetadataDecision = false;
+    backend.state.failMetadataContinue = true;
+    await user.click(save);
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(backend.calls.recoveryContinuePosts).toHaveLength(1),
+    );
+    expect(await screen.findByText(/服务响应无法确认操作结果/)).toBeVisible();
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
   it("keeps unsaved drafts across paging, never saves on paging and pins the discard choice on close", async () => {

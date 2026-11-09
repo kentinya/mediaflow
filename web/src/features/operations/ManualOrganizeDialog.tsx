@@ -64,7 +64,10 @@ import {
   destructiveStatement,
   displayEnum,
 } from "./organize-summary";
-import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
+import {
+  TaskItemRecoveryPanel,
+  type TaskItemDecisionDraft,
+} from "./TaskItemRecoveryPanel";
 
 /** One admitted Files organize selection the dialog follows. */
 export type ManualOrganizeDialogSession =
@@ -222,6 +225,9 @@ export function ManualOrganizeDialog({
   const [notices, setNotices] = useState<Readonly<Record<string, SaveNotice>>>(
     {},
   );
+  const [decisionDrafts, setDecisionDrafts] = useState<
+    Readonly<Record<string, TaskItemDecisionDraft>>
+  >({});
   const [result, setResult] = useState<string | null>(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   const [allowSourceCleanup, setAllowSourceCleanup] = useState(false);
@@ -1164,6 +1170,14 @@ export function ManualOrganizeDialog({
     const notice = currentNotice;
     const organizeTaskId = preparation?.organizeTaskId ?? null;
     const firstConflict = item.conflicts[0] ?? null;
+    const problemTaskItemId = item.problemTaskItemId;
+    const hasNativeProblem =
+      !organizeFlowEnded &&
+      organizeTaskId !== null &&
+      problemTaskItemId !== null;
+    const metadataNotFound =
+      item.analysis?.metadata?.status === "not_found" ||
+      item.analysis?.metadata?.match?.status === "not_found";
     const decisionAnalysisRequested = () => {
       setNotices((previous) => ({
         ...previous,
@@ -1469,35 +1483,45 @@ export function ManualOrganizeDialog({
                 当前文件在冲突决定被保存并由真实分析取代前不能纳入确认；
                 这里不会自动覆盖、跳过或移动任何文件。
               </p>
-              {!organizeFlowEnded &&
-              organizeTaskId !== null &&
-              item.problemTaskItemId !== null ? (
-                <TaskItemRecoveryPanel
-                  key={`${organizeTaskId}:${item.problemTaskItemId}:${token ?? "disconnected"}`}
-                  taskId={organizeTaskId}
-                  itemId={item.problemTaskItemId}
-                  runId={organizeTaskId}
-                  active={false}
-                  mode="decision"
-                  onAnalysisRequested={decisionAnalysisRequested}
-                />
-              ) : (
-                <StatusBanner
-                  variant="error"
-                  title="无法打开当前文件的冲突决定"
-                >
-                  <p role="status">
-                    尚未证明当前文件与本整理任务的审核条目关联；没有保存决定，
-                    也没有修改任何文件。请重新读取当前摘要，或关闭后从任务中心
-                    对应任务的冲突处理入口核对同一文件。
-                  </p>
-                </StatusBanner>
-              )}
             </>
           ) : item.failure !== null ? (
-            <StatusBanner variant="error" title="条目未就绪">
-              <p>{item.failure.message}</p>
-              <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
+            hasNativeProblem ? (
+              <p role="status">
+                {metadataNotFound
+                  ? "没有找到匹配的作品。请在下方修正搜索标题、年份或媒体类型，显式搜索并选择合法候选后保存；保存只记录决定，不会执行整理。"
+                  : "当前文件尚未就绪。请在下方完成该文件当前的合法决定并保存；保存后会重新分析并显示新的精确方案，保存本身不会执行整理。"}
+              </p>
+            ) : (
+              <StatusBanner variant="error" title="条目未就绪">
+                <p>{item.failure.message}</p>
+                <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
+              </StatusBanner>
+            )
+          ) : null}
+          {hasNativeProblem && problemTaskItemId !== null ? (
+            <TaskItemRecoveryPanel
+              key={`${organizeTaskId}:${problemTaskItemId}:${token ?? "disconnected"}`}
+              taskId={organizeTaskId}
+              itemId={problemTaskItemId}
+              runId={organizeTaskId}
+              active={false}
+              mode="decision"
+              onAnalysisRequested={decisionAnalysisRequested}
+              decisionDraft={decisionDrafts[problemTaskItemId]}
+              onDecisionDraftChange={(draft) =>
+                setDecisionDrafts((previous) => ({
+                  ...previous,
+                  [problemTaskItemId]: draft,
+                }))
+              }
+            />
+          ) : item.conflicts.length > 0 ? (
+            <StatusBanner variant="error" title="无法打开当前文件的冲突决定">
+              <p role="status">
+                尚未证明当前文件与本整理任务的审核条目关联；没有保存决定，
+                也没有修改任何文件。请重新读取当前摘要，或关闭后从任务中心
+                对应任务的冲突处理入口核对同一文件。
+              </p>
             </StatusBanner>
           ) : null}
           {item.warnings.length > 0 ? (

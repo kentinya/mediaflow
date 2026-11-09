@@ -862,9 +862,14 @@ test("an indeterminate run states an unknown total instead of inventing one", as
     .click();
   await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
   await expect(page).not.toHaveURL(/status=/);
+  // Earlier real-Python specs (including a live manual organize Task with a
+  // waiting sibling) are part of this inventory population. Select the seeded
+  // non-terminal standalone run by its own zero-item evidence instead of
+  // assuming the newest running row is the indeterminate fixture.
   const runningRow = page
     .getByRole("row")
     .filter({ hasText: "进行中" })
+    .filter({ hasText: "0 / 0 项" })
     .first();
   await expect(runningRow).toBeVisible();
   await runningRow.getByRole("button").first().click();

@@ -501,3 +501,167 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
     destinationTargets: [],
   });
 });
+
+test("a missing metadata candidate is corrected on the current file and confirmed into the exact Task", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const originalFile = "DialogRename.2024.mkv";
+  const renamedFile = "DialogNoMatch.2024.mkv";
+  const targetStemFile = "DialogRename.2024.mkv";
+  const stateFor = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, originalFile);
+
+  // A normal Files rename turns this otherwise valid source into a name no
+  // Provider candidate matches.  The card must recover it in place.
+  const row = page.getByRole("row", {
+    name: new RegExp(originalFile.replace(/\./g, "\\.")),
+  });
+  await row.click({ button: "right", position: { x: 40, y: 20 } });
+  await page.getByRole("menuitem", { name: "重命名" }).click();
+  const renameInput = page.getByLabel("新名称");
+  await expect(renameInput).toHaveValue(originalFile);
+  await renameInput.fill(renamedFile);
+  await page.getByRole("button", { name: "重命名", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "重命名" })).toHaveCount(0);
+  await expect(
+    page.getByRole("checkbox", { name: `选择 ${renamedFile}` }),
+  ).toBeVisible();
+
+  const before = await stateFor(renamedFile);
+  expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  await selectFiles(page, [renamedFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText("当前文件的合法决定")).toBeVisible();
+  // The renamed file no longer matches a RecognitionRule, so the operator
+  // first selects one recognition type on this same file.
+  await expect(card.getByText(/待处理的识别决策/)).toBeVisible();
+  await card.getByRole("radio", { name: /Normal Movie/ }).check();
+  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
+  await expect(
+    card.getByText(/当前文件的决定已保存并请求重新分析/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText(/待处理的识别决策/)).toHaveCount(0);
+  await driveDiscoveryFor(page, request, discoveryId as string);
+
+  // The real Worker then reports that this exact title has no Provider
+  // candidate; the current file now offers its metadata correction.
+  await expect(card.getByText(/没有找到匹配的作品/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText(/待处理的元数据修正决策/)).toBeVisible();
+
+  const title = card.getByLabel("搜索标题");
+  await expect(title).not.toHaveValue("");
+  await title.fill("DialogRename");
+  await card.getByLabel("年份(可留空)").fill("2024");
+  await card
+    .getByRole("button", { name: "显式搜索 Metadata Provider" })
+    .click();
+  await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
+  await card.getByRole("radio", { name: /DialogRename/ }).check();
+  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
+  await expect(
+    card.getByText(/当前文件的决定已保存并请求重新分析/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText(/待处理的元数据修正决策/)).toHaveCount(0);
+  await expect(card.getByText("正在保存…")).toHaveCount(0);
+
+  // Saving the correction and requesting analysis is zero media mutation:
+  // the renamed source is still there and no target exists yet.
+  expect(await stateFor(renamedFile)).toEqual(before);
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+  expect(executePosts()).toHaveLength(0);
+  const decisionPosts = commands.filter(
+    (command) =>
+      command.method === "POST" &&
+      /\/items\/[^/]+\/recovery\/decision$/.test(command.path),
+  );
+  expect(decisionPosts).toHaveLength(2);
+  expect(decisionPosts[0]?.body).toMatchObject({
+    kind: "recognition",
+    recognitionTypeId: "A",
+  });
+  expect(decisionPosts[1]?.body).toMatchObject({
+    kind: "metadata_correction",
+    query: "DialogRename",
+    year: 2024,
+    mediaType: "movie",
+    providerId: "704",
+  });
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/items\/[^/]+\/recovery\/continue$/.test(command.path),
+    ),
+  ).toHaveLength(2);
+
+  // The real Worker publishes the corrected exact summary; only then can the
+  // current file be included and the single precise confirmation be offered.
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText(/DialogRename \(2024\)/).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText(/没有找到匹配的作品/)).toHaveCount(0);
+  expect(executePosts()).toHaveLength(0);
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(executePosts()).toHaveLength(1);
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({
+    completed: true,
+    taskId: runId,
+    status: "completed",
+    itemCount: 1,
+  });
+  const moved = await stateFor(renamedFile);
+  expect(moved.sourceExists).toBe(false);
+  const finalTargets = (await stateFor(targetStemFile)).destinationTargets;
+  expect(finalTargets).toHaveLength(1);
+  expect(finalTargets[0]).toContain("DialogRename (2024)");
+});
