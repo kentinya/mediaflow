@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: f1d3828472920e7d8d93fbf0bbd1200de546951a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: B INDEPENDENT REVIEW OF DECISION-DRAFT CLOSE PROTECTION
+Next Action: DEVELOPER UNIFIES CURRENT-FILE CORRECTION PRESENTATION AND ACTIONS
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -296,90 +296,100 @@ tests/e2e/deep-link.spec.ts` → **64 passed（38.6s）**，在最终 build 上�
 
 ## B Review Result
 
-**FIX REQUIRED — B 独立复核，2026-11-10。** 无候选元数据修正已通过真实完整旅程；
-新增决定草稿没有接入已有离开提示，关闭时无提示丢失输入。继续 Task53.1，Base、范围及
-T4 不变；这是原 AC-9 的未完成项，不增加需求或新 Task。
+**FIX REQUIRED — B 独立复核，2026-11-10。** 决定草稿关闭保护通过；当前文件仍并列两套
+候选选择／保存操作，共享修正表单也没有完成原要求的可读、协调呈现。继续 Task53.1，
+Base、范围及 T4 不变；不是新增界面需求或另拆 Task。
 
 ### 审查范围与已通过修正
 
 - Branch：`main`；固定 Base：`95c24cd0a3cc51acd6143e37e72371445cb15a72`；
-  Reviewed Head：`abc400362c92bfa7c01afc16a57fc401c5a5f94b`；
-  本次实现：`800e4fd8c694c22366597abbf41ebf2943699eb1`。
-- 在此前完整审查基础上重新核对 Base..Head 清单，并审查本次 7 文件增量：共享决定草稿、
-  当前文件挂载、直接组件回归、真实旅程、夹具、任务清单测试定位及交付报告。
-- 真实 Python 浏览器回归 **4 passed**：10 项独立候选与一次准确确认；未知提交核对；
-  冲突重命名与健康未选兄弟不执行；Files 重命名→识别决定→无候选标题／年份修正→
-  显式搜索→保存／分析→新目标→一次确认→准确任务详情。上轮元数据入口 P1 解除。
-- 共享表单默认 full 消费者保持原任务中心呈现；不修改本 Task 的详情冻结边界。
-  继续／只读摘要已有前轮通过记录，仍需在最终候选完成全部验收。
+  Reviewed Head：`daa1021fea97a95528133cab65275e831fa8e31c`；
+  本次实现：`f1d3828472920e7d8d93fbf0bbd1200de546951a`。
+- 在此前完整审查基础上重新核对 Base..Head 清单，并审查本次全部 5 文件增量：决定草稿
+  dirty／失效／保存基线、统一关闭判断、组件与真实旅程回归、交付报告。未改产品代码。
+- 真实 Python 浏览器回归 **4 passed**：10 项独立候选与一次准确确认、未知提交核对、
+  冲突重命名与健康未选兄弟、Files 重命名后识别及无候选修正。最后用例已覆盖编辑标题／
+  年份→实际关闭按钮→原放弃提示→继续编辑保留输入→保存／分析→一次准确确认。
+- 独立浏览器亦核对 390px 的实际关闭提示与继续编辑，输入仍为 `DialogRename`/2024。
+  上轮关闭丢草稿 P1 解除。完整键盘／返回／短视口验收不因这些局部通过而标为完成。
 
-### P1：未保存的当前文件决定，关闭时没有提示并丢失
+### P1：同一文件出现两套独立候选／保存，修正呈现仍不清晰
 
-对应 RO-2、AC-9、逐文件输入保留和原有关闭交互。
+对应 RO-1／RO-2、AC-3／4 和用户原始“操作清晰、好看、人类可读”目标；不是可选美化。
 
-**实际完整旅程：** 使用本候选构建和现有隔离 Python harness，从 Files 进入
-`Unified media source / Dialog`，用原右键重命名把 `DialogRename.2024.mkv` 改为
-`DialogNoMatch.2024.mkv`；选择该文件并批量整理。在当前文件选择已有 Normal Movie
-识别决定并保存／分析，真实 Worker 得到无候选元数据问题。
+**真实完整操作：** Files→`Unified media source / Dialog`→选择
+`Dialog01.2011.mkv`、`Dialog02.2011.mkv`→批量整理。真实分析得到每个文件两个合法候选。
+第 1 个文件上方“作品匹配”提供“元数据身份(作品候选)”下拉框和“保存并重新分析”；
+向下滚动，“当前问题”又要求在下方完成决定，并展示同一文件的“候选 1／候选 2”单选框
+及“保存决策并继续安全分析”。同一个文件因此有两处选择、两种保存按钮，不能直接判断
+应完成哪一处或是否两处都要做。
 
-把“搜索标题”从 `DialogNoMatch` 改为 `DialogRename`，填写年份 `2024`，尚未保存，
-点击弹窗底部“关闭”。**弹窗立即关闭并返回 Files，未出现已有的“继续编辑／放弃草稿”
-提示。** 经任务中心打开同一 Task 的“继续整理”链接，回到准确原发现和文件后，没有保留
-所输入的标题与年份。用户只想暂离查看任务，却无机会选择保留编辑；必须重填。
+经任务中心原任务“继续整理”重开同一发现后，实际选择上方 `tmdb/601/movie`、下方
+候选 1（501），**两处可以同时保持不同作品**，没有联动。没有点击保存或执行来制造冲突；
+普通可见表单本身就允许两个不同草稿。Task 约定的单一逐文件选择／保存路径尚未完成。
 
-复现使用实际按钮和页面已有链接，没有构造 URL、注入故障或修改 Provider 响应。
-发现 ID 为 `b560bee5-00f3-404b-8700-5e2232460281`，原任务为
-`348c6190-e7a2-41ae-880b-46a87f86b464`；同一发现的继续链接保留在本地 JSON 证据。
+同轮从 Files 正常重命名 `DialogRename.2024.mkv` 为 `DialogNoMatch.2024.mkv`，
+在当前文件保存识别决定后进入元数据修正。桌面上的“搜索标题／媒体类型／年份／搜索”
+仍是紧挨的行内标签和原生输入；390px 下年份标签被拆成“年份”和“(可留空)”两行，
+候选单选项也连在一段中、跨行后难以辨认选项归属。没有横向溢出不等于可读性验收通过。
+同视口实际打开既有“新建自动化任务”卡片对照，参考页已有独立标签、成组字段、协调
+输入与间距；整理侧未复用这种呈现。技术词如 movie、Provider ID 和 Executor 也仍在
+普通选择／说明中占主要位置，而不是默认的人类可读信息层次。
 
-**原因及引入：** `800e4fd8` 新增 `decisionDrafts` 存放共享决定输入；但
-`ManualOrganizeDialog.tsx` 的 `hasUnsavedDrafts` 仍只计算原 `drafts`，关闭及路由离开
-判断没有消费新的决定草稿。新表单可跨翻页保存，却在关闭时绕过原有放弃确认。
-原候选选择的关闭提示已存在；需要让同一逐文件旅程的两种输入遵循同一交互。
+**原因及引入：** `800e4fd8` 扩大原生决定面板挂载时，保留了
+`ManualOrganizeDialog.tsx:1317` 的原修正区，同时在 `:1538` 挂载共享面板。
+原 `drafts` 与新 `decisionDrafts` 各自保存同一作品选择。共享 `DecisionForm` 的 dialog
+呈现主要更改了文案，仍复用行内标签／默认输入／小标题，整理 CSS 没有完成该区域的
+卡片字段与选项排布。这是本 Task 实现整合缺口，不要求改任务中心或新增后端决定模型。
 
 ### Developer 修正指导与验收
 
-1. 将共享决定的实际未保存输入接入原有关闭／路由离开提示，复用现有“继续编辑”和
-   “放弃草稿”交互。按准确 TaskItem／决定身份判断，与原候选草稿统一处理；不要简单
-   使用 `decisionDrafts` 非空作为未保存条件，避免未编辑、已保存或已失效输入误拦关闭。
-2. 核对当前文件及已翻到其他文件的未保存决定：关闭按钮、右上角关闭、Escape、浏览器
-   返回应有一致的既有提示；继续编辑保留准确输入，明确放弃后才离开，成功保存／分析后
-   正常关闭。原有在途／未知命令与精确确认边界一并按 AC-8／9 核对，不新增另一套恢复
-   模型，不改任务中心详情或引入自动保存。
-3. 在现有组件测试中覆盖共享决定编辑后的关闭／返回、继续编辑、明确放弃、保存后的正常
-   离开及跨文件草稿；真实 Python 回归加入上述 Files→无候选→修改标题／年份→关闭提示
-   →继续编辑→值仍在→保存／分析→新方案→一次准确确认。确认前没有 Execute 或媒体效果；
-   保留已通过的 10 项候选、未知提交、冲突与健康兄弟覆盖。
-4. Developer 运行新改／直接受影响测试和静态检查，提交同一 Task 的修正候选。B 继续承担
-   全部结果验收与 T4 门禁；不拆新 Task、不扩 Task Center 范围。
+1. 统一当前文件的识别／元数据／分类／冲突编辑呈现：同一个决定只保留一套清晰的选择、
+   一份当前草稿和明确保存／分析动作。按现有合法后端能力整合，不同时展示互不关联的
+   同一作品选择表单；正常候选和原生问题决定都沿用当前文件→保存／分析→新摘要→最后
+   一次子集确认的旅程。保留现有精确 TaskItem／版本／合法 choices 和执行边界。
+2. 仅为整理弹窗的呈现适配字段／候选／提示：对齐现有库／自动化卡片的标签层次、字段
+   分组、输入与选项间距和窄屏布局；候选各项可分辨、标题／年份／类型可读，技术标识及
+   说明按原计划进入可展开诊断。用 scoped dialog 呈现或必要共享提取，任务中心默认 full
+   消费者的布局、文案和操作保持不变；不做全站样式或业务引擎重构。
+3. 同一次修正检查四类决定及正常／无候选／冲突页面，不再逐字段补表单。加入直接回归，
+   证明同文件没有两套可分歧的作品选择／保存；逐项草稿、关闭提示、保存失败／分析失败、
+   10 项候选、未知提交、健康兄弟和精确确认继续保持。Developer 跑新改与直接受影响测试。
+4. 对照实际既有卡片，提交桌面、390px、矮窗口的真实操作画面，检查长文件名／多候选／
+   附件和修正区；B 以画面与完整旅程验收，不以 CSS 数值、存在 dialog 或无溢出代替。
+   B 继续承担完整 T4 门禁，不将全量套件交回 Developer。
 
 ### B 本轮实际验证与证据
 
 - 仓库根 `python3 scripts/check_governance.py`：PASS；
-  `git diff --check 95c24cd..abc40036`：clean。
+  `git diff --check 95c24cd..daa1021f`：clean。
 - `web/`：`npm run build`：PASS（既有体积提示）；
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts`：
-  **4 passed（49.9s）**。无候选完整用例 8.0s；冲突用例 10.9s。
-- 另经实际 Files／任务中心按钮完成上述关闭复现，观察未出现放弃提示，并确认原任务
-  继续链接未保留修正输入；没有确认执行该问题文件。构建、Provider、临时 SQLite／Local
-  Storage 与真实 Worker 均来自现有隔离 harness，未读取用户数据库或生产媒体。
-- 本地证据 `.git/validation-evidence/abc40036/b53-review/`：`build.log`、
-  `dialog-e2e.log`、`harness.log`、`unsaved-close.json`、
-  `metadata-unsaved-before-close.png`、`after-unsaved-close.png`、
-  `reopened-original-title.png`。截图为 1536×1000，JSON 记录编辑值、关闭结果及准确继续链接。
-- 手工验证辅助轮询曾因发现 ID 在路由更新前读取为空、以及已完成 Worker 返回
-  `advanced: false` 而报“未完成分析”；随后依据实际页面已完成状态继续，未据此判产品失败。
-  另一次辅助断言使用了不含 expect 的 Playwright 导出，改为读取实际表单；不计为产品测试。
-- 按 Workflow §6，确定 P1 后提前 FIX REQUIRED。完整 Python／Web／E2E、wheel／重启等
-  适用 T4 门禁及完整桌面／390px／矮窗口／键盘验收待修正后由 B 继续，不声称通过。
-  本轮测试和浏览器验证用时低于本轮总用时 50%，没有启动昂贵全量套件。
+  **4 passed（48.7s）**；候选 25.9s、未知提交 3.1s、冲突 10.4s、无候选／关闭提示 8.0s。
+- 独立浏览器通过现有 Files、任务中心继续链接及自动化新建入口，检查上述同文件重复
+  选择、无候选修正与关闭提示，实际视口 1536×1000 和 390×844。手工视觉检查未最终
+  确认整理；使用临时 SQLite／Local Storage、假 Provider／真实 Worker，不读用户媒体。
+- 本地证据 `.git/validation-evidence/daa1021f/b53-review/`：`build.log`、
+  `dialog-e2e.log`、`review-observations.json`、`dual-candidate-inputs.json`；
+  `candidate-desktop-top.png`、`candidate-desktop-decisions.png`、
+  `candidate-390-decisions.png`、`candidate-independent-top.png`、
+  `candidate-independent-bottom.png`、`correction-desktop.png`、`correction-390.png`、
+  `discard-prompt-confirm-390.png`、`reference-automation-desktop.png`、
+  `reference-automation-390.png`。后两张等待入场动效完成后保存；JSON 包含准确任务与发现。
+- 手工辅助代码第二次准备曾短暂读到前一次路由 ID，随后按实际页面确认新发现；一次
+  任务行定位未匹配实际目录范围，读取清单后通过该任务的真实 `0 / 2 项` 行继续。这些
+  辅助读取未判作产品失败；本次阻塞依据实际显示和可同时分歧的表单输入。
+- 确定 P1 后按 Workflow §6 提前 FIX REQUIRED。全量 Python／Web／E2E、wheel／重启等
+  适用 T4 门禁及完整视觉／键盘验收待修正后继续，不声称已通过。测试与浏览器验证用时
+  低于本轮总用时 50%，未启动昂贵全量套件。
 
 ### 全部 Slice 结果重评
 
-| 结果                        | 当前判断                                                                   |
-| --------------------------- | -------------------------------------------------------------------------- |
-| RO-1 逐文件弹窗             | Files 初次入口及桌面已核对；完整视觉、窄／矮窗口和键盘验收待完成。         |
-| RO-2 当前文件修正与集中确认 | 候选、冲突与无候选修正完整旅程通过；共享决定草稿关闭时无提示丢失，未满足。 |
-| RO-3 精确任务中心交接       | 正常与未知提交本轮通过；继续／只读摘要已有证据，最终候选待完整回归。       |
+| 结果                        | 当前判断                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| RO-1 逐文件弹窗             | Files 居中容器已实现；共享修正区的实际可读性与参考卡片一致性未完成。         |
+| RO-2 当前文件修正与集中确认 | 主要业务旅程与关闭提示通过；同文件两套分歧选择／保存，尚未满足清晰操作结果。 |
+| RO-3 精确任务中心交接       | 正常与未知提交本轮通过；继续／只读摘要已有前轮证据，最终候选待完整回归。     |
 
 Task53.1 为 FIX REQUIRED；不交 Closure Packet、不关闭 Slice、不规划新 Task。
 本轮只更新 TASK；预存 `.DS_Store`、调查脚本／日志、`15`、`output/` 保留。隔离 harness
