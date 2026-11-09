@@ -1,9 +1,9 @@
 # Task PATCH-20261109-3 — 失败整理的文件释放与摘要入口一致性
 
 用户于 2026-11-09 要求“写到Task里并激活Task”，确认下述开发后体验并授权将规划草案提升为
-正式实施 Task。最新候选已由 B 独立复核完整 Base..Head，结论仍为 FIX REQUIRED：上一轮
-两个阻塞已修正，当前剩余问题及同 Task 开发指导见文末最新 B 复核。不可变 Base、范围与
-测试分工保持。
+正式实施 Task。最新候选 `c02c3ad9` 已由 B 独立复核，结论为 FIX REQUIRED；上一轮
+B3-03／B3-04 的主要旅程已修正，剩余历史读取失败的页内恢复见文末最新复核。
+不可变 Base、范围与测试分工保持。
 
 ```text
 Task ID: PATCH-20261109-3
@@ -641,3 +641,85 @@ kernel 治理,已将资格判断收敛到与 `_kernel_task_id` 同一接缝后�
 +08:00)至本报告完成约 55 分钟(以 git 提交时间与本机命令时间戳推算);上列全部
 测试/静态检查命令的墙钟合计约 6 分钟(约 11%),低于 30% 上限,未以延长等待凑比例。
 未越权改 SLICE/Roadmap/Progress,未推送,未自签 PASS。
+
+
+### B 独立复核 — FIX REQUIRED（2026-11-09，候选 c02c3ad9）
+
+Reviewed Base: `fe3bd99b1cf6046ac716052e5c8ee63851c80f15`。
+Reviewed Head: `c02c3ad9bf6476a74026137c867bdd26a47c29ae`。
+Implementation Head: `c8e58c5a0d9de97f7a1748cab6098848babe7fc0`。
+B 审查完整 21 文件 Base..Head，以及本次修正所调用的原有查询／响应／重分析入口。
+本次没有新增表、列、schema version、迁移或状态枚举值；内存字段仍只投影已有状态。
+治理检查通过，main、预存脏文件与空暂存区已记录并保持；未推送。
+
+**已修正结果。** B3-01／B3-02 保持；B3-04 golden contract 及默认准备夹具均恢复。
+B3-03 的正常读取已通过真实 production build：文件页生成摘要 → 重新检查 → 分析读取
+失败由生产 Worker 发布 → 刷新／认证 → 任务中心“查看只读摘要” → 同版本 reopen，
+原文件、身份、策略及目标方案可见，无选择／修正／重新分析／确认按钮，无假分析等待。
+桌面／390px截图已检查。健康未确认摘要离开后从任务中心回到原 Task，明确确认、真实 MOVE、
+完成后打开只读摘要及已有执行记录的原生用例通过。无需改成 run 文档新字段；intent 的现有
+`latestPlan` 足以提供确切历史关联。生产开启 kernel 的资格接缝经真实入口和全 Python 回归
+核对，没有发现必须扩大到无 kernel 组合的 Task 内需求。
+
+**B3-05 / P1 — 历史关联读取失败被显示为永远加载，页内刷新不能恢复（AC-2，读取失败恢复）。**
+
+完整旅程：用户已有分析失败的 Task → 在任务中心打开其只读摘要 → 浏览器读取该 Task 的
+原 intent／latestPlan 时发生一次网络中断 → 网络恢复 → 点击页面已有 Refresh。
+实测仍显示“正在读取它已保存的原计划摘要作为只读历史”，原条目不可见；Refresh 只重新
+请求 discovery，没有再次读取 intent。整页刷新并重新认证后，原摘要立即显示，说明记录和
+关联均完整，缺口是这次读取失败的界面状态及页内恢复。
+
+原因在 `OrganizeCreationPage.tsx:175`／`:180`：历史读取仅用 `intentQuery.isError`
+区分失败；但现有 `fetchOrganizeIntent` 对断网、404、5xx 返回 `{ok:false,...}`，不会抛异常。
+因此普通断网后 `intent` 是 undefined、Query 却不处于 isError，错误地一直进入 pending 文案。
+`:653` 的 Refresh 未调用 `intentQuery.refetch()`，所以恢复网络后点击也不再读这份历史关联。
+该读取是本次恢复原摘要所新增依赖，属于本 Task 交付；不是要求新增网络功能。
+
+复现使用当前真实后端已产生的失败 Task 及浏览器已有页面，Playwright 仅中断一次实际
+`GET /api/v1/operations/organize/intents/{真实ID}`；没有构造不存在的入口或改写 Task 状态。
+日志显示失败时该 GET 1次，点 Refresh 后仍1次；解除中断后整页刷新显示原摘要。这个证据
+证明页面恢复遗漏，不声称后端曾出故障、发生数据丢失或重新执行。
+
+### 同 Task 剩余开发指导（B3-05）
+
+1. 在当前历史关联读取分支消费现有 `OrganizeIntentRead` 的结果：请求尚在进行时才显示读取中；
+   `ok:false` 和 query 异常显示读取失败与现有明确恢复动作；成功且 `latestPlan=null` 才说明
+   没有生成摘要。保持真实失败原因和已有历史，不新增状态系统或改写后端事实。
+2. 让页内 Refresh／历史读取恢复动作重新读取实际失败的 intent 关联，再沿原 preview ID
+   显示内容；保持请求只读、无自动整理／授权重发。复用现有查询，不做全局请求层改造。
+3. 在现有页面测试通过真实 fetch 返回方式覆盖断网或503后 `{ok:false}`，断言显示失败而非
+   无限读取；恢复后点击页面动作，断言该 intent GET 再次发出且原摘要可见。补充成功但无摘要
+   与失败的区别。此前真实 history-probe 的旅程可供 B 独立复验，无需建设新探测工具。
+4. Developer 跑改变页面及直接受影响查询用例、Web typecheck/lint/格式和原 affected plan。
+   B 继续承担完整 T4／原生／包装验收；未完成门禁不转成 Developer 的全量任务。其余已通过
+   事务 fence、正常摘要、混合兄弟流程保持，不另开 Task、不改 Slice/Roadmap/Progress。
+
+### B 本轮实际验证与剩余边界（c02c3ad9）
+
+本地证据目录：`.git/validation-evidence/c02c3ad9bf6476a74026137c867bdd26a47c29ae/b-review/`。
+完整日志已复制到本候选目录；测试最初输出到上一候选目录的 `candidate-*` 文件，当前目录
+保留本轮副本，不据此混用旧结果。截图和证据只在当前机器，未上传。
+
+| 检查 | 实际结果 |
+|---|---|
+| 治理、范围及工作区 diff check；改变 Python 的 Ruff check/format | PASS。 |
+| 相关 Python（含失败准备、中心、执行、历史、discovery、golden contract、release docs） | 262 tests OK，20.814s；`candidate-python-focused.log`。 |
+| 完整 Python | 2678 tests，OK，7 skips，286.381s；`candidate-python-full.log`。 |
+| 相关 Web／完整 Web 单测 | 166 tests／1475 tests（98 files）全通过；完整120.80s；对应 focused/full 日志。 |
+| Web typecheck、lint、format、production build | PASS；`candidate-web-quality.log`及终端结果。 |
+| 直接受影响默认 E2E（6个spec） | 124 passed，1 trace ENOENT；并行 Playwright 共用产物目录造成的 B 验证冲突。该用例使用独立产物目录重跑1 passed（2.9s）；`default-trace-rerun.log`。未改测试或重试次数，不作为产品阻塞。准备夹具旧失败均通过。 |
+| 真实健康摘要返回原 Task／完成后只读 | 1 passed（9.2s）；`candidate-health-e2e.log`，未削弱原选择／确认／真实效果检查。 |
+| 真实失败历史、刷新／认证／reopen、桌面／390px | 正常读取原摘要通过，`candidate-native-probe.log`、`failed-page.txt`、`failed-desktop.png`／`failed-390.png`。探针部分即时 heading 计数早于异步请求完成，不能当最终内容断言；最终文本与截图证实原条目方案可读。 |
+| 历史关联一次断网→页内Refresh→整页刷新 | 重现 B3-05；`history-read-probe.cjs`、`history-read-probe.log`、`history-read-stuck.png`。 |
+| compileall／pip check／两份example config／禁止依赖 | PASS。 |
+| wheel 构建及精确 wheel 安装后 smoke | PASS；wheel 为 `mediaflow-2.0.0.dev0-py3-none-any.whl`，`wheel-smoke-exact.log`。脚本在源树外新venv验证site-packages、CLI、数据库及准备消费者。第一次误用0.1.0文件名失败，改用实际构建文件后通过，未计为产品失败。 |
+| Docker | 本机 daemon 不可连接；未跑容器验证，不记通过。 |
+
+全部结果重评：AC-1／3／4 后端释放、独立兄弟及确认竞争仍通过，AC-2 的普通历史返回已通过，
+但新增历史读取失败的页内恢复未满足。AC-5的既有真实历史与新整理效果证据保持；AC-6全量
+Python/Web通过，默认全E2E、三个真实spec全量及混合批次完整原生验收仍未完成；上轮未定位
+浏览器失败未擅自归为 Base 问题。发现确切阻塞后停止扩大验证，后续仍由 B 完成。
+无 Task PASS、无 Slice 重开／关闭、无包装发布声明。
+
+本轮测试执行墙钟约7分钟；从开始复核到记录超过16分钟，测试低于本轮时间50%。代码审查、
+用户旅程定位与证据判读持续进行，未以空等凑比例。仅更新本 Task 和本地证据，预存文件保持。
