@@ -1,43 +1,8 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261109-3 — 失败整理的文件释放与摘要入口一致性
 
-Task PATCH-20261109-2 — 查询类型统一与已确认元数据的整理摘要续接 — **B PASS**。
-
-```text
-Task Type: STANDALONE MINOR BUG
-Parent Slice: NONE
-Decision: PASS
-Task Base: 233f6a25769856087d10cb4483c0f1a621a76546
-Reviewed Head: fbabe7f80614dd35faa096dcb55198d183784501
-Accepted Implementation Head: 86d9b7618acd88d640563ffc90f5e9d98c7e8b74
-Reviewer: B
-Review Date: 2026-11-09
-Difficulty: Medium
-Test Level: T4
-Task blockers: NONE
-Authorized bug acceptance complete: YES
-Next: NO ACTIVE IMPLEMENTATION TASK
-```
-
-已验收：策略只保留查询类型；新整理重新识别；当前任务使用本次明确保存的候选及类型继续生成摘要。
-整理意图页已有候选选择、保存、刷新读回及重新分析闭环通过。电影／电视剧结果类型仍供查询、命名和分类使用；
-无数据库结构变更或历史记录重写。
-
-完整 Base..Head 独立审查、AC-1–6、T4实际结果、浏览器产物目录冲突补跑及证据限制见
-[固定 B 验收报告](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)。
-原规划与 Developer 报告见
-[候选检查点](https://github.com/kentinya/mediaflow/blob/fbabe7f80614dd35faa096dcb55198d183784501/TASK.md)。
-本地原始证据：`.git/validation-evidence/fbabe7f8/b-final-review/`；Git 推送不包含这些本机材料，也不代表部署。
-
-此独立修正不重开 Slice52，不改 SLICE／Roadmap／Progress，也不授权后续实施。
-
----
-
-## 规划草案 — PATCH-20261109-3：失败整理的文件释放与摘要入口一致性
-
-**仅规划，未授权实施。** 当前仍为 NO ACTIVE IMPLEMENTATION TASK。用户本轮要求“规划一个
-Task”，授权范围为前述失败文件被旧整理意图／摘要继续占用，以及失败任务仍显示“继续整理”的
-体验修正。实施授权到达后，将本草案提升为根 Task；保留以下不可变 Task Base，不改已接受任务
-或 Slice52 的关闭事实，不自动开始 Developer、其他角色或子代理工作。
+用户于 2026-11-09 要求“写到Task里并激活Task”，确认下述开发后体验并授权将规划草案提升为
+正式实施 Task。当前状态 PLANNED，可由 Developer 按本 Task 开始实施；本次只完成文档补充与
+激活，不自动开展产品开发或其他角色／子代理工作。不可变 Task Base、范围与测试分工保持。
 
 ```text
 Task ID: PATCH-20261109-3
@@ -48,8 +13,12 @@ Task Base: fe3bd99b1cf6046ac716052e5c8ee63851c80f15
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR DEVELOPER
 ```
+
+上一独立修正 PATCH-20261109-2 的 B PASS、精确 Reviewed Head／Accepted Implementation Head
+及证据限制保留于[固定验收报告](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)。
+本 Task 不重开 Slice52，不改变 SLICE／Roadmap／Progress 或既有验收事实。
 
 ### Goal / Authority
 
@@ -66,6 +35,24 @@ Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 架构依据为 [source ownership](docs/architecture.md#current--files-admitted-organizing-task-and-verified-source-ownership-slice46)
 与 [source-history gate](docs/architecture.md#current--source-history-gate-for-new-organizing-slice47)。
 Slice46/47/52 仅作已接受合同引用，均不作为本 Task 的父 Slice。
+
+### 开发后体验 / Delivery Outcome
+
+下表为本 Task 必须交付的用户可见结果，作为 AC-1–6 和原生浏览器验收的具体场景；它描述
+目标行为，不代表当前已实现或已通过验收。
+
+| 场景 | 用户可见状态与可执行动作 |
+|---|---|
+| 整个任务已失败 | 任务中心不再显示“继续整理”；保留失败阶段、原因、历史结果和已知效果，指引回文件页重新发起。已失败任务无需再次取消。 |
+| 文件项已失败，旧摘要尚未确认 | 该失败文件不再被原意图／摘要占用，可直接从文件页重新整理；旧摘要中的失败项只读且不可确认。旧任务／摘要仍保留失败证据。 |
+| A失败，B/C正常待确认，任务仍有合法继续资格 | 原摘要保留B/C的选择与确认流程；A显示失败原因、已知效果和重新整理指引，单独从文件页重新发起，不必取消整批。 |
+| 正常生成摘要，未确认就离开 | 从“任务中心 → 全部任务／进行中 → 对应任务详情 → 继续整理”回到同一摘要，选择条目后明确确认；关闭页面不取消、不丢失原工作。 |
+
+普通重新整理沿用“文件页选择 → 重新分析 → 新摘要 → 明确确认 → 新工作结果”，使用当前
+配置；已有同一请求的响应未知时先核对原请求，不自动重发。确认前不执行媒体文件变更。
+用户无需清理内部整理意图或解锁记录；旧页面／旧授权不能再次执行已经失败的文件项。
+成功兄弟不重跑，原记录和已完成效果保持；部分／不确定效果继续显示既有提醒并检查当前源、
+目标和冲突，不把新请求当成对旧效果的自动重放或撤销。
 
 ### Observed gap / Planning evidence
 
@@ -93,6 +80,10 @@ Slice46/47/52 仅作已接受合同引用，均不作为本 Task 的父 Slice。
 `.DS_Store`、`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、
 `docs/`／`testdata/`／`web/` 元数据及 `output/` 既有材料全部保留且不纳入 checkpoint。
 不读取用户运行数据库、私有配置、凭据或媒体。规划只改本文件；不修改 SLICE／Roadmap／Progress。
+
+激活前 HEAD 为规划 checkpoint `785d5f621293ca7ab2740c9d3ab34a53c7bcc701`，
+治理检查 PASS；工作区预存变化与上述清单一致且暂存区为空。本次只提交本文件的激活与体验
+补充，不改变 Task Base，不纳入任何预存文件，不推送或部署。
 
 ### Implementation Scope
 
@@ -220,9 +211,9 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 
 ### Developer Completion Report
 
-待实施授权及 coherent checkpoint。报告实际 checkpoint、改动／根因、受影响命令与结果、
+已获实施授权，等待 Developer 实施及 coherent checkpoint。报告实际 checkpoint、改动／根因、受影响命令与结果、
 已知失败／未验证边界，状态 READY FOR B REVIEW；全量验收仍由 B 执行。
 
 ### B Review Result
 
-未开始。规划不代表实施、验收 PASS 或自动开启后续角色。
+未开始。激活不代表已经实施或验收 PASS；B 在 Developer 提交候选后独立审查与执行验收。
