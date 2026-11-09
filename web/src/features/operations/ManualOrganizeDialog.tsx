@@ -258,6 +258,35 @@ export function ManualOrganizeDialog({
     [preview],
   );
   const items = preview?.items ?? [];
+  /**
+   * The native problems this exact summary currently exposes. A stored
+   * decision draft whose TaskItem is no longer part of it belongs to a
+   * superseded analysis and must never pin the close prompt by itself.
+   */
+  const liveProblemItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of preview?.items ?? []) {
+      if (item.problemTaskItemId !== null) ids.add(item.problemTaskItemId);
+    }
+    return ids;
+  }, [preview]);
+  const liveProblemKey = JSON.stringify([...liveProblemItemIds].sort());
+  const [problemItemsKey, setProblemItemsKey] = useState<string | null>(null);
+  if (preview !== undefined && problemItemsKey !== liveProblemKey) {
+    setProblemItemsKey(liveProblemKey);
+    setDecisionDrafts((previous) => {
+      const keys = Object.keys(previous);
+      if (keys.every((key) => liveProblemItemIds.has(key))) return previous;
+      const next: Record<string, TaskItemDecisionDraft> = {};
+      for (const key of keys) {
+        const draft = previous[key];
+        if (draft !== undefined && liveProblemItemIds.has(key)) {
+          next[key] = draft;
+        }
+      }
+      return next;
+    });
+  }
 
   const activeSelection = useMemo(() => {
     const requested = executableIds.filter((itemId) => !excluded.has(itemId));
@@ -691,7 +720,11 @@ export function ManualOrganizeDialog({
     executeMutation.isPending ||
     unknownSubmission !== null ||
     reconcileMutation.isPending;
-  const hasUnsavedDrafts = Object.keys(drafts).length > 0;
+  const hasUnsavedDecisionDrafts = Object.values(decisionDrafts).some(
+    (draft) => draft.dirty,
+  );
+  const hasUnsavedDrafts =
+    Object.keys(drafts).length > 0 || hasUnsavedDecisionDrafts;
 
   const blocker = useBlocker({
     shouldBlockFn: () =>
@@ -838,6 +871,9 @@ export function ManualOrganizeDialog({
     currentItemId !== null &&
     (draftRecognitionId !== savedRecognitionId ||
       draftMetadataKey !== savedMetadataKey);
+  const currentDecisionDraftDirty =
+    currentItem?.problemTaskItemId != null &&
+    decisionDrafts[currentItem.problemTaskItemId]?.dirty === true;
   const selectedRecognition = recognitionOptions.find(
     (value) => value.id === draftRecognitionId,
   );
@@ -1978,7 +2014,9 @@ export function ManualOrganizeDialog({
       </Button>
       <span className="mf-dashboard-meta">
         第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
-        {currentItemId !== null && draftDirty ? " · 有未保存的修正" : ""}
+        {currentItemId !== null && (draftDirty || currentDecisionDraftDirty)
+          ? " · 有未保存的修正"
+          : ""}
       </span>
       <span className="mf-modal-footer-spacer" />
       <Button

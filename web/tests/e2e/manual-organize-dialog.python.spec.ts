@@ -578,9 +578,28 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await expect(card.getByText(/待处理的元数据修正决策/)).toBeVisible();
 
   const title = card.getByLabel("搜索标题");
+  const year = card.getByLabel("年份(可留空)");
   await expect(title).not.toHaveValue("");
   await title.fill("DialogRename");
-  await card.getByLabel("年份(可留空)").fill("2024");
+  await year.fill("2024");
+
+  // This correction belongs to the exact current TaskItem and is not saved
+  // yet.  Leaving through the ordinary close pins the existing discard choice;
+  // continuing keeps the operator's title and year instead of losing them.
+  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  const discardPrompt = card.getByRole("alertdialog");
+  await expect(
+    discardPrompt.getByText("有尚未保存的逐文件修正草稿。"),
+  ).toBeVisible();
+  await expect(card).toBeVisible();
+  await discardPrompt.getByRole("button", { name: "继续编辑" }).click();
+  await expect(card.getByRole("alertdialog")).toHaveCount(0);
+  await expect(title).toHaveValue("DialogRename");
+  await expect(year).toHaveValue("2024");
+  // Closing and returning to editing changed no durable decision and executed
+  // nothing; the rename source and its still-absent target stay untouched.
+  expect(await stateFor(renamedFile)).toEqual(before);
+
   await card
     .getByRole("button", { name: "显式搜索 Metadata Provider" })
     .click();

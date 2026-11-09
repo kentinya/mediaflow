@@ -174,6 +174,13 @@ function candidateSummary(value: {
 export interface TaskItemDecisionDraft {
   /** The exact checkpoint/decision identity these inputs belong to. */
   readonly decisionKey: string;
+  /**
+   * True only while these inputs differ from the exact saved decision this
+   * checkpoint already exposes. The manual-organize card uses it to protect
+   * real unsaved work without pinning a close prompt for an untouched form,
+   * a saved decision or a draft from a superseded checkpoint.
+   */
+  readonly dirty: boolean;
   readonly selectedChoice: string;
   readonly searchText: string;
   readonly correctedYear: string;
@@ -193,6 +200,7 @@ function decisionDraftFrom(
   if (decision === null) {
     return {
       decisionKey,
+      dirty: false,
       selectedChoice: "",
       searchText: "",
       correctedYear: "",
@@ -205,6 +213,7 @@ function decisionDraftFrom(
   }
   return {
     decisionKey,
+    dirty: false,
     selectedChoice: "",
     searchText: decision.query ?? "",
     correctedYear: decision.year === null ? "" : String(decision.year),
@@ -214,6 +223,24 @@ function decisionDraftFrom(
     conflictStrategy: decision.allowedStrategies[0] ?? "",
     confirmOverwrite: false,
   };
+}
+
+/** Compare operator inputs only; identity and the derived dirty flag differ. */
+function sameDecisionInputs(
+  left: TaskItemDecisionDraft,
+  right: TaskItemDecisionDraft,
+): boolean {
+  return (
+    left.selectedChoice === right.selectedChoice &&
+    left.searchText === right.searchText &&
+    left.correctedYear === right.correctedYear &&
+    left.mediaType === right.mediaType &&
+    left.selectedProviderId === right.selectedProviderId &&
+    left.metadataResult === right.metadataResult &&
+    left.conflictStrategy === right.conflictStrategy &&
+    (left.conflictStrategy !== "overwrite" ||
+      left.confirmOverwrite === right.confirmOverwrite)
+  );
 }
 
 export interface TaskItemRecoveryPanelProps {
@@ -372,14 +399,33 @@ export function TaskItemRecoveryPanel({
     ? decisionDraft
     : internalDecisionDraft;
   const updateDecisionDraft = (patch: Partial<TaskItemDecisionDraft>) => {
-    const next = {
+    const inputs = {
       ...effectiveDecisionDraft,
       ...patch,
       decisionKey,
     };
+    const next = {
+      ...inputs,
+      dirty: !sameDecisionInputs(
+        inputs,
+        decisionDraftFrom(decision, decisionKey),
+      ),
+    };
     if (!callerDraftMatches) setInternalDecisionDraft(next);
     onDecisionDraftChange?.(next);
   };
+  // A stored draft belongs to one exact checkpoint/decision identity.  Once
+  // that identity is superseded its inputs can no longer be saved, so the
+  // caller must not keep them as unsaved work or pin a close prompt for them.
+  // The first model read (the empty identity) deliberately keeps the caller's
+  // draft so returning to a file never flashes an empty form.
+  useEffect(() => {
+    if (decisionDraft === undefined || decisionKey === EMPTY_DECISION_KEY) {
+      return;
+    }
+    if (decisionDraft.decisionKey === decisionKey) return;
+    onDecisionDraftChange?.(decisionDraftFrom(decision, decisionKey));
+  }, [decision, decisionDraft, decisionKey, onDecisionDraftChange]);
 
   const refreshLinkedReads = () => {
     void queryClient.invalidateQueries({
@@ -466,6 +512,19 @@ export function TaskItemRecoveryPanel({
         ok: true as const,
         model: updated,
       });
+      // The exact inputs were durably saved (analysis may still fail on its
+      // own).  Replace the caller's draft with the updated decision baseline,
+      // so closing after this explicit save never claims the saved inputs are
+      // lost or asks the operator to discard work that already exists.
+      onDecisionDraftChange?.(
+        decisionDraftFrom(
+          updated.decision,
+          JSON.stringify([
+            updated.checkpoint.checkpointVersion,
+            updated.decision?.kind ?? null,
+          ]),
+        ),
+      );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
         await continueAt(updated.checkpoint.checkpointVersion, false);
       } else {

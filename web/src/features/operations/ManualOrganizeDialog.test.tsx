@@ -1049,6 +1049,15 @@ describe("ManualOrganizeDialog", () => {
       expect(within(card()).getAllByText("纳入本次整理")[0]).toBeVisible(),
     );
     expect(backend.calls.executePosts).toHaveLength(0);
+
+    // The correction was durably saved and re-analyzed: closing afterwards is
+    // an ordinary close, not a discard prompt for inputs that already exist.
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
   it("reports metadata decision save and analysis failures without executing or replaying", async () => {
@@ -1070,6 +1079,18 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(screen.getByLabelText("搜索标题")).toHaveValue("Movie.01");
+
+    // A rejected save has not persisted the operator's correction, so the
+    // same close protection keeps the edited title instead of losing it.
+    const editedTitle = screen.getByLabelText("搜索标题");
+    await user.clear(editedTitle);
+    await user.type(editedTitle, "DialogRename");
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    const failedPrompt = await screen.findByRole("alertdialog");
+    await user.click(
+      within(failedPrompt).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(screen.getByLabelText("搜索标题")).toHaveValue("DialogRename");
 
     // The durable decision succeeds but the Worker analysis request does not.
     // The card names that split instead of claiming either a failed save or a
@@ -1135,6 +1156,107 @@ describe("ManualOrganizeDialog", () => {
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
     expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("does not pin a discard prompt for an untouched native decision form", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await screen.findByLabelText("搜索标题");
+
+    // Merely opening the current file's native decision form changes no
+    // operator input; closing stays an ordinary close.
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("protects unsaved native decision input across paging, Escape, close and browser back", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    const title = await screen.findByLabelText("搜索标题");
+    await user.clear(title);
+    await user.type(title, "DialogRename");
+    const year = screen.getByLabelText("年份(可留空)");
+    await user.clear(year);
+    await user.type(year, "2024");
+
+    // Browsing another file keeps the exact TaskItem's unsaved correction;
+    // the page itself never saves or searches.
+    await user.click(screen.getByRole("button", { name: "下一项" }));
+    await screen.findByRole("heading", { name: /第 2 \/ 10 个/ });
+    expect(within(card()).queryByLabelText("搜索标题")).toBeNull();
+    expect(backend.calls.metadataSearchPosts).toHaveLength(0);
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+
+    // Escape, the header close and a browser back all pin the same existing
+    // discard choice while the correction of the other file is unsaved.
+    fireEvent.keyDown(document, { key: "Escape" });
+    const escapePrompt = await screen.findByRole("alertdialog");
+    await user.click(
+      within(escapePrompt).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(card()).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
+    const closePrompt = await screen.findByRole("alertdialog");
+    await user.click(
+      within(closePrompt).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // The first card entry owns one in-app history destination, so this is
+    // the same browser-back path an operator can take from the Files page.
+    backend.router.history.push("/ui-v2/resourcelib/files");
+    backend.router.history.back();
+    const backPrompt = await screen.findByRole("alertdialog");
+    expect(card()).toBeVisible();
+    await user.click(
+      within(backPrompt).getByRole("button", { name: "继续编辑" }),
+    );
+
+    // The untouched sibling was browse-only; returning to the first file
+    // restores exactly the unsaved title and year.
+    await user.click(screen.getByRole("button", { name: "上一项" }));
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await waitFor(() =>
+      expect(screen.getByLabelText("搜索标题")).toHaveValue("DialogRename"),
+    );
+    expect(screen.getByLabelText("年份(可留空)")).toHaveValue(2024);
+    expect(within(card()).getByText(/有未保存的修正/)).toBeVisible();
+    expect(backend.calls.metadataSearchPosts).toHaveLength(0);
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    // Only the explicit discard leaves; nothing was saved, cancelled or
+    // executed by closing or by the blocked navigation.
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    const discardPrompt = await screen.findByRole("alertdialog");
+    await user.click(
+      within(discardPrompt).getByRole("button", {
+        name: "放弃草稿并关闭",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(backend.calls.metadataSearchPosts).toHaveLength(0);
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
