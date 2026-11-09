@@ -418,6 +418,111 @@ describe("organize creation workspace", () => {
     ).toBeNull();
   });
 
+  it("reports a failed history read as a failure and recovers it in the page", async () => {
+    // Real B3-05 journey: the read-only summary page reads the ended run's
+    // intent/latestPlan association once and that single GET answers 503 (the
+    // client returns `{ok:false}` instead of throwing).  The page must show the
+    // read as failed — never an endless "reading" wait and never the "never
+    // generated" text — and the existing page recovery actions must issue the
+    // intent GET again so the saved summary becomes readable without a reload.
+    const user = userEvent.setup();
+    let intentReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              status: "analyzing",
+              previewId: null,
+              prepared: false,
+              organizeFlow: {
+                taskId: "organize-task-1",
+                status: "failed",
+                continuable: false,
+              },
+            }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+          intentReads += 1;
+          if (intentReads <= 2) {
+            // The honest bounded failure the client produces for a 503.
+            return jsonResponse({ error: { code: "unavailable" } }, 503);
+          }
+          const value = clone("organizeIntentChoice");
+          value["intentId"] = "intent-1";
+          ((value["actions"] as Json)["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          value["latestPlan"] = {
+            previewId: PREVIEW_ID,
+            status: "previewed",
+            current: true,
+            intentVersion: 2,
+            createdAt: "2026-01-01T00:00:00+00:00",
+            updatedAt: "2026-01-01T00:00:00+00:00",
+            truncated: false,
+          };
+          return jsonResponse(value);
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          const execute = (value["actions"] as Json)["execute"] as Json;
+          execute["available"] = false;
+          execute["reason"] =
+            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    // 1st read failed: the page says the read failed, with its bounded reason.
+    await screen.findByText(/原计划摘要暂时无法读取/);
+    expect(screen.getByText(/读取失败:Operations unavailable/)).toBeVisible();
+    expect(intentReads).toBe(1);
+    // Not an endless wait, and distinct from a genuinely absent summary.
+    expect(screen.queryByText(/正在读取它已保存的原计划摘要/)).toBeNull();
+    expect(screen.queryByText(/从未生成过计划摘要/)).toBeNull();
+    // No fake live waiting for work that can no longer run.
+    expect(screen.queryByText(/常驻处理 Worker 正在运行完整分析/)).toBeNull();
+
+    // 2nd read, through the page's own history-recovery action, fails again:
+    // the failure state is entered again instead of staying "reading".
+    await user.click(
+      screen.getByRole("button", { name: "重新读取原计划摘要" }),
+    );
+    await screen.findByText(/原计划摘要暂时无法读取/);
+    expect(intentReads).toBe(2);
+    expect(screen.queryByText(/正在读取它已保存的原计划摘要/)).toBeNull();
+
+    // 3rd read, through the existing page Refresh, succeeds and the original
+    // summary renders as read-only history — still never confirmable.
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(intentReads).toBe(3));
+    // The recovered association drives the read-only Preview read in turn.
+    await screen.findByText("One.2001.mkv", {}, { timeout: 5_000 });
+    expect(screen.queryByText(/原计划摘要暂时无法读取/)).toBeNull();
+    expect(screen.getByText(/只读历史\(本次整理已结束\)/)).toBeVisible();
+    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByLabelText(/选择 One.2001.mkv/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "重新检查并更新摘要" }),
+    ).toBeNull();
+  });
+
   it("states plainly when an ended run never generated any summary", async () => {
     vi.stubGlobal(
       "fetch",

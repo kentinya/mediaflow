@@ -171,13 +171,29 @@ export function OrganizeCreationPage() {
   const summaryPreviewId = preparation?.previewId ?? historyPlanId ?? "";
   /** Whether the rendered plan comes from the ended intent's saved history. */
   const previewIsHistory = organizeFlowEnded && preparation?.previewId == null;
-  /** The intent's saved-plan association is still being read (or failed). */
+  // The history association is an ordinary bounded read: fetchOrganizeIntent
+  // answers a network break, a 404 or a 5xx with `{ok:false}` instead of
+  // throwing, so the query's `isError` alone never observes those failures.
+  // A read is therefore failed only when no model arrived and no request is
+  // running (or not started) anymore; while a request is in flight, and until
+  // the first response lands, it is still a plain read in progress.
+  const intentReadResult = intentQuery.data;
+  const intentReadFailed =
+    intent === undefined &&
+    !intentQuery.isFetching &&
+    (intentQuery.isError || intentReadResult?.ok === false);
+  /** The intent's saved-plan association is still being read. */
   const historyPlanPending =
     previewIsHistory &&
     preparation?.intentId != null &&
     intent === undefined &&
-    !intentQuery.isError;
-  const historyPlanUnreadable = previewIsHistory && intentQuery.isError;
+    !intentReadFailed;
+  const historyPlanUnreadable = previewIsHistory && intentReadFailed;
+  /** The bounded refusal of the failed history read, when the read answered. */
+  const intentReadFailure =
+    intentReadResult != null && intentReadResult.ok === false
+      ? intentReadResult.failure
+      : null;
 
   // The linked exact Preview — the run's own current plan, or for an ended
   // run whose re-analysis cleared the link, the saved historical plan above.
@@ -652,9 +668,17 @@ export function OrganizeCreationPage() {
         <RefreshControl
           onRefresh={() => {
             void preparationQuery.refetch();
+            // The ended run's read-only history hangs off this intent read;
+            // a page refresh must re-request it too, otherwise a failed read
+            // stays failed after the network recovers.
+            if (intentQuery.isEnabled) void intentQuery.refetch();
             if (previewQuery.isEnabled) void previewQuery.refetch();
           }}
-          refreshing={preparationQuery.isFetching || previewQuery.isFetching}
+          refreshing={
+            preparationQuery.isFetching ||
+            intentQuery.isFetching ||
+            previewQuery.isFetching
+          }
         />
       </header>
 
@@ -853,13 +877,36 @@ export function OrganizeCreationPage() {
                 // history Preview query), and only says "never generated" when
                 // the intent's durable association really has no plan.  No
                 // Worker-waiting wording is offered for work that has ended.
-                <p className="mf-dashboard-meta">
-                  {historyPlanPending
-                    ? "本次整理已结束;正在读取它已保存的原计划摘要作为只读历史。"
-                    : historyPlanUnreadable
-                      ? "本次整理已结束,但原计划摘要暂时无法读取;本页不会重新提交整理或创建执行。请刷新后重试,或在任务中心查看运行结果。"
-                      : "本次整理已结束,且从未生成过计划摘要;下方没有可确认的内容。失败阶段与已知效果请在任务中心对应运行详情查看。需要再次整理时,请从资源库文件页重新选择并发起。"}
-                </p>
+                <>
+                  <p className="mf-dashboard-meta">
+                    {historyPlanPending
+                      ? "本次整理已结束;正在读取它已保存的原计划摘要作为只读历史。"
+                      : historyPlanUnreadable
+                        ? "本次整理已结束,但原计划摘要暂时无法读取;本页不会重新提交整理或创建执行。请重新读取,或刷新页面、在任务中心查看运行结果。"
+                        : "本次整理已结束,且从未生成过计划摘要;下方没有可确认的内容。失败阶段与已知效果请在任务中心对应运行详情查看。需要再次整理时,请从资源库文件页重新选择并发起。"}
+                  </p>
+                  {historyPlanUnreadable ? (
+                    <>
+                      {intentReadFailure !== null ? (
+                        <p role="status">
+                          读取失败:{intentReadFailure.title};
+                          {intentReadFailure.nextAction}
+                        </p>
+                      ) : null}
+                      <div className="mf-actions">
+                        {/* While the re-read runs, `intentReadFailed` turns
+                            false and this section already shows the plain
+                            read-in-progress wording instead of this button. */}
+                        <Button
+                          type="button"
+                          onClick={() => void intentQuery.refetch()}
+                        >
+                          重新读取原计划摘要
+                        </Button>
+                      </div>
+                    </>
+                  ) : null}
+                </>
               ) : (
                 <p className="mf-dashboard-meta">
                   {preparation.status === "analyzing"
