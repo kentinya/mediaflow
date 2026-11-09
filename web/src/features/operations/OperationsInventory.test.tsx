@@ -731,6 +731,7 @@ describe("Operations run inventory landing", () => {
             filesPreparation: {
               discoveryId: "discovery-1",
               resourceLibraryId: "source",
+              continuable: true,
             },
           }),
         );
@@ -760,6 +761,49 @@ describe("Operations run inventory landing", () => {
     expect(returnOps).toContain("run=task-001");
     // Reading/opening the preparation link submits nothing.
     expect(requested.filter((entry) => entry.method !== "GET")).toEqual([]);
+  });
+
+  it("offers no execution entry for an ended flow and keeps the read-only summary", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(
+          runDocument({
+            status: "failed",
+            filesPreparation: {
+              discoveryId: "discovery-1",
+              resourceLibraryId: "source",
+              continuable: false,
+            },
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The ended flow publishes no execution-nature entry.
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+    expect(within(detail).getByText(/本次整理工作已结束/)).toBeVisible();
+    // The read-only summary and the ordinary Files re-organize path stay
+    // reachable; both are plain navigation, never a mutating control.
+    const summary = within(detail).getByRole("link", { name: "查看只读摘要" });
+    expect(summary.getAttribute("href")).toContain("discoveryId=discovery-1");
+    await user.click(summary);
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations/organize/new"),
+    );
   });
 
   it("opens a supported deep link to the selected run and keeps list context", async () => {

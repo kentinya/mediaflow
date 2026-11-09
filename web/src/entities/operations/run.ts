@@ -318,6 +318,13 @@ export interface RunContinuation {
 export interface RunFilesPreparation {
   readonly discoveryId: string;
   readonly resourceLibraryId: string;
+  /**
+   * The backend-computed continuation eligibility of this exact organizing
+   * flow, judged from the durable Task flow status.  `false` means the flow
+   * has ended as a whole: the run detail offers no execution-nature entry and
+   * keeps the read-only summary link plus the failure evidence instead.
+   */
+  readonly continuable: boolean;
 }
 
 export interface RunInventoryPage {
@@ -867,6 +874,7 @@ function normalizeRunFilesPreparation(
         source["resourceLibraryId"],
         "run.filesPreparation.resourceLibraryId",
       ),
+      continuable: flag(source, "continuable"),
     };
   } catch {
     return fail();

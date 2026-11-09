@@ -168,6 +168,18 @@ export interface OrganizeDiscoveryModel {
    * remaining-scope recovery preparation, which keep their own existing lineage.
    */
   readonly organizeTaskId: string | null;
+  /**
+   * The backend-computed continuation eligibility of that exact flow, judged
+   * from the durable Task flow status.  `null` when this record has no linked
+   * organizing flow; `continuable: false` means the flow has ended as a whole,
+   * so the summary stays read-only history and the Files journey is the only
+   * way its scope becomes work again.
+   */
+  readonly organizeFlow: {
+    readonly taskId: string;
+    readonly status: string;
+    readonly continuable: boolean;
+  } | null;
   readonly prepared: boolean;
   readonly frozen: boolean;
   readonly pauseRequested: boolean;
@@ -465,6 +477,18 @@ export function normalizeOrganizeDiscovery(
     autoPrepare: record["autoPrepare"] === true,
     previewId: optionalText(record, "previewId"),
     organizeTaskId: optionalText(record, "organizeTaskId"),
+    organizeFlow: (() => {
+      const value = record["organizeFlow"];
+      if (value === null || value === undefined) return null;
+      const flow = readRecord(value, "organizeFlow");
+      const taskId = boundedText(flow, "organizeFlow.taskId");
+      const status = boundedText(flow, "organizeFlow.status");
+      return {
+        taskId,
+        status,
+        continuable: flow["continuable"] === true,
+      };
+    })(),
     prepared: record["prepared"] === true,
     frozen: record["frozen"] === true,
     pauseRequested: record["pauseRequested"] === true,

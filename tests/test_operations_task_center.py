@@ -702,11 +702,17 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
         self._link_preparation(sibling.task_id, discovery_id="prep_sibling")
         unlinked = self._task("manual_organize", scope="Movies/files-unlinked")
 
-        # The exact Task's own durable preparation identity is published.
+        # The exact Task's own durable preparation identity is published, with
+        # the backend continuation eligibility of the same flow (a running
+        # Task's preparation stays continuable).
         code, body = request(self.api, "GET", f"/api/v1/operations/runs/{prepared.task_id}")
         self.assertEqual(200, code)
         self.assertEqual(
-            {"discoveryId": "prep_linked", "resourceLibraryId": "source"},
+            {
+                "discoveryId": "prep_linked",
+                "resourceLibraryId": "source",
+                "continuable": True,
+            },
             body["filesPreparation"],
         )
         # A sibling Task's preparation is never borrowed.

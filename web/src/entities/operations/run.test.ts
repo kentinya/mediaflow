@@ -828,20 +828,35 @@ describe("run lifecycle projection normalization", () => {
 });
 
 describe("run Files preparation link normalization", () => {
-  it("normalizes the exact preparation identity of this Task", () => {
+  it("normalizes the exact preparation identity and its continuation eligibility", () => {
     const run = normalizeRunSummary(
       runDocument({
         task_id: "task-1",
         filesPreparation: {
           discoveryId: "discovery-1",
           resourceLibraryId: "source",
+          continuable: true,
         },
       }),
     );
     expect(run.filesPreparation).toEqual({
       discoveryId: "discovery-1",
       resourceLibraryId: "source",
+      continuable: true,
     });
+    // An ended flow is published as not continuable: the run detail keeps the
+    // read-only summary link instead of an execution-nature entry.
+    const ended = normalizeRunSummary(
+      runDocument({
+        task_id: "task-1",
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      }),
+    );
+    expect(ended.filesPreparation?.continuable).toBe(false);
   });
 
   it("normalizes an absent or explicit null preparation to null", () => {
@@ -863,6 +878,7 @@ describe("run Files preparation link normalization", () => {
           filesPreparation: {
             discoveryId: "discovery-1",
             resourceLibraryId: "source",
+            continuable: true,
           },
         }),
       ),
@@ -880,6 +896,19 @@ describe("run Files preparation link normalization", () => {
         runDocument({
           filesPreparation: {
             discoveryId: "",
+            resourceLibraryId: "source",
+            continuable: true,
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // A missing eligibility fact is contradictory evidence, not a guessable
+    // default: the backend always judges the durable flow status.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          filesPreparation: {
+            discoveryId: "discovery-1",
             resourceLibraryId: "source",
           },
         }),

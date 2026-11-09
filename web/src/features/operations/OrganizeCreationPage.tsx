@@ -229,6 +229,13 @@ export function OrganizeCreationPage() {
     },
   });
 
+  // PATCH-20261109-3: the linked organizing flow's continuation eligibility is
+  // the backend fact this page consumes.  An ended flow keeps the reviewed
+  // summary as read-only history: no new selection, correction, re-analysis or
+  // confirmation can be offered here, and the Files journey is the only way
+  // that scope becomes work again.
+  const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+
   const [selected, setSelected] = useState<readonly string[] | null>(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   const [allowSourceCleanup, setAllowSourceCleanup] = useState(false);
@@ -698,6 +705,31 @@ export function OrganizeCreationPage() {
             ) : null}
           </StatusBanner>
 
+          {organizeFlowEnded ? (
+            <StatusBanner variant="warning" title="本次整理工作已结束">
+              <p>
+                关联的整理流程（任务状态：
+                {preparation.organizeFlow?.status ?? "unknown"}）已结束。
+                原计划摘要保留为只读历史，不能再选择、修正或确认；失败阶段与已知效果请在任务中心对应运行详情查看。
+              </p>
+              <p>
+                需要再次整理其中的文件时，请从资源库文件页重新选择并发起：新工作会完整分析并生成新摘要，确认前不会修改任何媒体文件。
+              </p>
+              <div className="mf-actions">
+                <Button type="button" variant="secondary" onClick={openFiles}>
+                  前往资源库文件页
+                </Button>
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations"
+                  search={operationsLandingSearch(operationsReturn, null)}
+                >
+                  返回任务中心
+                </Link>
+              </div>
+            </StatusBanner>
+          ) : null}
+
           <section aria-label="准备进度">
             <h3>准备进度</h3>
             <dl>
@@ -770,7 +802,7 @@ export function OrganizeCreationPage() {
                       ? "可以重新运行完整分析（例如已保存合法的识别类型等修正）。"
                       : "准备尚未生成可确认的计划摘要；请等待处理 Worker 完成。"}
               </p>
-              {preparation.actions.prepare.available ? (
+              {preparation.actions.prepare.available && !organizeFlowEnded ? (
                 <div className="mf-actions">
                   <Button
                     type="button"
@@ -991,7 +1023,8 @@ export function OrganizeCreationPage() {
                 );
               })}
               {intent !== undefined &&
-                intent.items.some((item) => item.status === "ready") && (
+                intent.items.some((item) => item.status === "ready") &&
+                !organizeFlowEnded && (
                   <section aria-label="来源选择修正">
                     <h4>来源选择修正</h4>
                     <p className="mf-dashboard-meta">

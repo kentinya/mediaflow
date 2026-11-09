@@ -206,6 +206,7 @@ from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
+    SETTLED_TASK_FLOW_STATUSES,
     TRANSFER_MUTATION_IN_FLIGHT,
     ConfirmationStatus,
     ConflictConfirmation,
@@ -678,6 +679,9 @@ _KERNEL_MACHINE_ITEM_STATUSES = frozenset(
 #: failed source keeps its honest recorded outcome unless the operator's own
 #: explicit retry first returns it to a pending state.
 _SETTLED_ITEM_STATUS_VALUES = frozenset(value.value for value in SETTLED_ITEM_STATUSES)
+#: PATCH-20261109-3: the durable flow statuses whose Task can never continue its
+#: own remaining scope, matched as raw SQLite values in the ownership reads.
+_SETTLED_TASK_FLOW_STATUS_VALUES = frozenset(value.value for value in SETTLED_TASK_FLOW_STATUSES)
 
 #: The only Result certainties that can clear an in-flight mutation boundary:
 #: ``none`` proves no effect happened and ``verified_complete`` proves the
@@ -12170,10 +12174,19 @@ class SQLiteTaskRepository:
                             details={"discoveryId": binding_match["target_id"]},
                         )
                 admission_signature = self._admission_signature(discovery)
+                settled_flow = sorted(value.value for value in SETTLED_TASK_FLOW_STATUSES)
                 open_match = self._connection.execute(
                     "SELECT discovery_id FROM media_discoveries "
                     "WHERE admission_signature=? AND intent_id IS NULL AND frozen_at IS NULL "
                     "AND status NOT IN (?, ?, ?, ?) "
+                    # PATCH-20261109-3: the deciding transaction boundary judges
+                    # the same ended-flow fact the reconciliation lookup judged,
+                    # so a failure that settles during this admission can never
+                    # absorb the new request into its dead record.
+                    "AND (organize_task_id IS NULL OR NOT EXISTS ("
+                    "SELECT 1 FROM tasks ended WHERE ended.task_id = organize_task_id "
+                    f"AND ended.status IN ({', '.join('?' for _ in settled_flow)})"
+                    ")) "
                     "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
                     (
                         admission_signature,
@@ -12181,6 +12194,7 @@ class SQLiteTaskRepository:
                         DiscoveryStatus.PARTIAL_SUCCESS.value,
                         DiscoveryStatus.FAILED.value,
                         DiscoveryStatus.CANCELLED.value,
+                        *settled_flow,
                     ),
                 ).fetchone()
                 if open_match is not None:
@@ -12255,6 +12269,15 @@ class SQLiteTaskRepository:
                 "AND recovery_source_task_id IS NULL "
                 "AND intent_id IS NULL AND frozen_at IS NULL "
                 "AND status NOT IN (?, ?, ?, ?) "
+                # PATCH-20261109-3: a record whose linked organizing flow has
+                # already reached a terminal status is durable evidence, not
+                # open work.  It never absorbs a deliberate successor request
+                # (the exact same rule the source-ownership reads judge), so a
+                # new Files organize after a failed flow is a new admission.
+                "AND (organize_task_id IS NULL OR NOT EXISTS ("
+                "SELECT 1 FROM tasks ended WHERE ended.task_id = organize_task_id "
+                f"AND ended.status IN ({', '.join('?' for _ in SETTLED_TASK_FLOW_STATUSES)})"
+                ")) "
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
                 (
                     signature,
@@ -12262,6 +12285,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.PARTIAL_SUCCESS.value,
                     DiscoveryStatus.FAILED.value,
                     DiscoveryStatus.CANCELLED.value,
+                    *sorted(value.value for value in SETTLED_TASK_FLOW_STATUSES),
                 ),
             ).fetchone()
             if row is None:
@@ -12793,10 +12817,19 @@ class SQLiteTaskRepository:
                 if display is not None:
                     self._insert_run_display_locked(task.task_id, display, task.created_at)
                 admission_signature = self._admission_signature(discovery)
+                settled_flow = sorted(value.value for value in SETTLED_TASK_FLOW_STATUSES)
                 open_match = self._connection.execute(
                     "SELECT discovery_id FROM media_discoveries "
                     "WHERE admission_signature=? AND intent_id IS NULL AND frozen_at IS NULL "
                     "AND status NOT IN (?, ?, ?, ?) "
+                    # PATCH-20261109-3: the deciding transaction boundary judges
+                    # the same ended-flow fact the reconciliation lookup judged,
+                    # so a failure that settles during this admission can never
+                    # absorb the new request into its dead record.
+                    "AND (organize_task_id IS NULL OR NOT EXISTS ("
+                    "SELECT 1 FROM tasks ended WHERE ended.task_id = organize_task_id "
+                    f"AND ended.status IN ({', '.join('?' for _ in settled_flow)})"
+                    ")) "
                     "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
                     (
                         admission_signature,
@@ -12804,6 +12837,7 @@ class SQLiteTaskRepository:
                         DiscoveryStatus.PARTIAL_SUCCESS.value,
                         DiscoveryStatus.FAILED.value,
                         DiscoveryStatus.CANCELLED.value,
+                        *settled_flow,
                     ),
                 ).fetchone()
                 if open_match is not None:
@@ -13192,6 +13226,14 @@ class SQLiteTaskRepository:
         """
 
         settled = tuple(item.value for item in SETTLED_ITEM_STATUSES)
+        # PATCH-20261109-3: a *terminal* Task flow can never continue its own
+        # remaining scope, so its still-unsettled items are frozen evidence, not
+        # live work.  They no longer own their sources: a deliberate new Files
+        # request re-admits the exact file without cancelling the terminal Task
+        # or clearing any record, and every recorded item outcome stays history.
+        # A pending/running/paused Task — including one waiting for a human
+        # decision — keeps owning its unfinished items exactly as before.
+        settled_tasks = tuple(item.value for item in SETTLED_TASK_FLOW_STATUSES)
         # One concrete source is identified by its path *inside the Storage*, not by
         # the ResourceLibrary binding that happens to expose it.  Two valid library
         # bindings of the same Storage (a nested root and the whole root) therefore
@@ -13207,6 +13249,7 @@ class SQLiteTaskRepository:
             "AND items.resource_library_id=?)"
             ")",
             f"items.status NOT IN ({', '.join('?' for _ in settled)})",
+            f"tasks.status NOT IN ({', '.join('?' for _ in settled_tasks)})",
         ]
         parameters: list[object] = [
             storage_id,
@@ -13214,6 +13257,7 @@ class SQLiteTaskRepository:
             source_path,
             resource_library_id or "",
             *settled,
+            *settled_tasks,
         ]
         excluded_tasks: set[str] = set()
         if exclude_task_id is not None:
@@ -13958,7 +14002,8 @@ class SQLiteTaskRepository:
         parameters.extend((wanted, wanted, *legacy_parameters))
         rows = self._connection.execute(
             "SELECT d.discovery_id, d.actor, d.status, d.resource_library_id, "
-            "d.progress_json, d.sources_json, d.intent_id, d.storage_scope_json "
+            "d.progress_json, d.sources_json, d.intent_id, d.storage_scope_json, "
+            "d.organize_task_id "
             "FROM media_discoveries d "
             "WHERE " + " AND ".join(clauses) + " "
             "ORDER BY d.created_at DESC, d.discovery_id DESC LIMIT 50",
@@ -14044,15 +14089,92 @@ class SQLiteTaskRepository:
                     }
                 )
             if matched is not None and not replaced:
-                return {
-                    "kind": "discovery",
-                    "discoveryId": row["discovery_id"],
-                    "actor": row["actor"],
-                    "status": row["status"],
-                    "resourceLibraryId": row["resource_library_id"],
-                    "path": source_path,
-                }
+                if self._discovery_owner_still_holds_source_locked(
+                    row,
+                    storage_id=storage_id,
+                    wanted=wanted,
+                    source_path=source_path,
+                    resource_library_id=resource_library_id,
+                ):
+                    return {
+                        "kind": "discovery",
+                        "discoveryId": row["discovery_id"],
+                        "actor": row["actor"],
+                        "status": row["status"],
+                        "resourceLibraryId": row["resource_library_id"],
+                        "path": source_path,
+                    }
+                # PATCH-20261109-3: this preparation no longer holds the exact
+                # source (its linked flow ended, or that file recorded its own
+                # durable outcome), so the bounded read continues: an older
+                # candidate or a live TaskItem may still be the honest owner.
+                continue
         return None
+
+    def _discovery_owner_still_holds_source_locked(
+        self,
+        row: sqlite3.Row,
+        *,
+        storage_id: str,
+        wanted: str,
+        source_path: str,
+        resource_library_id: str | None,
+    ) -> bool:
+        """Whether one matched discovery row still legally holds the source.
+
+        PATCH-20261109-3: a Files preparation owns its sources through its
+        *unfinished* organizing work, not through the mere existence of the
+        record.  The judgment reads the same durable facts the confirmation
+        boundary judges, so ownership and eligibility can never disagree:
+
+        * A linked Task whose flow already reached a terminal status has ended
+          as a whole — its preparation and summary lost every execution
+          eligibility, so none of its sources are held any more.  The recorded
+          failure, results and pins stay untouched history.
+        * A still-unfinished Task releases exactly the sources whose own
+          TaskItems all recorded settled outcomes (a failed/partial analysis
+          sibling, an ignored or completed file); its waiting, four-type and
+          queued siblings keep their exact ownership, so a normal
+          ``completed`` discovery never releases a still-confirmable summary.
+
+        A record without a linked Task (a legacy pre-Task row) and a record
+        whose Task row cannot be read stay conservative owners: an unreadable
+        state is never answered as "free".
+        """
+
+        task_id = row["organize_task_id"]
+        if not isinstance(task_id, str) or not task_id:
+            return True
+        task = self._connection.execute(
+            "SELECT status FROM tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+        if task is None:
+            return True
+        if task["status"] in _SETTLED_TASK_FLOW_STATUS_VALUES:
+            return False
+        items = self._connection.execute(
+            "SELECT status FROM task_items WHERE task_id=? AND storage_id=? AND "
+            "("
+            "source_storage_path=? "
+            "OR (source_storage_path IS NULL AND source_path=? "
+            "AND resource_library_id=?)"
+            ")",
+            (
+                task_id,
+                storage_id,
+                wanted,
+                source_path,
+                resource_library_id or "",
+            ),
+        ).fetchall()
+        if not items:
+            # The Task's own per-file rows have not been written yet (the work
+            # is queued or mid-flight before its first item projection): the
+            # preparation stays the conservative owner.
+            return True
+        settled = tuple(item.value for item in SETTLED_ITEM_STATUSES)
+        return any(item["status"] not in settled for item in items)
 
     def find_media_discovery_for_intent(self, intent_id: str) -> MediaDiscovery | None:
         if not isinstance(intent_id, str) or not intent_id.strip():

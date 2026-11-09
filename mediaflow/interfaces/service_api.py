@@ -192,6 +192,7 @@ from mediaflow.domain.system_settings import (
 )
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
+    SETTLED_TASK_FLOW_STATUSES,
     ConfirmationStatus,
     PersistentTaskStatus,
     direct_command_task_command,
@@ -12073,6 +12074,13 @@ class MediaFlowApi:
             # the operator (and a reload) can open the exact task context instead
             # of inferring one from a recent list.
             "organizeTaskId": discovery.organize_task_id,
+            # PATCH-20261109-3: the backend-computed continuation eligibility of
+            # that exact flow.  The summary page and the Task Center consume this
+            # same durable fact instead of guessing from the record's own walk
+            # status: an ended flow keeps its read-only evidence and its ordinary
+            # Files re-organize path, and never offers a confirmation the backend
+            # would refuse.
+            "organizeFlow": self._organize_flow_document(discovery.organize_task_id),
             "autoPrepare": discovery.auto_prepare,
             "prepared": discovery.prepared,
             "previewId": discovery.preview_id,
@@ -12605,9 +12613,23 @@ class MediaFlowApi:
                 worker.get("durableState")
                 or "the resident Processing Worker cannot claim admitted work"
             )
+        # PATCH-20261109-3: a Files plan summary whose linked organizing flow has
+        # already ended is read-only history.  The execute action is refused with
+        # the exact reason, so a stale page can never offer a confirmation that
+        # the admission boundary would refuse: the ordinary Files journey is the
+        # only way that scope becomes work again.
+        organize_flow = self._organize_flow_for_intent(
+            document.get("intentId") if isinstance(document.get("intentId"), str) else None
+        )
+        if organize_flow is not None and not organize_flow["continuable"] and reason is None:
+            reason = (
+                "the organizing flow of this plan summary has already ended; "
+                "start a fresh organize from Files"
+            )
         document["executionCandidateItemIds"] = [item.get("itemId") for item in executable]
         document["blockedItemCount"] = blocked
         document["worker"] = worker
+        document["organizeFlow"] = organize_flow
         document["actions"] = {
             "execute": {
                 "available": reason is None,
@@ -13696,6 +13718,15 @@ class MediaFlowApi:
         identity: no scope, plan, claim or authority travels here, and a Task
         without that exact relationship exposes no entry instead of a guessed
         recent record.
+
+        PATCH-20261109-3: the identity carries the backend-computed continuation
+        eligibility of the same durable work.  ``continuable`` judges the linked
+        Task's *flow* status — the same settled-flow fact the repository's source
+        ownership reads, the execution adoption and the confirmation boundary all
+        judge — so the Task Center can offer "继续整理" only while the original
+        work can really still be continued, and an ended flow keeps its read-only
+        summary link plus the failure evidence instead of a control that the
+        backend would refuse.
         """
 
         repository = self._repository
@@ -13711,7 +13742,62 @@ class MediaFlowApi:
         return {
             "discoveryId": discovery.discovery_id,
             "resourceLibraryId": discovery.resource_library_id,
+            "continuable": self._organize_flow_continuable(discovery.organize_task_id),
         }
+
+    def _organize_flow_continuable(self, task_id: str) -> bool:
+        """Whether the linked organizing Task's flow can still be continued.
+
+        PATCH-20261109-3: the durable Task flow status is the single backend
+        fact behind the Task Center's "继续整理" entry, the preview document's
+        execute action and the old-summary refusal.  A terminal flow —
+        completed, failed or cancelled — has ended as a whole: its remaining
+        waiting scope is frozen evidence and its files are re-admitted through
+        the ordinary Files journey instead.  A Task whose row cannot be read
+        answers "not continuable" fail-closed; the ordinary read failure still
+        raises to the caller instead of being hidden here.
+        """
+
+        task = self._repository.get_task(task_id)
+        if task is None:
+            return False
+        return task.status not in SETTLED_TASK_FLOW_STATUSES
+
+    def _organize_flow_document(self, task_id: str | None) -> dict[str, object] | None:
+        """The bounded continuation eligibility of one linked organizing flow.
+
+        PATCH-20261109-3: the durable Task flow status is the single backend fact
+        behind the Task Center's "继续整理" entry, the summary page's read-only
+        presentation and the old-summary confirmation refusal.  ``null`` means
+        this record has no linked organizing flow (an ordinary intent or a
+        recovery preparation keeps its own existing lineage).  A Task whose row
+        cannot be read answers ``continuable: false`` fail-closed; the ordinary
+        read failure still raises to the caller instead of being hidden here.
+        """
+
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        task = self._repository.get_task(task_id)
+        if task is None:
+            return None
+        return {
+            "taskId": task_id,
+            "status": task.status.value,
+            "continuable": task.status not in SETTLED_TASK_FLOW_STATUSES,
+        }
+
+    def _organize_flow_for_intent(self, intent_id: str | None) -> dict[str, object] | None:
+        """The flow document of the Files run that owns one intent, if any."""
+
+        if not isinstance(intent_id, str) or not intent_id:
+            return None
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return None
+        discovery = finder(intent_id)
+        if discovery is None:
+            return None
+        return self._organize_flow_document(discovery.organize_task_id)
 
     def _operations_run_continuation(self, overview) -> dict[str, object] | None:
         """Remaining-scope continuations were retired with Job support.

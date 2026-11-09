@@ -277,6 +277,22 @@ COMPLETED_ITEM_STATUSES = frozenset(
 #: The item outcomes that count as a failed/partial source of one Task.
 FAILED_ITEM_STATUSES = frozenset({TaskItemStatus.PARTIAL, TaskItemStatus.FAILED})
 
+#: The Task flow statuses in which the whole flow has durably ended (the five-state
+#: model; ``partial_success`` is a retired legacy value that still honestly marks an
+#: ended flow).  A terminal Task can never adopt, continue or execute its remaining
+#: scope again, so its still-unsettled items are frozen evidence rather than live
+#: work: they no longer own their sources and a deliberate new Files request may
+#: re-admit them.  A pending/running/paused Task — including one waiting for a
+#: human decision — keeps owning its unfinished items exactly as before.
+SETTLED_TASK_FLOW_STATUSES = frozenset(
+    {
+        PersistentTaskStatus.COMPLETED,
+        PersistentTaskStatus.PARTIAL_SUCCESS,
+        PersistentTaskStatus.FAILED,
+        PersistentTaskStatus.CANCELLED,
+    }
+)
+
 #: TaskItem stage of one automatic pass that recorded a same-version prior
 #: failed/partial organizing outcome instead of processing the file again.
 #: Slice 47 RO-6: the exclusion itself is *not* a formal organizing outcome —

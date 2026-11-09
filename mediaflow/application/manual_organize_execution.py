@@ -62,6 +62,7 @@ from mediaflow.domain.organizer import (
 from mediaflow.domain.source_evidence import OccurrenceState, source_fingerprint
 from mediaflow.domain.storage import StorageEntry, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
+    SETTLED_TASK_FLOW_STATUSES,
     PersistentResultRecord,
     PersistentTaskItem,
     PersistentTaskStatus,
@@ -330,6 +331,7 @@ class ManualOrganizeExecutionService:
             preview,
             sources=((item.source.storage_id, item.source.path) for item in selected),
         )
+        self._assert_files_preparation_live(preview)
         self._validate_preview_parent(preview, snapshot_id, snapshot_digest)
         intent = self._intent(preview.intent_id)
         if getattr(intent.status, "value", intent.status) != "open":
@@ -682,6 +684,91 @@ class ManualOrganizeExecutionService:
             status=409,
             details={"storageId": storage_id, "path": path, "refusedCount": len(refused)},
         )
+
+    def _assert_files_preparation_live(self, preview) -> None:
+        """Refuse a Files summary whose linked organizing flow has ended.
+
+        PATCH-20261109-3: a Files admission owns its durable organizing Task
+        before business readiness, and the confirmation adopts exactly that
+        Task.  Once the Task's *flow* reached a terminal status — failed,
+        cancelled or completed — the whole preparation and its summary lost
+        every execution eligibility: the adoption would otherwise return
+        ``None`` and a stale page, an old authorization or a late confirmation
+        could silently mint a second Task beside the ended one, reopening work
+        the flow already gave up.  Both the authorization boundary and the
+        consume/admission boundary therefore judge the same durable flow fact
+        the repository's source ownership reads judge.
+
+        The refusal explains that this work has ended, keeps the recorded
+        evidence untouched and points at the ordinary Files re-organize path.
+        A summary without a linked Files run (the ordinary manual API/CLI
+        intent path) and a recovery preparation keep their own existing
+        semantics and are never governed here; an unreadable linked state fails
+        closed with a bounded read-failure answer instead of being treated as
+        either "eligible" or "ended".
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return
+        try:
+            discovery = finder(preview.intent_id)
+        except Exception as error:  # noqa: BLE001 - a bounded read failure is never eligibility
+            raise ManualExecutionError(
+                "the linked Files organizing work could not be read; nothing was admitted",
+                code="eligibility_unreadable",
+                next_action=(
+                    "refresh and read the preparation again; the current durable state "
+                    "decides the next action"
+                ),
+                status=503,
+            ) from error
+        if discovery is None:
+            return
+        task_id = getattr(discovery, "organize_task_id", None)
+        if not isinstance(task_id, str) or not task_id:
+            return
+        reader = getattr(self._repository, "get_task", None)
+        if not callable(reader):
+            return
+        try:
+            task = reader(task_id)
+        except Exception as error:  # noqa: BLE001 - a bounded read failure is never eligibility
+            raise ManualExecutionError(
+                "the linked organizing Task could not be read; nothing was admitted",
+                code="eligibility_unreadable",
+                next_action=(
+                    "refresh and read the run again; the current durable state "
+                    "decides the next action"
+                ),
+                status=503,
+            ) from error
+        if task is None:
+            raise ManualExecutionError(
+                "the linked organizing Task is unavailable; nothing was admitted",
+                code="eligibility_unreadable",
+                next_action=(
+                    "inspect the run in the Task Center; the recorded evidence decides "
+                    "the next action"
+                ),
+                status=409,
+            )
+        if task.status in SETTLED_TASK_FLOW_STATUSES:
+            raise ManualExecutionError(
+                "the organizing flow of this summary has already ended; "
+                "its recorded evidence stays and a stale confirmation cannot reopen it",
+                code="preparation_flow_ended",
+                next_action=(
+                    "inspect the run's recorded results and failure stage in the Task "
+                    "Center, then start a fresh organize from Files if the same files "
+                    "are wanted again"
+                ),
+                status=409,
+                details={
+                    "taskId": task_id,
+                    "flowStatus": task.status.value,
+                },
+            )
 
     def _revoke_unused_authority(
         self, authority: ManualExecutionAuthorization, error: ManualExecutionError
@@ -1050,6 +1137,7 @@ class ManualOrganizeExecutionService:
             preview,
             sources=((item.source.storage_id, item.source.path) for item in selected),
         )
+        self._assert_files_preparation_live(preview)
         self._validate_preview_parent(
             preview,
             authority.configuration_snapshot_id,
