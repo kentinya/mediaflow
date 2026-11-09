@@ -665,6 +665,9 @@ never automatically Add again, reset the database or move media. Existing saved 
 
 Reference images define hierarchy/style, not real names, counts, conditions or backend algorithms.
 TMDB remains the configured Provider abstraction; no implicit fallback or V1 Provider switching.
+The Metadata editor offers only query type: Movie, TV, Auto or None. Save omits the legacy policy
+`mediaType`; old values are ignored, with a missing query type read as Auto. Auto permits movie and
+TV candidates, whose own types still determine detail lookup, naming and classification.
 Production identity selection explains parser/rule/policy/candidate score; unrecognized/ambiguous/
 below-threshold/credential/timeout/malformed evidence cannot fabricate an identity.
 
@@ -827,6 +830,22 @@ results and audit; no existing runtime data or media is cleared.
 - **Failure/recovery:** source/plan change, stale permission/pin, conflict, capability or pre-mutation/
   partial/unknown effect explains durable state per item. Re-analyze the legal scope and obtain fresh
   intent when necessary; completed/ignored/uncertain siblings are not re-executed.
+
+Each new organizing request identifies its live source again under its pinned query type, without
+automatically copying a historical Provider ID/type into the new choice. History remains factual;
+normal NFO/external-ID lookup and Provider caching retain their existing behavior. A new ambiguity
+requires a choice for that request.
+
+On the organize intent page, select an existing source-grounded candidate (title/year, movie or TV,
+Provider/ID), save it, then explicitly generate a new analysis summary. With no candidate selected,
+analysis follows normal identification. Refresh reads back the saved choice; saving invalidates an
+earlier summary and performs no media mutation. The current Task's Metadata confirmation/correction
+continues using its saved candidate and type on the same legitimate pin: re-analysis reads the correct
+detail interface, then the summary uses the persisted identity without another Provider lookup or
+repeating the same confirmation. Invalid/stale choices or Provider failure retain the saved state and
+show the reason and existing correction/read action; execution still requires its own exact-summary
+confirmation. [Configuration](configuration.md#metadata-query-type-and-saved-identity) distinguishes
+query policy, result type and the saved choice.
 
 V1's explicit one-shot token remains an administration/API-automation/support mechanism, never a
 replacement for the normal V2 journey. Source preparation cannot accept browser-provided raw Storage

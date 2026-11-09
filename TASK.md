@@ -26,6 +26,6 @@ Next: NO ACTIVE IMPLEMENTATION TASK
 [固定 B 验收报告](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)。
 原规划与 Developer 报告见
 [候选检查点](https://github.com/kentinya/mediaflow/blob/fbabe7f80614dd35faa096dcb55198d183784501/TASK.md)。
-本地原始证据：`.git/validation-evidence/fbabe7f8/b-final-review/`；未推送或部署。
+本地原始证据：`.git/validation-evidence/fbabe7f8/b-final-review/`；Git 推送不包含这些本机材料，也不代表部署。
 
 此独立修正不重开 Slice52，不改 SLICE／Roadmap／Progress，也不授权后续实施。

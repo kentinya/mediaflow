@@ -1285,6 +1285,22 @@ kernel with its existing explicit execute/permission/one-shot-authority boundary
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
+MetadataPolicy query type is the sole lookup/type constraint: Movie accepts movie, TV accepts TV,
+Auto accepts both, and None performs no lookup while retaining the existing complete offline path.
+Legacy policy `mediaType` never supplies a default or limits an identity; new policy saves omit it.
+MediaCandidate/MediaIdentity retain their own types for Provider detail, naming and classification.
+
+New manual intents initialize without historical metadata identities. Source-grounded typed evidence
+and candidates may be offered as `allowedMetadataIdentities`, but become analysis input only after
+an explicit save for the current item. Number-only history cannot supply a typed candidate. Existing
+NFO/external-ID lookup and Provider caching remain unchanged. In the same Task, saved review/correction
+or intent choices feed the shared analysis with their own type; exact summary generation consumes
+its persisted, source/pin-bound identity without querying the Provider again or creating a duplicate
+review. These paths retain version checks, source authority, immutable pins and explicit execution;
+no schema change or historical backfill is involved. See the
+[manual journey](product-experience.md#manual-organize) and
+[configuration fields](configuration.md#metadata-query-type-and-saved-identity).
+
 ## CURRENT — Bounded folder discovery and safe restart
 
 ResourceLibrary Files list/grid admits folder or mixed selections to

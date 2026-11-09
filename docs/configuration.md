@@ -161,6 +161,8 @@ all historical pin semantics. Scanner/manual discovery consume the same pinned f
 real elapsed stability policy. Forms retain tab-scoped correctable values, never credentials or
 runtime authority. Empty/partial graphs explain missing dependencies without generating policies.
 
+### Metadata query type and saved identity
+
 MetadataPolicy uses only `mediaQueryType` (`movie`, `tv`, `auto`, `none`) to decide which Provider
 lookups and resolved identities are permitted. The movie/tv type on a candidate, Recognition Result
 or MediaIdentity belongs to that result and drives the Provider detail call, naming and

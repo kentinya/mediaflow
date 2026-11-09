@@ -15,6 +15,7 @@ Slice51／50及更早接受身份、延期保持；开发关闭不等于推送�
 
 | 已接受修正 | 当前结果与固定验收 |
 |---|---|
+| TMDB 查询类型与候选续接 | [PATCH-20261109-2](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)：策略只保留查询类型；新整理重新识别；当前任务保存候选后继续摘要，意图页可明确选择已有候选；完整 T4 结果及补跑限制见固定验收，现行字段见 [配置说明](configuration.md#metadata-query-type-and-saved-identity) |
 | 文件页与原整理摘要 | [PATCH-20261109-1](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)：文件页直接呈现目录读取／列表／错误；选择文件生成摘要后离开，可从任务中心原任务“继续整理”返回同一摘要，刷新／重认证后仍可继续，确认后查看原任务结果 |
 | OpenList 属性与原生操作 | [PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md)：属性使用缓存目录列表，内容单独获取下载链接；原生移动／重命名及逐项核验，Python 3.11 启动修正 |
 | 探索筛选与详情 | [PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)：带标签筛选行、紧凑 TMDB 外链、集中鸣谢、详情背景原位；[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)：删除页面标题、统一内容边界、详情主要信息与简介开头首屏可读 |

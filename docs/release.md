@@ -37,8 +37,9 @@ original closure, release version and packaging validation remain unchanged.
 Accepted Slice51 Explore/Dashboard retirement, Slice50 presentation/loading/cards, Slice49 confined
 Automation intent and Slice48 independent Task flow/file outcomes remain. Slice52's Web presentation
 and existing read-API validation do not establish a new package, container, external-service or
-production release. The old wheel does not validate the later Slice51 adapter changes or current
-source; exact current packaging and release gates must run for an actual release.
+production release. Packaging evidence applies only to its recorded source; the later standalone
+corrections below state which package gates were run. An actual release still requires its own
+exact-source container, external-service and release validation.
 
 This is development acceptance, not a V2 release. Current support is fresh initialization
 → submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
@@ -65,7 +66,7 @@ external-service or endurance environments. The OpenList 405 proof used local HT
 verified native Move／Rename, zero download-link/content requests and `refresh: false` throughout.
 Raw evidence is stored locally at `.git/validation-evidence/cf680df6/b-final/`.
 
-The latest [Files preparation-return correction](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
+The [Files preparation-return correction](https://github.com/kentinya/mediaflow/blob/886c320db6916a1f0c3f5c2f2e38b599d14418a5/TASK.md)
 passed independent B review on 2026-11-09, from Base
 `45674526b04d3366f533b86e864b3c8d179736ed` through reviewed Head
 `df565d058acaaf8078ddcb7b20ffa7c89079ac76`, with accepted implementation
@@ -79,6 +80,27 @@ original Task's result. Desktop/narrow loading, ready and continuation views wer
 The fixed report retains exact commands and local evidence location. These local temporary-Storage/
 fake-Provider checks do not extend the earlier OpenList full regression, wheel or Docker results to
 this later source. No production external-service or full release matrix was run for this correction.
+
+The latest [query-type and candidate-continuation correction](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass)
+passed independent B T4 review on 2026-11-09: Base
+`233f6a25769856087d10cb4483c0f1a621a76546`, reviewed Head
+`fbabe7f80614dd35faa096dcb55198d183784501`, implementation
+`86d9b7618acd88d640563ffc90f5e9d98c7e8b74`. Its acceptance includes:
+
+- Python: 2671 tests, 7 skipped for dedicated external-service/endurance environments; Web unit: 1469 passed.
+- Default browser: 266 passed initially; two artifact-file failures from concurrent suites sharing the
+  output directory passed when rerun with isolated output. All 268 cases have passing results on the
+  candidate; the initial failures remain recorded. Five targeted real-Python browser cases passed.
+- Local real-stack TV journeys verified new-request recognition, saved intent candidates, same-Task
+  confirmation to summary, correct TV detail and no Provider call during summary generation.
+- Quality, examples, Web build, wheel and installed consumers outside the source tree passed.
+  Wheel SHA-256: `07024680022cafd24e38506ad42a76781f364c1fe1f61bdb6a21863469028814`.
+
+The fixed report retains exact commands, fixture limits and local evidence at
+`.git/validation-evidence/fbabe7f8/b-final-review/`. This is development acceptance on temporary
+Storage/fake Providers; it adds no Docker, production-service, deployment or cross-version claim.
+Schema and historical records remain unchanged. Subsequent documentation-only reconciliation does
+not change the validated executable inputs.
 
 Use [Deployment](deployment.md) for current executable startup, health, backup and same-version
 recovery. Earlier V1 upgrade acceptance below remains historical; it is not a current `main` gate

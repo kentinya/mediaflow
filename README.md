@@ -55,6 +55,13 @@ keeps its results. [PATCH-20261109-1 B acceptance](https://github.com/kentinya/m
 records the accepted implementation and T3 validation; [Release validation](docs/release.md#current-v2-validation-boundary)
 distinguishes this acceptance from earlier full regression and packaging evidence.
 
+TMDB policies use query type alone; candidate/result movie or TV types still drive detail lookup,
+naming and classification. Each new organize identifies the source again. Within the current Task,
+a saved candidate continues through re-analysis to the exact summary without repeated confirmation
+or another Provider lookup at summary generation. The intent page supports selecting and saving its
+existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
+[Configuration](docs/configuration.md#metadata-query-type-and-saved-identity) explains current behavior.
+
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
 a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
 correction places Copy beside Edit and uses a compact enable switch saved through the form.
