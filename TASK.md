@@ -211,8 +211,74 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 
 ### Developer Completion Report
 
-已获实施授权，等待 Developer 实施及 coherent checkpoint。报告实际 checkpoint、改动／根因、受影响命令与结果、
-已知失败／未验证边界，状态 READY FOR B REVIEW；全量验收仍由 B 执行。
+**Status: READY FOR B REVIEW。** 实现 checkpoint `192d3c44e2613e7d0beb6c511475ffe14e9ad5181`
+（Base `fe3bd99b`，前一提交 `605a1598` 为本 Task 激活记录）；分支 `main`，未推送。
+预存脏文件（`mediaflow/.DS_Store` 及全部未跟踪文件）未纳入任何提交。
+
+**根因与实现。** 生产可达失败边界：Task engine 的 `_fail_discovery`（分析/读取 pass 异常时
+发布 Task FAILED + PENDING/PROCESSING item FAILED，不动 discovery 行、不动 waiting item）。
+该落定后：(a) `_discovery_source_owners_locked` 仍按记录存在判占用，新 Files 提交 409；
+(b) `find_open_media_discovery`/事务内 open-signature 检查把新请求收敛进死记录；
+(c) 详情 API 仅证明关联身份，`filesPreparation` 存在即渲染“继续整理”；
+(d) 旧摘要确认经 `_adopted_organize_task` 返回 None 后静默另建新 Task。
+统一资格事实 = `PersistentTaskStatus` 五态终态集合，新增 domain 常量
+`SETTLED_TASK_FLOW_STATUSES`（completed/legacy partial_success/failed/cancelled）：
+
+- `sqlite_runtime.py`：item 分支 SQL 排除终态 Task 的未决 item；discovery 分支新增
+  `_discovery_owner_still_holds_source_locked`——链路 Task 终态则整份释放，Task 未决则按
+  确切 Storage 身份逐文件判定（该文件 item 全部 settled 才释放；无 item 或不可读保持保守
+  占用）；两个 admission 收敛边界同样排除已终态 flow 的记录（同 requestId 重试仍对到原记录）。
+- `manual_organize_execution.py`：`authorize` 与 `execute`（消费）均新增
+  `_assert_files_preparation_live`——Files 关联且链路 Task 终态时 409
+  `preparation_flow_ended`，读取失败 503 `eligibility_unreadable`；普通未关联 API/CLI 路径
+  与 recovery 准备不受管辖。
+- `service_api.py`：`filesPreparation` 增加 `continuable`；discovery/preview 文档增加
+  `organizeFlow` 并据此关闭 `actions.execute.available`；共享 `_organize_flow_document`。
+- Web：`RunFilesPreparation.continuable`、`OrganizeDiscoveryModel.organizeFlow`（严格归一化，
+  缺字段即拒绝）；运行详情终态改渲染“本次整理工作已结束”+只读摘要链接+从文件页重新发起；
+  摘要页终态 banner、禁用修正/重新分析/确认（服务端 execute action 同步拒绝）。
+
+**实际命令与结果（全部通过，无 skip 掩盖）。**
+
+```sh
+python3 scripts/check_governance.py                    # PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts  # OK
+.venv/bin/python -m unittest tests.test_failed_preparation_ownership
+  tests.test_operations_task_center tests.test_manual_organize_execution   # 68 OK
+.venv/bin/python -m unittest tests.test_organize_source_history.{PartialItemIsHistoryNotOwner,
+  SupersededSingleFileOwnerHandoff,SupersededOwnerWithRemainingWork}Tests
+  tests.test_organize_preparation.{AdmittedSourceOwnership,SourceReidentificationJourney}Tests  # 16 OK
+.venv/bin/python -m unittest tests.test_task_source_ownership_race tests.test_organize_preparation  # 46 OK
+.venv/bin/python -m unittest tests.test_organize_source_history        # 23 OK
+.venv/bin/python -m unittest tests.test_media_discovery                # 156 OK
+.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_persistence  # 58 OK
+.venv/bin/ruff check <6 changed py files> / ruff format --check <同上>      # All checks passed
+git diff --check                                       # clean
+web: npm run typecheck / npm run lint / npx prettier --check <6 changed files>  # clean
+web: npm run test -- run OperationsInventory.test.tsx OrganizeCreationPage.test.tsx
+  StorageFilesPage.test.tsx run.test.ts                # 146+ tests OK（含新增终态呈现用例）
+```
+
+新增 `tests/test_failed_preparation_ownership.py`（4 旅程，全部走真实 Files/API/engine 入口，
+失败经 engine 自身 `_fail_discovery` 生产发布边界产生，标注于模块 docstring）：摘要前整流程
+失败→释放+新准入+同 requestId 对账；摘要后重分析失败→waiting item 冻结证据+释放+旧摘要
+确认 409 `preparation_flow_ended`+零 mutation；混合批次（One 逐项分析失败/Two waiting）→
+One 释放、Two 仍占用、选 A 拒绝、确认 B 采纳原 Task 执行、A 新工作独立完成；健康未确认摘要
+→continuable、重开同一摘要、延后确认成功、完成后转只读。`run.test.ts` 增加 continuable
+归一化/拒绝用例；`OperationsInventory.test.tsx` 增加终态无“继续整理”+只读链接用例。
+
+**已知边界与风险（供 B 审查）。**
+
+1. B 的注入式调查（`_SupersededHandoffFixture` 风格注入 item/task failed）未被复用为本轮
+   证据；本轮以 engine 失败发布边界复现，未证明用户现场具体触发原因（如真实 Provider 中断
+   或 Worker 崩溃的具体形态），根因引入时间待 B 判读。
+2. 逐文件释放对“同 path 多 item（不同 occurrence）”按“全部 settled 才释放”保守判定；
+   四类业务等待以 waiting（unsettled）保持占用，仅以 waiting_confirm/终态 journey 断言，
+   未单独构造 waiting_metadata 自然旅程（同 unsettled 集合同一路径）。
+3. 执行阶段整流程失败（worker 崩溃→`_record_failure`）与取消路径未新增专属 journey；其
+   终态判定与本轮同一 status 事实，既有 `test_manual_task_engine`/handoff 用例未回归。
+4. B 的 T4 全回归、E2E（organize-source-history / operations-inventory / task-flow python
+   specs）、wheel/packaging 门禁未由 Developer 执行，按分工属 B。
 
 ### B Review Result
 
