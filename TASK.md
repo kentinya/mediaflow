@@ -1,14 +1,15 @@
 # Task PATCH-20261109-3 — 失败整理的文件释放与摘要入口一致性
 
 用户于 2026-11-09 要求“写到Task里并激活Task”，确认下述开发后体验并授权将规划草案提升为
-正式实施 Task。候选已由 Developer 交付，本轮 B 独立复核为 FIX REQUIRED；Developer 在同一
-Task 内修正下述两个阻塞后重新交付。不可变 Task Base、范围与测试分工保持。
+正式实施 Task。最新候选已由 B 独立复核完整 Base..Head，结论仍为 FIX REQUIRED：上一轮
+两个阻塞已修正，当前剩余问题及同 Task 开发指导见文末最新 B 复核。不可变 Base、范围与
+测试分工保持。
 
 ```text
 Task ID: PATCH-20261109-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: fe3bd99b1cf6046ac716052e5c8ee63851c80f15
 Difficulty: High
 Test Level: T4
@@ -145,7 +146,9 @@ Slice46/47/52 仅作已接受合同引用，均不作为本 Task 的父 Slice。
 检查；B 对完整 Base..candidate 独立验收并承担 T4 全回归，不把全量门禁交回 Developer。
 所有复现使用临时 Local／SQLite／假 Provider，不使用用户运行数据或生产外部 Storage。
 
-**Developer — affected tests（实施后）**
+### Developer — affected tests
+
+实施后：
 
 新增 `tests/test_failed_preparation_ownership.py` 聚合本 bug 的真实失败旅程、单项／混合批次、
 事务竞争、旧授权及同版本 reopen 回归；尽量复用现有测试夹具，不为生产引入测试状态接口。
@@ -177,7 +180,9 @@ npm run lint
 `.venv/bin/ruff format --check <changed-python-files>`；对改变的 Web 文件在 `web/` 执行
 `npx prettier --check <changed-web-files>`，占位参数按实际清单替换，不运行全库格式化。
 
-**B — acceptance and full regression（候选提交后）**
+### B — acceptance and full regression
+
+候选提交后：
 
 - 独立复现 AC-1–6，审查所有受影响入口及事务；记录 Base是否自然可达、实际根因和引入来源，
   不把本轮注入调查当成产品验收。Task的五态／独立文件结果按当前规则判读。
@@ -428,3 +433,91 @@ web: npm run typecheck / npm run lint / npx prettier --check <5 changed web file
 本轮总耗时约 85 分钟,其中测试执行(单测、静态检查、typecheck/lint)累计约 6 分钟,
 低于 30% 上限;测试编写与 B3-01 失败定位属实现工作,未以延长等待凑比例。未越权改
 SLICE/Roadmap/Progress,未推送,未自签 PASS。
+
+
+### B 独立复核 — FIX REQUIRED（2026-11-09，最新）
+
+Reviewed Base: `fe3bd99b1cf6046ac716052e5c8ee63851c80f15`。
+Reviewed Head: `b33415e98c3f9bdca36c170ef950d32f50b024c8`。
+Implementation Head: `d39765bfbb1cc3fbd2d7831208dc053f375743ff`。
+独立审查完整 17 文件差异及关联准入／发布／页面链路。**B3-01、B3-02 已修正**：真实准备
+响应能够读取；失败跨过确认源检查时，事务内拒绝失效 Files 关联，没有第二 Task 或媒体效果。
+没有新增数据库表、列、迁移、schema version 或状态枚举值；`organizeFlow`／`continuable`
+是现有状态的响应投影，终态常量只集合已有值。
+
+**B3-03 / P1 — 已结束工作的只读历史与页面动作没有完整交付（AC-2／Implementation Scope 5）。**
+
+用户完整操作：文件页选择 One → 批量整理 → 得到完整摘要 → 点击已有的“重新检查并更新
+摘要” → 本次分析读取失败 → 刷新／重新认证 → 任务中心对应失败任务 →“查看只读摘要”。
+真实 Worker 已发布 Task failed，准备记录仍为 analyzing，previewId 已清空。页面同时说
+“正在完整分析并生成计划摘要”和“本次整理工作已结束”；所谓计划摘要只有等待 Worker 的
+占位文字，没有原文件／方案内容。任务中心只读链接返回同一占位页，同版本 reopen 后保持。
+原摘要通过其原 ID 仍能读取（HTTP 200），所以记录未删除，缺的是已有页面上的历史关联及
+正确结束呈现。未确认的临时源文件仍存在，目标无媒体效果。
+
+另一条不注入故障的正常旅程：文件页摘要 → 明确确认 → Worker 真正完成 One 的 MOVE →
+任务中心“查看只读摘要”。该页仍显示并启用“重新检查并更新摘要”，点击实测 409
+`analysis_rejected`。已结束工作不应继续提供该操作。后端拒绝有效，未出现再次执行。
+
+根因：`_enter_analysis` 进入重分析时清除当前 preview 关联；`_fail_discovery` 只发布 Task
+失败，保留原 discovery 的 analyzing 事实。本次 Web 新增结束 banner，却仍无条件按 discovery
+状态渲染主进度和无摘要占位；有摘要分支的重新检查按钮也没有消费结束事实。追溯前者现有
+链路至 `b5a21ea3`／`75a12d34`；本次未补齐 Task 已要求的失败历史旅程。不要用改写原失败
+状态、重开工作或单纯改提示文字代替实际历史内容。
+
+**B3-04 — API 合同变更未同步全部直接受影响的夹具。**
+
+完整 Python 回归的 golden contract 比对失败，差异是真实响应新增的两处 `organizeFlow: null`；
+默认浏览器五条准备旅程因 `web/tests/fake-server.mjs` 缺少这个必需键而停在读取失败，无法
+显示摘要／范围不完整结果。不可变 Base 上 golden contract 用例通过；Base production build
+上的原目录整理浏览器用例通过（497ms），当前同用例失败。这证明本轮夹具遗漏；真实后端
+正常准备已通过，不能将这些 fake 失败描述成生产文件页全面故障。
+
+### 同 Task 剩余开发指导
+
+1. 沿现有 discovery→intent→已保存 preview 关系，让已结束准备页能读取原有方案作为历史；
+   复用 repository 的 `get_latest_manual_preview`／`list_manual_previews` 及既有只读读取语义，
+   后端给出确切关联。重分析中的旧方案不能成为当前可执行方案，不新建表／状态／历史中心。
+   从未生成过摘要时明确说明没有摘要；已有摘要时必须能看到原条目、方案和当时证据。
+2. 已结束的流程统一显示结束事实及任务详情／Files 下一步，不再显示 Worker 正在分析或等它
+   完成的提示。所有摘要分支的选择、修正、重新分析和确认都消费同一后端继续资格；保持正常
+   未确认摘要及 A失败、B待确认的原批次行为。保留本轮已通过的事务 fence。
+3. 回归从以上两条真实入口完成，不只构造 `failed + previewId` 的页面文档。现有结束页单测
+   用 `/重新分析/` 查询按钮，漏掉实际名为“重新检查并更新摘要”的按钮；按用户真实名称及
+   动作检查只读性。补充重分析读取失败后原摘要可达／无假等待、刷新／同版本 reopen 的断言。
+4. 同步直接受影响的 golden contract 和 fake API：前者用
+   `MEDIAFLOW_UPDATE_FIXTURES=1 .venv/bin/python -m unittest tests.test_manual_operations_contract`
+   从真实响应生成并审查差异；后者按其真实关联语义提供 `organizeFlow`（无关联明确为 null）。
+   既有真实浏览器用例第3918行对完成后“继续整理”的期望，改为验证“查看只读摘要”及真正的
+   只读内容／动作；不得删掉正常未确认返回同一 Task 的验证。
+5. Developer 仍只跑原 affected plan 及本次直接改变的合同／页面／浏览器用例。B 保留全回归、
+   原生桌面／390px和包装验收责任；其他未定位的旧浏览器失败不转成 Developer 的泛化返工。
+   不另开 Task，不改 SLICE／Roadmap／Progress，不开发新治理工具。
+
+### B 本轮结果、证据与验收边界
+
+证据目录：`.git/validation-evidence/b33415e98c3f9bdca36c170ef950d32f50b024c8/b-review/`，
+仅在当前机器本地。`native_harness.py` 复用现有 production-build harness，仅在用户显式重分析
+后的依赖调用抛一次 DiscoveryUnavailable；Task failed 由生产 Worker 发布，没有写入测试
+状态、伪造资格或新增产品入口。`native-probe.cjs`、`completed-probe.cjs` 记录真实页面操作；
+`native-probe.log`、`completed-probe.log`、`failed-page.txt` 及 desktop／390px截图保留复现。
+
+| 验证 | 实际结果 |
+|---|---|
+| 治理、完整范围 diff check；全部已跟踪 Python Ruff format/check；compileall、pip check、两份 example config、禁止依赖检查 | PASS。全目录 Ruff 原命令被预存未跟踪 `.explore_adapter_block.py` 语法错误阻断；该文件保留，未计为产品问题。 |
+| 本 Task 直接失败／混合／健康／确认竞争用例 | 6 tests OK，0 skips，0.706s；`failed-preparation-tests.log`。混合批次额外走现有重新分析入口，只更新和整理健康 Two，One 失败历史保留；`mixed-reanalysis.log`。 |
+| Web 全部单测及 typecheck/lint/format/build | 98 files／1473 tests 全通过；单测127.74s；其余检查通过。 |
+| Python 全回归 | 2677 tests，2 failures、7 skips，309.322s；`python-full.log`。一个是上述 golden fixture；另一个是本 Task 的测试分工标题格式不满足现有文档测试，本轮 B 已恢复标准标题并单独复验。无全量全绿声明。 |
+| 默认 E2E | 262 passed／6 failed，3.9m。五个准备页 fixture 失败如上；另一个 trace ENOENT 来自两套并行 Playwright 共用产物目录，B 用独立输出目录重跑该认证用例后1 passed（777ms），不是产品故障。 |
+| 真实 Python source-history E2E | 1 passed（3.5s），真实新整理实际生效；`source-history-e2e.log`。 |
+| 真实 Python inventory＋task-flow E2E | 40 passed／8 failed（2.6m）。健康摘要从任务中心恢复、重新认证、同一 Task 确认及实际完成均已走通；其最后仍查找“继续整理”的旧期望失败。其余7个失败涉及旧筛选／步骤证据／Worker效果，未做 Base 对照，不宣称是既有问题或本次产品回归；保留 `python-browser.log`，后续由 B 继续核对。 |
+| Base 精确对照 | Base 两个对应 Python合同／文档测试均通过（0.067s）；原目录整理 E2E 1 passed（1.2s）。使用独立 git archive 源码和 Base build，不改当前工作区。 |
+| 原生失败历史、正常完成只读入口 | 重现 B3-03；桌面／390px均可见矛盾状态；刷新、重新认证、同版本数据库 reopen 后一致。正常完成只读页重新分析返回409。 |
+
+按全部 Task 结果重评：AC-1／3／4 的失败释放、混合兄弟及事务竞争后端证据通过；AC-2
+的只读历史与动作一致性未满足。AC-5已有真实历史提醒／新整理证据；AC-6完整回归尚不通过。
+混合批次完整原生验收及 wheel／安装后消费者／相关Docker边界尚未完成；产品阻塞已确认，
+本轮不继续这些门禁，不记为 PASS，也不交回 Developer 代跑。Slice52 保持既有 PASS／CLOSED。
+
+本轮并行测试的墙钟占用约6分钟，低于本轮审查、真实链路定位、Base对照和记录总时间的
+50%；未以延长等待凑比例。B 本轮只维护本 Task 和本地证据，预存工作区文件保持，未推送。
