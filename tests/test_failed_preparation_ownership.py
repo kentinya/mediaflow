@@ -26,6 +26,7 @@ from unittest.mock import patch
 
 from mediaflow.application.media_discovery import DiscoveryUnavailable
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.manual_execution import ManualExecutionAuthorizationStatus
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from tests.test_organize_source_history import (
@@ -389,6 +390,216 @@ class HealthyWaitingSummaryStaysContinuableTests(_SupersededHandoffFixture):
             code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             self.assertFalse(body["filesPreparation"]["continuable"])
+
+
+class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
+    """B3-02: a confirmation whose flow settles mid-admission admits nothing.
+
+    Both journeys enter through the real HTTP entrances and the exact
+    interleaving is production-natural: while the confirmation's own source
+    check runs (after the application boundary's healthy pre-read), a
+    concurrent re-analysis goes through the existing analyze entrance and the
+    resident engine's own ``_fail_discovery`` boundary publishes the Task
+    failure — exactly what B's two-window reproduction did without touching
+    durable state directly.  The refusal must therefore come from the atomic
+    admission transaction itself: no second Task, no admitted execution, no
+    consumed authority, zero Storage effect.
+
+    Evidence labels used below:
+
+    * ``production failure publication`` — Task FAILED is only ever written by
+      the engine's ``_fail_discovery`` after ``run_claimed`` raised, never by
+      test-local state injection.
+    * the ``organizeFlow`` assertions pin the exact nested document the Web
+      reader consumes (plain ``taskId``/``status``/``continuable`` keys).
+    """
+
+    def _publish_flow_failure(self, value, old_id):
+        """Re-analysis through the real API, then the engine's own failure."""
+
+        discovery = value.repository.get_media_discovery_for_task(old_id)
+        self.assertIsNotNone(discovery)
+        status, body = self.request(
+            value,
+            f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+            method="POST",
+            body={"expectedVersion": discovery.version},
+        )
+        self.assertIn(status, (200, 202), body)
+        with patch.object(
+            value.discovery,
+            "run_claimed",
+            side_effect=DiscoveryUnavailable("analysis read failed during old confirmation"),
+        ):
+            self._drive(value, old_id, steps=4)
+        # production failure publication
+        self.assertEqual(PersistentTaskStatus.FAILED, value.repository.get_task(old_id).status)
+
+    def _crossing_storage_check(self, value, old_id, *, fire_at):
+        """A storage check that lets the production failure land inside it."""
+
+        original = value.executions._validate_current_storage
+        calls = {"count": 0}
+
+        def crossing(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == fire_at:
+                self._publish_flow_failure(value, old_id)
+            return original(*args, **kwargs)
+
+        return crossing
+
+    @staticmethod
+    def _selected_ids(preview):
+        return [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
+
+    def _assert_no_second_work(self, value, old_id, preview):
+        """The ended flow keeps its evidence; nothing new was admitted."""
+
+        tasks = tuple(value.repository.list_tasks(limit=50))
+        self.assertEqual([old_id], [task.task_id for task in tasks])
+        self.assertEqual(PersistentTaskStatus.FAILED, value.repository.get_task(old_id).status)
+        self.assertEqual(
+            [],
+            list(value.repository.list_manual_executions_for_preview(preview["previewId"])),
+        )
+        authorizations = value.repository.list_manual_execution_authorizations_for_preview(
+            preview["previewId"]
+        )
+        self.assertTrue(authorizations)
+        for authority in authorizations:
+            self.assertIsNot(ManualExecutionAuthorizationStatus.CONSUMED, authority.status)
+        self.assertEqual([], value.target.mutations)
+        for item in value.repository.list_items(old_id):
+            self.assertEqual(TaskItemStatus.WAITING_CONFIRM, item.status)
+
+    def test_confirmation_crossing_the_failure_is_refused_by_the_admission_itself(self):
+        self.media("Movies/One.2001.mkv")
+        provider = _provider(MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001))
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            old_id, preview = self.summary(
+                value, ["Movies/One.2001.mkv"], "11111111-1111-4111-8111-111111111111"
+            )
+            discovery_id = value.repository.get_media_discovery_for_task(old_id).discovery_id
+
+            # The Web's own reader contract: the healthy flow document with the
+            # backend's real nested keys.
+            code, detail = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+            )
+            self.assertEqual(200, code, detail)
+            self.assertEqual(
+                {
+                    "taskId": old_id,
+                    "status": value.repository.get_task(old_id).status.value,
+                    "continuable": True,
+                },
+                detail["organizeFlow"],
+            )
+
+            # The web confirmation enters authorize (healthy) and execute.  The
+            # failure lands during execute's own source check — strictly after
+            # both pre-reads — so only the in-transaction fence can refuse it.
+            crossing = self._crossing_storage_check(value, old_id, fire_at=2)
+            selected = self._selected_ids(preview)
+            with patch.object(value.executions, "_validate_current_storage", side_effect=crossing):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                    method="POST",
+                    body={
+                        "confirmation": True,
+                        "itemIds": selected,
+                        "expectedIntentVersion": preview["intentVersion"],
+                        "allowOverwrite": False,
+                        "allowSourceCleanup": False,
+                    },
+                )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("preparation_flow_ended", refused["error"]["code"])
+
+            # The ended flow's own document for the Web, with real keys.
+            code, detail = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+            )
+            self.assertEqual(200, code, detail)
+            self.assertEqual(
+                {"taskId": old_id, "status": "failed", "continuable": False},
+                detail["organizeFlow"],
+            )
+            self._assert_no_second_work(value, old_id, preview)
+
+            # The ordinary new Files admission still releases and re-admits the
+            # failed file without touching the ended record (AC-1 stays intact).
+            status, fresh = self._admit(
+                value,
+                ["Movies/One.2001.mkv"],
+                request_id="22222222-2222-4222-8222-222222222222",
+            )
+            self.assertEqual(202, status, fresh)
+            self.assertNotEqual(old_id, fresh["organizeTaskId"])
+            self.assertEqual([], value.target.mutations)
+
+    def test_an_old_authorization_crossing_the_failure_is_never_consumed(self):
+        self.media("Movies/One.2001.mkv")
+        provider = _provider(MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001))
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            old_id, preview = self.summary(
+                value, ["Movies/One.2001.mkv"], "11111111-1111-4111-8111-111111111111"
+            )
+            selected = self._selected_ids(preview)
+            # The operator projection carries no version proof, so the exact
+            # reviewed item versions are read from the durable Preview itself.
+            durable = value.previews.get(preview["previewId"])
+            versions = {
+                item.item_id: item.item_version
+                for item in durable.items
+                if item.item_id in set(selected)
+            }
+
+            # The exact authority is issued while the flow is still healthy,
+            # through the standalone authorization entrance.
+            code, authorized = self.request(
+                value,
+                f"/api/v1/manual-previews/{preview['previewId']}/authorize",
+                method="POST",
+                body={
+                    "expectedVersion": preview["intentVersion"],
+                    "expectedItemVersions": versions,
+                    "itemIds": selected,
+                    "confirmation": True,
+                },
+            )
+            self.assertEqual(201, code, authorized)
+            authorization_id = authorized["authorizationId"]
+
+            # The flow settles while this old authority's own consume runs its
+            # source check: the admission transaction itself must refuse it.
+            crossing = self._crossing_storage_check(value, old_id, fire_at=1)
+            with patch.object(value.executions, "_validate_current_storage", side_effect=crossing):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/manual-execution-authorizations/{authorization_id}/consume",
+                    method="POST",
+                    body={"confirmation": True},
+                )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("preparation_flow_ended", refused["error"]["code"])
+
+            # With the failure durable, a plain repeat of the same consume is
+            # refused by the same bounded fact and still consumes nothing.
+            status, refused = self.request(
+                value,
+                f"/api/v1/manual-execution-authorizations/{authorization_id}/consume",
+                method="POST",
+                body={"confirmation": True},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("preparation_flow_ended", refused["error"]["code"])
+
+            authority = value.repository.get_manual_execution_authorization(authorization_id)
+            self.assertIsNot(ManualExecutionAuthorizationStatus.CONSUMED, authority.status)
+            self._assert_no_second_work(value, old_id, preview)
 
 
 if __name__ == "__main__":  # pragma: no cover - direct module execution

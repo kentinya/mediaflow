@@ -479,14 +479,33 @@ export function normalizeOrganizeDiscovery(
     organizeTaskId: optionalText(record, "organizeTaskId"),
     organizeFlow: (() => {
       const value = record["organizeFlow"];
-      if (value === null || value === undefined) return null;
+      // The backend always publishes this key: `null` for a record with no
+      // linked organizing Task, otherwise the exact durable flow document
+      // (`taskId`, `status`, `continuable`).  A missing key is contradictory
+      // evidence, never an "unlinked" guess — a linked flow that silently
+      // degraded to `null` would offer a confirmable summary for work that
+      // already ended.
+      if (value === null) return null;
+      if (value === undefined) fail("organizeFlow");
       const flow = readRecord(value, "organizeFlow");
-      const taskId = boundedText(flow, "organizeFlow.taskId");
-      const status = boundedText(flow, "organizeFlow.status");
+      // The nested document carries plain keys; read them as they are while
+      // keeping the nested path in the failure label.
+      const taskId = normalizeBoundedText(
+        flow["taskId"],
+        "organizeFlow.taskId",
+        MAX_DISCOVERY_TEXT,
+      );
+      const status = normalizeBoundedText(
+        flow["status"],
+        "organizeFlow.status",
+        MAX_DISCOVERY_TEXT,
+      );
+      const continuable = flow["continuable"];
+      if (typeof continuable !== "boolean") fail("organizeFlow.continuable");
       return {
         taskId,
         status,
-        continuable: flow["continuable"] === true,
+        continuable,
       };
     })(),
     prepared: record["prepared"] === true,

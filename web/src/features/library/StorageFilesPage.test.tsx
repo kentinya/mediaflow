@@ -3829,6 +3829,13 @@ describe("Files entry state and ResourceLibrary strip", () => {
       journey: "discovery",
       nextAction: "continue",
       nextObservationAt: null,
+      // The real nested flow document the backend publishes for this linked
+      // run, so the recovered preparation workspace parses the actual shape.
+      organizeFlow: {
+        taskId: "proved-original-task",
+        status: "running",
+        continuable: true,
+      },
       pauseRequested: false,
       primarySourceCount: 1,
       progress: {

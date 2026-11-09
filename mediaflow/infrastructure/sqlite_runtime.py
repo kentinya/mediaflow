@@ -11372,6 +11372,80 @@ class SQLiteTaskRepository:
             details={"storageId": storage_id, "path": path, "refusedCount": len(refused)},
         )
 
+    def _assert_files_preparation_live_locked(
+        self, intent_id: str, adopt_task_id: str | None
+    ) -> None:
+        """Refuse an admission whose linked Files organizing flow has ended.
+
+        PATCH-20261109-3: a Files selection admits its durable organizing Task
+        with the discovery, and the confirmation of its summary adopts exactly
+        that Task.  This is the deciding-transaction fence for the B3-02 race:
+        the flow can settle after the application boundary's pre-read and
+        before this transaction commits, at which point the adoption look-up
+        returns ``None`` and the plain intent path would mint a second Task
+        beside the ended one.  Inside this ``BEGIN IMMEDIATE`` transaction the
+        exact link is re-read:
+
+        * no discovery bound to the intent, or one without an organizing Task
+          (an analysis-only run) — the ordinary unlinked/new-Task admission is
+          untouched;
+        * a settled linked Task — the same bounded ``preparation_flow_ended``
+          refusal the application boundary uses, keeping recorded evidence;
+        * a live linked Task the adoption did not reconnect to (a foreign
+          principal or pin) — refused instead of creating second work from
+          this summary.
+        """
+
+        row = self._connection.execute(
+            "SELECT organize_task_id FROM media_discoveries WHERE intent_id=? "
+            "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+            (intent_id,),
+        ).fetchone()
+        if row is None:
+            return
+        linked_task_id = row["organize_task_id"]
+        if not isinstance(linked_task_id, str) or not linked_task_id:
+            return
+        task = self._connection.execute(
+            "SELECT status FROM tasks WHERE task_id=?", (linked_task_id,)
+        ).fetchone()
+        if task is None:
+            raise ManualExecutionError(
+                "this summary's linked organizing Task is unavailable; nothing was admitted",
+                code="admission_changed",
+                status=409,
+                next_action=(
+                    "inspect the run in the Task Center, then start a fresh organize "
+                    "from the Files selection"
+                ),
+                details={"taskId": linked_task_id},
+            )
+        if task["status"] in _SETTLED_TASK_FLOW_STATUS_VALUES:
+            raise ManualExecutionError(
+                "the organizing flow of this summary has already ended; "
+                "its recorded evidence stays and a stale confirmation cannot reopen it",
+                code="preparation_flow_ended",
+                next_action=(
+                    "inspect the run's recorded results and failure stage in the Task "
+                    "Center, then start a fresh organize from Files if the same files "
+                    "are wanted again"
+                ),
+                status=409,
+                details={"taskId": linked_task_id, "flowStatus": task["status"]},
+            )
+        if adopt_task_id != linked_task_id:
+            raise ManualExecutionError(
+                "this Files summary belongs to an organizing Task it cannot "
+                "reconnect to here; a separate Task cannot be created from it",
+                code="admission_changed",
+                status=409,
+                next_action=(
+                    "start a fresh organize from this operator's Files selection; "
+                    "the original Task keeps its recorded work"
+                ),
+                details={"taskId": linked_task_id},
+            )
+
     def admit_manual_execution(
         self,
         authorization: ManualExecutionAuthorization,
@@ -11553,6 +11627,14 @@ class SQLiteTaskRepository:
                         code="intent_stale",
                         next_action="reload the intent and request a fresh Preview",
                     )
+                # PATCH-20261109-3/B3-02: a Files summary may only reconnect to
+                # the exact organizing Task it was admitted with, judged inside
+                # this same transaction.  The application boundary read the link
+                # before admission, but the flow can settle in between (another
+                # concurrent read publishes its failure), and the adoption
+                # look-up then answers "none" — which must never fall through
+                # to the ordinary new-Task branch of an unlinked intent.
+                self._assert_files_preparation_live_locked(execution.intent_id, adopt_task_id)
                 scope_by_id = {value.item_id: value for value in authorization.scope}
                 for item in items:
                     scope = scope_by_id.get(item.item_id)

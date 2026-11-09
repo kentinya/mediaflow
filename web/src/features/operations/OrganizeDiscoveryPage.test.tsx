@@ -77,6 +77,12 @@ function discoveryDocument(progress: Record<string, unknown>) {
     nextAction:
       "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset",
     nextObservationAt: null,
+    // The backend's real nested flow document for this linked run.
+    organizeFlow: {
+      taskId: "organize-task-1",
+      status: "running",
+      continuable: true,
+    },
     pauseRequested: false,
     primarySourceCount: 1,
     progress,

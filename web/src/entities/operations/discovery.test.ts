@@ -50,6 +50,13 @@ function payload(overrides: Record<string, unknown> = {}) {
     nextAction:
       "the resident Processing Worker continues this bounded discovery",
     nextObservationAt: null,
+    // The backend's exact nested flow document for a linked, unfinished Task
+    // (plain keys, as `_organize_flow_document` serializes it).
+    organizeFlow: {
+      taskId: "task-9",
+      status: "running",
+      continuable: true,
+    },
     admissionRequestId: "11111111-1111-4111-8111-111111111111",
     pauseRequested: false,
     primarySourceCount: 2,
@@ -139,6 +146,53 @@ describe("normalizeOrganizeDiscovery", () => {
     expect("resume" in model.actions).toBe(false);
     expect(model.zeroMutation).toBe(true);
     expect(model.execution).toBe("not_available_from_discovery");
+    expect(model.organizeFlow).toEqual({
+      taskId: "task-9",
+      status: "running",
+      continuable: true,
+    });
+  });
+
+  it("reads the ended flow document with the backend's own nested keys", () => {
+    // Exact shape of `_organize_flow_document` for a failed flow: plain
+    // `taskId`/`status`/`continuable` keys inside the nested object.
+    const model = normalizeOrganizeDiscovery(
+      payload({
+        organizeFlow: {
+          taskId: "task-9",
+          status: "failed",
+          continuable: false,
+        },
+      }),
+    );
+    expect(model.organizeFlow).toEqual({
+      taskId: "task-9",
+      status: "failed",
+      continuable: false,
+    });
+  });
+
+  it("fails closed when a linked flow document is absent or incomplete", () => {
+    // The backend always publishes the key for a discovery read; a missing
+    // document is never silently read as "no linked flow", because that would
+    // offer a confirmable summary for work that already ended.
+    expect(() =>
+      normalizeOrganizeDiscovery(payload({ organizeFlow: undefined })),
+    ).toThrow(OrganizeDiscoveryNormalizationError);
+    expect(() =>
+      normalizeOrganizeDiscovery(
+        payload({ organizeFlow: { taskId: "task-9" } }),
+      ),
+    ).toThrow(/organizeFlow.status/);
+    // A keyed document without the eligibility fact is contradictory
+    // evidence, not a guessable default.
+    expect(() =>
+      normalizeOrganizeDiscovery(
+        payload({
+          organizeFlow: { taskId: "task-9", status: "failed" },
+        }),
+      ),
+    ).toThrow(/organizeFlow.continuable/);
   });
 
   it("publishes the backend refusal of a budget-limited finalize", () => {

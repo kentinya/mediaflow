@@ -96,6 +96,13 @@ function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
       message: "the exact zero-mutation plan summary is ready",
     },
     primarySourceCount: 1,
+    // The backend always publishes this nested document for a linked flow;
+    // the ordinary healthy run is unfinished and continuable.
+    organizeFlow: {
+      taskId: "organize-task-1",
+      status: "running",
+      continuable: true,
+    },
     admissionRequestId: null,
     autoPrepare: true,
     prepared: true,
@@ -222,6 +229,70 @@ describe("organize creation workspace", () => {
     await waitFor(() => expect(executeBody).not.toBeNull());
     expect(executeBody?.["itemIds"]).toEqual(["item-1"]);
     expect(executeBody?.["confirmation"]).toBe(true);
+  });
+
+  it("keeps an ended flow's summary readable but never confirmable", async () => {
+    // Real failed-flow shape: the page must still read the preparation (no
+    // "无法读取准备状态"), show the plan summary and the ended banner, and
+    // offer no confirmation or re-analysis entry for the ended work.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              organizeFlow: {
+                taskId: "organize-task-1",
+                status: "failed",
+                continuable: false,
+              },
+              actions: {
+                cancel: action(),
+                resume: action(),
+                finalize: action(),
+                prepare: {
+                  available: true,
+                  method: "POST",
+                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
+                  requiresVersion: true,
+                  sideEffects: "none",
+                  refusal: null,
+                },
+              },
+            }),
+          );
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          // Exact ended-flow preview shape: the backend closes the execute
+          // action with its own bounded reason.
+          const value = previewDocument();
+          const execute = (value["actions"] as Json)["execute"] as Json;
+          execute["available"] = false;
+          execute["reason"] =
+            "the organizing flow of this plan summary has already ended; start a fresh organize from Files";
+          return jsonResponse(value);
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "新建整理任务" });
+    // The summary itself stays readable as read-only history.
+    await screen.findByRole("heading", { name: "计划摘要" });
+    expect(
+      screen.queryByRole("heading", { name: "无法读取准备状态" }),
+    ).toBeNull();
+    expect(screen.getByText(/本次整理工作已结束/)).toBeVisible();
+    expect(screen.getByText(/任务状态：\s*failed/)).toBeVisible();
+    // The stale confirmation is refused by its own bounded reason, never
+    // offered as an executable entry, and re-analysis is not offered either.
+    const confirm = screen.getByRole("button", { name: /确认整理/ });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText(/start a fresh organize from Files/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /重新分析/ })).toBeNull();
   });
 
   it("never offers an executable prefix after a material budget refusal", async () => {
