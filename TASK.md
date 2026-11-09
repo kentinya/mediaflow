@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Checkpoint: 31211d9ad4c4aabcf7fccc1042cc8c13af5fa008
+Implementation Checkpoint: 16b949fcd649498b03bd8d0c15289817d471cfa3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: DEVELOPER COMPLETES CURRENT-FILE CONFLICT DECISION IN TASK53.1
+Next Action: B REVIEWS THE CURRENT-FILE CONFLICT FIX CANDIDATE
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -386,3 +386,67 @@ tests/e2e/deep-link.spec.ts` → **64 passed（38.6s）**，在最终 build 上�
 Task53.1 为 FIX REQUIRED，Slice53 保持原合同；不交 Closure Packet、不关闭 Slice。
 本轮只更新 Task 审查结论，预存 `.DS_Store`、调查脚本／日志、`15`、`output/` 保留；
 隔离 harness 与浏览器已结束，未读取用户媒体／数据库，未推送或部署。
+
+## Developer Completion Report — P1 修正
+
+**Status:** READY FOR B REVIEW。修正实现 checkpoint 为
+`16b949fcd649498b03bd8d0c15289817d471cfa3`（main；Task Base 未变）。本报告不声称
+PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- 后端在已有的 `publish_task_item_problem` 返回值上发布当前原生问题的精确
+  `problemTaskItemId`。它进入原零变更计划文档并经现有操作员投影输出，用于打开该
+  TaskItem 已有的恢复决定；没有新增 Provider、Storage、schema、任务状态、队列或
+  恢复引擎，也没有放宽任何决定/执行权限。
+- `ManualOrganizeDialog` 的“当前问题”在真实目标冲突时直接显示中文
+  “目标已有文件”、来源、目标与“保存决定后重新分析”的下一步；后端英文失败说明
+  移入“展开技术诊断”。原“纳入本次整理”在未解决时仍禁用。
+- 冲突决定通过现有 typed recovery API 在当前逐文件容器内完成：保存决定随后重跑
+  同一 Task 的零变更分析；决定保存与文件执行分离，最终仍只由“确认整理 N 项”发起。
+  未在整理弹窗另建结果中心，未改任务中心详情布局、内容、进度、结果或恢复 UI。
+- `TaskItemRecoveryPanel` 增加仅整理弹窗使用的 `mode="decision"` 与
+  `onAnalysisRequested`：复用同一决定/分析会话，隐藏恢复摘要/执行区；默认
+  `full` 模式的 Task Center 呈现与操作保持不变。
+- Python harness 增加隔离的 `Dialog/DialogConflict.2022.mkv` 与 synthetic provider
+  candidate；真实冲突旅程先复制保留来源，再从 Files 发起移动，产生真实目标冲突，
+  在弹窗内保存重命名决定并重新分析，最后只确认一次。
+
+### 实际验证（Developer 受影响范围）
+
+- `web/`：`NODE_ENV=test npx vitest run src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/shared/ui/modal-card.test.tsx src/features/library/StorageFilesPage.test.tsx
+  src/shared/navigation/destination-model.test.ts` → **8 files / 158 passed**。新增
+  冲突决定失败、分析失败的安全回归；既有 10 项候选、未知提交、草稿和焦点覆盖保留。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；5 个改动
+  Web 文件 `npx prettier --check` → all matched。
+- 仓库根：`.venv/bin/python -m unittest tests.test_organize_preparation` → **33 passed**；
+  `.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_organize_source_history` → **104 passed**。
+  新增断言证明问题计划的 `problemTaskItemId` 与同一 TaskItem 完全一致，解决后新摘要
+  不再携带该关联。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **3 passed（40.1s）**；最终 UI
+  调整后再次单跑真实冲突用例 → **1 passed（10.6s）**。真实链路验证：第一次
+  `Copy fixture` 保留来源并生成一个目标；第二次默认移动产生 `DESTINATION_EXISTS`；
+  当前文件显示中文目标冲突并保存 `rename` 决定；决定保存与重新分析前后文件效果不变；
+  新摘要后可确认，最终 Worker 保留原目标、移除来源并生成第二个重命名目标，任务中心
+  打开本次返回的准确 Task。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（38.6s）**。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean；
+  改动 Python 文件 `ruff check` → clean。
+
+### 剩余风险 / 未运行
+
+- B 的 T4 全量门禁、wheel／打包、重启、Docker 影响、完整桌面／390px／矮窗口视觉与
+  真实键盘验收未运行；本轮测试/验证合计约 3 分钟，低于本轮总用时 30%。
+- 旧持久 Preview 没有 `problemTaskItemId` 时，弹窗会明确显示“无法证明关联”并保留
+  原上下文，不会按路径或时间猜测 TaskItem；该文件需重新分析以取得新关联。
+- 真实冲突回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
+  用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
+  `15`／`output/` 材料保持未动、未提交。
