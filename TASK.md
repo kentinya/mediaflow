@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Checkpoint: 16b949fcd649498b03bd8d0c15289817d471cfa3
+Implementation Checkpoint: 800e4fd8c694c22366597abbf41ebf2943699eb1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: DEVELOPER COMPLETES CURRENT-FILE LEGAL DECISIONS IN TASK53.1
+Next Action: B INDEPENDENT REVIEW OF CURRENT-FILE METADATA CORRECTION FIX
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -445,5 +445,74 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
 - 旧持久 Preview 没有 `problemTaskItemId` 时，弹窗会明确显示“无法证明关联”并保留
   原上下文，不会按路径或时间猜测 TaskItem；该文件需重新分析以取得新关联。
 - 真实冲突回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
+  用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
+  `15`／`output/` 材料保持未动、未提交。
+
+
+## Developer Completion Report — 无候选元数据修正 P1
+
+**Status:** READY FOR B REVIEW。代码 checkpoint 为
+`800e4fd8c694c22366597abbf41ebf2943699eb1`（main；Task Base 未变），本报告随后的
+文档 checkpoint 为最终候选 HEAD。本报告不声称 PASS，不关闭 Slice，不替代 B 的 T4
+验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- `ManualOrganizeDialog` 的“当前问题”现在以当前文件真实关联的原生问题条目
+  `problemTaskItemId` 打开共享 `TaskItemRecoveryPanel mode="decision"`，不再只以
+  `conflicts.length > 0` 作为决定入口。无候选时直接说明“没有找到匹配的作品”并给出
+  修正搜索标题、年份、媒体类型、显式搜索、选择候选和保存/分析的同文件路径；后端英文
+  失败说明与分类仍保留在“展开技术诊断”。
+- 无候选失败的元数据修正、识别、元数据候选、分类和冲突决定共用原有 typed recovery
+  API 与同一 Task；保存只记录决定并请求原 Task 的零变更分析，不执行整理，最终仍只由
+  “确认整理 N 项”提交精确子集。未改任务中心详情布局、内容、进度、结果或恢复 UI，
+  默认 `full` 模式的任务中心呈现保持不变。
+- `TaskItemRecoveryPanel` 在整理弹窗中支持由调用方按准确 TaskItem 保存决定草稿：
+  搜索标题、年份、媒体类型、搜索结果、候选选择和冲突策略在翻页后保留，并按
+  checkpoint/decision 身份失效；同名异路径不会串项。Task Center 不传草稿时沿用原
+  本地状态行为。
+- Python harness 新增隔离的 `Dialog/DialogRename.2024.mkv` 与 synthetic provider
+  candidate。真实回归先在 Files 正常重命名为 `DialogNoMatch.2024.mkv`，经真实 Worker
+  得到识别问题，在当前弹窗选择识别类型；随后得到无候选元数据问题，在当前弹窗显式
+  搜索 `DialogRename`/2024、保存修正并重新分析，最后只确认一次准确任务。
+- 修复本 Task 冲突回归留下的合法等待兄弟任务影响后续 `operations-inventory` 首行
+  假设：该测试改按自身 `0 / 0 项` 证据选择 seeded indeterminate run，仍验证“总数未知”
+  且不伪造分母；不是放宽产品断言。
+
+### 实际验证（Developer 受影响范围）
+
+- `web/`：`NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/ui/modal-card.test.tsx src/shared/navigation/destination-model.test.ts`
+  → **8 files / 160 passed**。新增无候选当前文件修正、逐文件输入跨页保留、决定保存
+  失败和分析失败零执行回归；既有 10 项候选、冲突、未知提交和焦点覆盖保留。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed；5 个改动
+  Web 文件 `npx prettier --check` → all matched。
+- 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_organize_source_history` → **104 passed**。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts
+  tests/e2e/organize-source-history.python.spec.ts` → **50 passed（2.2m）**。新真实用例
+  **7.9s**：Files 重命名→批量整理→识别类型保存/分析→无候选元数据修正→显式搜索与
+  保存/分析→新目标可核对→一次确认→准确 Task 详情；确认前源文件仍在、目标不存在，
+  保存/分析请求前后零 Execute，Worker 完成后来源移除并生成 `DialogRename (2024)` 目标。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（39.2s）**。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean；
+  `ruff check scripts/operations_inventory_harness.py`、`py_compile` → clean。
+- 本轮测试/验证合计约 5 分钟，低于本轮总用时 30%。
+
+### 剩余风险 / 未运行
+
+- B 的 T4 全量门禁、wheel／打包、重启、Docker 影响、完整桌面／390px／矮窗口视觉与
+  真实键盘验收未运行；本报告不声称 PASS。
+- 旧持久 Preview 没有 `problemTaskItemId` 时仍会显示“无法证明关联”并保留原上下文；
+  该文件需重新分析取得新关联，不按路径或时间猜测 TaskItem。
+- 真实回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
   用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
   `15`／`output/` 材料保持未动、未提交。
