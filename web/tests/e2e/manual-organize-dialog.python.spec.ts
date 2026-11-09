@@ -2,6 +2,7 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type Locator,
   type Page,
 } from "@playwright/test";
 
@@ -117,6 +118,28 @@ async function driveDiscoveryFor(
   throw new Error("the exact discovery linked no plan summary");
 }
 
+/**
+ * Save one native decision and wait for the exact save + zero-mutation
+ * analysis responses. The card may drop the decision as soon as the new
+ * analysis starts, so the durable request boundary is the stable evidence,
+ * not transient copy that can be replaced by the next problem.
+ */
+async function saveNativeDecision(page: Page, card: Locator): Promise<void> {
+  const decision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  const continuation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/continue$/.test(new URL(response.url()).pathname),
+  );
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  expect((await decision).ok()).toBe(true);
+  expect((await continuation).ok()).toBe(true);
+}
+
 async function selectFiles(
   page: Page,
   files: readonly string[],
@@ -149,8 +172,8 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     card.getByRole("heading", { name: /第 1 \/ 10 个/ }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const choiceBodies: Record<string, unknown>[] = [];
-  const choiceItemIds: string[] = [];
+  const decisionBodies: Record<string, unknown>[] = [];
+  const decisionItemIds: string[] = [];
 
   for (let index = 1; index <= 10; index += 1) {
     await expect(
@@ -161,22 +184,22 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     const filename = DIALOG_FILE(index);
     await expect(card.getByText(filename).first()).toBeVisible();
 
-    const identity = card.locator('select[aria-label^="元数据身份 "]');
-    await expect(identity).toBeVisible({ timeout: 30_000 });
-    const values = await identity
-      .locator("option")
-      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value")));
-    // Two genuinely tied candidates are grounded for this exact source.
-    expect(values.filter((value) => value !== "")).toHaveLength(2);
-    const chosen = values.find(
-      (value) => value !== "" && value?.startsWith("tmdb/6"),
+    // The one native metadata decision on this exact file is the only chooser:
+    // two grounded radio cards, one draft and one save/analysis command. The
+    // former intent identity select is not mounted a second time.
+    await expect(card.locator('select[aria-label^="元数据身份 "]')).toHaveCount(
+      0,
     );
-    expect(chosen).toBeTruthy();
-    await identity.selectOption(chosen as string);
-    await card.getByRole("button", { name: "保存并重新分析" }).click();
+    await expect(card.getByText("选择正确的作品")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
+    await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
     await expect(
-      card.getByText(/选择已保存,正在按固定配置重新分析/),
-    ).toBeVisible({ timeout: 30_000 });
+      card.getByRole("button", { name: "保存并重新分析" }),
+    ).toHaveCount(1);
+    await card.getByRole("radio", { name: /候选 2/ }).check();
+    await saveNativeDecision(page, card);
 
     await driveDiscovery(request, true);
     await expect(card.getByText("纳入本次整理").first()).toBeVisible({
@@ -189,16 +212,27 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
 
   for (const command of commands) {
     if (command.method !== "POST") continue;
-    const choiceMatch = command.path.match(
-      /\/operations\/organize\/intents\/[^/]+\/items\/([^/]+)\/choice$/,
+    const decisionMatch = command.path.match(
+      /\/tasks\/[^/]+\/items\/([^/]+)\/recovery\/decision$/,
     );
-    if (choiceMatch !== null) {
-      if (command.body !== null) choiceBodies.push(command.body);
-      choiceItemIds.push(choiceMatch[1] ?? "");
+    if (decisionMatch !== null) {
+      if (command.body !== null) decisionBodies.push(command.body);
+      decisionItemIds.push(decisionMatch[1] ?? "");
     }
   }
-  expect(choiceBodies).toHaveLength(10);
-  expect(new Set(choiceItemIds).size).toBe(10);
+  expect(decisionBodies).toHaveLength(10);
+  expect(new Set(decisionItemIds).size).toBe(10);
+  for (const body of decisionBodies) {
+    expect(body["kind"]).toBe("metadata");
+    expect(body["candidateRank"]).toBe(2);
+  }
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/intents\/[^/]+\/items\//.test(command.path),
+    ),
+  ).toHaveLength(0);
   const executePosts = () =>
     commands.filter(
       (command) =>
@@ -429,11 +463,8 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
     );
   expect(executePosts()).toHaveLength(1);
 
-  await card.getByLabel("重命名目标(保留现有文件)").check();
-  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
-  await expect(
-    card.getByText(/当前文件的决定已保存并请求重新分析/),
-  ).toBeVisible({ timeout: 30_000 });
+  await card.getByRole("radio", { name: /重命名目标/ }).check();
+  await saveNativeDecision(page, card);
   // Saving the decision and re-analyzing has changed no media effect yet.
   expect(await fileState()).toEqual(copied);
   expect(executePosts()).toHaveLength(1);
@@ -561,13 +592,10 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await expect(card.getByText("当前文件的合法决定")).toBeVisible();
   // The renamed file no longer matches a RecognitionRule, so the operator
   // first selects one recognition type on this same file.
-  await expect(card.getByText(/待处理的识别决策/)).toBeVisible();
+  await expect(card.getByText("确认识别类型")).toBeVisible();
   await card.getByRole("radio", { name: /Normal Movie/ }).check();
-  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
-  await expect(
-    card.getByText(/当前文件的决定已保存并请求重新分析/),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(card.getByText(/待处理的识别决策/)).toHaveCount(0);
+  await saveNativeDecision(page, card);
+  await expect(card.getByText("确认识别类型")).toHaveCount(0);
   await driveDiscoveryFor(page, request, discoveryId as string);
 
   // The real Worker then reports that this exact title has no Provider
@@ -575,10 +603,10 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await expect(card.getByText(/没有找到匹配的作品/)).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByText(/待处理的元数据修正决策/)).toBeVisible();
+  await expect(card.getByText("修正作品搜索")).toBeVisible();
 
   const title = card.getByLabel("搜索标题");
-  const year = card.getByLabel("年份(可留空)");
+  const year = card.getByLabel("年份（可留空）");
   await expect(title).not.toHaveValue("");
   await title.fill("DialogRename");
   await year.fill("2024");
@@ -600,16 +628,11 @@ test("a missing metadata candidate is corrected on the current file and confirme
   // nothing; the rename source and its still-absent target stay untouched.
   expect(await stateFor(renamedFile)).toEqual(before);
 
-  await card
-    .getByRole("button", { name: "显式搜索 Metadata Provider" })
-    .click();
+  await card.getByRole("button", { name: "搜索作品" }).click();
   await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
   await card.getByRole("radio", { name: /DialogRename/ }).check();
-  await card.getByRole("button", { name: "保存决策并继续安全分析" }).click();
-  await expect(
-    card.getByText(/当前文件的决定已保存并请求重新分析/),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(card.getByText(/待处理的元数据修正决策/)).toHaveCount(0);
+  await saveNativeDecision(page, card);
+  await expect(card.getByText("修正作品搜索")).toHaveCount(0);
   await expect(card.getByText("正在保存…")).toHaveCount(0);
 
   // Saving the correction and requesting analysis is zero media mutation:

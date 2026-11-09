@@ -1567,23 +1567,32 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     ).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
-  // Both grounded candidates are offered; an invented one is impossible here.
-  const identity = card.locator('select[aria-label^="元数据身份 "]').first();
-  await expect(identity).toBeVisible();
-  const optionValues = await identity
-    .locator("option")
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value")));
-  expect(optionValues).toEqual(
-    expect.arrayContaining(["tmdb/111/movie", "tmdb/911/movie"]),
+  // Both grounded candidates are offered once on the exact current TaskItem;
+  // the older intent identity select is not mounted as a second, independently
+  // writable choice for the same file.
+  await expect(card.getByText("选择正确的作品")).toBeVisible();
+  await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
+  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
+  await expect(card.locator('select[aria-label^="元数据身份 "]')).toHaveCount(
+    0,
   );
 
   // Choose one grounded candidate; the same-page analysis produces a real
   // executable summary.
-  await identity.selectOption("tmdb/911/movie");
+  await card.getByRole("radio", { name: /候选 2/ }).check();
+  const decision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  const continuation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/continue$/.test(new URL(response.url()).pathname),
+  );
   await card.getByRole("button", { name: "保存并重新分析" }).click();
-  await expect(
-    card.getByText(/选择已保存,正在按固定配置重新分析/),
-  ).toBeVisible();
+  expect((await decision).ok()).toBe(true);
+  expect((await continuation).ok()).toBe(true);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,

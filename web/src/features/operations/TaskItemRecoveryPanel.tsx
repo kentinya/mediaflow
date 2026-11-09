@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -168,6 +168,52 @@ function candidateSummary(value: {
   ]
     .filter((part): part is string => part !== null && part !== "")
     .join(" · ");
+}
+
+/** Operator-facing media kind for the dialog decision cards. */
+function mediaTypeLabel(value: string | null): string {
+  if (value === "movie") return "电影";
+  if (value === "tv") return "剧集";
+  return value === null || value === "" ? "类型未知" : value;
+}
+
+/** The one dialog heading for each legal decision kind. */
+const DIALOG_DECISION_TITLES: Readonly<Record<TaskItemDecisionKind, string>> = {
+  recognition: "确认识别类型",
+  metadata: "选择正确的作品",
+  metadata_correction: "修正作品搜索",
+  classification: "选择整理目标",
+  conflict: "处理目标文件冲突",
+};
+
+/** Plain-language context above the one card set for a decision kind. */
+const DIALOG_DECISION_INTROS: Readonly<Record<TaskItemDecisionKind, string>> = {
+  recognition:
+    "当前文件没有唯一匹配的识别类型，请选择本次整理使用的一种。保存后使用固定策略重新分析。",
+  metadata:
+    "当前文件有多个同样合法的作品，请选择本次整理使用的那一个。保存后使用固定策略重新分析。",
+  metadata_correction:
+    "没有找到匹配的作品。修改搜索信息并搜索，再选择正确的候选；保存前不会执行整理。",
+  classification:
+    "当前文件有多个合法的目标位置，请选择本次整理使用的那一个。保存后使用固定策略重新分析。",
+  conflict:
+    "目标位置已有文件。请选择本次处理方式；这里不会自动覆盖、删除或移动任何文件。",
+};
+
+function conflictStrategyTitle(strategy: string): string {
+  return strategy === "skip"
+    ? "跳过此条目"
+    : strategy === "rename"
+      ? "重命名目标（保留现有文件）"
+      : "替换现有目标（高风险，需要再次确认）";
+}
+
+function conflictStrategyHint(strategy: string): string {
+  return strategy === "skip"
+    ? "保留来源与现有目标，本次不整理这个文件"
+    : strategy === "rename"
+      ? "现有目标不动，本次整理到另一个文件名"
+      : "只有固定策略明确允许时才可选择；本次仍需再次确认";
 }
 
 /** Operator inputs for one live decision form, kept per exact TaskItem. */
@@ -800,6 +846,26 @@ export function TaskItemRecoveryPanel({
             onRefresh={() => query.refetch({ cancelRefetch: false })}
           />
         </div>
+        {query.isLoading && (
+          <p className="mf-dashboard-meta" role="status">
+            正在读取当前文件的合法决定…
+          </p>
+        )}
+        {query.isError && (
+          <StatusBanner variant="error" title="无法读取当前文件的决定">
+            <p>
+              尚未获得可保存的选择，没有保存或执行任何操作。请重新读取该条目后再继续。
+            </p>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={query.isFetching}
+              onClick={() => query.refetch({ cancelRefetch: false })}
+            >
+              {query.isFetching ? "正在重新读取…" : "重新读取当前文件的决定"}
+            </button>
+          </StatusBanner>
+        )}
         {busy && pendingAction !== null && (
           <StatusBanner variant="info" title="操作请求仍在进行">
             <p>
@@ -1312,6 +1378,7 @@ function DecisionForm(props: {
   readonly presentation?: "full" | "dialog";
 }) {
   const { decision } = props;
+  const dialog = props.presentation === "dialog";
   const canSave =
     decision.kind === "metadata_correction"
       ? props.searchText.trim() !== ""
@@ -1320,16 +1387,94 @@ function DecisionForm(props: {
           (props.conflictStrategy !== "overwrite" || props.confirmOverwrite)
         : props.selectedChoice !== "";
   const actionId = `resolve_${decision.kind}`;
+  const optionName = dialog
+    ? `organize-${decision.kind}-choice`
+    : "recovery-choice";
+
+  /** One readable radio card in the manual-organize dialog. */
+  const dialogChoice = (
+    key: string,
+    checked: boolean,
+    onSelect: () => void,
+    rank: string | null,
+    title: string,
+    meta: string | null,
+  ) => (
+    <label key={key} className="mf-organize-decision-option">
+      <input
+        type="radio"
+        name={optionName}
+        checked={checked}
+        disabled={props.disabled}
+        onChange={onSelect}
+      />
+      <span className="mf-organize-decision-option-copy">
+        {rank !== null ? (
+          <span className="mf-organize-decision-option-rank">{rank}</span>
+        ) : null}
+        <span className="mf-organize-decision-option-title">{title}</span>
+        {meta !== null && meta !== "" ? (
+          <span className="mf-organize-decision-option-meta">{meta}</span>
+        ) : null}
+      </span>
+    </label>
+  );
+
+  const technicalChoices =
+    decision.kind === "recognition"
+      ? decision.choices.map((choice, index) => (
+          <Fragment key={choice.id}>
+            <dt>选项 {index + 1}</dt>
+            <dd>
+              {choice.name} · 标识 {choice.id}
+            </dd>
+          </Fragment>
+        ))
+      : decision.kind === "metadata"
+        ? decision.choices.map((choice) => (
+            <Fragment key={choice.rank}>
+              <dt>候选 {choice.rank}</dt>
+              <dd>
+                Provider 身份 {choice.providerId ?? "—"} ·{" "}
+                {choice.mediaType ?? "类型未知"}
+              </dd>
+            </Fragment>
+          ))
+        : decision.kind === "classification"
+          ? decision.choices.map((choice) => (
+              <Fragment key={choice.rank}>
+                <dt>选项 {choice.rank}</dt>
+                <dd>
+                  规则 {choice.id} · 目标库 {choice.mediaLibraryId ?? "—"} ·
+                  优先级 {choice.priority ?? "—"}
+                </dd>
+              </Fragment>
+            ))
+          : null;
+
   return (
     <div
-      className="mf-count-section"
+      className={
+        dialog ? "mf-count-section mf-organize-decision" : "mf-count-section"
+      }
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
     >
-      <h6>待处理的{DECISION_LABELS[decision.kind]}决策</h6>
-      {decision.status && props.presentation !== "dialog" && (
+      <h6>
+        {dialog
+          ? DIALOG_DECISION_TITLES[decision.kind]
+          : `待处理的${DECISION_LABELS[decision.kind]}决策`}
+      </h6>
+      {decision.status && !dialog && (
         <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
       )}
-      {decision.kind === "recognition" &&
+      {dialog ? (
+        <p className="mf-organize-decision-intro">
+          {DIALOG_DECISION_INTROS[decision.kind]}
+        </p>
+      ) : null}
+
+      {!dialog &&
+        decision.kind === "recognition" &&
         decision.choices.map((choice) => (
           <label key={choice.id} className="mf-list-choice">
             <input
@@ -1343,7 +1488,27 @@ function DecisionForm(props: {
             {choice.description ? ` — ${choice.description}` : ""}
           </label>
         ))}
-      {decision.kind === "metadata" &&
+      {dialog && decision.kind === "recognition" && (
+        <div
+          className="mf-organize-decision-options"
+          role="radiogroup"
+          aria-label="识别类型"
+        >
+          {decision.choices.map((choice) =>
+            dialogChoice(
+              choice.id,
+              props.selectedChoice === choice.id,
+              () => props.onSelectChoice(choice.id),
+              null,
+              choice.name,
+              choice.description,
+            ),
+          )}
+        </div>
+      )}
+
+      {!dialog &&
+        decision.kind === "metadata" &&
         decision.choices.map((choice) => (
           <label key={choice.rank} className="mf-list-choice">
             <input
@@ -1356,7 +1521,33 @@ function DecisionForm(props: {
             候选 {choice.rank}：{candidateSummary(choice)}
           </label>
         ))}
-      {decision.kind === "metadata_correction" && (
+      {dialog && decision.kind === "metadata" && (
+        <div
+          className="mf-organize-decision-options"
+          role="radiogroup"
+          aria-label="作品候选"
+        >
+          {decision.choices.map((choice) =>
+            dialogChoice(
+              String(choice.rank),
+              props.selectedChoice === String(choice.rank),
+              () => props.onSelectChoice(String(choice.rank)),
+              `候选 ${choice.rank}`,
+              `${choice.name}${choice.year === null ? "" : ` (${choice.year})`}`,
+              [
+                mediaTypeLabel(choice.mediaType),
+                choice.description === null
+                  ? null
+                  : `原名 ${choice.description}`,
+              ]
+                .filter((part): part is string => part !== null)
+                .join(" · "),
+            ),
+          )}
+        </div>
+      )}
+
+      {!dialog && decision.kind === "metadata_correction" && (
         <>
           <label>
             搜索标题
@@ -1436,7 +1627,99 @@ function DecisionForm(props: {
           )}
         </>
       )}
-      {decision.kind === "classification" &&
+      {dialog && decision.kind === "metadata_correction" && (
+        <>
+          <div className="mf-organize-decision-fields">
+            <label className="mf-organize-decision-field">
+              <span className="mf-organize-decision-label">搜索标题</span>
+              <input
+                value={props.searchText}
+                maxLength={500}
+                disabled={props.disabled}
+                onChange={(event) => props.onSearchText(event.target.value)}
+              />
+            </label>
+            <label className="mf-organize-decision-field">
+              <span className="mf-organize-decision-label">媒体类型</span>
+              <select
+                value={props.mediaType}
+                disabled={props.disabled}
+                onChange={(event) => props.onMediaType(event.target.value)}
+              >
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+              </select>
+            </label>
+            <label className="mf-organize-decision-field">
+              <span className="mf-organize-decision-label">年份（可留空）</span>
+              <input
+                type="number"
+                min="1870"
+                max="2100"
+                value={props.correctedYear}
+                placeholder="例如 2024"
+                disabled={props.disabled}
+                onChange={(event) => props.onCorrectedYear(event.target.value)}
+              />
+            </label>
+          </div>
+          <p className="mf-organize-decision-hint">
+            标题、年份和媒体类型只用于外部元数据搜索，不会修改文件名或目录。
+          </p>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={
+                props.disabled ||
+                !decision.canSearch ||
+                props.searchText.trim() === ""
+              }
+              onClick={props.onSearch}
+            >
+              {props.busy ? "正在搜索…" : "搜索作品"}
+            </button>
+          </div>
+          {props.metadataResult && (
+            <fieldset className="mf-organize-decision-options">
+              <legend className="mf-organize-decision-legend">
+                搜索结果（{props.metadataResult.candidates.length} 项）
+              </legend>
+              {props.metadataResult.candidates.map((candidate, index) =>
+                dialogChoice(
+                  candidate.providerId,
+                  props.selectedProviderId === candidate.providerId,
+                  () =>
+                    props.onSelectProvider(
+                      candidate.providerId,
+                      candidate.mediaType,
+                    ),
+                  `结果 ${index + 1}`,
+                  `${candidate.title}${
+                    candidate.year ? ` (${candidate.year})` : ""
+                  }`,
+                  [
+                    mediaTypeLabel(candidate.mediaType),
+                    candidate.originalTitle === null
+                      ? null
+                      : `原名 ${candidate.originalTitle}`,
+                  ]
+                    .filter((part): part is string => part !== null)
+                    .join(" · "),
+                ),
+              )}
+              {props.metadataResult.truncated && (
+                <p className="mf-organize-decision-hint">
+                  结果数量受策略限制；如未找到目标，请调整标题再次搜索。
+                </p>
+              )}
+            </fieldset>
+          )}
+        </>
+      )}
+
+      {!dialog &&
+        decision.kind === "classification" &&
         decision.choices.map((choice) => (
           <label key={choice.rank} className="mf-list-choice">
             <input
@@ -1451,27 +1734,32 @@ function DecisionForm(props: {
             {choice.description ? ` — ${choice.description}` : ""}
           </label>
         ))}
-      {decision.kind === "conflict" && (
-        <>
-          {props.presentation === "dialog" ? (
-            <>
-              <p>
-                <strong>目标已有文件</strong>：来源{" "}
-                {decision.sourcePath ?? "不可用"} 的目标{" "}
-                {decision.targetPath ?? "不可用"} 已存在，当前文件不能纳入确认。
-              </p>
-              <p className="mf-dashboard-meta">
-                下一步：选择一种合法的冲突处理方式，然后保存并重新分析。
-                保存只记录决定，不会执行任何整理；新的精确方案就绪后再由你最终确认。
-              </p>
-            </>
-          ) : (
-            <p>
-              冲突：{decision.conflictTypes.join("、") || "未提供"}。来源：
-              {decision.sourcePath ?? "不可用"}；目标：
-              {decision.targetPath ?? "不可用"}。
-            </p>
+      {dialog && decision.kind === "classification" && (
+        <div
+          className="mf-organize-decision-options"
+          role="radiogroup"
+          aria-label="目标位置"
+        >
+          {decision.choices.map((choice) =>
+            dialogChoice(
+              String(choice.rank),
+              props.selectedChoice === String(choice.rank),
+              () => props.onSelectChoice(String(choice.rank)),
+              `目标 ${choice.rank}`,
+              choice.name,
+              `位置 ${choice.relativePath ?? "根目录"}`,
+            ),
           )}
+        </div>
+      )}
+
+      {!dialog && decision.kind === "conflict" && (
+        <>
+          <p>
+            冲突：{decision.conflictTypes.join("、") || "未提供"}。来源：
+            {decision.sourcePath ?? "不可用"}；目标：
+            {decision.targetPath ?? "不可用"}。
+          </p>
           {decision.allowedStrategies.map((strategy) => (
             <label key={strategy} className="mf-list-choice">
               <input
@@ -1503,6 +1791,84 @@ function DecisionForm(props: {
           )}
         </>
       )}
+      {dialog && decision.kind === "conflict" && (
+        <>
+          <p className="mf-organize-decision-hint">
+            来源{" "}
+            <span className="mf-exact-identity">
+              {decision.sourcePath ?? "不可用"}
+            </span>{" "}
+            的目标{" "}
+            <span className="mf-exact-identity">
+              {decision.targetPath ?? "不可用"}
+            </span>{" "}
+            已存在。
+          </p>
+          <div
+            className="mf-organize-decision-options"
+            role="radiogroup"
+            aria-label="冲突处理方式"
+          >
+            {decision.allowedStrategies.map((strategy) =>
+              dialogChoice(
+                strategy,
+                props.conflictStrategy === strategy,
+                () => props.onConflictStrategy(strategy),
+                null,
+                conflictStrategyTitle(strategy),
+                conflictStrategyHint(strategy),
+              ),
+            )}
+          </div>
+          {props.conflictStrategy === "overwrite" && (
+            <label className="mf-organize-decision-confirm">
+              <input
+                type="checkbox"
+                checked={props.confirmOverwrite}
+                disabled={props.disabled}
+                onChange={(event) =>
+                  props.onConfirmOverwrite(event.target.checked)
+                }
+              />
+              <span>
+                我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析。
+              </span>
+            </label>
+          )}
+        </>
+      )}
+
+      {dialog ? (
+        <details className="mf-organize-decision-diagnostics">
+          <summary>展开技术诊断</summary>
+          <dl>
+            <dt>决定类型</dt>
+            <dd>
+              {decision.kind}
+              {decision.reviewId === null ? "" : ` · 审核 ${decision.reviewId}`}
+            </dd>
+            {technicalChoices}
+            {decision.kind === "metadata_correction" ? (
+              <>
+                <dt>已保存的搜索</dt>
+                <dd>
+                  {decision.query ?? "—"} · {decision.year ?? "年份未设置"} ·{" "}
+                  {decision.mediaType ?? "类型未知"}
+                </dd>
+              </>
+            ) : null}
+            {decision.kind === "conflict" ? (
+              <>
+                <dt>冲突类型</dt>
+                <dd>{decision.conflictTypes.join("、") || "未提供"}</dd>
+                <dt>固定策略</dt>
+                <dd>{decision.configuredStrategy ?? "—"}</dd>
+              </>
+            ) : null}
+          </dl>
+        </details>
+      ) : null}
+
       <div className="mf-actions">
         <button
           type="button"
@@ -1512,7 +1878,13 @@ function DecisionForm(props: {
           }
           onClick={props.onSave}
         >
-          {props.busy ? "正在保存…" : "保存决策并继续安全分析"}
+          {dialog
+            ? props.busy
+              ? "正在保存并重新分析…"
+              : "保存并重新分析"
+            : props.busy
+              ? "正在保存…"
+              : "保存决策并继续安全分析"}
         </button>
         {props.canIgnore && (
           <button
@@ -1525,10 +1897,16 @@ function DecisionForm(props: {
           </button>
         )}
       </div>
-      <p className="mf-dashboard-meta">
-        保存仅记录人工决定，不执行 OrganizerExecutor；分析使用此 Task
-        的固定配置并由常驻 Worker 处理。
-      </p>
+      {dialog ? (
+        <p className="mf-organize-decision-hint">
+          保存只记录当前文件的选择并重新运行零变更分析，不会执行整理，也不会修改任何文件。
+        </p>
+      ) : (
+        <p className="mf-dashboard-meta">
+          保存仅记录人工决定，不执行 OrganizerExecutor；分析使用此 Task
+          的固定配置并由常驻 Worker 处理。
+        </p>
+      )}
     </div>
   );
 }

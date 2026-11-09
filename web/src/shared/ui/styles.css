@@ -9172,24 +9172,227 @@ tr[aria-selected="true"] {
   margin: 2px 0 0;
 }
 
-.mf-organize-correction {
+/*
+ * Slice53 unified current-file correction: the dialog mounts one decision card
+ * per file with the same field/label grammar as the Automation and Storage
+ * cards. Task Center's default `full` panel keeps its existing markup, which
+ * never receives these scoped classes.
+ */
+.mf-organize-correction.mf-organize-decision {
   margin-top: 10px;
-  padding: 10px 12px;
+}
+
+.mf-organize-decision {
+  margin-top: 10px;
+  padding: 12px 14px;
   border: 1px solid #dbe4f3;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #f8faff;
 }
 
-.mf-organize-correction label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+.mf-organize-dialog-body .mf-organize-decision h6 {
+  margin: 0 0 4px;
+  color: #14223c;
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.mf-organize-decision-intro {
+  margin: 0 0 2px;
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-organize-decision-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  margin-top: 10px;
+}
+
+.mf-organize-decision-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  align-content: start;
+}
+
+.mf-organize-decision-label {
+  color: #263b61;
+  font-size: 14px;
   font-weight: 600;
 }
 
-.mf-organize-correction select {
-  max-width: 100%;
+.mf-organize-decision-field input,
+.mf-organize-decision-field select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #cfd8e5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17233b;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 11px;
+}
+
+.mf-organize-decision-field input:focus-visible,
+.mf-organize-decision-field select:focus-visible {
+  outline: 2px solid #1268f5;
+  outline-offset: 1px;
+  border-color: #1268f5;
+}
+
+.mf-organize-decision-options {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.mf-organize-decision-legend {
+  margin-bottom: 2px;
+  padding: 0;
+  color: #263b61;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mf-organize-decision-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.mf-organize-decision-option:has(input:checked) {
+  border-color: #1268f5;
+  background: #f3f7ff;
+  box-shadow: inset 0 0 0 1px rgba(18, 104, 245, 0.25);
+}
+
+.mf-organize-decision-option:focus-within {
+  outline: 2px solid #1268f5;
+  outline-offset: 2px;
+}
+
+.mf-organize-decision-option input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: #1268f5;
+}
+
+.mf-organize-decision-option-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mf-organize-decision-option-rank {
+  color: #5f6b7d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mf-organize-decision-option-title {
+  color: #14223c;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-decision-option-meta {
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-decision-hint {
+  margin: 8px 0 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.mf-organize-decision-diagnostics {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #dfe6ef;
+}
+
+.mf-organize-decision-diagnostics > summary {
+  cursor: pointer;
+  color: #52627a;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mf-organize-decision-diagnostics dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+}
+
+.mf-organize-decision-diagnostics dt {
+  margin: 0;
+  color: #5f6b7d;
+  font-weight: 600;
+}
+
+.mf-organize-decision-diagnostics dd {
+  margin: 0;
+  color: #263b61;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-decision-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #f0d39a;
+  border-radius: 10px;
+  background: #fff9ea;
+  color: #6b4a00;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-organize-decision-confirm input {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+}
+
+.mf-organize-decision .mf-actions {
+  margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+  .mf-organize-decision {
+    padding: 10px 12px;
+  }
+
+  .mf-organize-decision-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .mf-organize-decision-option {
+    padding: 10px;
+  }
 }
 
 .mf-organize-review-list {

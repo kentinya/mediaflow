@@ -109,6 +109,13 @@ function operationLabel(value: string | null): string {
   return value === null ? "—" : displayEnum(value);
 }
 
+/** The operator-facing media kind, never the raw provider enum. */
+function mediaTypeLabel(value: string | null): string {
+  if (value === "movie") return "电影";
+  if (value === "tv") return "剧集";
+  return value === null ? "类型未知" : displayEnum(value);
+}
+
 /** The known destination-conflict kinds, in the operator's own words. */
 function conflictTypeLabel(value: string | null): string {
   const labels: Readonly<Record<string, string>> = {
@@ -1214,6 +1221,12 @@ export function ManualOrganizeDialog({
     const metadataNotFound =
       item.analysis?.metadata?.status === "not_found" ||
       item.analysis?.metadata?.match?.status === "not_found";
+    const recognitionTypeName =
+      intent?.options.recognitionTypes.find(
+        (value) =>
+          value.id ===
+          (item.recognitionType ?? currentIntentItem?.choice.recognitionTypeId),
+      )?.name ?? null;
     const decisionAnalysisRequested = () => {
       setNotices((previous) => ({
         ...previous,
@@ -1262,21 +1275,12 @@ export function ManualOrganizeDialog({
               {item.mediaIdentity?.year != null
                 ? ` (${item.mediaIdentity.year})`
                 : ""}
-              {item.mediaIdentity?.mediaType === "movie"
-                ? " · 电影"
-                : item.mediaIdentity?.mediaType === "tv"
-                  ? " · 剧集"
-                  : ""}
-              {item.mediaIdentity?.matchedBy != null
-                ? ` · 匹配:${item.mediaIdentity.matchedBy}`
+              {item.mediaIdentity?.mediaType != null
+                ? ` · ${mediaTypeLabel(item.mediaIdentity.mediaType)}`
                 : ""}
             </dd>
             <dt>识别类型</dt>
-            <dd>{item.recognitionType ?? "—"}</dd>
-            <dt>元数据身份</dt>
-            <dd>
-              {item.provider ?? "—"} / {item.providerId ?? "—"}
-            </dd>
+            <dd>{recognitionTypeName ?? item.recognitionType ?? "—"}</dd>
           </dl>
           {item.analysis?.metadata?.match != null &&
           item.analysis.metadata.match.candidates.length > 0 ? (
@@ -1289,14 +1293,23 @@ export function ManualOrganizeDialog({
                   (candidate, position) => (
                     <li key={`candidate-${position}`}>
                       {candidate.title ?? candidate.providerId}
-                      {candidate.year !== null
-                        ? ` (${candidate.year})`
-                        : ""} · {candidate.provider}/{candidate.providerId}
+                      {candidate.year !== null ? ` (${candidate.year})` : ""}
+                      {candidate.mediaType !== null
+                        ? ` · ${mediaTypeLabel(candidate.mediaType)}`
+                        : ""}
                       {candidate.exactTitle ? " · 标题精确" : ""}
                       {candidate.exactYear ? " · 年份精确" : ""}
-                      {candidate.score !== null
-                        ? ` · 评分 ${candidate.score}`
-                        : ""}
+                      {candidate.provider !== null ||
+                      candidate.providerId !== null ? (
+                        <span className="mf-dashboard-meta">
+                          {" "}
+                          身份 {candidate.provider ?? "—"}/
+                          {candidate.providerId ?? "—"}
+                          {candidate.score !== null
+                            ? ` · 评分 ${candidate.score}`
+                            : ""}
+                        </span>
+                      ) : null}
                     </li>
                   ),
                 )}
@@ -1311,69 +1324,77 @@ export function ManualOrganizeDialog({
             <p className="mf-dashboard-meta">当前没有可读的元数据候选。</p>
           )}
 
+          {!organizeFlowEnded && hasNativeProblem ? (
+            <p className="mf-dashboard-meta" role="status">
+              当前文件的修正决定统一在下方“当前问题”中完成；保存后只重新运行零变更分析，不会执行整理。
+            </p>
+          ) : null}
           {!organizeFlowEnded &&
+          !hasNativeProblem &&
           currentIntentItem !== undefined &&
           intent !== undefined ? (
-            <div className="mf-organize-correction">
-              <label>
-                识别类型
-                <select
-                  aria-label={`识别类型 ${filename}`}
-                  value={draftRecognitionId}
-                  disabled={saveMutation.isPending}
-                  onChange={(event) =>
-                    patchDraft({ recognitionTypeId: event.target.value })
-                  }
-                >
-                  <option value="">选择识别类型</option>
-                  {recognitionOptions.map((value) => (
-                    <option key={value.id} value={value.id}>
-                      {value.name ?? value.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="mf-organize-correction mf-organize-decision">
+              <div className="mf-organize-decision-fields">
+                <label className="mf-organize-decision-field">
+                  <span className="mf-organize-decision-label">识别类型</span>
+                  <select
+                    aria-label={`识别类型 ${filename}`}
+                    value={draftRecognitionId}
+                    disabled={saveMutation.isPending}
+                    onChange={(event) =>
+                      patchDraft({ recognitionTypeId: event.target.value })
+                    }
+                  >
+                    <option value="">选择识别类型</option>
+                    {recognitionOptions.map((value) => (
+                      <option key={value.id} value={value.id}>
+                        {value.name ?? value.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
+                  <label className="mf-organize-decision-field">
+                    <span className="mf-organize-decision-label">作品身份</span>
+                    <select
+                      aria-label={`元数据身份 ${filename}`}
+                      value={draftMetadataKey}
+                      disabled={saveMutation.isPending}
+                      onChange={(event) =>
+                        patchDraft({ metadataKey: event.target.value })
+                      }
+                    >
+                      <option value="">选择已固定身份</option>
+                      {currentIntentItem.allowedMetadataIdentities.map(
+                        (value) => (
+                          <option
+                            key={metadataKey(value)}
+                            value={metadataKey(value)}
+                          >
+                            {value.title ?? value.providerId}
+                            {value.year !== null
+                              ? ` (${value.year})`
+                              : ""} · {mediaTypeLabel(value.mediaType)}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+              {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
+                <p className="mf-dashboard-meta">
+                  本文件当前没有可供选择的识别类型修正。
+                </p>
+              ) : null}
               {draftRecognitionId !== "" && !mappingComplete ? (
                 <p className="mf-dashboard-meta" role="status">
                   当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
                 </p>
               ) : null}
-              {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
-                <label>
-                  元数据身份(作品候选)
-                  <select
-                    aria-label={`元数据身份 ${filename}`}
-                    value={draftMetadataKey}
-                    disabled={saveMutation.isPending}
-                    onChange={(event) =>
-                      patchDraft({ metadataKey: event.target.value })
-                    }
-                  >
-                    <option value="">选择已固定身份</option>
-                    {currentIntentItem.allowedMetadataIdentities.map(
-                      (value) => (
-                        <option
-                          key={metadataKey(value)}
-                          value={metadataKey(value)}
-                        >
-                          {value.title ?? value.providerId}
-                          {value.year !== null ? ` (${value.year})` : ""} ·{" "}
-                          {value.mediaType === "movie"
-                            ? "电影"
-                            : value.mediaType === "tv"
-                              ? "剧集"
-                              : "类型未知"}{" "}
-                          · {value.provider}/{value.providerId}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-              ) : (
-                <p className="mf-dashboard-meta">
-                  本文件当前没有可供选择的识别类型修正。
-                </p>
-              )}
+              <p className="mf-organize-decision-hint">
+                翻页不会自动保存。保存只记录当前文件的选择并重新运行零变更分析，不会执行整理。
+              </p>
               <div className="mf-actions">
                 <Button
                   type="button"
@@ -1401,9 +1422,6 @@ export function ManualOrganizeDialog({
                       ? "重新分析"
                       : "保存并重新分析"}
                 </Button>
-                <span className="mf-dashboard-meta">
-                  翻页不会自动保存;保存只持久记录选择并重新分析,不执行整理。
-                </span>
               </div>
               {notice !== undefined ? (
                 <StatusBanner
@@ -1524,8 +1542,8 @@ export function ManualOrganizeDialog({
             hasNativeProblem ? (
               <p role="status">
                 {metadataNotFound
-                  ? "没有找到匹配的作品。请在下方修正搜索标题、年份或媒体类型，显式搜索并选择合法候选后保存；保存只记录决定，不会执行整理。"
-                  : "当前文件尚未就绪。请在下方完成该文件当前的合法决定并保存；保存后会重新分析并显示新的精确方案，保存本身不会执行整理。"}
+                  ? "当前文件还没有匹配到作品，尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"
+                  : "当前文件尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"}
               </p>
             ) : (
               <StatusBanner variant="error" title="条目未就绪">
@@ -1609,7 +1627,7 @@ export function ManualOrganizeDialog({
             <p className="mf-dashboard-meta" role="status">
               {admittedItemIds.has(item.itemId)
                 ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                : "该文件当前未就绪,不能纳入本次确认;请查看上方当前问题与下一步。"}
+                : "该文件当前未就绪,不能纳入本次确认;请先完成上方当前问题中的决定。"}
             </p>
           ) : null}
           {!organizeFlowEnded &&
@@ -1630,6 +1648,14 @@ export function ManualOrganizeDialog({
         <details className="mf-organize-diagnostics">
           <summary>展开技术诊断</summary>
           <ItemFindings item={item} />
+          <dl>
+            <dt>元数据身份</dt>
+            <dd>
+              {item.provider ?? "—"} / {item.providerId ?? "—"}
+            </dd>
+            <dt>匹配依据</dt>
+            <dd>{item.mediaIdentity?.matchedBy ?? "—"}</dd>
+          </dl>
           {item.failure !== null ? (
             <dl>
               <dt>后端失败分类</dt>

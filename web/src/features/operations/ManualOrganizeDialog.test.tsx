@@ -76,6 +76,9 @@ function makeBackend() {
     // metadata-correction decision the same TaskItem exposes after analysis.
     metadataProblem: false as boolean,
     metadataProblemResolved: false as boolean,
+    // A real metadata-review problem: two tied legal candidates on item-1.
+    metadataCandidateProblem: false as boolean,
+    metadataCandidateResolved: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
   };
@@ -315,7 +318,10 @@ function makeBackend() {
       selectedItemIds: order.map((index) => `item-${index + 1}`),
       unselectedItemIds: [],
     };
-    if (state.metadataProblem && !state.metadataProblemResolved) {
+    if (
+      (state.metadataProblem && !state.metadataProblemResolved) ||
+      (state.metadataCandidateProblem && !state.metadataCandidateResolved)
+    ) {
       const problem = (value["items"] as Json[]).find(
         (item) => item["itemId"] === "item-1",
       );
@@ -396,6 +402,67 @@ function makeBackend() {
     next_action: resolved
       ? "continue safe analysis"
       : "correct the metadata search",
+  });
+
+  const metadataCandidateRecovery = (resolved: boolean): Json => ({
+    task_id: "organize-task-1",
+    item_id: "problem-item-1",
+    checkpoint: {
+      status: resolved ? "pending" : "waiting_metadata",
+      stage: resolved ? "queued" : "waiting_metadata",
+      raw_stage: resolved ? "metadata_resolved" : "waiting_metadata",
+      effects: { certainty: "none" },
+      retry_safety: resolved ? "safe" : "unsafe",
+      checkpoint_version: "c".repeat(64),
+      blocker: resolved
+        ? null
+        : { kind: "metadata", blocker_id: "metadata-review-1" },
+      permitted_action_ids: resolved
+        ? ["retry"]
+        : ["resolve_metadata", "ignore"],
+      refusal_reason: null,
+      next_action: resolved
+        ? "continue safe analysis"
+        : "choose one legal metadata candidate",
+    },
+    decision: resolved
+      ? null
+      : {
+          kind: "metadata",
+          review_id: "metadata-review-1",
+          status: "pending",
+          query: "Movie.01",
+          year: 2001,
+          media_type: "movie",
+          can_search: false,
+          candidates: [
+            {
+              rank: 1,
+              provider: "tmdb",
+              provider_id: "501",
+              media_type: "movie",
+              title: "Movie.01",
+              original_title: null,
+              canonical_year: 2001,
+            },
+            {
+              rank: 2,
+              provider: "tmdb",
+              provider_id: "601",
+              media_type: "movie",
+              title: "Movie.01",
+              original_title: "Original Movie",
+              canonical_year: 2001,
+            },
+          ],
+          allowed_strategies: [],
+          conflict_types: [],
+        },
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: resolved
+      ? "continue safe analysis"
+      : "choose one legal metadata candidate",
   });
 
   const fetchMock = vi.fn(
@@ -540,7 +607,9 @@ function makeBackend() {
         method === "GET"
       ) {
         return jsonResponse(
-          metadataCorrectionRecovery(state.metadataProblemResolved),
+          state.metadataCandidateProblem
+            ? metadataCandidateRecovery(state.metadataCandidateResolved)
+            : metadataCorrectionRecovery(state.metadataProblemResolved),
         );
       }
 
@@ -585,6 +654,10 @@ function makeBackend() {
         );
         if (state.failMetadataDecision) {
           return jsonResponse({ error: { code: "stale_checkpoint" } }, 409);
+        }
+        if (state.metadataCandidateProblem) {
+          state.metadataCandidateResolved = true;
+          return jsonResponse(metadataCandidateRecovery(true));
         }
         state.metadataProblemResolved = true;
         return jsonResponse(metadataCorrectionRecovery(true));
@@ -990,9 +1063,18 @@ describe("ManualOrganizeDialog", () => {
     expect(within(card()).getByText(/没有找到匹配的作品/)).toBeVisible();
     const title = screen.getByLabelText("搜索标题");
     expect(title).toHaveValue("Movie.01");
+    // The native TaskItem decision is the single correction path: the older
+    // intent identity selectors are not also mounted for the same file.
+    expect(
+      within(card()).queryByLabelText("元数据身份 Movie.01.mkv"),
+    ).toBeNull();
+    expect(within(card()).queryByLabelText("识别类型 Movie.01.mkv")).toBeNull();
+    expect(
+      within(card()).getAllByRole("button", { name: "保存并重新分析" }),
+    ).toHaveLength(1);
     await user.clear(title);
     await user.type(title, "DialogRename");
-    const year = screen.getByLabelText("年份(可留空)");
+    const year = screen.getByLabelText("年份（可留空）");
     await user.clear(year);
     await user.type(year, "2024");
 
@@ -1004,16 +1086,14 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("搜索标题")).toHaveValue("DialogRename"),
     );
-    expect(screen.getByLabelText("年份(可留空)")).toHaveValue(2024);
+    expect(screen.getByLabelText("年份（可留空）")).toHaveValue(2024);
     expect(backend.calls.metadataSearchPosts).toHaveLength(0);
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
 
     // The explicit Provider search is a read; choosing its grounded candidate
     // and saving the decision re-analyzes without executing anything.
-    await user.click(
-      screen.getByRole("button", { name: "显式搜索 Metadata Provider" }),
-    );
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(1),
     );
@@ -1024,9 +1104,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       await screen.findByRole("radio", { name: /DialogRename/ }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "保存决策并继续安全分析" }),
-    );
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
 
     await waitFor(() =>
       expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
@@ -1060,6 +1138,63 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
+  it("keeps one candidate selection and one save action for a native metadata decision", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataCandidateProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    // Both legal candidates belong to the exact current TaskItem and are shown
+    // once, as readable radio cards. There is no second, independently
+    // writable metadata identity form on the same file.
+    await screen.findByRole("radio", { name: /候选 1/ });
+    expect(
+      within(card()).queryByLabelText("元数据身份 Movie.01.mkv"),
+    ).toBeNull();
+    expect(within(card()).queryByLabelText("识别类型 Movie.01.mkv")).toBeNull();
+    expect(
+      within(card()).getAllByRole("button", { name: "保存并重新分析" }),
+    ).toHaveLength(1);
+    expect(within(card()).queryByText(/保存决策并继续安全分析/)).toBeNull();
+
+    const save = screen.getByRole("button", { name: "保存并重新分析" });
+    expect(save).toBeDisabled();
+
+    // Changing the radio selection replaces the one draft. Nothing is written
+    // by selecting, and selecting the second candidate leaves only that value.
+    await user.click(screen.getByRole("radio", { name: /候选 2/ }));
+    const candidateOne = screen.getByRole("radio", { name: /候选 1/ });
+    const candidateTwo = screen.getByRole("radio", { name: /候选 2/ });
+    expect(candidateOne).not.toBeChecked();
+    expect(candidateTwo).toBeChecked();
+    expect(save).toBeEnabled();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(save);
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    expect(backend.calls.recoveryDecisionPosts[0]).toMatchObject({
+      kind: "metadata",
+      candidateRank: 2,
+    });
+    // The single save is followed by the existing zero-mutation analysis; no
+    // second intent choice, search or execution was created.
+    await waitFor(() =>
+      expect(backend.calls.recoveryContinuePosts).toHaveLength(1),
+    );
+    expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.metadataSearchPosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    await waitFor(() =>
+      expect(within(card()).getAllByText("纳入本次整理")[0]).toBeVisible(),
+    );
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
   it("reports metadata decision save and analysis failures without executing or replaying", async () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, (value) => {
@@ -1068,7 +1203,7 @@ describe("ManualOrganizeDialog", () => {
     });
     await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
     const save = await screen.findByRole("button", {
-      name: "保存决策并继续安全分析",
+      name: "保存并重新分析",
     });
 
     // A rejected decision stays on the current file; no analysis is requested
@@ -1188,7 +1323,7 @@ describe("ManualOrganizeDialog", () => {
     const title = await screen.findByLabelText("搜索标题");
     await user.clear(title);
     await user.type(title, "DialogRename");
-    const year = screen.getByLabelText("年份(可留空)");
+    const year = screen.getByLabelText("年份（可留空）");
     await user.clear(year);
     await user.type(year, "2024");
 
@@ -1234,7 +1369,7 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("搜索标题")).toHaveValue("DialogRename"),
     );
-    expect(screen.getByLabelText("年份(可留空)")).toHaveValue(2024);
+    expect(screen.getByLabelText("年份（可留空）")).toHaveValue(2024);
     expect(within(card()).getByText(/有未保存的修正/)).toBeVisible();
     expect(backend.calls.metadataSearchPosts).toHaveLength(0);
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
