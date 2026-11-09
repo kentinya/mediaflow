@@ -42,7 +42,18 @@ const ADMIN_TOKEN = "harness-admin-token";
 const BASE = "http://127.0.0.1:4183";
 const TASK45_RECOVERY_EVIDENCE = "test-results/task45.3-recovery-evidence";
 /** The four runs seeded by real producers through supported admission paths. */
-const SEEDED_RUN_TOTAL = 4;
+// The real population read at suite start, so an earlier real-Python spec's
+// completed runs are part of the truth instead of a hard-coded offset.
+let seededRunTotal = 4;
+
+test.beforeAll(async ({ request }) => {
+  const response = await request.get(`${BASE}/api/v1/operations/runs`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(response.ok()).toBe(true);
+  const population = (await response.json()) as { readonly total: number };
+  seededRunTotal = population.total;
+});
 
 /** The exact persisted scope of the rich detail run created by the harness. */
 const RICH_RUN_SCOPE = "Movies/Harness/Failed";
@@ -414,7 +425,7 @@ test("the inventory renders real producer runs with truthful labels", async ({
 
   // Two real API-admitted Jobs and two coordinator-created Tasks appear as
   // four runs: pre-Task pending admissions and standalone Tasks both visible.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+  await expectRunTotal(page, seededRunTotal);
   // Both admitted Jobs are the one supported organize command; the rich detail
   // Task records the manual organize command. The retired Scan/Preview work
   // kinds no longer exist, so no run carries their labels.
@@ -515,7 +526,7 @@ test("server-side filtered selection and return keep the list context", async ({
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+  await expectRunTotal(page, seededRunTotal);
 });
 
 test("historical identity survives a real restart of the runtime database", async ({
@@ -524,7 +535,7 @@ test("historical identity survives a real restart of the runtime database", asyn
 }) => {
   await connect(page);
   await openInventory(page);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+  await expectRunTotal(page, seededRunTotal);
 
   const before = await page
     .getByRole("table")
@@ -540,7 +551,7 @@ test("historical identity survives a real restart of the runtime database", asyn
   // label, trigger and scope is byte-for-byte the same, because the inventory
   // never backfills display evidence from a current Active configuration.
   await page.getByRole("button", { name: "刷新" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+  await expectRunTotal(page, seededRunTotal);
   const after = await page
     .getByRole("table")
     .getByRole("button")
@@ -617,6 +628,7 @@ test("the selected run follows polling, header refresh and history navigation", 
 
 test("the selected run detail reads progress, filtered items, evidence and records", async ({
   page,
+  request,
 }) => {
   const api = recordApiCalls(page);
   await connect(page);
@@ -755,7 +767,14 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await page.goBack();
   await expect(page).not.toHaveURL(/run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
-  await expectRunTotal(page, 1);
+  // The ended population is read from the same server the page reads, so an
+  // earlier real-Python spec's terminal runs are part of the truth.
+  const endedPopulation = (await (
+    await request.get(`${BASE}/api/v1/operations/runs?view=ended`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    })
+  ).json()) as { readonly total: number };
+  await expectRunTotal(page, endedPopulation.total);
 });
 
 test("the eligible run exports its bounded result package as a real download", async ({
@@ -911,7 +930,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+  await expectRunTotal(page, seededRunTotal);
 
   // The isolated Python harness admits an exact ResourceLibrary file Preview
   // through the real API, then completes its MOVE with the production manual
@@ -938,7 +957,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // `/files/organize` preparation.  That preparation is *not* organizing work
   // of its own, so the center shows only the admitted execution Task: exactly
   // one new organizing row.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  await expectRunTotal(page, seededRunTotal + 1);
   const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
@@ -1169,7 +1188,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await openInventory(page);
   // The preceding journey's one admitted execution Task (its analysis-only
   // preparation is not a separate organizing row).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  await expectRunTotal(page, seededRunTotal + 1);
   // Ordinary sidebar Files navigation has no implicit Task Center return.
   // The admitted execution offers its own exact linked-task entry below.
   // Task46.3 RO-2: the organizing journey starts from ResourceLibrary Files,
@@ -1181,16 +1200,15 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // identifier is submitted as source authority.
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  // Every selection now enters the one in-context preparation workspace: the
+  // Every selection now opens the one preparation card over Files: the
   // resident Worker runs the bounded walk and the complete analysis, then the
-  // exact plan summary appears on the same page.
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  // exact plan appears in that same card.
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   // Drive the real resident bounded-discovery Worker to completion: the walk
   // freezes its reviewed sources and the complete analysis links the exact
   // Preview.  The browser only polls the same durable state.
-  await expect(page).toHaveURL(/discoveryId=/);
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1202,15 +1220,18 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({
-    timeout: 30_000,
-  });
-  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    {
+      timeout: 30_000,
+    },
+  );
+  const recognition = card.locator('select[aria-label^="识别类型 "]');
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   await recognition.first().selectOption("C");
-  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByText(/选择已保存,正在按固定配置重新分析/),
+  ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1221,9 +1242,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
 
@@ -1234,9 +1253,6 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     sourceExists: true,
     destinationTargets: [],
   });
-  await expect(
-    page.getByRole("heading", { name: /Three\.2003\.mkv 可执行/ }),
-  ).toBeVisible();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
@@ -1257,6 +1273,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
       await route.abort("connectionreset");
     },
   );
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(
     page.getByRole("heading", { name: "执行结果未知" }),
@@ -1268,25 +1285,17 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
     );
   expect(exactExecutePosts()).toHaveLength(1);
-  // The admitted item is now shown as already accepted and is excluded from a
-  // fresh confirmation, so the control cannot re-run it.
-  await expect(page.getByText("已受理执行，不再纳入本次创建")).toBeVisible();
+  // The unknown admission blocks a second submission until the bounded
+  // reconciliation read proves the durable outcome.
   await expect(
-    page.getByRole("button", { name: "确认整理 0 项" }),
+    page.getByRole("button", { name: "确认整理 1 项" }),
   ).toBeDisabled();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "查看关联任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "任务中心", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -1396,7 +1405,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   request,
 }) => {
   // RO-2 P1 (B blocker 1): two genuinely ready plans, one confirmed, the
-  // sibling must remain correctable and re-analyzable on the same page
+  // sibling must remain correctable and re-analyzable on the same card
   // without re-including the completed item.
   const api = recordApiCalls(page);
   await request.post(`${BASE}/__harness__/register-manual-worker`);
@@ -1408,8 +1417,10 @@ test("a selected execution never blocks the unselected sibling's correction and 
   await page.getByRole("checkbox", { name: "选择 Ninth.2009.mkv" }).check();
   await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
-  const discoveryId = new URL(page.url()).searchParams.get("discoveryId");
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1420,24 +1431,21 @@ test("a selected execution never blocks the unselected sibling's correction and 
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/可整理主文件 2 项/)).toBeVisible();
+  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
 
-  // The same-page re-check is offered even though a summary already exists.
+  // Confirm exactly the Ninth item by leaving its sibling out of this batch.
+  await card.getByRole("button", { name: "下一项" }).click();
   await expect(
-    page.getByRole("button", { name: "重新检查并更新摘要" }),
+    card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
   ).toBeVisible();
-
-  // Confirm exactly the Ninth item.
-  await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).uncheck();
+  await card.getByRole("checkbox", { name: /纳入 Tenth\.2010\.mkv/ }).uncheck();
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "查看关联任务" }).click();
-  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
   expect(await worker.json()).toMatchObject({ completed: true, itemCount: 1 });
@@ -1457,21 +1465,32 @@ test("a selected execution never blocks the unselected sibling's correction and 
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   // Re-open the same preparation: the admitted sibling is shown as already
-  // accepted, and the unselected sibling stays confirmable.
+  // accepted, and the unselected sibling stays correctable.
   await page.goto(
-    `${BASE}/ui-v2/operations/organize/new?discoveryId=${discoveryId}`,
+    `${BASE}/ui-v2/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText(/已有受理的兄弟项/)).toBeVisible();
+  const reopenedHeading = card.getByRole("heading", {
+    name: /第 [12] \/ 2 个/,
+  });
+  await expect(reopenedHeading).toBeVisible();
+  if ((await reopenedHeading.textContent())?.includes("第 1 /")) {
+    await card.getByRole("button", { name: "下一项" }).click();
+  }
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("已受理执行，不再纳入本次创建")).toBeVisible();
+    card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
+  ).toBeVisible();
 
-  // Correct the unselected sibling's RecognitionType on-page; the analysis
-  // must only review the remaining item and succeed.
-  const recognition = page.locator('select[aria-label^="识别类型 "]');
-  await recognition.last().selectOption("C");
-  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  // Correct the unselected sibling's RecognitionType on this card; the
+  // analysis must only review the remaining item and succeed.
+  const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await recognition.selectOption("C");
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByText(/选择已保存,正在按固定配置重新分析/),
+  ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1482,10 +1501,9 @@ test("a selected execution never blocks the unselected sibling's correction and 
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible();
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
   // No second execution was admitted by the correction/re-analysis.
   expect(
     api.filter(
@@ -1513,7 +1531,9 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.getByRole("checkbox", { name: "选择 Eleventh.2011.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1524,13 +1544,16 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
   // The ambiguous item is not executable and offers its real candidates.
-  await expect(page.getByText(/可确认 0 项/)).toBeVisible();
-  await expect(page.getByText("未就绪").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: /确认整理/ })).toBeDisabled();
+  await expect(card.getByText("未就绪").first()).toBeVisible();
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(
+    page.getByRole("button", { name: "确认整理 0 项" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "返回逐项复核" }).click();
   expect(
     await (
       await request.get(
@@ -1540,7 +1563,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   // Both grounded candidates are offered; an invented one is impossible here.
-  const identity = page.locator('select[aria-label^="元数据身份 "]').first();
+  const identity = card.locator('select[aria-label^="元数据身份 "]').first();
   await expect(identity).toBeVisible();
   const optionValues = await identity
     .locator("option")
@@ -1552,7 +1575,10 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   // Choose one grounded candidate; the same-page analysis produces a real
   // executable summary.
   await identity.selectOption("tmdb/911/movie");
-  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByText(/选择已保存,正在按固定配置重新分析/),
+  ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1563,7 +1589,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(page.getByText(/可确认 1 项/)).toBeVisible({
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
   // Nothing has mutated before the explicit confirmation.
@@ -1575,12 +1601,10 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     ).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
+  await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "查看关联任务" }).click();
-  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
   expect(await worker.json()).toMatchObject({ completed: true, itemCount: 1 });
@@ -1837,14 +1861,10 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   // Ordinary Files preparation has no task-center return context.
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByRole("link", { name: "返回任务中心" }).first(),
-  ).toHaveAttribute("href", "/ui-v2/operations");
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(page).not.toHaveURL(/returnOps=/);
-  await expect(page).toHaveURL(/discoveryId=/);
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1855,17 +1875,20 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({
-    timeout: 30_000,
-  });
-  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    {
+      timeout: 30_000,
+    },
+  );
+  const recognition = card.locator('select[aria-label^="识别类型 "]');
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   // The correction re-enters the durable analysis stage; the resident Worker
-  // links the new exact plan summary under the same pinned configuration.
+  // links the new exact plan under the same pinned configuration.
   await recognition.first().selectOption("C");
-  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByText(/选择已保存,正在按固定配置重新分析/),
+  ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
       `${BASE}/__harness__/run-discovery-worker`,
@@ -1876,22 +1899,14 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
 
-  // Follow the execution page's existing exact task link into the center.
+  // The card hands the proved admission to the existing exact run selection.
+  await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "查看关联任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "任务中心", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -2760,6 +2775,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   page,
   request,
 }) => {
+  test.setTimeout(180_000);
   await connect(page, ADMIN_TOKEN);
   const calls = recordApiCalls(page);
   for (const width of [1536, 380]) {
@@ -2818,10 +2834,22 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
     .getByRole("checkbox", { name: "选择 Fourteenth.2014.mkv" })
     .check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
-  const first = await (
-    await request.post(BASE + "/__harness__/run-discovery-worker")
-  ).json();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const retirementDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(retirementDiscoveryId).toBeTruthy();
+  const advanceRetirement = async () =>
+    await (
+      await request.post(
+        BASE +
+          "/__harness__/run-discovery-worker?discoveryId=" +
+          encodeURIComponent(retirementDiscoveryId as string),
+      )
+    ).json();
+  const first = await advanceRetirement();
   expect(first.status).toBe("waiting_stability");
   await expect(
     page.getByText("等待来源稳定", { exact: true }).first(),
@@ -2847,9 +2875,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   await request.post(BASE + "/__harness__/retirement-change");
   // Real test-side time; the product browser never drives an observation loop.
   await new Promise((resolve) => setTimeout(resolve, 3100));
-  const changed = await (
-    await request.post(BASE + "/__harness__/run-discovery-worker")
-  ).json();
+  const changed = await advanceRetirement();
   expect(changed.status).toBe("waiting_stability");
   const afterChange = await (
     await request.get(BASE + "/__harness__/retirement-state")
@@ -2859,26 +2885,24 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   // destination/target was touched.
   expect(afterChange.counts).toEqual(unchanged.counts);
   expect(afterChange.targets).toEqual([]);
-  expect(
-    (
-      await (
-        await request.post(BASE + "/__harness__/run-discovery-worker")
-      ).json()
-    ).advanced,
-  ).toBe(false);
+  expect((await advanceRetirement()).advanced).toBe(false);
   await new Promise((resolve) => setTimeout(resolve, 3100));
-  for (let step = 0; step < 10; step += 1) {
-    const advanced = await (
-      await request.post(BASE + "/__harness__/run-discovery-worker")
-    ).json();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await advanceRetirement();
     if (advanced.previewId) break;
+    await page.waitForTimeout(500);
   }
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "选择 Thirteenth.2013.mkv" })
+    card.getByRole("heading", { name: /第 [12] \/ 2 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  for (let step = 0; step < 2; step += 1) {
+    if (await card.getByText("Thirteenth.2013.mkv").first().isVisible()) break;
+    await card.getByRole("button", { name: "下一项" }).click();
+  }
+  await card
+    .getByRole("checkbox", { name: /纳入 Thirteenth\.2013\.mkv/ })
     .uncheck();
+  await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
     page.getByRole("button", { name: "确认整理 1 项" }),
   ).toBeEnabled();
@@ -2894,7 +2918,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
       .counts,
   ).toEqual(unchanged.counts);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/organize\/execution\//);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
   const executed = await (
     await request.post(BASE + "/__harness__/run-manual-worker")
   ).json();
@@ -3775,11 +3799,10 @@ test("initial manual preparation remains reachable from Task Center", async ({
 
   await page.getByRole("checkbox", { name: "选择 Two.2002.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(/discoveryId=/);
-  const discoveryId = new URL(page.url()).searchParams.get("discoveryId");
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
 
   // Drive the real resident bounded-discovery Worker to its exact summary.
@@ -3794,13 +3817,11 @@ test("initial manual preparation remains reachable from Task Center", async ({
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
   // Deliberately leave the preparation unconfirmed.
-  await expect(
-    page.getByRole("button", { name: "确认整理 1 项" }),
-  ).toBeVisible();
+  await expect(card.getByRole("button", { name: /整批复核/ })).toBeVisible();
 
   // The real API proves which organizing Task this exact preparation owns;
   // the browser journey below then finds that same Task through its normal
@@ -3816,8 +3837,9 @@ test("initial manual preparation remains reachable from Task Center", async ({
   expect(discovery.organizeTaskId).toBeTruthy();
   const taskId = discovery.organizeTaskId as string;
 
-  // Leave through the preparation page's ordinary return entry.
-  await page.getByRole("link", { name: "返回任务中心" }).first().click();
+  // Leave through the ordinary close action, then the Task Center entry.
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();

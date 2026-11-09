@@ -30,7 +30,7 @@ const HISTORY_STEP_LABELS: Readonly<Record<string, string>> = {
   process_interruption: "执行中断",
 };
 
-function describeHistoryStep(value: string): string {
+export function describeHistoryStep(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) return trimmed;
   if (trimmed.startsWith("ATTACHMENT:")) return "复制附件";

@@ -445,23 +445,32 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await expect(page.getByText("已选择 2 个文件")).toBeVisible();
   await expect(page.getByText(/可进入整理分析 1 个/)).toBeVisible();
   await page.getByRole("button", { name: "批量整理" }).click();
+  // Slice53: the one preparation card opens over this unchanged Files page.
+  // The admitted discovery identity enters this route's URL, so a reload or
+  // reconnect reopens exactly this preparation instead of a duplicate.
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
   expect(admissionBodies[0]).not.toContain("readme.txt");
   // The retired single-file Preview admission is no longer used by Files.
   expect(previewBodies).toHaveLength(0);
-  // The return context restores the originating ResourceLibrary and directory.
-  await page.getByRole("link", { name: "返回文件" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources/,
-  );
+  // The background library, directory and selection never moved.
   await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByText(/已选择 2 个文件/)).toBeVisible();
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
+  );
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByText(/已选择 2 个文件/)).toBeVisible();
 });
 
 test("a folder selection starts the bounded discovery journey instead of a direct intent", async ({
@@ -491,23 +500,23 @@ test("a folder selection starts the bounded discovery journey instead of a direc
   await expect(page.getByRole("button", { name: "批量整理" })).toBeEnabled();
   await page.getByRole("button", { name: "批量整理" }).click();
 
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
   expect(discoveryBodies[0]).toContain('"autoPrepare":true');
   // The folder/mixed preparation never uses the direct file-only intent
-  // admission; the same-page summary appears instead.
+  // admission; the linked exact plan summary opens inside the same card.
   expect(admissionBodies).toHaveLength(0);
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
-  // Zero mutation is advertised truthfully.
-  await expect(page.getByText(/准备阶段不会修改文件/)).toBeVisible();
+  // Zero mutation is advertised truthfully in the card's own wording.
+  await expect(card.getByText(/零媒体变更/)).toBeVisible();
+  await expect(card.getByRole("button", { name: /整批复核/ })).toBeVisible();
 });
 
 test("a mixed folder and file selection enters one bounded discovery", async ({
@@ -530,8 +539,11 @@ test("a mixed folder and file selection enters one bounded discovery", async ({
   await expect(page.getByText(/已选择 2 个项目/)).toBeVisible();
   await page.getByRole("button", { name: "批量整理" }).click();
 
+  await expect(
+    page.getByRole("dialog", { name: "整理所选文件" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain("Movies");
@@ -557,8 +569,11 @@ test("a folder row Organize action admits exactly that discovery scope", async (
     .getByRole("row", { name: /Movies/ })
     .click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "整理" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "整理所选文件" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
@@ -571,57 +586,71 @@ test("the same-page preparation links the summary and confirms one exact subset"
   await openFiles(page);
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
 
-  // The workspace shows the durable preparation stage and its linked exact
-  // zero-mutation plan summary on the same page.
+  // The card reviews one exact zero-mutation plan first, then offers one
+  // compact batch review of the exact subset before the single confirmation.
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    page.getByText(/零变更摘要,确认受理前不修改任何文件/),
   ).toBeVisible();
-  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "确认整理 1 项" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
+
+  // Slice53 RO-3: the proved admission closes the preparation card and hands
+  // the exact durable task to the existing task-center selection, whose
+  // existing detail opens — never a second execution-results surface.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\?.*run=organize-task-e2e-001/,
+  );
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 });
 
-test("the preparation reconnects to the same durable record with its return context", async ({
+test("the Files URL preparation identity reconnects the same card with no duplicate admission", async ({
   page,
 }) => {
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/discoveries")
+    ) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
   await resetFakeOrganize(page);
   await openFiles(page);
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
 
   // A full browser reload clears memory-only auth and lands on the V2
-  // entry; the shared route/auth continuation model has recorded the exact
-  // durable preparation destination plus its bounded Files return context, so
-  // reconnecting continues the same preparation instead of the Explore home.
+  // entry; the Files route carried the exact durable preparation identity,
+  // so reconnecting reopens that same preparation instead of the Explore home
+  // — and never re-submits the admission.
   await page.reload();
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+  );
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
-  );
-  await expect(page).toHaveURL(
-    /returnTo=files&returnResourceLibraryId=resources/,
-  );
-  await expect(page.getByRole("link", { name: "返回文件" })).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
 });
 
 test("a matching open preparation reuses one durable record instead of a duplicate", async ({
@@ -631,10 +660,11 @@ test("a matching open preparation reuses one durable record instead of a duplica
   await openFiles(page);
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  await page.goBack();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  // Closing only leaves this card: the background Files selection survives.
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(card).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
   const moviesCheckbox = page.getByRole("checkbox", {
     name: "选择 Movies",
@@ -645,12 +675,11 @@ test("a matching open preparation reuses one durable record instead of a duplica
   await page.getByRole("button", { name: "批量整理" }).click();
 
   // The fake reconciles an identical open scope to the same durable record;
-  // the journey returns to the same preparation workspace, never a second one.
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  // the card reopens over the same Files page with the same preparation
+  // identity, never a second, different one.
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
 });
 
@@ -663,7 +692,7 @@ test("a budget-limited preparation refuses to freeze and offers the narrowing re
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    page.getByRole("dialog", { name: "整理所选文件" }),
   ).toBeVisible();
 
   // The honest incomplete outcome: the truncated prefix is never offered as
@@ -696,20 +725,19 @@ test("the row Organize action admits the existing durable intent for one eligibl
     .getByRole("row", { name: /sample\.mkv/ })
     .click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
 
-  // The bounded return action restores the originating Files context.
-  await page.getByRole("link", { name: "返回文件" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources/,
-  );
+  // Closing the card returns to the exact originating Files context, with the
+  // directory listing intact behind it.
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await expect(page.getByRole("table")).toBeVisible();
 });
 
@@ -729,25 +757,25 @@ test("the selection footer admits one bounded multi-file intent", async ({
   await openFiles(page);
 
   // The selection footer admits a bounded multi-file selection in one ordered
-  // request; the same-page summary shows both items.
+  // request; the card reviews the exact linked subset over that same page.
   await page.getByRole("checkbox", { name: "选择 sample.mkv" }).check();
   await page
     .getByRole("checkbox", { name: "选择 Avatar.2009.1080p.mkv" })
     .check();
   await expect(page.getByText("已选择 2 个文件")).toBeVisible();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain(
     '"paths":["sample.mkv","Avatar.2009.1080p.mkv"]',
   );
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
-  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "返回文件" })).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "关闭整理弹窗" }),
+  ).toBeVisible();
 });
 
 test("a rejected Organize admission keeps Files context, selection and a safe retry", async ({

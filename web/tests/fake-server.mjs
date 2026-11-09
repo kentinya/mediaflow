@@ -1540,6 +1540,8 @@ function resourceLibraryState(session) {
       // The bounded folder/mixed discovery admission of this session, or null
       // before the first one.
       discovery: null,
+      // A lazily-created (never explicitly reset) session is not budget-limited.
+      discoveryLimit: null,
       // A deterministic admission failure for the failure-path journey.
       filesOrganizeFailure: null,
       // ResourceLibrary-relative directories removed outside MediaFlow in this

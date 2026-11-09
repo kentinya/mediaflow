@@ -3912,7 +3912,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       }),
     );
     authStore.setToken("test-token");
-    renderApp("/ui-v2/resourcelib/files");
+    const { router } = renderApp("/ui-v2/resourcelib/files");
 
     await screen.findAllByText("Recover");
     await user.click(
@@ -3924,12 +3924,15 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "新建整理任务" }),
+        screen.getByRole("dialog", { name: "整理所选文件" }),
       ).toBeVisible(),
     );
-    // The recovered admission opens the one in-context preparation workspace
-    // for exactly this durable discovery, not a duplicate admission.
+    // Slice53: the recovered admission opens the preparation card on this
+    // same Files page for exactly this durable discovery, not a duplicate
+    // admission and not the legacy full page.
     expect(screen.getByText(/准备完成/)).toBeVisible();
+    expect(router.state.location.pathname).toBe("/resourcelib/files");
+    expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
     // The page really did submit its own generated identity.
     expect(discoveryPosts).toHaveLength(1);
     expect(String(discoveryPosts[0]?.requestId)).toMatch(

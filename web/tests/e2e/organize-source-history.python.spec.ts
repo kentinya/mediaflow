@@ -117,11 +117,12 @@ test("a recorded partial history warns, then the confirmed new organize takes ef
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.getByRole("checkbox", { name: `选择 ${FILE}` }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscovery(request);
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
 
   // The short reminder is bound to this exact file and never claims that the
   // unknown effect was verified.
@@ -131,9 +132,9 @@ test("a recorded partial history warns, then the confirmed new organize takes ef
   await expect(page.getByText(/上次整理部分成功/).first()).toBeVisible();
   await expect(page.getByText(new RegExp(FILE)).first()).toBeVisible();
   await expect(
-    page.getByText("上次整理记录（同一文件版本）", { exact: true }),
+    page.getByText("上次整理记录（同一文件版本）", { exact: true }).first(),
   ).toBeVisible();
-  await expect(page.getByText(/部分存储效果未确认/).first()).toBeVisible();
+  await expect(page.getByText(/效果未确认/).first()).toBeVisible();
   // The item detail names the recorded facts in plain language: the possible
   // target and the unconfirmed effect, without internal step codes or a
   // second verification product.
@@ -154,11 +155,15 @@ test("a recorded partial history warns, then the confirmed new organize takes ef
   });
 
   // The ordinary selected confirmation is the only confirm, and it binds to
-  // the reviewed subset.
+  // the reviewed subset.  The card hands the proved admission to the existing
+  // task-center selection instead of a second result surface.
+  await page.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
 
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBe(true);

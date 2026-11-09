@@ -9117,3 +9117,120 @@ tr[aria-selected="true"] {
 .mf-explore-detail-card > .mf-modal-header .mf-modal-close:focus-visible {
   outline-color: #ffffff;
 }
+
+/* Slice53 manual organize dialog: one centered card with an independently
+   scrolling per-file body, a wrapping fixed footer and bounded diagnostics.
+   Long exact paths must stay readable without widening the card, so identity
+   text relies on `mf-exact-identity` word breaking rather than truncation. */
+.mf-modal-card.mf-organize-dialog {
+  width: min(860px, 100%);
+}
+
+.mf-modal-card.mf-organize-dialog .mf-modal-footer {
+  flex-wrap: wrap;
+}
+
+.mf-modal-footer-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.mf-organize-dialog-body section,
+.mf-organize-dialog-body header.mf-organize-file-head {
+  padding: 10px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.mf-organize-dialog-body section:last-of-type {
+  border-bottom: 0;
+}
+
+.mf-organize-file-head h3 {
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-organize-file-head h3 .mf-status-badge {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mf-organize-dialog-body h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.mf-organize-dialog-body dt {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.mf-organize-dialog-body dd {
+  margin: 2px 0 0;
+}
+
+.mf-organize-correction {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dbe4f3;
+  border-radius: 8px;
+  background: #f8faff;
+}
+
+.mf-organize-correction label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.mf-organize-correction select {
+  max-width: 100%;
+}
+
+.mf-organize-review-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mf-organize-review-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.mf-organize-review-list .mf-exact-identity {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.mf-organize-diagnostics {
+  margin-top: 10px;
+}
+
+.mf-organize-diagnostics > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mf-organize-discard {
+  margin: 10px 0 4px;
+  padding: 12px;
+  border: 1px solid #e7c877;
+  border-radius: 8px;
+  background: #fff9ea;
+}
+
+.mf-organize-discard p {
+  margin: 0 0 6px;
+}

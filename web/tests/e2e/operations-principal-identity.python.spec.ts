@@ -60,25 +60,24 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   // browser selects it from the actual ResourceLibrary listing.
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/discoveryId=/);
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscoveryWorker(request);
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  const recognition = card.locator('select[aria-label^="识别类型 "]');
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   await recognition.first().selectOption("C");
-  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
-  await driveDiscoveryWorker(request);
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByRole("heading", { name: /Three\.2003\.mkv 可执行/ }),
+    card.getByText(/选择已保存,正在按固定配置重新分析/),
   ).toBeVisible();
+  await driveDiscoveryWorker(request);
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
@@ -99,28 +98,18 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
       await route.abort("connectionreset");
     },
   );
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(
     page.getByRole("heading", { name: "执行结果未知" }),
   ).toBeVisible();
   expect(executePosts()).toHaveLength(1);
-  await expect(page.getByText("已受理执行，不再纳入本次创建")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "确认整理 0 项" }),
-  ).toBeDisabled();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "查看关联任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "任务中心", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();

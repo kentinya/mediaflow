@@ -802,12 +802,20 @@ export function allowlistedDestinationSearch(
       const value = current.get(key);
       setSafe(allowed, key, value);
     }
-    // The one Organize-selection marker and the task-center return context
-    // survive a reconnect inside a Files-originated organize journey; no
-    // other route gains a mutating search key through this branch.
+    // The one Organize-selection marker, the exact admitted preparation
+    // identity and the task-center return context survive a reconnect inside a
+    // Files-originated organize journey; no other route gains a mutating search
+    // key through this branch.  The preparation identity is re-validated as a
+    // bounded token and only ever addresses one backend discovery read.
     if (current.get("organize") === "1") {
       allowed.set("organize", "1");
     }
+    setFilterToken(
+      allowed,
+      "organizeDiscovery",
+      current.get("organizeDiscovery"),
+      OPERATION_TASK_TOKEN,
+    );
     setJourneyOperationsContext(allowed, current);
     setFilterToken(
       allowed,

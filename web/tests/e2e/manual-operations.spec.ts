@@ -239,14 +239,15 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await row.focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "整理" }).click();
+  // Slice53: the durable preparation opens as the one card over this Files
+  // page, and its identity is recorded in the route for a clean reconnect.
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/new\?discoveryId=organize-discovery-e2e-001/,
+    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');

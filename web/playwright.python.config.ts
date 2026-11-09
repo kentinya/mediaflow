@@ -10,6 +10,11 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  // One Python process serves one temporary SQLite database and one shared
+  // durable fixture set.  File-level parallelism would let two specs admit
+  // work, consume the single organizing capacity or move the same source
+  // concurrently, so the real-harness run is deliberately serial.
+  workers: 1,
   forbidOnly: true,
   reporter: [["list"]],
   use: {

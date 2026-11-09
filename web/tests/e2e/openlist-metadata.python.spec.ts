@@ -106,9 +106,9 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     await page.getByRole("checkbox", { name: `选择 ${name}` }).check();
   }
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
 
   let previewId: string | null = null;
   for (let step = 0; step < 24; step += 1) {
@@ -123,7 +123,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   }
   expect(previewId).not.toBeNull();
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    card.getByRole("heading", { name: /第 1 \/ 2 个/ }),
   ).toBeVisible();
 
   const beforeConfirmation = await providerState(page);
@@ -143,10 +143,10 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   }
 
   await page.request.post("/__harness__/register-manual-worker");
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 2 项$/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   let worker: ManualWorkerResult | null = null;
   for (let step = 0; step < 30; step += 1) {
@@ -213,13 +213,15 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     expect(result.effectCertainty).toBe("verified_complete");
   }
 
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expect(page.getByText(/已验证完成\s*2/)).toBeVisible();
-  await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expect(page.getByText(/已验证完成\s*2/)).toBeVisible();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  await detail
+    .getByRole("button", { name: "刷新", exact: true })
+    .first()
+    .click();
+  await expect(detail.getByText("2成功", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
 
   const final = await providerState(page);
   expect(mutations(final).length).toBe(4);

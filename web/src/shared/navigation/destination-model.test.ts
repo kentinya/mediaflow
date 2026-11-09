@@ -583,12 +583,35 @@ describe("destination model", () => {
       ).toBe(
         "resourceLibraryId=resources&path=Movies&organize=1&returnOps=run%3Djob-001",
       );
+      // The exact admitted preparation identity survives a reconnect as a
+      // bounded token, so the same durable card reopens without a duplicate.
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "resourceLibraryId=resources&organizeDiscovery=organize-discovery-1",
+        ),
+      ).toBe(
+        "resourceLibraryId=resources&organizeDiscovery=organize-discovery-1",
+      );
       // Only the literal marker survives; a foreign `organize` value drops it.
       expect(
         allowlistedDestinationSearch("/resourcelib/files", "organize=execute"),
       ).toBeNull();
       expect(
         allowlistedDestinationSearch("/resourcelib/files", "organize="),
+      ).toBeNull();
+      // A preparation identity outside the bounded grammar never survives.
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "organizeDiscovery=..%2Fescape",
+        ),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "organizeDiscovery=",
+        ),
       ).toBeNull();
       expect(
         allowlistedDestinationSearch(

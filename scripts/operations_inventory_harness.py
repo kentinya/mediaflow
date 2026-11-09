@@ -367,6 +367,21 @@ def build_managed_fixture(
     # preparation must withhold automatic selection and ground both candidates
     # for a same-page choice.
     (source_root / "Eleventh.2011.mkv").write_bytes(b"ambiguous identity synthetic media")
+    # Slice53 browser fixture: ten brand-new sources whose two tied provider
+    # candidates force one explicit metadata decision per file, plus one
+    # unambiguous source for the unknown-admission reconciliation journey.
+    # They live in their own directory so no other journey's root listing
+    # changes.
+    dialog_root = source_root / "Dialog"
+    dialog_root.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 11):
+        dialog_file = dialog_root / f"Dialog{index:02d}.2011.mkv"
+        dialog_file.write_bytes(b"slice53 dialog synthetic media")
+        old_time = time.time() - 86400
+        os.utime(dialog_file, (old_time, old_time))
+    (dialog_root / "DialogUnknown.2021.mkv").write_bytes(
+        b"slice53 unknown admission synthetic media"
+    )
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -531,6 +546,31 @@ def build_managed_fixture(
                             "^(?:One|Two|Three|Four|Ninth|Tenth|Eleventh|"
                             "Thirteenth|Fourteenth)\\.[0-9]{4}\\.(?:mkv|mp4)$"
                         ),
+                    },
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "dialog-journey-video",
+            "name": "Slice53 dialog video fixtures",
+            "priority": 121,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "filename",
+                        "operator": "regex",
+                        "value": r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021)\.mkv$",
                     },
                 ],
             },
@@ -921,6 +961,33 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Eleventh",
                         year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # Slice53's ten per-file decisions: two equally-ranked
+                    # identities for each brand-new source, so the Files card
+                    # must ground both and wait for the operator's own save.
+                    *(
+                        MediaCandidate(
+                            "tmdb",
+                            provider_id,
+                            MediaType.MOVIE,
+                            f"Dialog{index:02d}",
+                            year=2011,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        )
+                        for index in range(1, 11)
+                        for provider_id in (f"5{index:02d}", f"6{index:02d}")
+                    ),
+                    # The unknown-admission source resolves to one identity
+                    # and is ready without an extra operator decision.
+                    MediaCandidate(
+                        "tmdb",
+                        "701",
+                        MediaType.MOVIE,
+                        "DialogUnknown",
+                        year=2021,
                         genres=("Animation",),
                         countries=("JP",),
                     ),

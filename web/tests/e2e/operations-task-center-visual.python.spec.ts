@@ -245,7 +245,9 @@ test("capture the in-context creation summary and confirmation journey", async (
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   // Drive the real resident bounded-discovery Worker: the walk freezes the
   // reviewed sources and the analysis links the exact Preview.
   for (let step = 0; step < 20; step += 1) {
@@ -258,22 +260,23 @@ test("capture the in-context creation summary and confirmation journey", async (
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
-  // The linked plan summary really published: the prepared item and its
-  // destructive-impact statement are visible before the capture.
-  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/organize-creation-summary.png`,
     fullPage: false,
   });
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/零变更摘要/).first()).toBeVisible();
   const confirmation = page.getByRole("button", { name: /确认整理 \d+ 项/ });
   await expect(confirmation).toBeVisible();
   await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/organize-confirmation-summary.png`,
+    fullPage: false,
+  });
   await page.setViewportSize({ width: 380, height: 720 });
   await page.screenshot({
     path: `${OUTPUT}/organize-creation-summary-narrow.png`,

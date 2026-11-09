@@ -26,12 +26,14 @@ import {
   IdentityLabel,
   identityAccessibleName,
 } from "../../shared/ui/files-path";
-import { filesReturnSearch } from "../../shared/navigation/files-return";
 import {
   operationsLandingSearch,
-  operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
+import {
+  ManualOrganizeDialog,
+  type ManualOrganizeDialogSession,
+} from "../operations/ManualOrganizeDialog";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -486,6 +488,33 @@ function updateDirectoryRouteState(relativePath: string): void {
   const search = new URLSearchParams(window.location.search);
   if (relativePath === "") search.delete("path");
   else search.set("path", relativePath);
+  const query = search.toString();
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + (query === "" ? "" : `?${query}`),
+  );
+}
+
+/**
+ * Slice53 RO-1: the admitted preparation identity the Files URL carries so a
+ * reload or an authentication reconnect reopens the same durable card instead
+ * of re-submitting an admission.  Only a bounded identifier matches; anything
+ * else simply never restores a session.
+ */
+function readOrganizeSessionSearch(): ManualOrganizeDialogSession | null {
+  if (typeof window === "undefined") return null;
+  const value =
+    new URLSearchParams(window.location.search).get("organizeDiscovery") ?? "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) return null;
+  return { phase: "admitted", discoveryId: value };
+}
+
+function updateOrganizeRouteState(discoveryId: string | null): void {
+  if (typeof window === "undefined") return;
+  const search = new URLSearchParams(window.location.search);
+  if (discoveryId === null) search.delete("organizeDiscovery");
+  else search.set("organizeDiscovery", discoveryId);
   const query = search.toString();
   window.history.replaceState(
     null,
@@ -2389,6 +2418,38 @@ export function StorageFilesPage() {
     !filesQuery.isError;
   const showFilesWait = useReadReveal(filesAwaiting);
 
+  /**
+   * Slice53 RO-1: an admitted Files selection opens the one centered
+   * preparation/review/confirmation card over this unchanged Files background
+   * (library, directory, selection and scroll position stay mounted) instead
+   * of leaving for the legacy full page. A refused admission never opens the
+   * card: it stays an inline Files failure with the selection intact for an
+   * explicit retry.
+   */
+  const [organizeSession, setOrganizeSession] =
+    useState<ManualOrganizeDialogSession | null>(readOrganizeSessionSearch);
+  const openOrganizeDialog = (session: ManualOrganizeDialogSession) => {
+    setOrganizeSession(session);
+    if (session.phase === "admitted") {
+      updateOrganizeRouteState(session.discoveryId);
+    }
+  };
+  const closeOrganizeDialog = () => {
+    setOrganizeSession(null);
+    // Closing never cancels the durable admission; it only stops this URL
+    // from re-opening the card, so a refresh cannot resurrect a discarded one.
+    updateOrganizeRouteState(null);
+  };
+  /** One proved admission hands its exact durable task to the existing task-center selection (RO-3). */
+  const handoffToTaskCenter = (taskId: string) => {
+    setOrganizeSession(null);
+    updateOrganizeRouteState(null);
+    void navigate({
+      to: "/operations",
+      search: operationsLandingSearch(operationsReturn, taskId),
+    });
+  };
+
   const organizeMutation = useMutation({
     mutationFn: async ({
       libraryId,
@@ -2482,29 +2543,16 @@ export function StorageFilesPage() {
       }
       return { kind: "discovery" as const, id: admitted.discoveryId };
     },
-    onSuccess: (admitted, variables) => {
+    onSuccess: (admitted) => {
       setPreviewError(null);
-      // Every selection enters the one in-context preparation workspace; the
-      // exact plan summary and confirmation happen there, on the same page.
-      void navigate({
-        to: "/operations/organize/new",
-        search: {
-          discoveryId: admitted.id,
-          ...(variables.libraryId === ""
-            ? {}
-            : { resourceLibraryId: variables.libraryId }),
-          ...(variables.returnPath === ""
-            ? {}
-            : { path: variables.returnPath }),
-          ...filesReturnSearch({
-            resourceLibraryId: variables.libraryId,
-            path: variables.returnPath,
-          }),
-          ...operationsReturnSearch(operationsReturn),
-        },
-      });
+      // Slice53: the durable discovery opens the preparation card on this
+      // same page; browsing, selection and scroll position stay untouched.
+      // Its identity also enters this route's URL, so a reload or a reconnect
+      // reopens exactly this preparation instead of admitting a duplicate.
+      openOrganizeDialog({ phase: "admitted", discoveryId: admitted.id });
     },
     onError: (error) => {
+      closeOrganizeDialog();
       setPreviewError(
         error instanceof Error
           ? error.message
@@ -3871,20 +3919,39 @@ export function StorageFilesPage() {
                             return every ? new Set() : new Set(selectablePaths);
                           });
                         }}
-                        onPreviewOne={(entryPath, discovery) =>
+                        onPreviewOne={(entryPath, discovery) => {
+                          setPreviewError(null);
+                          // A new admission supersedes any URL-recorded one:
+                          // this card's outcome decides what a refresh may
+                          // restore, never an older durable record.
+                          updateOrganizeRouteState(null);
+                          // The card opens immediately and shows the real
+                          // submitting state while the admission resolves.
+                          setOrganizeSession({
+                            phase: "submitting",
+                            resourceLibraryId: currentLibrary.id,
+                            paths: [entryPath],
+                          });
                           organizeMutation.mutate({
                             libraryId: currentLibrary.id,
                             paths: [entryPath],
                             returnPath: model.path,
                             discovery,
-                          })
-                        }
+                          });
+                        }}
                         onPreviewSelected={() => {
                           const admitted = model.entries.filter(
                             (entry) =>
                               selectedFiles.has(entry.path) &&
                               entry.organizeEligible === true,
                           );
+                          setPreviewError(null);
+                          updateOrganizeRouteState(null);
+                          setOrganizeSession({
+                            phase: "submitting",
+                            resourceLibraryId: currentLibrary.id,
+                            paths: admitted.map((entry) => entry.path),
+                          });
                           organizeMutation.mutate({
                             libraryId: currentLibrary.id,
                             paths: admitted.map((entry) => entry.path),
@@ -4272,6 +4339,13 @@ export function StorageFilesPage() {
               },
             });
           }}
+        />
+      )}
+      {organizeSession !== null && (
+        <ManualOrganizeDialog
+          session={organizeSession}
+          onClose={closeOrganizeDialog}
+          onHandoff={handoffToTaskCenter}
         />
       )}
     </div>

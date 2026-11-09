@@ -999,10 +999,9 @@ async function organizeOneFileThroughFiles(
   ).toBeVisible();
   await page.getByRole("checkbox", { name: `选择 ${file}` }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/discoveryId=/);
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   for (let step = 0; step < 24; step += 1) {
     const advanced = await request.post("/__harness__/run-discovery-worker");
     const body = (await advanced.json()) as {
@@ -1011,18 +1010,20 @@ async function organizeOneFileThroughFiles(
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
   // Nothing was mutated before the explicit confirmation.
   const before = await (
     await request.get(`/__harness__/manual-file-state?file=${file}`)
   ).json();
   expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
-  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
-    { timeout: 20_000 },
-  );
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 20_000,
+  });
   // The real Processing Worker performs the admitted work; the browser only
   // reads the same durable result afterwards.
   await expect
@@ -1094,7 +1095,7 @@ test("system runtime settings share one organizing allowance across automation a
   await expect(page.getByText(/系统整理队列已满/)).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page).not.toHaveURL(/discoveryId=/);
+  await expect(page).not.toHaveURL(/organizeDiscovery=/);
   const refusedState = await (
     await request.get("/__harness__/manual-file-state?file=Two.2002.mkv")
   ).json();
@@ -1117,10 +1118,9 @@ test("system runtime settings share one organizing allowance across automation a
     )
     .toBe("idle");
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/discoveryId=/);
+  const retryCard = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(retryCard).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   for (let step = 0; step < 24; step += 1) {
     const advanced = await request.post("/__harness__/run-discovery-worker");
     const body = (await advanced.json()) as {
@@ -1130,14 +1130,14 @@ test("system runtime settings share one organizing allowance across automation a
     if (body.advanced && body.previewId != null) break;
   }
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    retryCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
-  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
-    {
-      timeout: 20_000,
-    },
-  );
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect
     .poll(
       async () => {
@@ -1171,7 +1171,7 @@ test("system runtime settings keep an old summary at the current organizing capa
   await expect(page.getByRole("table")).toBeVisible();
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page).toHaveURL(/discoveryId=/);
+  await expect(page).toHaveURL(/organizeDiscovery=/);
   const oldSummaryUrl = page.url();
   for (let step = 0; step < 24; step += 1) {
     const advanced = await request.post("/__harness__/run-discovery-worker");
@@ -1182,7 +1182,9 @@ test("system runtime settings keep an old summary at the current organizing capa
     if (body.advanced && body.previewId != null) break;
   }
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    page.getByRole("dialog", { name: "整理所选文件" }).getByRole("heading", {
+      name: /第 1 \/ 1 个/,
+    }),
   ).toBeVisible({ timeout: 30_000 });
 
   // Lower the published allowance to 1.  A fresh Four request is a real
@@ -1212,7 +1214,9 @@ test("system runtime settings keep an old summary at the current organizing capa
   // the shared queue, so the current allowance refuses it with no admission.
   await connectOn(page, oldSummaryUrl);
   await expect(
-    page.getByRole("heading", { name: "计划摘要", exact: true }),
+    page.getByRole("dialog", { name: "整理所选文件" }).getByRole("heading", {
+      name: /第 1 \/ 1 个/,
+    }),
   ).toBeVisible({ timeout: 30_000 });
   const confirmation = page.waitForResponse(
     (response) =>
@@ -1220,11 +1224,11 @@ test("system runtime settings keep an old summary at the current organizing capa
       response.url().includes("/previews/") &&
       response.url().endsWith("/execute"),
   );
+  await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
   expect((await confirmation).status()).toBe(409);
-  await expect(
-    page.getByRole("heading", { name: "整理执行情况", exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText(/这次执行被明确拒绝/)).toBeVisible();
+  await expect(page).not.toHaveURL(/\/ui-v2\/operations\?/);
   const state = await (
     await request.get("/__harness__/manual-file-state?file=Three.2003.mkv")
   ).json();
