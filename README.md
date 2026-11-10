@@ -48,8 +48,12 @@ runtime settings live in System Settings. Five-state Task flow stays independent
 completion neither proves file success nor grants replay.
 
 Files opens directly into the selected library's directory loading, listing or read error; its
-former organizing-history panel is removed. Select files → prepare the exact summary → leave →
-open the original Task in Task Center → `继续整理` returns to the same still-continuable summary,
+former organizing-history panel is removed. Select files and click Organize to open a centered
+per-file dialog. Choose candidates and use `保存并重新分析` for each file that needs correction;
+review the ready subset and click `确认整理 N 项` once. Proven admission opens that exact Task's
+existing detail in Task Center. A lost response offers original-request reconciliation, retaining
+its original identity even after an unselected file is corrected/reanalyzed. After leaving,
+`继续整理` on the original Task returns to the same still-continuable review,
 including after reload/re-authentication. Ended work offers `查看只读摘要` and a Files entry for
 deliberate new organizing. Failed files can start again from Files without cancelling the ended Task;
 healthy siblings still waiting for confirmation keep their original summary. History read failures
@@ -60,8 +64,8 @@ remain factual. The [manual journey](docs/product-experience.md#manual-organize)
 TMDB policies use query type alone; candidate/result movie or TV types still drive detail lookup,
 naming and classification. Each new organize identifies the source again. Within the current Task,
 a saved candidate continues through re-analysis to the exact summary without repeated confirmation
-or another Provider lookup at summary generation. The intent page supports selecting and saving its
-existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
+or another Provider lookup at summary generation. The per-file organizer supports selecting and
+saving its existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
 [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity) explains current behavior.
 
 [Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
@@ -200,9 +204,9 @@ unsupported-argument/type errors; no retirement page/410, automatic conversion o
 migration/history/takeover framework. New manual organizing starts from ResourceLibrary Files;
 Task Center owns its progress and four-type recovery under accepted Slice46.
 
-Explicit Files organizing admits a durable task before business readiness, then keeps exact same-page
-analysis/summary and separate selected execution confirmation. Automation checked Enabled supplies
-future scheduled intent; Run once directly executes its saved bounded scope with current permission,
+Explicit Files organizing admits a durable task before business readiness, then keeps exact
+analysis/summary and separate selected confirmation in its per-file dialog. Automation checked
+Enabled supplies future scheduled intent; Run once directly executes its saved bounded scope with current permission,
 without an independent grant/pre-analysis or second initial confirmation. Four-type recovery still
 requires explicit safe continuation. `mediaflow organize` without `--execute` and Rules/configuration
 checks retain shared zero-media-mutation analysis. Separate analysis creates no organizing authority

@@ -38,24 +38,23 @@ only in [the development workflow](development-workflow.md).
 | 50 — V2 Dialog, Readability and Navigation Experience | Complete the original eight requested UX changes: readable Task detail cards; Storage view/add/edit cards and More menu; remove both library pages' directory trees, improve library edit/remove presentation and add/edit cards; natural transitions between existing V2 sidebar destination pages and consistent loading animation on Files/MediaLibrary; include the user's added Automation create/edit card jitter correction | PASS / CLOSED | Accepted49 and accepted standalone UI correction at `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`; explicit 2026-11-05 planning/document authorization, create/edit stability supplement and explicit activation/first-Task planning authorization |
 | 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
 | 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PASS / CLOSED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; independently accepted by A on 2026-11-08 through `f5409da41191c6e4bbf238bb7def601229fc59dc`; first-Task planning role exception retained, subsequent B review independent |
-| 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | ACTIVE | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
+| 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | PASS / CLOSED | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
 
 ## Current boundary
 
-[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **FIX REQUIRED**.
-The roadmap row remains ACTIVE. Fixed Base
-`95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation
-`8a468b7685d5750bcd7607fc291a61ae70b7000c` previously passed B review through [Task53.1](../TASK.md).
-Independent A review returned A53-01: sibling reanalysis changes the preview used to reconcile an
-unknown Execute, falsely denying the original admitted effects. B continues the same Task with a
-focused correction plan; RO-3 is incomplete. The modal/handoff contract remains TARGET;
-Task Center task-detail layout/content/progress/results/recovery UI stays frozen.
-Slice52 and prior acceptance, deferrals and evidence limits remain unchanged.
-This A review is a local checkpoint; no push or production deployment is performed.
+[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **PASS / CLOSED**.
+Fixed Base `95c24cd0a3cc51acd6143e37e72371445cb15a72`; accepted Implementation Head
+`8c1b2b1e262d483b594e99a06ad67e747b13bfa4`, reviewed through
+`8482d77d3d7db5b89edbaca4022c1bf6f154ca5e` on 2026-11-10. Files per-file review, current-file
+correction/one exact subset confirmation and accurate Task handoff are CURRENT. A53-01's original
+unknown request remains fixed across sibling reanalysis; original Task detail UI is preserved.
+The user authorized the B reviewer to perform this final A review; that exception, prior failure,
+actual validation and environment limits remain in the Contract. Next: A selects the next large Slice
+separately. This local closure includes no push or production deployment.
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice52 Contract/A review](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review).
+Latest acceptance: [Slice53 Contract/A review](../SLICE.md#closure-packet-and-a-final-review).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

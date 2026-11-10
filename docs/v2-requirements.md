@@ -502,20 +502,19 @@ and Files composition. [Files specification](file-page-visual-spec.md) owns copy
 visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md) owns its separate
 page. Shared chrome does not create another authority or imply unrelated business-page redesign.
 
-## TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
+## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-User-authorized 2026-11-09 Task activation; [Slice53](../SLICE.md) fixes the scope.
-Implementation previously passed B review; A final review returned A53-01 for incorrect
-original-request reconciliation after sibling reanalysis. These requirements remain TARGET until
-correction, acceptance and CURRENT reconciliation. They refine `V2-OPS-010/012/017` presentation
-and post-confirmation navigation, without changing early durable admission or execution authority.
+Accepted 2026-11-10 under [Slice53](../SLICE.md), including the corrected original-request
+reconciliation after sibling reanalysis. The user explicitly authorized the B reviewer to perform
+the final A review; that role exception and evidence limits remain in the Contract.
+These requirements refine `V2-OPS-010/012/017` presentation and post-confirmation navigation;
+early durable admission and execution authority remain unchanged.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-OPS-018 | ResourceLibrary Files manual single/batch/folder organizing uses a readable centered modal, one primary plus attachments per page, with per-item correction and one final subset confirmation. | Preserve Files background and existing library/Automation card conventions. Show real preparation, readable identity/source/target/operation/issues, and expandable exact diagnostics. Previous/Next only browse and preserve item drafts. Explicit Save and re-analyze saves the legal decision then generates the new exact plan, without execution. For 10 ambiguous files, make 10 candidate selections and 10 save/reanalysis actions, review all 10 and confirm once with 确认整理 10 项. Unready/readonly/admitted items remain independent; only the selected eligible exact subset may execute under existing overwrite/cleanup authority. Desktop/390px/short viewport, keyboard/focus/scroll/close, failures and exact-context reopen remain usable. |
-| V2-OPS-019 | Proven manual execution admission closes the organizer and opens the exact returned Task using existing Task Center detail UI. | Show 正在提交… and prevent duplicate confirmation. Lost responses reconcile the original submission only; known admission takes the same exact-task handoff. Unavailable Task association/read preserves exact known context and reread, never guesses the newest Task or resubmits. Admission is not file success. Task Center task-detail layout/content/progress/results/recovery UI remains unchanged; existing continue/readonly links reopen the exact organizer context. Preserve pins, independent outcomes and completed/uncertain non-replay. |
+| V2-OPS-019 | Proven manual execution admission closes the organizer and opens the exact returned Task using existing Task Center detail UI. | Show 正在提交… and prevent duplicate confirmation. Lost responses retain the original summary/subset/version/effect identity for every reconciliation even after a sibling reanalysis publishes a new summary; known admission takes the same exact-task handoff. Unavailable Task association/read preserves exact known context and reread, never guesses the newest Task or resubmits. Admission is not file success. Task Center task-detail layout/content/progress/results/recovery UI remains unchanged; existing continue/readonly links reopen the exact organizer context. Preserve pins, independent outcomes and completed/uncertain non-replay. |
 
 No new Task engine/schema/permissions/Provider or Task Center redesign is authorized.
-Accepted CURRENT contracts remain authoritative until A acceptance; the
-[TARGET journey](product-experience.md#target--manual-organize-dialog-slice53-fix-required) supplies the
-complete operator sequence.
+The [CURRENT journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)
+supplies the complete operator sequence. Earlier accepted safety and deferral contracts remain authoritative.

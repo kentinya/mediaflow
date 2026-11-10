@@ -8,16 +8,30 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice53](../SLICE.md) is **FIX REQUIRED**, fixed Base
-`95c24cd0a3cc51acd6143e37e72371445cb15a72`, implementation
-`8a468b7685d5750bcd7607fc291a61ae70b7000c`. [Task53.1](../TASK.md) previously passed B's independent
-review; A's full-range final review found A53-01 in original-request reconciliation after sibling
-reanalysis, leaving RO-3 incomplete. B continues Task53.1 with the original Base and scope, updates
-the correction plan and revalidates before resubmission. Task Center task-detail UI stays frozen.
-There is no A acceptance or closure entry for Slice53. Slice52 remains the latest accepted large Slice;
-all previous identities, deferrals and evidence limits remain unchanged.
+[Slice53](../SLICE.md) is **PASS / CLOSED**; [TASK.md](../TASK.md) has no active implementation.
+Next: A selects the next large Slice as a separate action. Original Base, reviewed implementation,
+prior failure, user-authorized B-to-A role exception, evidence limits and deferrals are retained below
+and in the Contract. Closure is a local checkpoint, separate from release or deployment.
 
-## Latest accepted closure — Slice52
+## Latest accepted closure — Slice53
+
+Files single/batch/bounded-folder organizing uses a centered per-file review dialog, preserves
+background and item drafts, saves legal decisions then reanalyzes, and confirms one exact ready
+subset. Proven normal or original-request admission opens the exact Task's unchanged detail.
+A53-01 is corrected across sibling reanalysis; completed/uncertain effects stay independent.
+`V2-OPS-018/019` are CURRENT. Accepted Base `95c24cd0a3cc51acd6143e37e72371445cb15a72` →
+Implementation Head `8c1b2b1e262d483b594e99a06ad67e747b13bfa4`, reviewed through
+`8482d77d3d7db5b89edbaca4022c1bf6f154ca5e` on 2026-11-10.
+
+The [Closure Packet/A Final Review](../SLICE.md#closure-packet-and-a-final-review) records the explicit
+user authorization for the same B reviewer to perform A review. B's full Python run had one Task
+heading failure, corrected and covered by 28 passing document-consumer checks; Web 1495 and Node
+E2E 268 passed. A's fresh real Python browser journey passed 8 tests. Seven optional environment
+skips, root Ruff's pre-existing untracked script error (tracked Python checks pass), and initial
+stale wheel staging are retained; the accepted fresh isolated wheel matches all 170 source files.
+Full logs, screenshots and artifacts remain local in the Contract's evidence directories.
+
+## Prior accepted closure — Slice52
 
 Delivered coordinated Explore layout and complete scrollable details, bounded ordinary pagination
 with accurate return/recovery, all nine main-page transitions/read handoff including both library
@@ -41,6 +55,7 @@ rewrite older acceptance. Detailed prior closure/validation pointers remain at
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
+| 53 | `8482d77d3d7db5b89edbaca4022c1bf6f154ca5e:SLICE.md` (prior A53-01 / FIX REQUIRED); current acceptance in [SLICE](../SLICE.md#closure-packet-and-a-final-review) | B final output / local `.git/validation-evidence/415a2d43/b53-review/review.md`; summary in [SLICE](../SLICE.md#b-closure-packet--task531-pass) |
 | 52 | `19a458eb6c1a6afb8693d2757755487a58213a4f:SLICE.md` | `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md` |
 | 51 | `c0a02875e53f249f1ac7d22b9b667c6a453c87b9:SLICE.md` | `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` |
 | 50 | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787:SLICE.md` | `60798c3e50fdc62a6d46b6ee439e2406751ecfd3:TASK.md` |
@@ -65,6 +80,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 53 — Manual Organize Dialog and Task Center Handoff | PASS / CLOSED | `95c24cd0a3cc51acd6143e37e72371445cb15a72` | `8c1b2b1e262d483b594e99a06ad67e747b13bfa4` | A Final Review PASS / CLOSED — 2026-11-10; user-authorized B-to-A role exception | Per-file Files dialog and current-file legal correction/reanalysis; one exact subset confirmation; original-request reconciliation across sibling reanalysis and exact Task Center handoff; task-detail UI preserved | Task Center/list/recovery redesign, new engine/schema/permissions/Providers/Storage, broad configuration changes, MediaLibrary organizing, cross-Task recovery, arbitrary history replay, production validation/release/deployment; original evidence limits retained |
 | 52 — Explore, Navigation and Automation Entry Experience | PASS / CLOSED | `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` | `f5409da41191c6e4bbf238bb7def601229fc59dc` | A Final Review PASS / CLOSED — 2026-11-08 | Coordinated Explore layout/scrollable details; bounded ordinary paging and exact return; nine-page transitions/read handoff and two-library refresh stability; old Automation Open Web journey and exclusive dependencies retired, current cards/commands/history preserved | New sources/download/play, persistent detail sessions, whole-site business redesign, full backend retirement, new commands/schema/permissions/queue/recovery engine, historical conversion, production/full release matrix; original validation limits retained |
 | 51 — V2 Explore Homepage Replacing Dashboard | PASS / CLOSED | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` | `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` | A Final Review PASS / CLOSED — 2026-11-07 | Default Explore; bounded movie/TV browse/filter/search/paging; exact poster detail/return; genuine zero-result recovery; trusted artwork/precise CSP; Dashboard Web/API/CLI and dedicated implementation/consumers fully retired, shared histories preserved | New sources, recommendations/subscriptions/download/play, standalone detail links and refresh/re-auth session restoration, dedicated no-Active startup, other-page redesign, new schema/permissions/engine, V1 expansion, production/full release matrix; original validation limits retained |
 | 50 — V2 Dialog, Readability and Navigation Experience | PASS / CLOSED | `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0` | `6b0927328a7bf0873faffce9cb38007fd4607764` | A Final Review PASS / CLOSED — 2026-11-07 | Original eight UX changes plus Automation create/edit stability; centered Task/Storage/library cards and readable actions; both page-local trees removed; nine main-page transitions and consistent library loading; exact publication, recovery and non-replay preserved | New backend/schema/engine/permissions/commands, other pages’ business redesign, themes/settings, automatic uncertain replay/rollback, V1 and production deployment; B failure/skip/validation limits retained |

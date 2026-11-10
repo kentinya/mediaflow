@@ -850,9 +850,9 @@ automatically copying a historical Provider ID/type into the new choice. History
 normal NFO/external-ID lookup and Provider caching retain their existing behavior. A new ambiguity
 requires a choice for that request.
 
-On the organize intent page, select an existing source-grounded candidate (title/year, movie or TV,
-Provider/ID), save it, then explicitly generate a new analysis summary. With no candidate selected,
-analysis follows normal identification. Refresh reads back the saved choice; saving invalidates an
+In the per-file organizer, select an existing source-grounded candidate (title/year, movie or TV,
+Provider/ID), then use 保存并重新分析 to save that file's legal choice and request its new exact
+summary. With no candidate selected, analysis follows normal identification. Refresh reads back the saved choice; saving invalidates an
 earlier summary and performs no media mutation. The current Task's Metadata confirmation/correction
 continues using its saved candidate and type on the same legitimate pin: re-analysis reads the correct
 detail interface, then the summary uses the persisted identity without another Provider lookup or
@@ -900,13 +900,11 @@ explicitly deferred; exact pins, source checks, independent results and non-repl
 Discovery controls/progress/readiness and return-to-Files remain in the exact admitted task/
 preparation context, with no global discovery block.
 
-## TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
+## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-`V2-OPS-018/019` previously passed B review; A returned A53-01 in unknown-submit reconciliation
-after sibling reanalysis. This section retains TARGET status until correction and acceptance;
-the preceding manual journey is the accepted baseline.
-[Slice53](../SLICE.md) changes pre-execution presentation and handoff only. Existing early Task
-admission, exact confirmation, independent effects and the Tasks/recovery journey below remain.
+Accepted `V2-OPS-018/019` under [Slice53](../SLICE.md) supplies the current Files review and
+post-confirmation handoff. Existing early Task admission, exact confirmation, independent effects
+and the Tasks/recovery journey below remain.
 
 1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
@@ -928,9 +926,11 @@ admission, exact confirmation, independent effects and the Tasks/recovery journe
    evidence proves execution admission, close the organizer and navigate to Task Center, opening
    that exact returned Task with the existing detail UI. Queued/running admission does not mean
    files succeeded. Existing Task detail owns progress, independent results and later recovery.
-6. **Failure/recovery:** lost responses keep original-request reconciliation, without automatic
-   resubmission; proven admission uses the same handoff. Preserve exact known Task/request context
-   if association/detail reading fails, and allow reread rather than selecting a guessed Task.
+6. **Failure/recovery:** lost responses keep the original submitted summary, exact items, version
+   and effect scope for reconciliation. The operator may correct/reanalyze an unselected sibling;
+   that newer review cannot change the original request being checked. Proven admission uses the
+   same handoff. Preserve exact known Task/request context if association/detail reading fails,
+   and allow reread rather than selecting a guessed Task.
    Other failures explain stage, saved state, known effects and the legal next action.
 7. **Exit/reopen:** closing cancels no admitted work. Existing Task Center 继续整理 / 查看只读摘要
    links and valid deep links reopen the exact preparation with its existing continue/readonly

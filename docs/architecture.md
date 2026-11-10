@@ -1436,13 +1436,11 @@ filters/selection through Files and recovery without a second address-bar-derive
 credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 `29a6d6d0064a5de766086446b345ae5ec2fe790f:docs/architecture.md`; it is not a second current contract.
 
-### TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
+### CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-[Slice53](../SLICE.md), `V2-OPS-018/019`: implementation previously passed B review; A returned
-A53-01 because reconciliation uses a later preview after sibling reanalysis rather than the
-immutable original request. This section remains TARGET pending correction/acceptance; CURRENT
-Files-admitted Task/source ownership above is preserved. This target reuses existing typed API/query, durable discovery/intent/plan,
-exact selected execution and original-request reconciliation; no new engine/schema/authority.
+Accepted [Slice53](../SLICE.md), `V2-OPS-018/019`, reuses existing typed API/query, durable
+discovery/intent/plan, exact selected execution and original-request reconciliation. CURRENT
+Files-admitted Task/source ownership above remains in force; engine/schema/authority are unchanged.
 
 Files hosts the modal above its preserved background. Valid preparation/readonly deep links and
 Task Center continue links retain exact discovery/library/return context through refresh and
@@ -1453,6 +1451,10 @@ The organizer owns itemId/preparation/summary-bound drafts, inclusion, active fi
 save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. Navigation
 is read-only. Late responses cannot switch files or overwrite unrelated drafts. Summary/subset
 changes invalidate stale dangerous authorization; server gates remain authoritative.
+One immutable submission identity (previewId, copied itemIds, intentVersion, allowOverwrite and
+allowSourceCleanup) is captured at confirmation and used by Execute and every unknown-request
+read. It is independent of the editable current summary and survives its replacement during sibling
+reanalysis; failed reads retain that identity and the existing submission restriction.
 
 Both normal execution admission and reconciliation-proven admission use the returned exact taskId
 with the existing Task Center selected-run/detail route, closing the organizer. Missing association
