@@ -411,12 +411,18 @@ def build_managed_fixture(
     (dialog_root / "DialogPrepAction.2026.mkv").write_bytes(
         b"slice53 preparation analysis action synthetic media"
     )
+    # Slice53 browser state regression: its own source with two tied provider
+    # candidates, so an unsaved per-file choice is a real draft while the
+    # browser proves the admitted preparation address across a cancelled Back
+    # and a reload + reconnect.  It never executes, so no target is created.
+    (dialog_root / "DialogBack.2025.mkv").write_bytes(b"slice53 cancelled back synthetic media")
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogRename.2024.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogFreeze.2020.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPrepAction.2026.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogBack.2025.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -606,7 +612,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025)\.mkv$"
                         ),
                     },
                 ],
@@ -1072,6 +1078,21 @@ def build_managed_fixture(
                         year=2026,
                         genres=("Animation",),
                         countries=("JP",),
+                    ),
+                    # Slice53 cancelled-Back state regression: two equally
+                    # ranked identities, so the current file keeps a real
+                    # unsaved choice until the operator saves it.
+                    *(
+                        MediaCandidate(
+                            "tmdb",
+                            provider_id,
+                            MediaType.MOVIE,
+                            "DialogBack",
+                            year=2025,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        )
+                        for provider_id in ("707", "708")
                     ),
                 )
             ),

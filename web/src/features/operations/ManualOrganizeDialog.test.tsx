@@ -1821,6 +1821,42 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
   }, 20_000);
 
+  it("keeps the router-owned Files history entry when the admitted card enters and leaves the address", async () => {
+    // A real Files entry carries the router's own history index/key.  The
+    // admitted preparation identity must join that same entry: replacing the
+    // entry with a fresh/empty state makes a later browser Back look like an
+    // unknown traversal, so a cancelled Back could no longer restore this
+    // exact preparation address and a reload lost the card (Slice53 B P1).
+    const routerState = {
+      __TSR_index: 2,
+      key: "router-entry",
+      __TSR_key: "router-entry",
+    };
+    window.history.replaceState(
+      routerState,
+      "",
+      "/ui-v2/resourcelib/files?resourceLibraryId=source",
+    );
+    const user = userEvent.setup();
+    await openDialog(user);
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    const search = () => new URLSearchParams(window.location.search);
+    await waitFor(() =>
+      expect(search().get("organizeDiscovery")).toBe(DISCOVERY_ID),
+    );
+    expect(window.history.state).toEqual(routerState);
+
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(search().get("organizeDiscovery")).toBeNull();
+    // Closing removes only the bounded preparation key, never the router's
+    // history entry identity.
+    expect(window.history.state).toEqual(routerState);
+  }, 30_000);
+
   it("closes on Escape when nothing is pending and returns focus to the invoking control", async () => {
     const user = userEvent.setup();
     await openDialog(user);

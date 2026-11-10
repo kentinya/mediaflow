@@ -466,34 +466,44 @@ function readInitialBrowseState(): InitialBrowseState {
 }
 
 /**
+ * Files-owned route state changes only the bounded view keys of the current
+ * Files address.  The router owns this browser-history entry, so the write
+ * must carry its existing history state (`__TSR_index`/key) instead of
+ * replacing it: the router uses that index to classify a later Back/Forward.
+ * Dropping it made a Back from an open preparation look like an unknown
+ * traversal, so a cancelled Back restored a different address and a reload
+ * lost the admitted `organizeDiscovery` card.  A write that changes nothing is
+ * skipped so repeated renders do not rewrite the same entry.
+ */
+function replaceFilesRouteSearch(
+  update: (search: URLSearchParams) => void,
+): void {
+  if (typeof window === "undefined") return;
+  const search = new URLSearchParams(window.location.search);
+  update(search);
+  const query = search.toString();
+  const next = window.location.pathname + (query === "" ? "" : `?${query}`);
+  if (next === `${window.location.pathname}${window.location.search}`) return;
+  window.history.replaceState(window.history.state, "", next);
+}
+
+/**
  * Files-owned route state: keep the selected ResourceLibrary in the URL so an
  * in-app revisit, deep link or reload followed by normal authentication
  * recovery selects it again when it remains enabled.
  */
 function updateLibraryRouteState(libraryId: string): void {
-  if (typeof window === "undefined") return;
-  const search = new URLSearchParams(window.location.search);
-  if (libraryId === "") search.delete("resourceLibraryId");
-  else search.set("resourceLibraryId", libraryId);
-  const query = search.toString();
-  window.history.replaceState(
-    null,
-    "",
-    window.location.pathname + (query === "" ? "" : `?${query}`),
-  );
+  replaceFilesRouteSearch((search) => {
+    if (libraryId === "") search.delete("resourceLibraryId");
+    else search.set("resourceLibraryId", libraryId);
+  });
 }
 
 function updateDirectoryRouteState(relativePath: string): void {
-  if (typeof window === "undefined") return;
-  const search = new URLSearchParams(window.location.search);
-  if (relativePath === "") search.delete("path");
-  else search.set("path", relativePath);
-  const query = search.toString();
-  window.history.replaceState(
-    null,
-    "",
-    window.location.pathname + (query === "" ? "" : `?${query}`),
-  );
+  replaceFilesRouteSearch((search) => {
+    if (relativePath === "") search.delete("path");
+    else search.set("path", relativePath);
+  });
 }
 
 /**
@@ -511,16 +521,10 @@ function readOrganizeSessionSearch(): ManualOrganizeDialogSession | null {
 }
 
 function updateOrganizeRouteState(discoveryId: string | null): void {
-  if (typeof window === "undefined") return;
-  const search = new URLSearchParams(window.location.search);
-  if (discoveryId === null) search.delete("organizeDiscovery");
-  else search.set("organizeDiscovery", discoveryId);
-  const query = search.toString();
-  window.history.replaceState(
-    null,
-    "",
-    window.location.pathname + (query === "" ? "" : `?${query}`),
-  );
+  replaceFilesRouteSearch((search) => {
+    if (discoveryId === null) search.delete("organizeDiscovery");
+    else search.set("organizeDiscovery", discoveryId);
+  });
 }
 
 function discoveryAdmissionFailureMessage(

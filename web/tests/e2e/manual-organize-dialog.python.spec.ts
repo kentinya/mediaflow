@@ -853,3 +853,104 @@ test("a missing metadata candidate is corrected on the current file and confirme
   expect(finalTargets).toHaveLength(1);
   expect(finalTargets[0]).toContain("DialogRename (2024)");
 });
+
+test("keeps the exact admitted preparation across a cancelled browser Back and a normal reconnect", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const backFile = "DialogBack.2025.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  const posts = (pattern: RegExp) =>
+    commands.filter(
+      (command) => command.method === "POST" && pattern.test(command.path),
+    );
+  const admissions = () =>
+    posts(/\/resource-libraries\/[^/]+\/files\/discoveries$/);
+  const decisions = () => posts(/\/items\/[^/]+\/recovery\/decision$/);
+  const continuations = () => posts(/\/items\/[^/]+\/recovery\/continue$/);
+  const analyses = () => posts(/\/organize\/discoveries\/[^/]+\/analyze$/);
+  const executions = () =>
+    posts(/\/operations\/organize\/previews\/[^/]+\/execute$/);
+
+  await openDialogDirectory(page, backFile);
+  await selectFiles(page, [backFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText("选择正确的作品")).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /候选 2/ }).check();
+  expect(admissions()).toHaveLength(1);
+  expect(decisions()).toHaveLength(0);
+  expect(executions()).toHaveLength(0);
+
+  // A real browser Back over an unsaved per-file choice opens the existing
+  // discard choice.  Continuing must keep this exact Files address, the
+  // admitted preparation and the operator's own unsaved choice; it saves,
+  // analyzes and executes nothing.
+  await page.goBack();
+  const prompt = card.getByRole("alertdialog");
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByText("有尚未保存的逐文件修正草稿。")).toBeVisible();
+  await prompt.getByRole("button", { name: "继续编辑" }).click();
+  await expect(card.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`organizeDiscovery=${discoveryId}`));
+  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeChecked();
+  await expect(card).toBeVisible();
+  expect(admissions()).toHaveLength(1);
+  expect(decisions()).toHaveLength(0);
+  expect(continuations()).toHaveLength(0);
+  expect(analyses()).toHaveLength(0);
+  expect(executions()).toHaveLength(0);
+
+  // A reload discards the unsaved choice and needs the ordinary reconnect.
+  // The durable preparation identity is what the URL carries, so connecting
+  // returns to the same Files address and reopens the same preparation/summary
+  // instead of admitting a second one or landing on a guessed route.
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
+    .toBe(discoveryId);
+  expect(new URL(page.url()).pathname).toBe("/ui-v2/resourcelib/files");
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText(backFile).first()).toBeVisible();
+  await expect(card.getByText("选择正确的作品")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
+  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
+  expect(admissions()).toHaveLength(1);
+  expect(decisions()).toHaveLength(0);
+  expect(continuations()).toHaveLength(0);
+  expect(analyses()).toHaveLength(0);
+  expect(executions()).toHaveLength(0);
+
+  // An ordinary close removes only the re-open marker.  The durable admitted
+  // preparation is not cancelled, and nothing is saved, analyzed or executed.
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(card).toHaveCount(0);
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
+    .toBeNull();
+  expect(new URL(page.url()).pathname).toBe("/ui-v2/resourcelib/files");
+  expect(admissions()).toHaveLength(1);
+  expect(decisions()).toHaveLength(0);
+  expect(executions()).toHaveLength(0);
+});
