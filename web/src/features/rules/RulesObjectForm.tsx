@@ -488,6 +488,29 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   maxEntries: "最多清理条目数",
 };
 
+/**
+ * Operator-facing labels for the duplicate/cleanup mode enums. The submitted
+ * value stays the untouched backend enum; the real value remains visible in
+ * parentheses, so a translation never rewrites it.
+ */
+const HASH_MODE_LABELS: Readonly<Record<string, string>> = {
+  none: "不重复比对 (none)",
+  fast: "快速采样比对 (fast)",
+  size_only: "按文件大小比对 (size_only)",
+  sample_hash: "采样哈希比对 (sample_hash)",
+  full: "完整哈希比对 (full)",
+  full_hash: "完整哈希比对 (full_hash)",
+};
+
+const CLEANUP_MODE_LABELS: Readonly<Record<string, string>> = {
+  none: "不清理 (none)",
+  empty: "仅删除空目录 (empty)",
+  empty_directories: "仅删除空目录 (empty_directories)",
+  ignorable: "按忽略模式清理 (ignorable)",
+  full_if_empty: "源目录为空时清理 (full_if_empty)",
+  full: "完整清理 (full)",
+};
+
 const MOVIE_TEMPLATE_FIELDS = new Set([
   "directoryTemplate",
   "filenameTemplate",
@@ -929,26 +952,39 @@ export function RulesObjectForm({
       </Section>,
       <Section
         key="matching"
-        title="候选与匹配"
-        description="决定候选如何被接受为自动匹配、需要人工确认或被拒绝。"
+        title="候选接受与匹配"
+        description="决定候选如何被接受为自动匹配、需要人工确认或被拒绝;单位均为分数(0–100)。"
       >
         <div className="mf-rules-pair">
           {number("automaticThreshold", 0, 100, "达到该分数自动接受")}
           {number("confirmationThreshold", 0, 100, "低于该分数直接拒绝")}
         </div>
         <div className="mf-rules-pair">
-          {number("minimumScoreGap", 0, 100, "第一与第二候选的最小分差")}
+          {number(
+            "minimumScoreGap",
+            0,
+            100,
+            "第一与第二候选的最小分差,单位为分数",
+          )}
+        </div>
+      </Section>,
+      <Section
+        key="limits"
+        title="请求限制(高级)"
+        description="限制单次查询向 Provider 发起的请求数量与候补深度,避免无限放大外部请求。"
+      >
+        <div className="mf-rules-pair">
           {number("maxCandidates", 1, 100, "返回的候选上限")}
+          {number("maxSearchPages", 1, 10, "最大搜索页数")}
         </div>
         <div className="mf-rules-pair">
-          {number("maxSearchPages", 1, 10)}
-          {number("maxProviderRequests", 1, 100)}
+          {number("maxProviderRequests", 1, 100, "单次查询的最大 Provider 请求数")}
+          {number("maxCandidateEnrichments", 0, 100, "最大候选补全数")}
         </div>
         <div className="mf-rules-pair">
-          {number("maxCandidateEnrichments", 0, 100)}
-          {number("retryCount", 0, 10)}
+          {number("timeout", 1, 120, "单次 Provider 请求超时,单位为秒")}
+          {number("retryCount", 0, 10, "单次请求的最大重试次数")}
         </div>
-        {number("timeout", 1, 120, "单次 Provider 请求超时")}
       </Section>,
       <Section key="state" title="状态">
         {enableSwitch("关闭后该元数据策略不被类型策略引用")}
@@ -1003,7 +1039,9 @@ export function RulesObjectForm({
       (item) =>
         !MOVIE_TEMPLATE_FIELDS.has(item) && !TV_TEMPLATE_FIELDS.has(item),
     );
-    const variableHint = `支持的变量:{${authority.enums.namingVariables.join(", ")}};补零仅支持 {${authority.enums.numericNamingVariables.join(", ")}}。`;
+    // One central variable reference below; repeating the whole variable list
+    // under every template made long templates unreadable (Slice54 RO-2).
+    const variableHint = "变量列表与补零说明见「变量与缺失处理」。";
     body.push(
       <Section key="basic" title="基本信息">
         {text("id", requiredHint("id"), true)}
@@ -1018,27 +1056,43 @@ export function RulesObjectForm({
       <Section
         key="movie"
         title="电影模板"
-        description="目录模板与文件名模板各为一个相对组件。"
+        description="目录模板与文件名模板各为一个相对组件;长模板分行可读可编辑。"
       >
-        {movieTemplates.map((template) => text(template, variableHint, true))}
+        {movieTemplates.map((template) =>
+          text(template, variableHint, true, true),
+        )}
       </Section>,
       <Section
         key="tv"
         title="剧集模板"
-        description="剧集、季与单集/多集文件名分别使用各自的模板。"
+        description="剧集、季与单集/多集文件名分别使用各自的模板;长模板分行可读可编辑。"
       >
-        {tvTemplates.map((template) => text(template, variableHint, true))}
+        {tvTemplates.map((template) =>
+          text(template, variableHint, true, true),
+        )}
       </Section>,
       ...(otherTemplates.length > 0
         ? [
-            <Section key="other" title="其他模板">
+            <Section
+              key="other"
+              title="其他模板"
+              description={variableHint}
+            >
               {otherTemplates.map((template) =>
-                text(template, variableHint, true),
+                text(template, variableHint, true, true),
               )}
             </Section>,
           ]
         : []),
-      <Section key="variables" title="变量与缺失处理">
+      <Section
+        key="variables"
+        title="变量与缺失处理"
+        description={
+          authority.enums.numericNamingVariables.length > 0
+            ? `补零仅支持 {${authority.enums.numericNamingVariables.join(", ")}}。`
+            : undefined
+        }
+      >
         <p className="mf-rules-variable-list">
           可用变量:
           {authority.enums.namingVariables.map((item) => (
@@ -1912,7 +1966,7 @@ function OrganizeNested({
           >
             {authority.enums.hashModes.map((mode) => (
               <option key={mode} value={mode}>
-                {mode}
+                {HASH_MODE_LABELS[mode] ?? mode}
               </option>
             ))}
           </select>
@@ -1991,7 +2045,7 @@ function OrganizeNested({
           >
             {authority.enums.cleanupModes.map((mode) => (
               <option key={mode} value={mode}>
-                {mode}
+                {CLEANUP_MODE_LABELS[mode] ?? mode}
               </option>
             ))}
           </select>

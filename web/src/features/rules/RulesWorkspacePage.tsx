@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -10,7 +11,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   fetchRuleActiveAuthority,
-  fetchRuleCopy,
   fetchRuleImpact,
   fetchRulesInventory,
   removeRuleObject,
@@ -43,10 +43,19 @@ import {
   type RuleFormFamily,
 } from "../../entities/rules/rules-form";
 import { RulesCompleteFlowCheck } from "./RulesCompleteFlowCheck";
+import { RulesObjectCard } from "./RulesObjectCard";
+import { usePrincipalIdentity } from "../operations/principal-identity-query";
 import {
-  RulesObjectDrawer,
-  type RulesDrawerSession,
-} from "./RulesObjectDrawer";
+  beginSectionNavigation,
+  clearRulesList,
+  endSectionNavigation,
+  peekRulesList,
+  readRulesDialogSession,
+  rememberRulesList,
+  rulesCardSubject,
+  rulesDialogSearch,
+  type RulesCardSession,
+} from "./rules-card-session";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { readRuleDraft } from "./rules-workspace-labels";
 import { Icon } from "../../shared/ui/Icons";
@@ -339,6 +348,7 @@ function Inventory({
   canManage,
   onAdd,
   onCopy,
+  onEdit,
   pending,
   setPending,
   onCommanded,
@@ -350,11 +360,11 @@ function Inventory({
   readonly canManage: boolean;
   readonly onAdd: (family: RuleFormFamily) => void;
   readonly onCopy: (family: RuleFormFamily, objectId: string) => void;
+  readonly onEdit: (objectId: string) => void;
   readonly pending: PendingListCommand | null;
   readonly setPending: Dispatch<SetStateAction<PendingListCommand | null>>;
   readonly onCommanded: (message: string) => void;
 }) {
-  const navigate = useNavigate();
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const actions = model.actions[family];
@@ -633,15 +643,8 @@ function Inventory({
                   {canManage && authored ? (
                     <button
                       type="button"
-                      onClick={() =>
-                        void navigate({
-                          to: "/rules/edit/$family/$objectId",
-                          params: {
-                            family: family as string,
-                            objectId: item.id,
-                          },
-                        })
-                      }
+                      data-edit-entry={item.id}
+                      onClick={() => onEdit(item.id)}
                     >
                       编辑
                     </button>
@@ -681,20 +684,51 @@ function Inventory({
   );
 }
 
-export function RulesWorkspacePage() {
+/**
+ * A publication message waiting for its inventory to mount again (an Edit
+ * card publishes across a route change). It is consumed exactly once by the
+ * list that returns, so a truthful publish fact neither disappears with the
+ * old instance nor resurfaces later. The list read itself stays independent:
+ * a failed inventory reread reports that failure without touching the already
+ * durable publication.
+ */
+let rulesNoticeMemory: string | null = null;
+
+export function RulesWorkspacePage({
+  editSession = null,
+}: {
+  /**
+   * The pre-existing edit address renders this same inventory as the card
+   * background and the default close destination (Slice54 RO-1); there is no
+   * second full-page editor surface.
+   */
+  readonly editSession?: RulesCardSession | null;
+} = {}) {
   const token = useAuthToken();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const principal = usePrincipalIdentity();
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   // The URL search string is the single source of truth for the open section:
   // a deep link, a tab click, browser Back/Forward, a refresh and an
   // authentication continuation can never disagree about which inventory is
-  // shown. Malformed input resolves to the read-only Overview.
-  const section = readRulesSection(searchParams);
-  const [search, setSearch] = useState("");
-  const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">("all");
-  const [drawer, setDrawer] = useState<RulesDrawerSession | null>(null);
+  // shown. Malformed input resolves to the read-only Overview; a direct edit
+  // entry backgrounds the matching family.
+  const section: Section =
+    editSession !== null ? editSession.family : readRulesSection(searchParams);
+  // The inventory's own presentation survives the one route change an Edit
+  // card makes, so the return lands on the exact rows the operator left.
+  const remembered = peekRulesList();
+  const [search, setSearch] = useState(remembered?.keyword ?? "");
+  const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">(
+    remembered?.state ?? "all",
+  );
   const [pending, setPending] = useState<PendingListCommand | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() => {
+    const value = rulesNoticeMemory;
+    rulesNoticeMemory = null;
+    return value;
+  });
   const previousSection = useRef<Section>(section);
   const query = useQuery({
     queryKey: ["rules-workspace", token],
@@ -709,6 +743,38 @@ export function RulesWorkspacePage() {
     query.data === undefined && !query.isError,
   );
 
+  // Restore the remembered scroll before the first paint of this inventory
+  // instance, and — only when a plain list return consumes the memory — hand
+  // focus back to the exact row entry that opened the card.
+  useLayoutEffect(() => {
+    const snapshot = peekRulesList();
+    if (snapshot === null) return;
+    if (snapshot.scrollY > 0) {
+      try {
+        window.scrollTo({ top: snapshot.scrollY, left: 0 });
+      } catch {
+        // A DOM-only test environment may not implement scrolling.
+      }
+    }
+    if (editSession !== null) return;
+    clearRulesList();
+    if (snapshot.focusObjectId === null) return;
+    const timer = window.setTimeout(() => {
+      const entries = document.querySelectorAll<HTMLElement>("[data-edit-entry]");
+      for (const entry of Array.from(entries)) {
+        if (entry.getAttribute("data-edit-entry") === snapshot.focusObjectId) {
+          entry.focus({ preventScroll: true });
+          return;
+        }
+      }
+      document
+        .getElementById("rules-family-title")
+        ?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Leaving a family discards only the *keyword* scope: the correctable draft
   // for that family stays in its own session store, so the next explicit
   // Add/Edit restores it.
@@ -718,61 +784,144 @@ export function RulesWorkspacePage() {
     setSearch("");
   }, [section, setSearch]);
 
-  // Leaving a family is a navigation, never a discard: an open create/copy
-  // drawer closes, and whatever the operator typed stays in the correctable
-  // session draft for that exact family, so the next explicit Add/Edit restores
-  // it. Clicking a tab never opens the drawer either.
+  // The one open card subject, strictly bounded by mode + family + ID.
+  const dialogSession: RulesCardSession | null =
+    editSession ?? readRulesDialogSession(searchParams, section);
+
+  // Leaving a family is a navigation, never a silent discard: an open card's
+  // own blocker owns the Continue/Discard decision, and whatever the operator
+  // typed stays in the correctable session draft for that exact family.
+  // Clicking a tab never opens a card either.
   const goToSection = (next: Section) => {
-    setDrawer(null);
     setPending(null);
     setNotice(null);
+    // A section switch is a workspace navigation, never a discard: the open
+    // card for the leaving family closes only in the sense that the route
+    // changes, and its correctable draft stays in the session store. The
+    // blocker's Continue/Discard decision stays reserved for the real close
+    // gestures and for browser Back on the open-card URL.
+    beginSectionNavigation();
     void navigate({
       to: "/rules",
       search: rulesSectionSearch(next),
+    }).finally(endSectionNavigation);
+  };
+
+  const openCreate = (family: RuleFormFamily) => {
+    setNotice(null);
+    void navigate({
+      to: "/rules",
+      search: rulesDialogSearch({ mode: "create", family }),
+      resetScroll: false,
     });
+  };
+
+  const openCopy = (family: RuleFormFamily, sourceId: string) => {
+    setNotice(null);
+    void navigate({
+      to: "/rules",
+      search: rulesDialogSearch({ mode: "copy", family, sourceId }),
+      resetScroll: false,
+    });
+  };
+
+  const openEdit = (objectId: string) => {
+    setNotice(null);
+    rememberRulesList({
+      keyword: search,
+      state: enabled,
+      scrollY: typeof window === "undefined" ? 0 : window.scrollY,
+      focusObjectId: objectId,
+    });
+    void navigate({
+      to: "/rules/edit/$family/$objectId",
+      params: { family: section, objectId },
+      resetScroll: false,
+    });
+  };
+
+  /** Every close route returns to the exact family list the card came from. */
+  const closeCard = () => {
+    void navigate({
+      to: "/rules",
+      search: rulesSectionSearch(dialogSession?.family ?? section),
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  const handlePublished = (message: string) => {
+    if (editSession !== null) {
+      // The return crosses a route change: hand the publish fact to the list
+      // that mounts next instead of losing it with this instance.
+      rulesNoticeMemory = message;
+    } else {
+      setNotice(message);
+    }
+    setPending(null);
+    closeCard();
+    void queryClient.invalidateQueries({ queryKey: ["rules-workspace", token] });
+  };
+
+  const handleCommanded = (message: string) => {
+    setNotice(message);
+    setPending(null);
   };
 
   // A correctable draft that belongs to a family other than the one on screen
   // is stated explicitly, so navigating away never looks like it silently threw
-  // the input away.
+  // the input away. Drafts are principal-scoped; an unresolved identity shows
+  // nothing it cannot prove belongs to this session.
   const draftFamilies = RULE_FORM_FAMILIES.filter(
-    (family) => family !== section && readRuleDraft(family, null) !== undefined,
+    (family) =>
+      family !== section &&
+      principal.resolved &&
+      readRuleDraft(principal.principalId, family, null) !== undefined,
   );
 
   return (
-    <AuthorizedReadBoundary query={query} unavailableTitle="整理规则暂不可用">
-      {({ data, isPending, isFetching, refresh }) => {
-        const header = (
-          <header className="mf-rules-header">
-            <div>
-              <h1>{RULES_WORKSPACE_TITLE}</h1>
-              <p>{RULES_WORKSPACE_DESCRIPTION}</p>
-            </div>
-            <Button variant="secondary" onClick={refresh} disabled={isFetching}>
-              {isFetching ? "刷新中…" : "刷新"}
-            </Button>
-          </header>
-        );
-        if (isPending || data === undefined)
-          return (
-            <section className="mf-rules-page">
-              {header}
-              {showInventoryWait ? (
-                <div className="mf-rules-state mf-wait-reveal" role="status">
-                  正在读取 Active 规则...
-                </div>
-              ) : null}
-            </section>
+    <section className="mf-rules-page">
+      {/* The publish fact survives an inventory reread failure: it is visible
+          next to the bounded retry, and recovering the list repeats only the
+          read — it never re-publishes or rolls back. */}
+      {notice !== null && (
+        <p className="mf-rules-verified" role="status">
+          {notice}
+        </p>
+      )}
+      <AuthorizedReadBoundary query={query} unavailableTitle="整理规则暂不可用">
+        {({ data, isPending, isFetching, refresh }) => {
+          const header = (
+            <header className="mf-rules-header">
+              <div>
+                <h1>{RULES_WORKSPACE_TITLE}</h1>
+                <p>{RULES_WORKSPACE_DESCRIPTION}</p>
+              </div>
+              <Button variant="secondary" onClick={refresh} disabled={isFetching}>
+                {isFetching ? "刷新中…" : "刷新"}
+              </Button>
+            </header>
           );
-        if (!data.available)
-          return (
-            <section className="mf-rules-page">
-              {header}
-              <FamilyNavigation section={section} onSelect={goToSection} />
-              <Availability model={data} section={section} />
-            </section>
-          );
-        const family = section === "overview" ? null : section;
+          if (isPending || data === undefined)
+            return (
+              <>
+                {header}
+                {showInventoryWait ? (
+                  <div className="mf-rules-state mf-wait-reveal" role="status">
+                    正在读取 Active 规则...
+                  </div>
+                ) : null}
+              </>
+            );
+          if (!data.available)
+            return (
+              <>
+                {header}
+                <FamilyNavigation section={section} onSelect={goToSection} />
+                <Availability model={data} section={section} />
+              </>
+            );
+          const family = section === "overview" ? null : section;
         const items =
           family === null
             ? []
@@ -790,35 +939,10 @@ export function RulesWorkspacePage() {
                   enabled === "all" || item.enabled === (enabled === "enabled");
                 return matchesText && matchesState;
               });
-        const openCopy = (target: RuleFormFamily, objectId: string) => {
-          setNotice(null);
-          void fetchRuleCopy(token, target, objectId).then((outcome) => {
-            if (outcome.ok) {
-              setDrawer({
-                family: target,
-                mode: "copy",
-                sourceId: objectId,
-                candidate: outcome.model.value,
-              });
-            } else {
-              setNotice(`复制候选读取失败:${ruleFailureCopy(outcome.code)}`);
-            }
-          });
-        };
-        const onPublished = (message: string) => {
-          setNotice(message);
-          setPending(null);
-          void query.refetch();
-        };
-        return (
-          <section className="mf-rules-page">
+          return (
+          <>
             {header}
             <FamilyNavigation section={section} onSelect={goToSection} />
-            {notice !== null && (
-              <p className="mf-rules-verified" role="status">
-                {notice}
-              </p>
-            )}
             {draftFamilies.length > 0 && (
               <p className="mf-rules-verified" role="status">
                 仍有未保存的输入保存在本次会话中:
@@ -834,7 +958,9 @@ export function RulesWorkspacePage() {
                 aria-labelledby="rules-family-title"
               >
                 <div className="mf-rules-family-head">
-                  <h2 id="rules-family-title">{LABELS[section]}</h2>
+                  <h2 id="rules-family-title" tabIndex={-1}>
+                    {LABELS[section]}
+                  </h2>
                   <p>{RULE_FAMILY_INVENTORY_DESCRIPTIONS[section]}</p>
                 </div>
                 <div className="mf-rules-family-actions">
@@ -842,12 +968,7 @@ export function RulesWorkspacePage() {
                     <button
                       type="button"
                       className="mf-button mf-button-primary mf-rules-add"
-                      onClick={() =>
-                        setDrawer({
-                          family: section as RuleFormFamily,
-                          mode: "create",
-                        })
-                      }
+                      onClick={() => openCreate(section as RuleFormFamily)}
                     >
                       <span aria-hidden="true">+</span> 添加{LABELS[section]}
                     </button>
@@ -887,26 +1008,29 @@ export function RulesWorkspacePage() {
                   totalInFamily={data.sections[section].length}
                   model={data}
                   canManage={data.canManage}
-                  onAdd={(target) =>
-                    setDrawer({ family: target, mode: "create" })
-                  }
+                  onAdd={openCreate}
                   onCopy={openCopy}
+                  onEdit={openEdit}
                   pending={pending}
                   setPending={setPending}
-                  onCommanded={onPublished}
+                  onCommanded={handleCommanded}
                 />
               </section>
             )}
-            {drawer !== null && (
-              <RulesObjectDrawer
-                session={drawer}
-                onClose={() => setDrawer(null)}
-                onPublished={onPublished}
+            {dialogSession !== null ? (
+              <RulesObjectCard
+                key={rulesCardSubject(dialogSession)}
+                session={dialogSession}
+                canManage={data.canManage}
+                onClose={closeCard}
+                onPublished={handlePublished}
+                onNotice={setNotice}
               />
-            )}
-          </section>
+            ) : null}
+          </>
         );
       }}
-    </AuthorizedReadBoundary>
+      </AuthorizedReadBoundary>
+    </section>
   );
 }

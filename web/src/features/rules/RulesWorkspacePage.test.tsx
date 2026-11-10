@@ -39,6 +39,8 @@ function stubRules(
         status,
         headers: { "Content-Type": "application/json" },
       });
+    if (url.endsWith("/api/v1/auth/principal"))
+      return json({ principal_id: "rules-principal-a" });
     if (url.endsWith("/operations/rules/inventory"))
       return json(
         options.inventory ?? rulesPayload,
@@ -109,12 +111,20 @@ describe("RulesWorkspacePage", () => {
   it("keeps the content header during loading and guards a delayed refresh without losing filters", async () => {
     const { mock, calls } = stubRules();
     let release: ((response: Response) => void) | undefined;
-    mock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          release = resolve;
-        }),
-    );
+    const base = mock.getMockImplementation()!;
+    const holdInventory = () => {
+      mock.mockImplementation(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).endsWith("/operations/rules/inventory")) {
+            return new Promise<Response>((resolve) => {
+              release = resolve;
+            });
+          }
+          return base(input, init);
+        },
+      );
+    };
+    holdInventory();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules?section=recognitionTypes");
     await screen.findByText("正在读取 Active 规则...");
@@ -123,6 +133,7 @@ describe("RulesWorkspacePage", () => {
     );
     expect(screen.getByRole("button", { name: "刷新中…" })).toBeDisabled();
     release?.(new Response(JSON.stringify(rulesPayload)));
+    mock.mockImplementation(base);
     await screen.findByRole("heading", { name: "识别类型" });
     const user = userEvent.setup();
     await user.type(screen.getByRole("searchbox"), "Special");
@@ -130,12 +141,7 @@ describe("RulesWorkspacePage", () => {
       screen.getByRole("combobox", { name: "状态" }),
       "enabled",
     );
-    mock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          release = resolve;
-        }),
-    );
+    holdInventory();
     await user.click(screen.getByRole("button", { name: "刷新" }));
     const busy = screen.getByRole("button", { name: "刷新中…" });
     expect(busy).toBeDisabled();
@@ -143,6 +149,7 @@ describe("RulesWorkspacePage", () => {
     await user.click(busy);
     expect(mock).toHaveBeenCalledTimes(count);
     release?.(new Response(JSON.stringify(rulesPayload)));
+    mock.mockImplementation(base);
     await screen.findByRole("button", { name: "刷新" });
     expect(screen.getByRole("searchbox")).toHaveValue("Special");
     expect(screen.getByRole("combobox", { name: "状态" })).toHaveValue(
@@ -152,7 +159,7 @@ describe("RulesWorkspacePage", () => {
   });
 
   it("deep-links to a full-width inventory with no drawer or editor open", async () => {
-    const { mock } = stubRules();
+    const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
     expect(
@@ -165,15 +172,17 @@ describe("RulesWorkspacePage", () => {
       screen.getByRole("link", { name: "Organizing rules" }),
     ).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("heading", { name: "规则关系概览" })).toBeVisible();
-    // Page entry is a pure read: no drawer, no form, no command.
+    // Page entry is a pure read (inventory + principal identity): no card,
+    // no form, no command.
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(mock).toHaveBeenCalledTimes(1);
-    expect(mock.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
-    expect(String(mock.mock.calls[0]?.[0])).toContain(inventoryPath);
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    expect(
+      calls.filter((call) => call.url.includes(inventoryPath)),
+    ).toHaveLength(1);
   });
 
   it("row selection, search, filter, tab change and refresh never open an editor or write", async () => {
-    const { mock, calls } = stubRules();
+    const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
@@ -202,7 +211,11 @@ describe("RulesWorkspacePage", () => {
       "all",
     );
     await user.click(screen.getByRole("button", { name: "刷新" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        calls.filter((call) => call.url.includes(inventoryPath)),
+      ).toHaveLength(2),
+    );
     // Nothing but GET reads happened through the whole read journey.
     expect(calls.every((call) => call.method === "GET")).toBe(true);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -271,7 +284,7 @@ describe("RulesWorkspacePage", () => {
     ).toBeVisible();
   });
 
-  it("previews the exact create candidate without publishing it", async () => {
+  it("tests the exact create candidate locally without publishing it", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
@@ -285,23 +298,32 @@ describe("RulesWorkspacePage", () => {
     const name = within(dialog).getByLabelText(/^名称/);
     await user.clear(name);
     await user.type(name, "Movie Candidate");
+    // Settings and the object-local test are two areas of one card; only the
+    // explicit test submits, and it carries the exact unsaved candidate.
+    await user.click(within(dialog).getByRole("tab", { name: "单项测试" }));
     await user.click(
-      within(dialog).getByRole("button", { name: "测试识别策略" }),
+      within(dialog).getByRole("button", { name: "测试该识别类型" }),
     );
-    expect(
-      await within(dialog).findByText(/candidate preview completed/),
-    ).toBeVisible();
-    const preview = calls.find((call) =>
-      call.url.endsWith("/previews/strategy"),
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "POST" &&
+            call.url.includes("/analysis/recognitionTypes"),
+        ),
+      ).toBe(true),
     );
-    expect(preview?.body).toMatchObject({
-      resourceLibraryId: "source",
+    const analysis = calls.find((call) =>
+      call.url.includes("/analysis/recognitionTypes"),
+    );
+    expect(analysis?.body).toMatchObject({
       candidate: {
         family: "recognitionTypes",
         objectId: null,
         values: { id: "movie", name: "Movie Candidate" },
       },
     });
+    // The local check never publishes the candidate: no Save command travels.
     expect(
       calls.some(
         (call) =>
@@ -331,6 +353,11 @@ describe("RulesWorkspacePage", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const method = (init?.method ?? "GET").toUpperCase();
         const url = String(input);
+        if (url.endsWith("/api/v1/auth/principal"))
+          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
         if (method === "POST")
           return new Response(JSON.stringify(rejection), {
             status: 409,
@@ -374,7 +401,7 @@ describe("RulesWorkspacePage", () => {
     expect(within(dialog).getByLabelText(/^名称/)).toHaveValue("Duplicate");
   });
 
-  it("a transport-failed save asks for Active verification and never auto-resends", async () => {
+  it("an unknown save freezes the submitted command, blocks re-submit and never resends", async () => {
     let posts = 0;
     const flaky = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -384,6 +411,14 @@ describe("RulesWorkspacePage", () => {
           posts += 1;
           throw new TypeError("connection reset");
         }
+        if (url.endsWith("/api/v1/auth/principal"))
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         if (url.endsWith("/operations/rules/inventory"))
           return new Response(JSON.stringify(rulesPayload), {
             status: 200,
@@ -414,12 +449,15 @@ describe("RulesWorkspacePage", () => {
     await user.clear(name);
     await user.type(name, "Quiet");
     await user.click(within(dialog).getByRole("button", { name: "保存" }));
-    const unknown = await screen.findByText(/无法确认上次保存是否生效/);
-    expect(unknown).toBeVisible();
+    expect(await screen.findByText(/无法确认上次保存是否生效/)).toBeVisible();
     expect(posts).toBe(1);
-    // The only offered continuation is an explicit Active verification.
+    // The retained record blocks any unprotected re-submit until it is
+    // reconciled; nothing is replayed automatically.
+    expect(
+      within(dialog).getByRole("button", { name: "保存" }),
+    ).toBeDisabled();
     await user.click(
-      within(dialog).getByRole("button", { name: "核实当前 Active" }),
+      within(dialog).getByRole("button", { name: "读取当前 Active 核对" }),
     );
     await waitFor(() =>
       expect(
@@ -428,11 +466,33 @@ describe("RulesWorkspacePage", () => {
         ),
       ).toBe(true),
     );
-    // Verification re-reads; it never re-sends the command.
+    expect(posts).toBe(1);
+    // The verdict states the current value against the original request: it
+    // never pretends a same/different value proves the original outcome.
+    expect(
+      await screen.findByText(/与原提交内容不同|与原提交内容一致/),
+    ).toBeVisible();
+    // Close and reopen: the frozen record of the original submit survives with
+    // its own facts (mode/ID/baseline), and Save stays blocked.
+    await user.click(
+      within(dialog).getByRole("button", { name: "关闭规则表单" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "放弃并关闭" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const reopened = await screen.findByRole("dialog", {
+      name: "添加识别类型",
+    });
+    expect(
+      within(reopened).getByText(/提交时 Active 序号/),
+    ).toBeVisible();
+    expect(
+      within(reopened).getByRole("button", { name: "保存" }),
+    ).toBeDisabled();
     expect(posts).toBe(1);
   });
 
-  it("warns before discarding unsaved input and keeps it until an explicit discard", async () => {
+  it("warns before discarding unsaved input; a repeated close never discards", async () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
@@ -446,62 +506,69 @@ describe("RulesWorkspacePage", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "关闭规则表单" }),
     );
-    // The first close attempt only warns: input is still there, dialog still open.
-    expect(await screen.findByText(/有未保存的输入/)).toBeVisible();
+    // The first close attempt only warns: input is still there, card open.
+    expect(await screen.findByText(/表单中有未保存的输入/)).toBeVisible();
     expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
-    // Changing the section is a navigation, not a discard: the form closes and
-    // the workspace states that correctable input is still held for that family.
-    await user.click(screen.getByRole("button", { name: "命名规则" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText(/仍有未保存的输入保存在本次会话中/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "识别类型" }));
-    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
-    const reopened = await screen.findByRole("dialog", {
-      name: "添加识别类型",
-    });
-    expect(within(reopened).getByLabelText(/^ID/)).toHaveValue("keep-me");
-    // Correcting the restored candidate is still protected: closing only warns.
-    await user.type(within(reopened).getByLabelText(/^ID/), "x");
+    // A repeated close gesture is never an implicit discard: it withdraws the
+    // choice and keeps everything.
     await user.click(
-      within(reopened).getByRole("button", { name: "关闭规则表单" }),
+      within(dialog).getByRole("button", { name: "关闭规则表单" }),
     );
-    expect(await screen.findByText(/有未保存的输入/)).toBeVisible();
-    // Discarding is a second explicit intent and only then forgets the input.
-    await user.click(screen.getByRole("button", { name: "放弃并关闭" }));
+    expect(screen.queryByText(/表单中有未保存的输入/)).toBeNull();
+    expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
+    // Explicit continue returns to the fields, input intact.
+    await user.click(
+      within(dialog).getByRole("button", { name: "关闭规则表单" }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(screen.queryByText(/表单中有未保存的输入/)).toBeNull();
+    expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
+    // Only an explicit discard forgets the candidate.
+    await user.click(
+      within(dialog).getByRole("button", { name: "关闭规则表单" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "放弃并关闭" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // The forgotten candidate is not restored by a later Add.
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
     const empty = await screen.findByRole("dialog", { name: "添加识别类型" });
     expect(within(empty).getByLabelText(/^ID/)).toHaveValue("");
   });
 
-  it("edit opens the refresh-safe full-page editor with immutable ID", async () => {
+  it("edit opens the same card over its family inventory with an immutable ID", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    const { router } = renderApp("/ui-v2/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     const row = await screen.findByRole("row", { name: /Special/ });
     await user.click(within(row).getByRole("button", { name: "编辑" }));
-    expect(await screen.findByRole("heading", { name: "C" })).toBeVisible();
-    // The editor is a full-page route state, not a drawer.
-    expect(screen.queryByRole("dialog")).toBeNull();
-    const idField = screen.getByLabelText(/^ID/) as HTMLInputElement;
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    // The family inventory stays as the card background; there is no second
+    // full-page editor surface.
+    expect(screen.getByRole("heading", { name: "识别类型" })).toBeVisible();
+    expect(router.state.location.pathname).toBe(
+      "/rules/edit/recognitionTypes/C",
+    );
+    const idField = within(dialog).getByLabelText(/^ID/) as HTMLInputElement;
     expect(idField.value).toBe("C");
     expect(idField.readOnly).toBe(true);
-    // The return link carries the originating family section, so leaving the
-    // editor and returning lands on the same inventory.
-    for (const link of screen.getAllByRole("link", {
-      name: "返回整理规则清单",
-    }))
-      expect(link.getAttribute("href")).toBe(
-        "/ui-v2/rules?section=recognitionTypes",
-      );
+    expect(calls.some((call) => call.method === "GET")).toBe(true);
     expect(
       calls.some((call) => call.url.includes("/objects/recognitionTypes/C")),
     ).toBe(true);
+    // Cancel returns to the exact family list behind the card.
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(router.state.location.pathname).toBe("/rules");
+    expect(router.state.location.search).toEqual({
+      section: "recognitionTypes",
+    });
   });
 
   it("enable/disable and remove need explicit final intent and reference impact", async () => {
@@ -767,11 +834,12 @@ describe("RulesWorkspacePage", () => {
     expect(add).toHaveFocus();
     await user.keyboard("{Enter}");
     const dialog = await screen.findByRole("dialog", { name: "添加识别类型" });
-    // Focus lands on the dialog heading so a keyboard operator is inside it.
-    expect(dialog.querySelector("h2")).toHaveFocus();
-    // Tabs never open the drawer by themselves.
+    // Focus lands inside the card (the close control is the stable first
+    // target while the subject read is still in flight).
+    expect(dialog.querySelector(".mf-modal-close")).toHaveFocus();
+    // Cancel plays the shared coordinated exit before the card unmounts.
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await user.click(screen.getByRole("button", { name: "概览" }));
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -938,7 +1006,7 @@ describe("RulesWorkspacePage", () => {
   });
 
   it("keeps malformed recovery bounded and keyboard reachable", async () => {
-    const { mock } = stubRules({
+    const { calls } = stubRules({
       inventory: { ...rulesPayload, sections: {} },
     });
     authStore.setToken("rules-token");
@@ -957,7 +1025,11 @@ describe("RulesWorkspacePage", () => {
     }
     expect(retry).toHaveFocus();
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        calls.filter((call) => call.url.includes(inventoryPath)),
+      ).toHaveLength(2),
+    );
   });
 });
 
@@ -1313,15 +1385,15 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
     expect(within(dialog).getByLabelText(/^描述/).tagName).toBe("TEXTAREA");
     const enable = within(dialog).getByRole("switch", { name: "启用" });
     expect(enable).toBeChecked();
-    // The drawer exposes Rules-scoped geometry only; Files drawer classes stay out.
-    const drawer = dialog.closest(".mf-rules-drawer") as HTMLElement;
-    expect(drawer.className).not.toContain("mf-files-drawer");
-    expect(drawer.querySelector(".mf-rules-drawer-header")).not.toBeNull();
-    expect(drawer.querySelector(".mf-rules-drawer-body")).not.toBeNull();
-    expect(drawer.querySelector(".mf-rules-drawer-actions")).not.toBeNull();
+    // The card uses the shared modal geometry; Files drawer classes stay out.
+    const card = dialog.closest(".mf-rules-card") as HTMLElement;
+    expect(card.className).not.toContain("mf-files-drawer");
+    expect(card.querySelector(".mf-modal-header")).not.toBeNull();
+    expect(card.querySelector(".mf-rules-card-scroll")).not.toBeNull();
+    expect(card.querySelector(".mf-modal-footer")).not.toBeNull();
     // Cancel then Save, aligned at the right of the pinned footer.
     const footerButtons = Array.from(
-      drawer.querySelectorAll(".mf-rules-drawer-actions button"),
+      card.querySelectorAll(".mf-modal-footer button"),
     ).map((button) => button.textContent);
     expect(footerButtons).toEqual(["取消", "保存"]);
   });
@@ -1503,9 +1575,9 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
       expect(dialog.querySelectorAll("[aria-required]").length).toBeGreaterThan(
         0,
       );
-      // The drawer keeps its own scrolling body and pinned footer.
-      expect(dialog.querySelector(".mf-rules-drawer-body")).not.toBeNull();
-      expect(dialog.querySelector(".mf-rules-drawer-actions")).not.toBeNull();
+      // The card keeps its own scrolling body and pinned footer.
+      expect(dialog.querySelector(".mf-rules-card-scroll")).not.toBeNull();
+      expect(dialog.querySelector(".mf-modal-footer")).not.toBeNull();
     });
   }
 
@@ -1572,9 +1644,11 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
     });
 
     expect(within(dialog).getByLabelText("元数据服务")).toBeVisible();
-    // The policy's own media type is the first of the two "媒体类型" controls
-    // (the object test sample below has its own).
-    expect(within(dialog).getAllByLabelText("媒体类型")[0]).toBeVisible();
+    // The backend field for the query scope is 查询类型; the legacy free-text
+    // media type control is never offered (see rules-form.test.ts), and the
+    // local-test sample is not visible while the settings area is the default.
+    expect(within(dialog).getByLabelText("查询类型")).toBeVisible();
+    expect(within(dialog).queryByLabelText("媒体类型")).toBeNull();
     expect(within(dialog).getByLabelText("语言")).toBeVisible();
     expect(within(dialog).getByLabelText("地区")).toBeVisible();
     for (const field of [

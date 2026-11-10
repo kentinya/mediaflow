@@ -13,6 +13,7 @@ import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+import { rulesPayload } from "../../entities/rules/rules-workspace.test";
 import { formAuthorityPayload } from "./rules-form-fixtures";
 import { __resetRuleDraftsForTests } from "./rules-workspace-labels";
 
@@ -88,6 +89,12 @@ function stubFetch(object: unknown, saves: Record<string, unknown>[]): void {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/auth/principal"))
+        return new Response(
+          JSON.stringify({ principal_id: "rules-principal-a" }),
+        );
+      if (url.endsWith("/inventory"))
+        return new Response(JSON.stringify(rulesPayload));
       if (url.endsWith("/form-authority"))
         return new Response(JSON.stringify(formAuthorityPayload));
       if (
@@ -126,7 +133,9 @@ describe("classification destination authoring", () => {
     stubFetch(REVISED_POLICY, saves);
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
-    await screen.findByRole("heading", { name: "class-a" });
+    await screen.findByRole("dialog", {
+      name: "编辑分类规则 · Movie classification",
+    });
 
     // The default state is the compact internal-rule inventory: the rule's own
     // priority, ID/name, condition summary and selected destination, with no
@@ -169,7 +178,9 @@ describe("classification destination authoring", () => {
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
-    await screen.findByRole("heading", { name: "class-a" });
+    await screen.findByRole("dialog", {
+      name: "编辑分类规则 · Movie classification",
+    });
 
     // The legacy contract is stated inside the explicit rule editor, together
     // with the proposed revised routing, before any deliberate conversion.
@@ -200,7 +211,9 @@ describe("classification destination authoring", () => {
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
-    await screen.findByRole("heading", { name: "class-a" });
+    await screen.findByRole("dialog", {
+      name: "编辑分类规则 · Movie classification",
+    });
 
     const user = userEvent.setup();
     // A cosmetic edit to the policy itself must not require opening (or

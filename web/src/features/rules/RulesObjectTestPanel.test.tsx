@@ -117,6 +117,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     expect(
       await screen.findByRole("heading", { name: "测试与预览" }),
     ).toBeVisible();
@@ -150,15 +151,20 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "测试该识别规则" }));
     await screen.findByText(/规则在提交路径上匹配/);
     expect(bodies).toHaveLength(1);
     // A relevant edit invalidates currency but submits nothing by itself.
+    // The form lives in the settings area of the same card; both areas stay
+    // mounted, so the test result survives the switch.
+    await userEvent.click(screen.getByRole("tab", { name: "设置" }));
     fireEvent.change(screen.getByLabelText(/^名称/), {
       target: { value: "Edited" },
     });
+    await userEvent.click(screen.getByRole("tab", { name: "单项测试" }));
     expect(
       await screen.findByText(/该结果已过期;当前表单、样本或 Active 已变化/),
     ).toBeVisible();
@@ -188,6 +194,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "测试该识别规则" }));
@@ -208,6 +215,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("允许实时元数据测试")).toBeNull();
   });
@@ -242,6 +250,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/metadataPolicies/C");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.getByLabelText("允许实时元数据测试")).not.toBeChecked();
     const user = userEvent.setup();
@@ -277,6 +286,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("测试合成路径")).toBeNull();
     const user = userEvent.setup();
@@ -306,6 +316,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/namingPolicies/B");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
     await user.selectOptions(screen.getByLabelText("测试样本媒体类型"), "tv");
@@ -377,6 +388,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/typeBindings/type-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("测试合成路径")).toBeNull();
     expect(screen.queryByLabelText("测试样本标题")).toBeNull();
@@ -416,6 +428,7 @@ describe("Rules object-scoped local test", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/organizePolicies/C");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "解释该整理策略" }));

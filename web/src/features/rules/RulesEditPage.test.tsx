@@ -5,10 +5,12 @@ import {
   fireEvent,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+import { rulesPayload } from "../../entities/rules/rules-workspace.test";
 import {
   editProjectionPayload,
   formAuthorityPayload,
@@ -20,63 +22,230 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function previewPayload(result: Readonly<Record<string, unknown>>) {
+function localAnalysisPayload(
+  overrides: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
   return {
+    family: "recognitionTypes",
+    objectId: "C",
+    outcome: "valid",
+    conclusion: "本地检查通过",
+    applicability: "applicable",
+    runtimeEligibility: "separate",
+    readiness: null,
+    result: { definition: { id: "C", name: "Special" }, associatedRules: [] },
+    message: null,
+    nextAction: null,
+    failureCategory: null,
     revisionId: "candidate-revision-1234",
     revisionVersion: 2,
     revisionDigest: "b".repeat(64),
-    status: "completed",
+    testedAt: "2026-01-01T00:00:00+00:00",
     stale: false,
-    result,
-    message: "preview completed",
-    nextAction: "review",
-    failureCategory: null,
+    localOnly: true,
+    candidateState: "validated_non_active",
+    providerCalls: 0,
+    storageReads: 0,
+    identityStatus: null,
+    syntheticIdentity: false,
+    blockers: [],
+    executionAuthorityGranted: null,
+    ...overrides,
   };
 }
 
-describe("RulesEditPage previews", () => {
-  it("uses typed sample controls and renders revision-linked strategy evidence", async () => {
-    const previewBodies: Record<string, unknown>[] = [];
+describe("RulesEditPage edit card", () => {
+  it("opens the edit card local test with typed controls and no complete-chain preview", async () => {
+    const requests: { method: string; url: string }[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        requests.push({ method, url });
+        if (url.endsWith("/auth/principal"))
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
         if (url.includes("/objects/recognitionTypes/C"))
           return new Response(JSON.stringify(editProjectionPayload));
-        if (url.endsWith("/previews/strategy")) {
-          previewBodies.push(
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    // The exact identity stays immutable and readable in the ID field.
+    const idField = within(dialog).getByLabelText(/^ID/) as HTMLInputElement;
+    expect(idField.value).toBe("C");
+    expect(idField.readOnly).toBe(true);
+    // The legacy complete-chain preview area and its entry buttons are gone
+    // from the edit surface (Slice54 RO-3); only the two local areas remain.
+    for (const name of [
+      "完整链路预览",
+      "测试识别策略",
+      "预览分类",
+      "预览命名",
+      "解释整理权限",
+    ]) {
+      expect(within(dialog).queryByText(name)).toBeNull();
+      expect(within(dialog).queryByRole("button", { name })).toBeNull();
+    }
+    expect(within(dialog).getByRole("tab", { name: "设置" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("tab", { name: "单项测试" }),
+    );
+    expect(
+      await within(dialog).findByRole("heading", { name: "测试与预览" }),
+    ).toBeVisible();
+    // The identification sample stays typed and explicit; the association is
+    // an opt-in and nothing runs on open, switch or opt-in.
+    expect(within(dialog).getByLabelText("试识别关联规则")).toBeVisible();
+    expect(within(dialog).queryByLabelText("测试合成路径")).toBeNull();
+    await userEvent.click(within(dialog).getByLabelText("试识别关联规则"));
+    expect(within(dialog).getByLabelText("测试合成路径")).toBeVisible();
+    expect(
+      requests.every(
+        (entry) =>
+          entry.method === "GET" &&
+          (entry.url.endsWith("/auth/principal") ||
+            entry.url.endsWith("/form-authority") ||
+            entry.url.endsWith("/inventory") ||
+            entry.url.includes("/objects/recognitionTypes/C")),
+      ),
+    ).toBe(true);
+  });
+  it("keeps a late local-test result stale after the form changes across areas", async () => {
+    let resolveAnalysis: ((response: Response) => void) | undefined;
+    const pending = new Promise<Response>((resolve) => {
+      resolveAnalysis = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/principal"))
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
+        if (url.includes("/objects/recognitionTypes/C"))
+          return new Response(JSON.stringify(editProjectionPayload));
+        if (url.includes("/analysis/")) return pending;
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("tab", { name: "单项测试" }),
+    );
+    await within(dialog).findByRole("heading", { name: "测试与预览" });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "测试该识别类型" }),
+    );
+    expect(
+      await within(dialog).findByText(/正在测试提交时的未保存对象/),
+    ).toBeVisible();
+    // Edit the form in the other area of the same card while the run is in
+    // flight; both areas stay mounted, so the result survives the switch.
+    await userEvent.click(within(dialog).getByRole("tab", { name: "设置" }));
+    fireEvent.change(within(dialog).getByLabelText(/^名称/), {
+      target: { value: "Changed while pending" },
+    });
+    await userEvent.click(
+      within(dialog).getByRole("tab", { name: "单项测试" }),
+    );
+    await act(async () => {
+      resolveAnalysis?.(
+        new Response(JSON.stringify(localAnalysisPayload({}))),
+      );
+      await pending;
+    });
+    expect(await within(dialog).findByText(/该结果已过期/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "用当前输入重新运行此项" }),
+    ).toBeEnabled();
+  });
+  it("renders classification decisions as readable local-test explanations", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/auth/principal"))
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
+        if (url.includes("/objects/classificationPolicies/")) {
+          const objectUrl = decodeURIComponent(
+            url.split("/objects/classificationPolicies/")[1],
+          );
+          return new Response(
+            JSON.stringify({
+              family: "classificationPolicies",
+              object: {
+                id: objectUrl,
+                name: "Movie classification",
+                description: "",
+                enabled: true,
+                priority: 0,
+                rules: [],
+              },
+              references: {
+                total: 0,
+                items: [],
+                truncated: false,
+                removalBlocked: false,
+              },
+              active: formAuthorityPayload.active,
+              sideEffects: "none",
+            }),
+          );
+        }
+        if (url.includes("/analysis/")) {
+          bodies.push(
             JSON.parse(String(init?.body)) as Record<string, unknown>,
           );
           return new Response(
             JSON.stringify(
-              previewPayload({
-                recognition: {
-                  status: "recognized",
-                  recognitionType: "C",
-                  ruleId: "rule-c",
-                  score: 90,
-                  confidence: 0.9,
-                  matchedRules: [
-                    {
-                      ruleId: "rule-c",
-                      recognitionType: "C",
-                      priority: 100,
-                      score: 90,
-                    },
-                  ],
-                  reasons: [{ code: "matched", message: "title matched" }],
-                  warnings: [],
+              localAnalysisPayload({
+                family: "classificationPolicies",
+                objectId: "policy-a",
+                outcome: "matched",
+                conclusion: "分类规则命中:action-movie",
+                result: {
+                  status: "classified",
+                  matchedRuleId: "action-movie",
+                  mediaLibraryId: "movies",
+                  mediaLibraryResolved: true,
+                  relativePath: "电影/华语",
+                  destinationContract: "media_library_path",
+                  matchEvidence: ["genre matched"],
                 },
-                policy: {
-                  typePolicyId: "type-c",
-                  metadataPolicy: "C",
-                  namingPolicy: "A",
-                  classificationPolicy: "A",
-                  organizePolicy: "A",
-                },
-                recognitionTypePreserved: true,
               }),
             ),
           );
@@ -87,161 +256,36 @@ describe("RulesEditPage previews", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
-    expect(await screen.findByRole("heading", { name: "C" })).toBeVisible();
-    expect(screen.getByLabelText("样本标题")).toHaveValue("The Matrix");
-    expect(screen.getByLabelText("样本 RecognitionType")).toHaveValue("C");
-    expect(screen.getByLabelText("样本 RecognitionType")).toBeDisabled();
-    expect(screen.queryByRole("option", { name: "从路径解析" })).toBeNull();
-    expect(screen.queryByLabelText("命名、分类与目标样本 JSON")).toBeNull();
-    expect(screen.queryByRole("button", { name: "测试元数据策略" })).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "测试识别策略" }));
-    expect(await screen.findByText(/候选修订 candidat/)).toBeVisible();
-    expect(screen.getByRole("heading", { name: "匹配规则" })).toBeVisible();
-    expect(screen.getAllByText("rule-c")[0]).toBeVisible();
-    expect(screen.getByText("type-c")).toBeVisible();
-    expect(previewBodies[0]).toMatchObject({
-      resourceLibraryId: "source",
+    renderApp("/ui-v2/rules/edit/classificationPolicies/policy-a");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑分类规则 · Movie classification",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("tab", { name: "单项测试" }),
+    );
+    await within(dialog).findByRole("heading", { name: "测试与预览" });
+    // The typed identity sample belongs to the card and travels with the
+    // exact candidate; the evidence leads with the actual matched rule and
+    // the real destination while full JSON stays in diagnostics.
+    await userEvent.click(
+      within(dialog).getByLabelText("测试样本识别类型"),
+    );
+    await userEvent.type(
+      within(dialog).getByLabelText("测试样本识别类型"),
+      "C",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "测试该分类规则" }),
+    );
+    expect(await within(dialog).findByText(/分类规则命中/)).toBeVisible();
+    expect(within(dialog).getByText("action-movie")).toBeVisible();
+    expect(within(dialog).getByText("电影/华语")).toBeVisible();
+    expect(within(dialog).getByText(/完整证据 JSON/)).toBeVisible();
+    expect(bodies[0]).toMatchObject({
       candidate: {
-        family: "recognitionTypes",
-        objectId: "C",
-        values: { id: "C" },
+        family: "classificationPolicies",
+        objectId: "policy-a",
       },
-    });
-    expect(previewBodies[0]?.sample).toBeUndefined();
-
-    fireEvent.change(screen.getByLabelText("样本标题"), {
-      target: { value: "Second sample" },
-    });
-    expect(await screen.findByText(/该结果已过期/)).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "用当前输入重新运行此项" }),
-    );
-    await waitFor(() => expect(previewBodies).toHaveLength(2));
-    expect(
-      screen.getAllByRole("heading", { name: "strategy 结果" }),
-    ).toHaveLength(2);
-  });
-
-  it("keeps an in-flight old-candidate result stale after the form changes", async () => {
-    let resolvePreview: ((response: Response) => void) | undefined;
-    const pending = new Promise<Response>((resolve) => {
-      resolvePreview = resolve;
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith("/form-authority"))
-          return new Response(JSON.stringify(formAuthorityPayload));
-        if (url.includes("/objects/recognitionTypes/C"))
-          return new Response(JSON.stringify(editProjectionPayload));
-        if (url.endsWith("/previews/strategy")) return pending;
-        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
-          status: 404,
-        });
-      }),
-    );
-    authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
-    await screen.findByRole("heading", { name: "C" });
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "测试识别策略" }));
-    expect(screen.getByText(/正在测试提交时的候选/)).toBeVisible();
-    fireEvent.change(screen.getByLabelText(/^名称/), {
-      target: { value: "Changed while pending" },
-    });
-    await act(async () => {
-      resolvePreview?.(
-        new Response(
-          JSON.stringify(
-            previewPayload({
-              recognition: { status: "recognized", recognitionType: "C" },
-              policy: null,
-              recognitionTypePreserved: true,
-            }),
-          ),
-        ),
-      );
-      await pending;
-    });
-    expect(await screen.findByText(/该结果已过期/)).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "用当前输入重新运行此项" }),
-    ).toBeEnabled();
-  });
-
-  it("renders classification and organize decisions as readable explanations", async () => {
-    const previewBodies: Record<string, unknown>[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.endsWith("/form-authority"))
-          return new Response(JSON.stringify(formAuthorityPayload));
-        if (url.includes("/objects/recognitionTypes/C"))
-          return new Response(JSON.stringify(editProjectionPayload));
-        if (url.includes("/previews/"))
-          previewBodies.push(
-            JSON.parse(String(init?.body)) as Record<string, unknown>,
-          );
-        if (url.endsWith("/previews/classification"))
-          return new Response(
-            JSON.stringify(
-              previewPayload({
-                status: "classified",
-                appliedPolicyId: "A",
-                matchedRuleId: "movies-rule",
-                matchedRuleName: "Movies",
-                mediaLibraryId: "movies",
-                mediaLibraryResolved: true,
-                relativePath: "Sci-Fi",
-                recognitionType: "C",
-                matchEvidence: ["genre matched"],
-                warnings: [],
-              }),
-            ),
-          );
-        if (url.endsWith("/previews/organize"))
-          return new Response(
-            JSON.stringify(
-              previewPayload({
-                operation: "move",
-                conflictStrategy: "manual",
-                requiredStorageCapabilities: ["can_move"],
-                warnings: ["review conflict"],
-                destinationStatus: "completed",
-                destination: {
-                  destinationPath: "Movies/Sci-Fi/The Matrix.mkv",
-                  verdict: "ready",
-                  conflictProjection: { projectedOutcome: "ready" },
-                },
-                executionAllowed: true,
-                executionAuthorityGranted: "none",
-                allowBlockReasons: [
-                  "read-only checks passed; execution still requires separate authority",
-                ],
-              }),
-            ),
-          );
-        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
-          status: 404,
-        });
-      }),
-    );
-    authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
-    await screen.findByRole("heading", { name: "C" });
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "预览分类" }));
-    expect(
-      await screen.findByRole("heading", { name: "分类结果" }),
-    ).toBeVisible();
-    expect(screen.getByText("Movies")).toBeVisible();
-    expect(screen.getByText("Sci-Fi")).toBeVisible();
-    expect(previewBodies[0]).toMatchObject({
-      policySelection: { mode: "binding", recognitionType: "C" },
       sample: {
         title: "The Matrix",
         mediaType: "movie",
@@ -249,50 +293,39 @@ describe("RulesEditPage previews", () => {
         year: 1999,
       },
     });
+    // The classification sample never smuggles in naming-only fields.
+    expect((bodies[0]?.sample as Record<string, unknown>).extension).toBe(
+      undefined,
+    );
     expect(
-      (previewBodies[0]?.sample as Record<string, unknown>).extension,
-    ).toBeUndefined();
-    await user.click(screen.getByRole("button", { name: "解释整理权限" }));
-    expect(
-      await screen.findByRole("heading", { name: "整理权限与目标" }),
-    ).toBeVisible();
-    expect(screen.getByText("Movies/Sci-Fi/The Matrix.mkv")).toBeVisible();
-    expect(screen.getByText("can_move")).toBeVisible();
-    expect(
-      screen.getByText(
-        "read-only checks passed; execution still requires separate authority",
+      bodies.some(
+        (body) =>
+          typeof body.liveMetadata === "boolean" && body.liveMetadata === false,
       ),
-    ).toBeVisible();
-    expect(screen.getByText("none")).toBeVisible();
+    ).toBe(true);
   });
-
-  it("shows typed validation recovery and reruns after correction", async () => {
-    const previewBodies: Record<string, unknown>[] = [];
+  it("shows typed sample validation recovery and reruns after correction", async () => {
+    const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url.endsWith("/auth/principal"))
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
         if (url.includes("/objects/recognitionTypes/C"))
           return new Response(JSON.stringify(editProjectionPayload));
-        if (url.endsWith("/previews/naming")) {
-          previewBodies.push(
+        if (url.includes("/analysis/")) {
+          bodies.push(
             JSON.parse(String(init?.body)) as Record<string, unknown>,
           );
           return new Response(
-            JSON.stringify(
-              previewPayload({
-                appliedPolicyId: "A",
-                recognitionType: "C",
-                mediaType: "movie",
-                directory: "The Matrix (2000)",
-                filename: "The Matrix (2000).mkv",
-                renderedVariables: { title: "The Matrix", year: "2000" },
-                sanitizationChanges: [],
-                warnings: [],
-              }),
-            ),
+            JSON.stringify(localAnalysisPayload({})),
           );
         }
         return new Response(JSON.stringify({ error: { code: "not_found" } }), {
@@ -302,27 +335,37 @@ describe("RulesEditPage previews", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/recognitionTypes/C");
-    await screen.findByRole("heading", { name: "C" });
-    const user = userEvent.setup();
-    fireEvent.change(screen.getByLabelText("样本年份"), {
-      target: { value: "10000" },
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
     });
-    await user.click(screen.getByRole("button", { name: "预览命名" }));
-    expect(
-      await screen.findByText(/年份 必须是 0 到 9999 的整数/),
-    ).toBeVisible();
-    expect(previewBodies).toHaveLength(0);
-    fireEvent.change(screen.getByLabelText("样本年份"), {
-      target: { value: "2000" },
-    });
-    await user.click(
-      screen.getByRole("button", { name: "用当前输入重新运行此项" }),
+    await userEvent.click(
+      within(dialog).getByRole("tab", { name: "单项测试" }),
     );
-    expect(await screen.findByText("The Matrix (2000).mkv")).toBeVisible();
-    expect(previewBodies).toHaveLength(1);
-    expect(previewBodies[0]).toMatchObject({
-      policySelection: { mode: "binding", recognitionType: "C" },
-      sample: { title: "The Matrix", year: 2000, recognitionType: "C" },
+    await within(dialog).findByRole("heading", { name: "测试与预览" });
+    await userEvent.click(within(dialog).getByLabelText("试识别关联规则"));
+    // A bounded invalid sample is refused before any request travels.
+    fireEvent.change(within(dialog).getByLabelText("测试合成路径"), {
+      target: { value: "" },
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "测试该识别类型" }),
+    );
+    expect(
+      await within(dialog).findByText(
+        /需要一个不超过 4096 个字符的合成路径/,
+      ),
+    ).toBeVisible();
+    expect(bodies).toHaveLength(0);
+    // Correcting the input in place re-runs explicitly with the fixed sample.
+    fireEvent.change(within(dialog).getByLabelText("测试合成路径"), {
+      target: { value: "电影/The Matrix (2000).mkv" },
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "用当前输入重新运行此项" }),
+    );
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.sample).toMatchObject({
+      path: "电影/The Matrix (2000).mkv",
     });
   });
 });
@@ -364,8 +407,12 @@ describe("RulesEditPage classification save recovery", () => {
         const url = String(input);
         const method = (init?.method ?? "GET").toUpperCase();
         calls.push({ method, url });
+        if (url.endsWith("/auth/principal"))
+          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }));
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(classificationAuthority));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
         if (url.includes("/objects/classificationPolicies/"))
           return new Response(
             JSON.stringify({
@@ -404,7 +451,9 @@ describe("RulesEditPage classification save recovery", () => {
     );
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules/edit/classificationPolicies/policy-a");
-    await screen.findByRole("heading", { name: "policy-a" });
+    await screen.findByRole("dialog", {
+      name: "编辑分类规则 · Policy A",
+    });
     const user = userEvent.setup();
 
     // The compact internal-rule list is the default state on the full page too.
@@ -445,8 +494,12 @@ describe("RulesEditPage object identity", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         requested.push(url);
+        if (url.endsWith("/auth/principal"))
+          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }));
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.endsWith("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
         if (url.includes("/objects/recognitionTypes/"))
           return new Response(
             JSON.stringify({
@@ -476,9 +529,13 @@ describe("RulesEditPage object identity", () => {
     for (const [route, expectedId] of cases) {
       cleanup();
       renderApp(route);
+      const dialog = await screen.findByRole("dialog", {
+        name: "编辑识别类型 · Special",
+      });
+      // The decoded backend identity is what the immutable ID field holds.
       expect(
-        await screen.findByRole("heading", { name: expectedId }),
-      ).toBeVisible();
+        (within(dialog).getByLabelText(/^ID/) as HTMLInputElement).value,
+      ).toBe(expectedId);
       // The editor for this exact identity was requested; the object was
       // never swapped for a different one and no write happened.
       expect(
@@ -488,10 +545,13 @@ describe("RulesEditPage object identity", () => {
           ),
         ),
       ).toBe(true);
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
     }
+    // Opening the editor never runs analysis, previews or writes.
     expect(
-      requested.every((url) => !url.includes("/operations/") || true),
+      requested.every(
+        (url) => !url.includes("/analysis/") && !url.includes("/previews/"),
+      ),
     ).toBe(true);
   });
 

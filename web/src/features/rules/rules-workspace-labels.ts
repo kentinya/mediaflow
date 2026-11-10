@@ -6,8 +6,14 @@
  * sessionStorage-backed so it survives a real browser refresh, route navigation,
  * remount and reconnect within the authenticated tab. Nothing here is persisted
  * to the URL or any log, and it never holds a credential or authority.
+ *
+ * Slice54: every draft is scoped to the backend-confirmed principal session,
+ * the family and the card subject (mode + object/source). A principal that has
+ * not resolved can neither read nor persist a draft, so one identity can never
+ * be shown another identity's retained input.
  */
 
+import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
   RULE_FAMILY_LABELS,
   type RuleFamily,
@@ -49,15 +55,22 @@ export const RULE_RETURN_TO_LABEL = "返回整理规则清单";
 type Draft = Record<string, RuleFormValue>;
 
 const drafts = new Map<string, Draft>();
-const STORAGE_KEY = "mediaflow.rules.correctable-drafts";
+// Slice54 keys every entry by principal session; the pre-principal storage
+// spelling is superseded so a stale unscoped draft can never be resurrected
+// for whatever identity connects next.
+const STORAGE_KEY = "mediaflow.rules.correctable-drafts.v2";
+const LEGACY_STORAGE_KEY = "mediaflow.rules.correctable-drafts";
 
 function loadDrafts(): void {
   if (typeof window === "undefined") return;
   try {
+    window.sessionStorage.removeItem(LEGACY_STORAGE_KEY);
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw) as Record<string, Draft>;
     for (const [draftKey, value] of Object.entries(parsed)) {
+      // Only principal-scoped entries are loadable; anything else is dropped.
+      if (!draftKey.includes("|")) continue;
       if (value && typeof value === "object" && !Array.isArray(value)) {
         drafts.set(draftKey, { ...value });
       }
@@ -81,32 +94,46 @@ function persistDrafts(): void {
 
 loadDrafts();
 
-function key(family: RuleFormFamily, objectId: string | null): string {
-  return `${family}/${objectId ?? "*"}`;
+function key(
+  principalId: string | null,
+  family: RuleFormFamily,
+  objectId: string | null,
+): string | null {
+  if (principalId === null || principalId.length === 0) return null;
+  return `${principalIdStorageSegment(principalId)}|${family}/${objectId ?? "*"}`;
 }
 
 export function readRuleDraft(
+  principalId: string | null,
   family: RuleFormFamily,
   objectId: string | null,
 ): Draft | undefined {
-  const stored = drafts.get(key(family, objectId));
+  const storageKey = key(principalId, family, objectId);
+  if (storageKey === null) return undefined;
+  const stored = drafts.get(storageKey);
   return stored === undefined ? undefined : { ...stored };
 }
 
 export function writeRuleDraft(
+  principalId: string | null,
   family: RuleFormFamily,
   objectId: string | null,
   values: Draft,
 ): void {
-  drafts.set(key(family, objectId), { ...values });
+  const storageKey = key(principalId, family, objectId);
+  if (storageKey === null) return;
+  drafts.set(storageKey, { ...values });
   persistDrafts();
 }
 
 export function clearRuleDraft(
+  principalId: string | null,
   family: RuleFormFamily,
   objectId: string | null,
 ): void {
-  drafts.delete(key(family, objectId));
+  const storageKey = key(principalId, family, objectId);
+  if (storageKey === null) return;
+  drafts.delete(storageKey);
   persistDrafts();
 }
 
