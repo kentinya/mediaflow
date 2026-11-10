@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 8248adc1372c4e63196de9c2c62df7c79216db2f
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: B INDEPENDENTLY REVIEWS PREPARATION HANDOFF AND VISIBLE ANALYSIS RECOVERY ON A FRESH T4 CANDIDATE
+Next Action: DEVELOPER FIXES FILES ORGANIZE CONTEXT AFTER CANCELLED BROWSER BACK IN THE SAME TASK
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -296,110 +296,106 @@ tests/e2e/deep-link.spec.ts` → **64 passed（38.6s）**，在最终 build 上�
 
 ## B Review Result
 
-**FIX REQUIRED — B 独立复核，2026-11-10。** 本次统一候选／保存及修正表单的旧 P1
-解除；真实 Files 旅程仍观察到准备阶段停在过期状态，分析被拒后又没有可见反馈。
-继续同一 Task53.1，固定 Base、范围及 T4 不变，不改任务中心详情，不规划新 Task。
+**FIX REQUIRED — B 独立复核，2026-11-10。** 上轮准备到摘要交接、分析拒绝无反馈、
+真实合同 fixture 与两处 Ruff 格式问题均已解除。本轮确认 Files 原入口在取消浏览器后退
+后丢失准备地址，随后刷新不能恢复同一弹窗；这是 AC-8／9 与 RO-1／3 尚未完成的旅程。
+继续同一 Task53.1，固定 Base、范围与 T4 不变，不改任务中心详情，不新增 Task。
 
 ### Reviewed range / 已通过结果
 
 - Branch `main`；固定 Base `95c24cd0a3cc51acd6143e37e72371445cb15a72`；
-  Reviewed Head `39f3b46356728cc920303600c68e3863c8902b42`；
-  本轮实现 `f58c25d83bddc71d96dd90276e99e67395e3ac7f`。
-- 在此前完整审查基础上核对完整 Base..Head 的 37 文件清单，以及本轮全部 8 文件增量；
-  重新检查准备轮询、保存／分析、精确子集、未知交接、共享面板 full 消费者与后端条目关联。
-  B 未改产品代码；任务中心详情仍保留原呈现分支。
-- 真实 Python／SQLite／Local Storage／假 Provider／真实 Worker 的整理弹窗 **4 passed**：
-  10 个独立候选决定与一次 10 项确认、未知 Execute 核对后准确交接、冲突重命名与健康
-  未选兄弟、Files 重命名后无候选修正及关闭草稿保护。
-- 独立浏览器实际确认：同文件 2 个候选、1 个保存动作；翻到另一文件再回来仍保留候选；
-  Escape 出现放弃提示，继续编辑保留选择；22 次 Tab 均在弹窗内；关闭后焦点回到
-  “批量整理”，Files 原选择保留。正文内滚动、背景锁滚、桌面／390px／矮窗口候选卡可读。
-  390px 文档宽度为 390，无横向溢出；同视口检查既有自动化新建卡片作为参考。
+  Reviewed Head `5de5394f226a3694905906724dc0e3aace5fe0e9`；
+  本轮实现 `8248adc1372c4e63196de9c2c62df7c79216db2f`。
+- 在前轮完整审查基础上重新核对完整 Base..Head 的 38 文件清单和全部 7 文件增量；
+  检查准备轮询、逐项决定／草稿、摘要／子集／危险授权绑定、未知提交、精确 Task 交接、
+  后端问题条目关联及默认 full 恢复面板消费者。任务中心详情组件未改；B 未改产品代码。
+- 真实 Files→批量整理→Worker 冻结完成／未关联摘要→同一弹窗自动显示逐文件摘要，
+  没有第二次分析或执行提交。另从可见准备动作发出真实分析请求，仅延迟该请求的网络
+  送达，让真实 Worker 先完成关联，得到实际 **409 discovery_conflict**；弹窗明确显示
+  拒绝、零执行与重读入口，并显示同一准备的新摘要。未伪造响应或产品持久阶段。
+- 真实 Python 弹窗 E2E **6 passed**：10 个独立候选／保存后一次精确确认、未知 Execute
+  核对后准确 Task 交接、冲突与健康未选兄弟、冻结交接、准备分析受理、无候选修正。
+- 浏览器实际查看桌面 1536×1000、390×844、矮窗口 1536×700；通过现有 Files 文本
+  创建入口给合成媒体增加 zh.srt／en.ass，保存分析后得到同页两附件及准确来源／目标。
+  长文件名通过原重命名菜单建立；390px 文档宽度为 390，路径换行，标题与底栏可达。
+  候选翻页后仍保留；20 次 Tab 留在弹窗；Escape／放弃草稿与 reduced-motion 关闭可用。
+  从任务中心既有“继续整理”重开的同一准备，取消后退能恢复准确地址和候选。
+  **Files 原入口的同一操作仍有下述差异，不以这些通过项代替失败项。**
 
-### P1：准备已生成摘要，弹窗仍停在过期的“准备完成”；分析被拒没有反馈
+### P1：Files 弹窗取消浏览器后退后，刷新丢失当前整理
 
-对应 RO-1／RO-2、AC-1／8 与完整失败恢复旅程。
+**完整用户旅程：** 任务中心 → Files → `Unified media source / Dialog` → 选择
+`Dialog03.2011.mkv` → 批量整理 → Worker 生成实际候选 → 选择“候选 2”但不保存 →
+使用浏览器后退 → 在草稿提示中点击“继续编辑”。弹窗仍显示该文件、候选 2 仍选中，
+但 URL 已从带 `organizeDiscovery=de3ddb19-3cea-46e3-b1da-abee810c1b18` 的 Files 地址
+变为仅 `resourceLibraryId=source`。等待页面恢复后标识仍未回来。
+随后刷新并按正常流程重新认证，只显示 Files，整理弹窗数量为 0。
+用户必须另去任务中心找原任务，无法按本 Task 约定刷新后继续当前准备。
+此过程没有保存、取消或执行整理；不是文件效果丢失，也不要求刷新保留未保存候选。
 
-**实际用户旅程：** Files → `Unified media source / Dialog` → 通过原重命名菜单将
-`DialogRename.2024.mkv` 改为 `DialogNoMatch.2024.mkv` → 选择该文件 → 批量整理。
-现有隔离 harness 的真实 Worker 推进这次准入后，弹窗停留在“准备完成”、
-`open the linked manual intent…`、底栏“第 0 / 0 个”，只提供“运行分析并生成计划摘要”。
-读取该页面实际请求的同一 discovery，持久记录已经是 version 5，且已关联真实
-`previewId=5be2e1a5-5754-4ff5-8877-de037b3de5d0`。页面没有继续更新到该摘要。
-
-用户点击可见的“运行分析并生成计划摘要”，实际 POST 返回 **409 discovery_conflict**，
-明确当前 version 5、没有 mutation、下一步应重新读取；弹窗仍显示原准备内容，
-既不显示拒绝原因，也没有准备状态刷新入口。没有伪造 API 响应或构造产品入口。
-这不是“没有找到作品”，而是用户还没有进入本来已可读取的当前文件与修正界面。
-
-**原因及引入：** `99328d5d` 新弹窗在 `ManualOrganizeDialog.tsx` 的轮询 effect 中，
-仅按 discovery 的 `completed / partial_success` 停止读取。真实 Worker 先发布遍历完成，
-再冻结／进入分析／关联计划；浏览器读到中间的 completed 后就会停止，错过后续关联。
-准备页分析动作又使用 `itemId: ""`：失败通知写入空条目 notices／result，
-但准备页没有渲染这些通知（result 仅在整批确认中显示），也没有在版本冲突后重读。
-观察到的准确 discovery、Task、最终计划和 409 响应见证据 JSON。
+**定位：** `StorageFilesPage.tsx` 新增的 `updateOrganizeRouteState` 用
+`window.history.replaceState(null, ...)` 写准备地址；取消后退经 TanStack 的 history／
+blocker 恢复时，地址与仍挂载的 organizeSession 没有保持一致。`null` 还清除了路由管理的
+history 状态。现有 memory-router 后退单测只断言草稿／弹窗，不能证明真实浏览器恢复的
+URL 仍携带同一准备。新增该恢复地址写入的实现是 `99328d5d`（2026-11-09 22:13）；
+本轮准备交接修正没有更改此路由路径。
 
 ### Developer 修正指导
 
-1. 按现有 discovery／organizeFlow／计划关联语义完成准备到摘要的读取交接。
-   不以遍历 completed 单独证明整个准备已结束；同一准入已有新计划时应在原弹窗显示它。
-   保持真正结束、拒绝、空范围、预算不完整及只读历史的现有边界，不重新创建整理，
-   不自动保存或执行，不新增后台引擎或新状态。
-2. 准备页“运行分析并生成计划摘要”就近显示请求中、接受、明确拒绝或读取失败的事实。
-   版本过期时读取同一准备并给出准确下一步；分析失败说明已保存什么、尚缺什么及如何继续。
-   准备级通知不能放到不存在的空 item 或用户尚进不去的整批确认页。
-3. 用现有 Files 入口和真实 Worker 分阶段推进，覆盖浏览器先读到遍历 completed、
-   随后同一准备关联摘要的顺序；增加准备级分析拒绝／失败的可见反馈回归。
-   保留 10 项独立决定、草稿保护、未知提交、健康兄弟和精确确认现有断言。
-4. 同轮同步有意新增 `problemTaskItemId` 的真实 API golden fixture：
-   `tests.test_manual_operations_contract` 当前因两个新增 null 字段与前端 fixture 不同而失败。
-   更新真实合同夹具并保留完整比较，不删除字段断言或放宽比较。对本 Task 的
-   `scripts/operations_inventory_harness.py`、`tests/test_organize_preparation.py` 执行 Ruff 格式化。
-   Developer 仅跑上述新增／改动及直接受影响检查；完整回归仍由 B 承担。
+1. 在当前 Files 整理旅程中统一准备地址、路由 history 与弹窗会话的同步。取消后退后应
+   留在原 Files／同一 discovery；重新认证及刷新仍能读取同一耐久准备。沿用现有路由
+   能力，保留合法库／返回上下文及 history 状态；不重新准入，不用最新任务替代。
+   只修本旅程所需同步，不扩展为全站路由／文件浏览重构。
+2. 保留浏览器后退时的草稿提示：继续编辑保留原输入；明确放弃才离开或关闭。
+   真正关闭仍移除重开标识，关闭不取消耐久工作。受理成功仍只交接准确 Task。
+3. 在现有真实 Python 浏览器 spec 中覆盖 **Files→候选草稿→真实浏览器后退→继续编辑→
+   检查准确 URL→刷新／正常重新认证→同一准备弹窗**；同时断言无新准入、无保存、无
+   Execute。刷新可以丢弃未保存输入，必须恢复原准备／摘要。保留任务中心继续入口、
+   放弃后退、普通关闭与未知提交的既有行为，不能只在 memory router 中模拟后退。
+4. Developer 运行新增／修改及直接受影响的 Files、ManualOrganizeDialog、导航、真实
+   弹窗测试与类型／lint／格式／build；不承担全量套件。修正后交回同一 Task，B 再对新
+   候选执行相应 T4 验收。本轮通过的准备交接、分析反馈、合同 fixture 不应回退。
 
 ### B 实际验证 / 原始失败与限制
 
-证据根目录：`.git/validation-evidence/39f3b463/b53-review/`，均为本地隔离证据。
+本地证据根：`.git/validation-evidence/5de5394f/b53-review/`。
+核心失败为 `browser-back-proof.json`、`back-continued-before-refresh.png` 与
+`back-continued-after-refresh.png`；另有真实 409、长名称、候选与附件各视口截图。
 
-- `python3 scripts/check_governance.py`、Base..Head `git diff --check`：PASS。
-- Web：typecheck、lint、全量 Prettier、build：PASS（既有 bundle 体积提示）；
-  `npm run test -- run`：**99 files / 1490 passed**（147.37s）。
-- 真实弹窗 E2E：**4 passed（31.0s）**；完整独立 inventory spec：
-  **45 passed（1.5m）**，包括四类恢复、原继续／只读入口、认证、重启与非重放。
-- 全量 Node E2E 独立输出目录复跑：**268 passed（3.1m）**；
-  命令 `npm run test:e2e -- --output=../.git/validation-evidence/39f3b463/b53-review/node-results`。
-- Python 全量：**2678 tests，2 failures，7 skipped（331.587s）**。
-  一项为上述真实合同 fixture；另一项为 B 的 Task 测试分工标题未匹配既有治理断言，
-  本轮仅将 Task 的两处标题改为既有要求，保持测试分工内容；该治理断言独立复核
-  **1 passed**。全量首跑的两项失败仍保留，不改写为全量 PASS。
-- Ruff 原命令同时读到预存未跟踪 `.explore_adapter_block.py` 的语法错误；该文件未动。
-  仅 tracked Python 再查：lint PASS，format 仍明确失败于上述 2 个本 Task 文件。
-  compileall、pip check、两个配置示例验证、禁用依赖检查均通过。
-- wheel build 与隔离安装 smoke PASS；wheel SHA-256
-  `3d579cffa7124e1ce3f08eb67db44926453ecea3b461fe3f81fb3f54f9268b49`。
-  本 Slice 没有改变 Docker、依赖、镜像权限或容器执行路径，Docker 广域矩阵不适用。
-- 首次并行的 Node／Python E2E 共用默认输出目录，造成 trace ENOENT；Node 首跑
-  260 passed / 8 failures，均为该输出冲突，不能作为通过证据，原日志保留。
-  Python 6 spec 组合运行 46 passed / 20 failures，包含输出冲突及前序设置改变后队列占用；
-  不将组合失败直接判为产品缺陷。之后以全新 harness 单跑 inventory 45 passed；
-  其余组合失败尚未全部独立定位，不宣称这些门禁通过，也不把 B 的环境核对交回 Developer。
-- 视觉证据：`candidate-desktop.png`、`candidate-desktop-decision.png`、
-  `candidate-390-decision.png`、`candidate-short-decision.png`、
-  `reference-automation-desktop.png`、`analysis-no-feedback.png`、`review-observations.json`。
-  本轮无候选表单人工采集实际停在上述准备问题，未取得该区新画面；Developer 同候选
-  证据作为补充，不冒充 B 独立完成。多附件／长路径、完整 reduced-motion／浏览器返回
-  以及其余 Slice 最终视觉验收待修正后完成。发现 P1 后不再扩大测试范围。
+- `python3 scripts/check_governance.py`、Base..Head `git diff --check`：PASS；本轮 TASK
+  更新后 `tests.test_governance` **20 passed（6.397s）**。
+- Web typecheck／lint／全量 Prettier／build：PASS（既有 bundle 体积提示）；
+  全量 Vitest **99 files / 1493 passed（132.70s）**。
+- Python 全量 **2678 tests，0 failures，7 skipped（321.664s）**；跳过是专用真实
+  SMB／S3／OpenList 接受环境及四种 endurance profile 未配置，不作为已验证的生产效果。
+- 完整 Node E2E **268 passed（3.1m）**；所有运行使用独立输出目录。
+- 真实 Python spec 各用全新 harness：dialog **6 passed（39.4s）**、inventory
+  **45 passed（1.4m）**、source-history **1 passed（4.3s）**、automation-settings
+  **15 passed（23.8s）**、task-center-visual **2 passed（9.1s）**。
+  覆盖现有四类恢复、认证／重启、历史与非重放，未削弱原安全断言。
+- OpenList metadata **1 passed（8.3s）**，使用
+  `playwright.openlist-metadata.python.config.ts`；Unicode principal **1 passed（5.6s）**，
+  使用 `playwright.python.unicode-principal.config.ts`。此前错误地套用普通 Python config
+  的两次单用例各失败 1 项：分别在读取专用 provider 状态和读取 Unicode 身份时失败，
+  尚未进入整理。原失败日志保留；专用配置重跑通过，不作为产品返工。
+- Ruff 根目录原命令仍被预存未跟踪 `.explore_adapter_block.py:8` 的语法错误阻断；
+  该文件未动。tracked Python 的 lint 与 format 均 PASS（355 files）；compileall、
+  pip check、两份示例配置与禁用依赖检查通过。
+- wheel build 与隔离安装 smoke PASS；精确 wheel SHA-256
+  `0c15c3dc7e618f4e9288954168bcaf858717da4ab849e5c15a9d90a0be2c92c7`。
+  smoke 在源码外验证已安装消费者、数据库备份／恢复及准备／恢复模块。
+  本 Slice 未改 Docker、依赖、镜像权限或容器执行路径，Docker 广域矩阵不适用。
+- 一次手动浏览器脚本因等待被阻止的导航超时而重置；之后以原入口重新操作并核对实际
+  地址、弹窗、候选和刷新结果，失败证据不是该脚本超时推断。未开发新的过程工具。
 
-### 全部 Slice 结果重评
+### Slice 全量结果重评 / 决策
 
-| 结果 | 当前判断 |
-| ---- | -------- |
-| RO-1 逐文件弹窗 | 候选呈现旧 P1 解除；准备到计划可停在过期状态，尚未完整满足。 |
-| RO-2 当前文件修正与集中确认 | 单一选择／保存与关键完整链路通过；准备级分析失败恢复仍缺失。 |
-| RO-3 精确任务中心交接 | 正常及未知核对交接通过，详情原 UI 保持；最终候选仍需完整门禁。 |
-
-Task53.1 保持 FIX REQUIRED；不提交 Closure Packet，不关闭 Slice，不新增 Task。
-本轮只修改 TASK，预存 dirty／untracked 全部保留；未推送或部署。
+RO-2 的逐项决定、精确子集与安全执行边界已获验证；RO-1 的 Files 原背景整理及 RO-3 的
+准确上下文恢复仍被上述返回／刷新问题阻断。正常与未知受理后的精确 Task 交接通过，
+任务中心详情仍冻结。当前只有上述一个产品 P1，不追加可选改进或新 Task。
+Task53.1 保持 **FIX REQUIRED**；不提交 Closure Packet，不关闭 Slice，不改 A-owned
+SLICE／Roadmap／Progress 或 CURRENT 接受标记。本轮仅修改 TASK，预存 dirty／untracked
+全部保留，未推送或部署。
 
 ## Developer Completion Report — P1 修正
 
