@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVE — FIRST TASK PLANNING ONLY; NO IMPLEMENTATION AUTHORIZED
+Development Authorization: TASK54.1 IMPLEMENTATION USER AUTHORIZED ON 2026-11-10
 Risk: High
 Accepted Test Level: T4
-Next Action: TASK54.1 PLANNED; USER AUTHORIZES IMPLEMENTATION
+Next Action: DEVELOPER IMPLEMENTS TASK54.1
 ```
 
 ## Authority and accepted baseline
@@ -21,7 +21,9 @@ Next Action: TASK54.1 PLANNED; USER AUTHORIZES IMPLEMENTATION
 内容的美观与可读性。2026-11-10 用户先授权 A 规划，合同提交于 022d7777；随后明确
 “激活 Slice 并代替 B 规划第一个 Task”。本次将 Slice 激活并先提交合同，再由 A 按用户
 授权代行 B 规划首个 Task。该角色例外仅限本次 Task 规划，不包含自审实现或代行最终
-A 验收。首个 Task 保留规划状态；本轮不开始实现、不修改产品代码、不推送或部署。
+A 验收。用户随后明确“激活 Task”，正式授权 Task54.1 实施；原 Task ID／Base／Goal／Scope
+保持，移除规划草案通知。Task 当前 PLANNED、等待 Developer 进入 IN PROGRESS；
+本激活检查点不修改产品代码，不推送或部署。
 
 Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 原退回／修正、
 验证限制及 B 转任 A 的用户授权例外均保留于

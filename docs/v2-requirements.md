@@ -521,8 +521,8 @@ supplies the complete operator sequence. Earlier accepted safety and deferral co
 
 ## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
 
-[Slice54](../SLICE.md) is ACTIVE with first-Task planning authorized, fixed Base
-e43a40674eb14aa12615a440a348fe675cd50c4e; implementation and acceptance remain pending.
+[Slice54](../SLICE.md) is ACTIVE with Task54.1 implementation authorized, fixed Base
+e43a40674eb14aa12615a440a348fe675cd50c4e; implementation is not yet delivered or accepted.
 This TARGET replaces the presentation portions of V2-RULES-001/006/009 only after acceptance.
 Until then the existing Rules drawer/full-page editor baseline remains CURRENT. Prior
 Slice41/44/50/53 acceptance identities, safety and deferrals remain unchanged.

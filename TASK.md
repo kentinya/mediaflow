@@ -1,19 +1,3 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-[Slice54](SLICE.md) 已在 6351b60433f0e79dac6f5f7150884a1fecb0da43 激活为 ACTIVE。
-下方是用户“代替 B 规划第一个 Task”授权下完成的 **Task54.1 规划草案**，不授权实现。
-待用户授权实施后移除本通知，保留同一 Task ID／Base／Goal／Scope，按工作流进入实施。
-本轮不启动 Developer，不推送或部署。
-
-Planner: A acting as B — USER AUTHORIZED FIRST-TASK PLANNING ONLY.
-该角色例外不包含 Task 验收或同一 Slice 的最终 A 验收。Developer 不得自审；后续 B
-独立审查实际实现，再由 A 按工作流审查整个 Slice。Slice53 的接受、A53-01 原退回／
-修正及验证限制保留于 [固定关闭记录](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)。
-
-Next Action: USER AUTHORIZES TASK54.1 IMPLEMENTATION
-
----
-
 # Task 54.1 — 七类整理规则统一弹窗、可读表单与单项检查
 
 Authority: committed [Slice54](SLICE.md)，激活检查点
@@ -21,6 +5,12 @@ Authority: committed [Slice54](SLICE.md)，激活检查点
 [Development Workflow](docs/development-workflow.md) 定义。阅读角色对应的
 [B experience](docs/agent-experience/task-planner-reviewer.md) 或
 [Developer experience](docs/agent-experience/developer-implementation-role.md)。
+
+用户于 2026-11-10 明确“激活 Task”，正式授权 Task54.1 在既定边界内实施。
+原 Task Base／Goal／Scope／验收与测试归属不变；本激活检查点未开始产品代码实现。
+A 代行 B 的例外只涵盖首个 Task 规划，不包含 Developer 自审或代行最终 A 验收。
+Slice53 的接受、原退回／修正与验证限制保留于
+[固定关闭记录](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)。
 
 ~~~text
 Task ID: 54.1
@@ -31,8 +21,9 @@ Task Base: 6351b60433f0e79dac6f5f7150884a1fecb0da43
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: A acting as B for planning only / independent B review pending
-Implementation Authorization: NOT GRANTED — PLANNING DRAFT UNDER NO ACTIVE IMPLEMENTATION TASK
+Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
 Implementation Checkpoint: NOT SET
+Next Action: DEVELOPER IMPLEMENTS TASK54.1
 ~~~
 
 ## Goal
@@ -115,7 +106,7 @@ API 客户端仅作既有请求／投影的必要封装调整，不改后端发�
 
 7. **交接。** 跑 Developer affected tests 后提交连贯候选及 READY FOR B REVIEW 报告，
    不等待或代跑 B 全量。修正在同一 Task 循环；文档保持 TARGET，CURRENT／Slice 关闭
-   由最终 A 接受后协调，不提前宣告接受。本轮规划本身不执行本节实施步骤。
+   由最终 A 接受后协调，不提前宣告接受。
 
 ## Acceptance Criteria
 
@@ -154,7 +145,7 @@ API 客户端仅作既有请求／投影的必要封装调整，不改后端发�
 ## Required Tests
 
 归属以 [test levels and ownership](docs/development-workflow.md#6-test-levels) 为准。
-以下是实施后必需命令，**本轮规划未执行产品验收、不作通过声明**。原生证明必须使用
+以下是实施后必需命令；**激活检查点未执行产品验收、不作通过声明**。原生证明必须使用
 精确生产构建、临时库／本地假 Provider，禁止私有配置、运行数据库或用户媒体。
 
 ### Developer — affected tests
@@ -239,7 +230,7 @@ npm run test:e2e -- --config=playwright.python.config.ts --output=../.git/valida
 动效设置或其他页面业务。不改 Slice53 原请求恢复及执行／Task 交接，不自动保存／
 测试／重放未知命令，不隐式转换旧分类或授权覆盖／删除，不扩到 V1／任意资产路由。
 不规划下一 Task，不把可选优化当阻塞，不自行更改 Slice／Roadmap 边界或关闭 Slice。
-本轮只规划，后续实施须用户授权；推送、发布与部署不在授权内。
+实施已获用户授权，仅限本 Task；推送、发布与部署不在授权内。
 
 ## Developer Completion Report
 

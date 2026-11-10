@@ -10,9 +10,10 @@ workflow authority. Closure rules live only in
 
 [Slice54](../SLICE.md) is **ACTIVE**, fixed Base e43a40674eb14aa12615a440a348fe675cd50c4e.
 On 2026-11-10 the user authorized activation and A acting as B to plan the first Task.
-The role exception covers planning only. [Task54.1](../TASK.md) is planned as one coherent High/T4
-unit under NO ACTIVE IMPLEMENTATION TASK, pending explicit implementation authorization.
-No implementation or acceptance is claimed here.
+The role exception covers planning only. The user subsequently activated [Task54.1](../TASK.md)
+for implementation on 2026-11-10, preserving its Base/Goal/Scope. The formal High/T4 Task is PLANNED,
+ready for Developer; the no-active-implementation notice is removed.
+No product implementation or acceptance is claimed by this activation checkpoint.
 Scope remains seven Rules families' Add/Copy/Edit dialogs, form/local-test readability and
 Overview-only complete-flow checking. TARGET is not delivered and there is no new closure entry.
 Slice53 remains the latest accepted large Slice; its fixed acceptance, prior failure, role exception,

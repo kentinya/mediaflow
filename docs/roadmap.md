@@ -49,8 +49,10 @@ User authorized activation and A acting as B to plan the first coherent Task on 
 The role exception is planning-only; implementation, Task acceptance and A Final Review are separate.
 Scope remains seven families' Add/Copy/Edit dialogs, settings/local-test readability and Overview-only
 complete-flow checking. TARGET is not delivered CURRENT.
-[Task54.1](../TASK.md) now has a High/T4 planning draft under NO ACTIVE IMPLEMENTATION TASK.
-Next: explicit implementation authorization; no code, push or deployment in this planning action.
+[Task54.1](../TASK.md) is now the authorized High/T4 implementation Task, Status PLANNED.
+User explicitly activated it on 2026-11-10; original Task Base/Goal/Scope remain unchanged.
+Next: Developer implements Task54.1. No product implementation is claimed by the activation
+checkpoint; push and deployment remain outside this authorization.
 Slice53 and earlier acceptance/deferrals remain fixed.
 
 ## Accepted boundary references

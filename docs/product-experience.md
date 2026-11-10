@@ -708,7 +708,7 @@ keeps prior Active and correctable input.
 
 ## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
 
-[Slice54](../SLICE.md) and V2-RULES-010–012 are ACTIVE TARGET with first-Task planning authorized, not delivered CURRENT.
+[Slice54](../SLICE.md) and V2-RULES-010–012 are ACTIVE TARGET with Task54.1 implementation authorized, not delivered CURRENT.
 This replaces Add/Copy drawers, full-page Edit and legacy editor chain-preview presentation only
 after acceptance; existing publication, local analysis and safety semantics remain.
 

@@ -1034,7 +1034,7 @@ shell navigation/authentication and other business routes retain their behavior.
 
 [Slice54](../SLICE.md), V2-RULES-010–012 and the
 [complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-active)
-are ACTIVE TARGET with first-Task planning authorized. The CURRENT Rules presentation above stays delivered until acceptance.
+are ACTIVE TARGET with Task54.1 implementation authorized. The CURRENT Rules presentation above stays delivered until acceptance.
 
 Rules inventory hosts all seven families' Add/Copy/Edit cards. Existing allowlisted edit URLs
 retain exact family/object identity but render the same card above the appropriate inventory.
