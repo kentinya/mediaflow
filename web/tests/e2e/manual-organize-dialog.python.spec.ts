@@ -29,6 +29,8 @@ const UNKNOWN_FILE = "DialogUnknown.2021.mkv";
 interface RecordedCommand {
   readonly method: string;
   readonly path: string;
+  /** Raw query string: the admission reconciliation binds its identity here. */
+  readonly search: string;
   readonly body: Record<string, unknown> | null;
 }
 
@@ -50,7 +52,12 @@ function recordCommands(page: Page): RecordedCommand[] {
     } catch {
       body = null;
     }
-    commands.push({ method: request.method(), path: url.pathname, body });
+    commands.push({
+      method: request.method(),
+      path: url.pathname,
+      search: url.search,
+      body,
+    });
   });
   return commands;
 }
@@ -953,4 +960,216 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
   expect(executions()).toHaveLength(0);
+});
+
+test("an unknown original submission is reconciled under a newer sibling summary without a second Execute", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const runFile = "DialogReconcile.2027.mkv";
+  const siblingFile = "DialogUnselected.2028.mkv";
+  const stateFor = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // Real Files entry with exactly these two temporary sources: neither has
+  // been used or moved by any other journey.
+  await openDialogDirectory(page, runFile);
+  await selectFiles(page, [runFile, siblingFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+
+  // Only runFile is confirmed; the sibling stays outside this submission.
+  const siblingInclusion = card.getByRole("checkbox", {
+    name: `纳入 ${siblingFile}`,
+  });
+  if (!(await siblingInclusion.isVisible().catch(() => false))) {
+    await card.getByRole("button", { name: "下一项" }).click();
+  }
+  await expect(siblingInclusion).toBeVisible();
+  if (await siblingInclusion.isChecked()) await siblingInclusion.uncheck();
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(card.getByText(/将整理 1 项/)).toBeVisible();
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+  expect(executePosts()).toHaveLength(0);
+
+  // Let the production API commit its durable admission, then drop only the
+  // browser-visible response: the operator cannot know the outcome.
+  let dropped = false;
+  await page.route(
+    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    async (route) => {
+      if (dropped) {
+        await route.continue();
+        return;
+      }
+      dropped = true;
+      await route.fetch();
+      await route.abort("connectionreset");
+    },
+  );
+  await card.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(card.getByText("执行结果未知")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByRole("button", { name: /核对提交结果/ }),
+  ).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(executePosts()).toHaveLength(1);
+  const executeBody = executePosts()[0]?.body ?? {};
+  const executePreviewId = (executePosts()[0]?.path.match(
+    /previews\/([^/]+)\/execute$/,
+  ) ?? [])[1];
+  expect(executePreviewId).toBeTruthy();
+  expect(executeBody["itemIds"]).toHaveLength(1);
+  expect(executeBody["confirmation"]).toBe(true);
+
+  // The real Worker completes the admitted MOVE first: the confirmed file is
+  // gone from the source and its exact target exists.
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBe(true);
+  const workerBody = (await worker.json()) as {
+    readonly completed: boolean;
+    readonly status: string;
+    readonly taskId: string;
+    readonly itemCount: number;
+  };
+  expect(workerBody).toMatchObject({
+    completed: true,
+    status: "completed",
+    itemCount: 1,
+  });
+  const moved = await stateFor(runFile);
+  expect(moved.sourceExists).toBe(false);
+  expect(moved.destinationTargets).toHaveLength(1);
+  expect(await stateFor(siblingFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+  expect(executePosts()).toHaveLength(1);
+
+  // Only now the untouched sibling gets its legal correction: RecognitionType
+  // C, one explicit save, then its own zero-mutation re-analysis.
+  await card.getByRole("button", { name: "返回逐项复核" }).click();
+  await expect(card.getByText(siblingFile).first()).toBeVisible();
+  await card.getByLabel(`识别类型 ${siblingFile}`).selectOption({
+    label: "Special",
+  });
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(card.getByText(/选择已保存,正在按固定配置重新分析/)).toBeVisible(
+    { timeout: 30_000 },
+  );
+
+  // Drive the real Worker until the newer exact summary is linked and read.
+  const summaryReadPath = `/api/v1/operations/organize/previews/${executePreviewId}`;
+  const newerSummaryReads = () =>
+    commands.filter(
+      (command) =>
+        command.method === "GET" &&
+        /^\/api\/v1\/operations\/organize\/previews\/[^/]+$/.test(
+          command.path,
+        ) &&
+        command.path !== summaryReadPath,
+    );
+  for (let pass = 0; pass < 20 && newerSummaryReads().length === 0; pass += 1) {
+    const drove = await request.post(
+      `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+        discoveryId as string,
+      )}`,
+    );
+    expect(drove.ok()).toBe(true);
+    await page.waitForTimeout(1_500);
+  }
+  expect(newerSummaryReads().length).toBeGreaterThan(0);
+  const newerPreviewId = newerSummaryReads()[0]?.path.split("/").pop() ?? "";
+  expect(newerPreviewId).toBeTruthy();
+  expect(newerPreviewId).not.toBe(executePreviewId);
+
+  // The newer summary is visible for the current review and the original
+  // request is still unknown: no second Execute exists.
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(card.getByText(`方案 ${newerPreviewId}`)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText("执行结果未知")).toBeVisible();
+  expect(executePosts()).toHaveLength(1);
+
+  // One bounded read of the original request proves `known` and opens the
+  // exact original Task; the newer summary is never the lookup target.
+  await card.getByRole("button", { name: "核对提交结果" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/, {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const admissionGets = () =>
+    commands.filter(
+      (command) =>
+        command.method === "GET" &&
+        /\/operations\/organize\/previews\/[^/]+\/admission$/.test(
+          command.path,
+        ),
+    );
+  expect(admissionGets()).toHaveLength(1);
+  expect(admissionGets()[0]?.path).toBe(
+    `/api/v1/operations/organize/previews/${executePreviewId}/admission`,
+  );
+
+  // Item-by-item identity: every admission parameter equals the original
+  // Execute request, whatever the newer summary says.
+  const admissionParams = new URLSearchParams(admissionGets()[0]?.search ?? "");
+  expect(admissionParams.get("itemIds")).toBe(
+    (executeBody["itemIds"] as string[]).join(","),
+  );
+  expect(admissionParams.get("expectedIntentVersion")).toBe(
+    String(executeBody["expectedIntentVersion"]),
+  );
+  expect(admissionParams.get("allowOverwrite")).toBe(
+    String(executeBody["allowOverwrite"] === true),
+  );
+  expect(admissionParams.get("allowSourceCleanup")).toBe(
+    String(executeBody["allowSourceCleanup"] === true),
+  );
+
+  // The handoff carries the exact original Task the Worker completed, never a
+  // guessed or newest run, and the total is still one Execute.
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+  expect(runId).toBe(workerBody.taskId);
+  expect(executePosts()).toHaveLength(1);
+  expect(await stateFor(runFile)).toEqual({
+    sourceExists: false,
+    destinationTargets: moved.destinationTargets,
+  });
+  expect(await stateFor(siblingFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
 });

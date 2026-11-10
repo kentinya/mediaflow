@@ -20,6 +20,9 @@
  * - a newer summary keeps the visible page on the same durable itemId (AC-5);
  * - an unknown Execute response is never retried: only the bounded admission
  *   read proves the outcome, then the exact task handoff happens (AC-7);
+ * - the original unknown submission keeps its exact preview/subset/version/
+ *   effect identity while a sibling re-analysis publishes a newer summary,
+ *   and reconciles only that original request (A53-01);
  * - an unready or already-admitted sibling never enters the fresh
  *   confirmation, and browsing is zero-execute (AC-6 / AC-10);
  * - Escape with nothing pending closes the card and returns focus to the
@@ -91,13 +94,28 @@ function makeBackend() {
     metadataCandidateResolved: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
+    // The exact paths the Files admission carried: the summary then plans
+    // exactly those files, so a two-file journey is a two-item plan.
+    selectedPaths: [] as string[],
+    // The A53-01 journey: an overwrite the operator must authorize on every
+    // exact summary, and one bounded admission-read failure.
+    requireOverwrite: false as boolean,
+    failAdmissionOnce: false as boolean,
+    // Previews whose Execute the backend durably admitted. A lost response
+    // changes nothing about this record.
+    admittedPreviewIds: [] as string[],
   };
   const calls = {
     discoveryPosts: [] as Json[],
     choicePosts: [] as Json[],
     analyzePosts: [] as Json[],
     executePosts: [] as Json[],
+    executePreviewIds: [] as string[],
     admissionReads: 0,
+    admissionRequests: [] as {
+      readonly previewId: string;
+      readonly params: Record<string, string>;
+    }[],
     metadataSearchPosts: [] as Json[],
     recoveryDecisionPosts: [] as Json[],
     recoveryContinuePosts: [] as Json[],
@@ -106,6 +124,23 @@ function makeBackend() {
   let releasedExecute: ((response: Response) => void) | null = null;
   let holdExecute = false;
   const heldExecuteResponses: Response[] = [];
+
+  /**
+   * The exact item indices this admission plans: the file rows the real
+   * Files discovery request carried. A selection without a recognised file
+   * path keeps the full ten-file default of this journey.
+   */
+  const previewItemIndices = (): number[] => {
+    const indices: number[] = [];
+    for (const path of state.selectedPaths) {
+      const match = /^Movies\/Movie\.(\d{2})\.mkv$/.exec(path);
+      if (match !== null) indices.push(Number(match[1]) - 1);
+    }
+    indices.sort((left, right) => left - right);
+    return indices.length > 0
+      ? indices
+      : Array.from({ length: FILE_COUNT }, (_, index) => index);
+  };
 
   const discoveryDocument = (): Json => ({
     journey: "discovery",
@@ -126,10 +161,10 @@ function makeBackend() {
     budgets: {},
     progress: {
       phase: "prepared",
-      visitedEntries: FILE_COUNT + 1,
+      visitedEntries: previewItemIndices().length + 1,
       visitedDirectories: 1,
       pageFetches: 1,
-      primarySources: FILE_COUNT,
+      primarySources: previewItemIndices().length,
       excludedEntries: 0,
       unstableEntries: 0,
       errorEntries: 0,
@@ -142,7 +177,7 @@ function makeBackend() {
       reasons: [],
       message: "the exact zero-mutation plan summary is ready",
     },
-    primarySourceCount: FILE_COUNT,
+    primarySourceCount: previewItemIndices().length,
     organizeTaskId: state.endedFlow ? null : "organize-task-1",
     organizeFlow: {
       taskId: "organize-task-1",
@@ -294,7 +329,7 @@ function makeBackend() {
       continuable: true,
     };
     const template = (value["items"] as Json[])[0]!;
-    const order = Array.from({ length: FILE_COUNT }, (_, index) => index);
+    const order = previewItemIndices();
     if (reversed) order.reverse();
     value["items"] = order.map((index, position) => {
       const item = JSON.parse(JSON.stringify(template)) as Json;
@@ -326,6 +361,10 @@ function makeBackend() {
         destination["filename"] = filename(index);
         destination["storageRelativePath"] = `Movies/${filename(index)}`;
         destination["relativePath"] = `Movies/${filename(index)}`;
+      }
+      if (state.requireOverwrite) {
+        const implications = plan["destructiveImplications"] as Json;
+        implications["overwriteRequired"] = true;
       }
       return item;
     });
@@ -586,6 +625,7 @@ function makeBackend() {
       ) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
         calls.discoveryPosts.push(body);
+        state.selectedPaths = (body["paths"] as string[] | undefined) ?? [];
         return jsonResponse(
           {
             discoveryId: DISCOVERY_ID,
@@ -825,7 +865,33 @@ function makeBackend() {
         /^\/api\/v1\/operations\/organize\/previews\/([^/?]+)\/admission/,
       );
       if (admissionMatch !== null && method === "GET") {
+        const previewId = admissionMatch[1] ?? "";
+        const rawQuery = url.split("?")[1] ?? "";
         calls.admissionReads += 1;
+        calls.admissionRequests.push({
+          previewId,
+          params: Object.fromEntries(new URLSearchParams(rawQuery)),
+        });
+        if (state.failAdmissionOnce) {
+          state.failAdmissionOnce = false;
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
+        if (!state.admittedPreviewIds.includes(previewId)) {
+          // No durable admission exists under this exact summary: the honest
+          // answer for a preview the operator never executed.
+          return jsonResponse({
+            outcome: "not_admitted",
+            reason: "execution_not_found",
+            executionId: null,
+            taskId: null,
+            status: null,
+            selectedItemIds: [],
+            completedItemCount: 0,
+            failedItemCount: 0,
+            sideEffects: "none",
+            nextAction: "refresh the exact summary before confirming again",
+          });
+        }
         return jsonResponse({
           outcome: "known",
           reason: null,
@@ -846,6 +912,10 @@ function makeBackend() {
       if (executeMatch !== null && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
         calls.executePosts.push(body);
+        calls.executePreviewIds.push(executeMatch[1] ?? "");
+        // The durable admission record exists regardless of what the browser
+        // later sees: a lost response never erases it.
+        state.admittedPreviewIds.push(executeMatch[1] ?? "");
         const respond = () =>
           jsonResponse({
             executionId: "exec-1",
@@ -1016,6 +1086,7 @@ function card(): HTMLElement {
 async function openDialog(
   user: ReturnType<typeof userEvent.setup>,
   configure?: (backend: Backend) => void,
+  selection?: readonly string[],
 ): Promise<
   Backend & { readonly router: ReturnType<typeof renderApp>["router"] }
 > {
@@ -1025,7 +1096,13 @@ async function openDialog(
   authStore.setToken(TOKEN);
   const { router } = renderApp("/ui-v2/resourcelib/files");
   await screen.findByRole("table");
-  await user.click(screen.getByRole("checkbox", { name: "选择全部" }));
+  if (selection === undefined) {
+    await user.click(screen.getByRole("checkbox", { name: "选择全部" }));
+  } else {
+    for (const name of selection) {
+      await user.click(screen.getByRole("checkbox", { name: `选择 ${name}` }));
+    }
+  }
   await user.click(screen.getByRole("button", { name: "批量整理" }));
   await screen.findByRole("dialog", { name: "整理所选文件" });
   return Object.assign(backend, { router });
@@ -1873,5 +1950,160 @@ describe("ManualOrganizeDialog", () => {
         "批量整理",
       ),
     );
+  }, 30_000);
+
+  it("reconciles the original submission identity after a sibling re-analysis publishes a newer summary", async () => {
+    const user = userEvent.setup();
+    // A53-01: real Files entry with exactly two files, one confirmed and
+    // answered only with a lost response; then the untouched sibling gets a
+    // legal correction + re-analysis that publishes a newer summary before
+    // the operator reconciles the original request.
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.flipPreviewOnAnalyze = true;
+        value.state.requireOverwrite = true;
+        value.state.failAdmissionOnce = true;
+      },
+      [filename(0), filename(1)],
+    );
+    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    expect(within(card()).getByText("Movie.01.mkv")).toBeVisible();
+
+    // Only Movie.01 is confirmed; the sibling stays out of this submission.
+    await user.click(screen.getByRole("button", { name: "下一项" }));
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    await user.click(
+      screen.getByRole("checkbox", { name: "纳入 Movie.02.mkv" }),
+    );
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    expect(screen.getByText(/将整理 1 项/)).toBeVisible();
+    expect(screen.getByText(/包含覆盖已有目标/)).toBeVisible();
+
+    const overwrite = screen.getByRole("checkbox", {
+      name: "我确认允许按已审阅方案替换现有目标文件",
+    });
+    expect(overwrite).not.toBeChecked();
+    await user.click(overwrite);
+    await waitFor(() => expect(overwrite).toBeChecked());
+
+    // The backend admits durably; only the browser-visible response is lost.
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let executeFailed = false;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/execute") && !executeFailed) {
+        executeFailed = true;
+        original(input, init);
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      return original(input, init);
+    });
+
+    const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await user.click(confirm);
+    await screen.findByText(/执行结果未知/);
+    expect(backend.calls.executePosts).toHaveLength(1);
+    expect(backend.calls.executePreviewIds).toEqual([PREVIEW_ID]);
+    expect(backend.calls.executePosts[0]).toMatchObject({
+      confirmation: true,
+      itemIds: ["item-1"],
+      expectedIntentVersion: 7,
+      allowOverwrite: true,
+      allowSourceCleanup: false,
+    });
+    expect(backend.calls.admissionRequests).toHaveLength(0);
+
+    // Still unknown: no second Execute, no guessed handoff.
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+
+    // The untouched sibling is corrected (RecognitionType C) and re-analyzed:
+    // a newer exact summary appears while the original request stays unknown.
+    await user.click(screen.getByRole("button", { name: "返回逐项复核" }));
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    await user.selectOptions(
+      screen.getByLabelText(`识别类型 ${filename(1)}`),
+      "C",
+    );
+    const save = screen.getByRole("button", { name: "保存并重新分析" });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+    await waitFor(() => expect(backend.calls.choicePosts).toHaveLength(1));
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    // The newer summary is visible and owned by the current review.
+    await screen.findByText(/方案 preview-2/);
+
+    // Its own overwrite authorization starts fresh — the original request's
+    // dangerous authorization is not inherited by the new plan.
+    const freshOverwrite = screen.getByRole("checkbox", {
+      name: "我确认允许按已审阅方案替换现有目标文件",
+    });
+    expect(freshOverwrite).not.toBeChecked();
+    expect(screen.getByText(/执行结果未知/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(backend.calls.executePosts).toHaveLength(1);
+
+    // First bounded read fails: the original unknown restriction stays and no
+    // denial from another summary is invented.
+    await user.click(screen.getByRole("button", { name: "核对提交结果" }));
+    await waitFor(() =>
+      expect(backend.calls.admissionRequests).toHaveLength(1),
+    );
+    await screen.findByText(/Operations unavailable/);
+    expect(screen.getByText(/执行结果未知/)).toBeVisible();
+    expect(screen.queryByText(/没有被受理/)).toBeNull();
+    expect(screen.queryByText(/没有发生整理变更/)).toBeNull();
+    expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
+    expect(backend.calls.executePosts).toHaveLength(1);
+
+    // One explicit re-read of the same original request proves `known` and
+    // hands off the exact original Task.
+    await user.click(screen.getByRole("button", { name: "重新核对提交结果" }));
+    await waitFor(() =>
+      expect(backend.calls.admissionRequests).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(backend.router.state.location.pathname).toBe("/operations"),
+    );
+    expect(backend.router.state.location.search).toMatchObject({
+      run: "task-handoff-1",
+    });
+
+    // Exactly one Execute; every reconciliation request carries exactly the
+    // original identity, item by item, and never the newer summary.
+    expect(backend.calls.executePosts).toHaveLength(1);
+    const executed = backend.calls.executePosts[0]!;
+    expect(backend.calls.admissionRequests).toHaveLength(2);
+    for (const read of backend.calls.admissionRequests) {
+      expect(read.previewId).toBe(PREVIEW_ID);
+      expect(read.params["itemIds"]).toBe(
+        (executed["itemIds"] as string[]).join(","),
+      );
+      expect(read.params["expectedIntentVersion"]).toBe(
+        String(executed["expectedIntentVersion"]),
+      );
+      expect(read.params["allowOverwrite"]).toBe("true");
+      expect(read.params["allowSourceCleanup"]).toBe("false");
+    }
+    expect(
+      backend.calls.admissionRequests.some(
+        (read) => read.previewId === "preview-2",
+      ),
+    ).toBe(false);
   }, 30_000);
 });

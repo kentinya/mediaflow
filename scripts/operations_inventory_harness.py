@@ -416,6 +416,17 @@ def build_managed_fixture(
     # browser proves the admitted preparation address across a cancelled Back
     # and a reload + reconnect.  It never executes, so no target is created.
     (dialog_root / "DialogBack.2025.mkv").write_bytes(b"slice53 cancelled back synthetic media")
+    # Slice53 A53-01 original-request reconciliation regression: its own pair
+    # of sources — the one the operator confirms (and the real Worker moves),
+    # and the sibling the operator corrects afterwards.  Each has exactly one
+    # unambiguous Provider identity, and neither borrows a file another journey
+    # may have already moved.
+    (dialog_root / "DialogReconcile.2027.mkv").write_bytes(
+        b"slice53 original submission reconciliation synthetic media"
+    )
+    (dialog_root / "DialogUnselected.2028.mkv").write_bytes(
+        b"slice53 untouched sibling synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -423,6 +434,8 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogFreeze.2020.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPrepAction.2026.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogBack.2025.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogReconcile.2027.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogUnselected.2028.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -612,7 +625,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028)\.mkv$"
                         ),
                     },
                 ],
@@ -1093,6 +1106,27 @@ def build_managed_fixture(
                             countries=("JP",),
                         )
                         for provider_id in ("707", "708")
+                    ),
+                    # Slice53 A53-01 reconciliation pair: one unambiguous
+                    # identity each, so both sources are ready without an
+                    # extra operator decision.
+                    MediaCandidate(
+                        "tmdb",
+                        "709",
+                        MediaType.MOVIE,
+                        "DialogReconcile",
+                        year=2027,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "710",
+                        MediaType.MOVIE,
+                        "DialogUnselected",
+                        year=2028,
+                        genres=("Animation",),
+                        countries=("JP",),
                     ),
                 )
             ),
@@ -3794,6 +3828,8 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogSibling.2023.mkv",
         "Dialog/DialogNoMatch.2024.mkv",
         "Dialog/DialogRename.2024.mkv",
+        "Dialog/DialogReconcile.2027.mkv",
+        "Dialog/DialogUnselected.2028.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")

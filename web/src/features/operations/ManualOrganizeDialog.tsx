@@ -97,6 +97,20 @@ interface SaveNotice {
   readonly retryAnalysis: boolean;
 }
 
+/**
+ * The immutable identity of one confirmed Execute request (A53-01): captured
+ * once when the operator confirms, it is the only input that request and its
+ * later reconciliation ever read. A newer summary, a changed selection or a
+ * re-read cannot rewrite any of its values.
+ */
+interface OrganizeSubmissionIdentity {
+  readonly previewId: string;
+  readonly itemIds: readonly string[];
+  readonly intentVersion: number;
+  readonly allowOverwrite: boolean;
+  readonly allowSourceCleanup: boolean;
+}
+
 const metadataKey = (value: {
   readonly provider: string | null;
   readonly providerId: string | null;
@@ -251,10 +265,8 @@ export function ManualOrganizeDialog({
   >(null);
   const [unknownSubmission, setUnknownSubmission] = useState<{
     readonly message: string;
-    readonly itemIds: readonly string[];
-    readonly intentVersion: number;
-    readonly allowOverwrite: boolean;
-    readonly allowSourceCleanup: boolean;
+    /** The original request's full identity, fixed when it was submitted. */
+    readonly submission: OrganizeSubmissionIdentity;
   } | null>(null);
   const [reconciliation, setReconciliation] = useState<{
     readonly kind: "unknown" | "known" | "not_equivalent" | "not_admitted";
@@ -543,29 +555,20 @@ export function ManualOrganizeDialog({
 
   const executeLockedRef = useRef(false);
   const executeMutation = useMutation({
-    mutationFn: async (options: {
-      readonly itemIds: readonly string[];
-      readonly intentVersion: number;
-      readonly allowOverwrite: boolean;
-      readonly allowSourceCleanup: boolean;
-    }) => {
+    mutationFn: async (submission: OrganizeSubmissionIdentity) => {
       // A second gesture (double click, Enter repeat) arriving before React
       // commits the pending state must never become a second Execute.
       if (executeLockedRef.current) {
         return { kind: "duplicate" as const };
       }
       executeLockedRef.current = true;
-      if (preview === undefined) {
-        executeLockedRef.current = false;
-        throw new Error("计划摘要尚未就绪。");
-      }
       try {
         const value = await executeOrganizePreview(token, {
-          previewId: preview.previewId,
-          itemIds: options.itemIds,
-          expectedIntentVersion: options.intentVersion,
-          allowOverwrite: options.allowOverwrite,
-          allowSourceCleanup: options.allowSourceCleanup,
+          previewId: submission.previewId,
+          itemIds: submission.itemIds,
+          expectedIntentVersion: submission.intentVersion,
+          allowOverwrite: submission.allowOverwrite,
+          allowSourceCleanup: submission.allowSourceCleanup,
         });
         return { kind: "result" as const, value };
       } finally {
@@ -578,7 +581,7 @@ export function ManualOrganizeDialog({
       setUnknownSubmission(null);
       setReconciliation(null);
     },
-    onSuccess: (outcome, options) => {
+    onSuccess: (outcome, submission) => {
       if (outcome.kind === "duplicate") return;
       const value = outcome.value;
       if (value.ok) {
@@ -615,10 +618,7 @@ export function ManualOrganizeDialog({
               : value.code === "malformed_response"
                 ? "后端对这次整理请求返回了无法解读的响应。无法确定这次执行是否已受理。"
                 : `后端对这次整理请求返回了 ${value.status}。无法确定这次执行是否已受理。`,
-          itemIds: [...options.itemIds],
-          intentVersion: options.intentVersion,
-          allowOverwrite: options.allowOverwrite,
-          allowSourceCleanup: options.allowSourceCleanup,
+          submission,
         });
         return;
       }
@@ -636,16 +636,16 @@ export function ManualOrganizeDialog({
   });
 
   const reconcileMutation = useMutation({
-    mutationFn: async (submission: NonNullable<typeof unknownSubmission>) => {
-      if (preview === undefined) throw new Error("计划摘要尚未就绪。");
-      return fetchOrganizeAdmissionOutcome(token, {
-        previewId: preview.previewId,
-        itemIds: submission.itemIds,
-        expectedIntentVersion: submission.intentVersion,
-        allowOverwrite: submission.allowOverwrite,
-        allowSourceCleanup: submission.allowSourceCleanup,
-      });
-    },
+    // The original request's identity is the only lookup input: a replaced,
+    // cleared or still-loading current summary never changes what is read.
+    mutationFn: async (unknown: NonNullable<typeof unknownSubmission>) =>
+      fetchOrganizeAdmissionOutcome(token, {
+        previewId: unknown.submission.previewId,
+        itemIds: unknown.submission.itemIds,
+        expectedIntentVersion: unknown.submission.intentVersion,
+        allowOverwrite: unknown.submission.allowOverwrite,
+        allowSourceCleanup: unknown.submission.allowSourceCleanup,
+      }),
     retry: false,
     onSuccess: (value) => {
       if (!value.ok) {
@@ -2214,14 +2214,18 @@ export function ManualOrganizeDialog({
         type="button"
         disabled={executeDisabled}
         aria-busy={executeMutation.isPending}
-        onClick={() =>
+        onClick={() => {
+          if (preview === undefined) return;
+          // One identity captured here serves both the request and any later
+          // reconciliation of this exact confirmation.
           executeMutation.mutate({
-            itemIds: activeSelection,
-            intentVersion: preview?.intentVersion ?? 0,
+            previewId: preview.previewId,
+            itemIds: [...activeSelection],
+            intentVersion: preview.intentVersion ?? 0,
             allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
             allowSourceCleanup: requiresCleanup && effectiveAllowSourceCleanup,
-          })
-        }
+          });
+        }}
       >
         {executeMutation.isPending
           ? "正在提交..."
