@@ -167,15 +167,13 @@ interface FrozenSubmit {
 }
 
 interface VerifyPanelState {
-  /** Why the panel exists: a lost response, or a stale baseline refusal. */
-  readonly reason: "unknown" | "stale";
+  /**
+   * Why the panel exists: a lost response, a stale baseline refusal, or a
+   * restored draft whose own read differs from the current one (B54-01).
+   */
+  readonly reason: "unknown" | "stale" | "draft";
   readonly verdict:
-    | "unverified"
-    | "reading"
-    | "matched"
-    | "modified"
-    | "absent"
-    | "unreadable";
+    "unverified" | "reading" | "matched" | "modified" | "absent" | "unreadable";
   readonly readCode: string | null;
   /** The freshly read current value + the exact baseline it was read with. */
   readonly current: {
@@ -206,6 +204,18 @@ function formatSubmitTime(at: number): string {
   }
 }
 
+/** Two reads pair only when they carry the same Active identity. */
+function sameReadIdentity(
+  a: ActiveAuthorityIdentity,
+  b: ActiveAuthorityIdentity,
+): boolean {
+  return (
+    a.expectedVersion === b.expectedVersion &&
+    a.expectedRevisionId === b.expectedRevisionId &&
+    a.expectedDigest === b.expectedDigest
+  );
+}
+
 export function RulesObjectCard({
   session,
   canManage,
@@ -233,11 +243,26 @@ export function RulesObjectCard({
         readonly ok: true;
         readonly baseline: ActiveAuthorityIdentity;
         readonly name: string | null;
+        /** The exact read values that baseline was produced with. */
+        readonly values: FormValues | null;
       }
-    | { readonly ok: false; readonly code: string; readonly nextAction: string | null }
+    | {
+        readonly ok: false;
+        readonly code: string;
+        readonly nextAction: string | null;
+      }
     | null
   >(null);
   const [values, setValues] = useState<FormValues | null>(null);
+  /**
+   * The Active identity the current `values` derive from: the read that
+   * seeded them, or the recorded read of a restored draft. A Save baseline
+   * may only come from this pairing — a newer read never silently replaces
+   * it; an explicit adopt or re-check decision updates it together with the
+   * input it applies to.
+   */
+  const [pairedBaseline, setPairedBaseline] =
+    useState<ActiveAuthorityIdentity | null>(null);
   const [dirty, setDirty] = useState(false);
   const [state, setState] = useState<SaveState>({ kind: "idle" });
   const [issues, setIssues] = useState<ReadonlyMap<string, string>>(new Map());
@@ -248,22 +273,23 @@ export function RulesObjectCard({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const dirtyRef = useRef(dirty);
+  const valuesRef = useRef<FormValues | null>(null);
   const principalRef = useRef<string | null>(null);
   useEffect(() => {
     savingRef.current = saving;
     dirtyRef.current = dirty;
+    valuesRef.current = values;
     principalRef.current = principalId;
   });
   // The retained unknown record is read from its external session store on
   // every render (never into state), so close/reopen/refresh always shows the
   // durable record itself rather than a stale copy of it.
-  const storedRecord: RulesUnknownSaveRecord | null =
-    principal.resolved
-      ? readRulesUnknownSave(principal.principalId, session.family, {
-          mode: session.mode,
-          subjectId,
-        })
-      : null;
+  const storedRecord: RulesUnknownSaveRecord | null = principal.resolved
+    ? readRulesUnknownSave(principal.principalId, session.family, {
+        mode: session.mode,
+        subjectId,
+      })
+    : null;
   const frozen: FrozenSubmit | null =
     frozenState ??
     (storedRecord !== null
@@ -299,16 +325,13 @@ export function RulesObjectCard({
             if (defaults.values[field] !== undefined)
               seeded[field] = defaults.values[field];
           }
-          setProjection({
-            ok: true,
-            baseline: authorityIdentity(outcome.model.active),
-            name: null,
-          });
-          setValues((current) => {
-            if (current !== null && Object.keys(current).length > 0)
-              return current;
-            return seeded;
-          });
+          const baseline = authorityIdentity(outcome.model.active);
+          setProjection({ ok: true, baseline, name: null, values: seeded });
+          const current = valuesRef.current;
+          if (current === null || Object.keys(current).length === 0) {
+            setValues(seeded);
+            setPairedBaseline(baseline);
+          }
         }
       } else {
         setAuthorityError(ruleFailureCopy(outcome.code));
@@ -320,17 +343,22 @@ export function RulesObjectCard({
           if (!active || !mountedRef.current) return;
           if (outcome.ok) {
             const value = { ...(outcome.model.value as FormValues) };
+            const baseline = authorityIdentity(outcome.model.active);
             setProjection({
               ok: true,
               // The prefill and its baseline are one read: Save composes
               // against exactly what the operator is looking at.
-              baseline: authorityIdentity(outcome.model.active),
+              baseline,
               name:
                 typeof value.name === "string" ? (value.name as string) : null,
+              values: value,
             });
-            setValues((current) =>
-              current !== null && dirtyRef.current ? current : value,
-            );
+            // A draft restored above keeps its own recorded pairing; only a
+            // fresh form may adopt this read as its baseline.
+            if (!dirtyRef.current) {
+              setValues(value);
+              setPairedBaseline(baseline);
+            }
           } else {
             setProjection({
               ok: false,
@@ -347,22 +375,24 @@ export function RulesObjectCard({
           if (!active || !mountedRef.current) return;
           if (outcome.ok) {
             const seeded = { ...(outcome.model.value as FormValues) };
+            const baseline = authorityIdentity(outcome.model.active);
             setProjection({
               ok: true,
               // The copy candidate and the Active it was computed from are
               // one read: pairing them keeps the new-ID candidate savable
               // without stitching across versions.
-              baseline: authorityIdentity(outcome.model.active),
+              baseline,
               name:
                 typeof seeded.name === "string"
                   ? (seeded.name as string)
                   : null,
+              values: seeded,
             });
-            setValues((current) =>
-              current !== null && Object.keys(current).length > 0
-                ? current
-                : seeded,
-            );
+            const current = valuesRef.current;
+            if (current === null || Object.keys(current).length === 0) {
+              setValues(seeded);
+              setPairedBaseline(baseline);
+            }
           } else {
             setProjection({
               ok: false,
@@ -379,8 +409,9 @@ export function RulesObjectCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [retry, token]);
 
-  // --- principal-scoped draft restore: a principal that has not resolved can
-  // neither be shown another identity's draft nor write one.
+  // --- principal-scoped, mode-scoped draft restore: a principal that has not
+  // resolved can neither be shown another identity's draft nor write one, and
+  // a Copy of `A` never restores an Edit of `A` (or vice versa).
   const draftTriedRef = useRef(false);
   useEffect(() => {
     if (draftTriedRef.current) return;
@@ -389,26 +420,64 @@ export function RulesObjectCard({
     const principalValue = principal.resolved ? principal.principalId : null;
     const stored = readRuleDraft(principalValue, session.family, draftKey);
     if (stored !== undefined && !dirtyRef.current) {
-      setValues((current) => {
-        if (dirtyRef.current) return current;
-        return { ...stored } as FormValues;
-      });
+      // The input keeps the read identity it was composed from; the pairing
+      // stays visible above so a newer read cannot become its save baseline
+      // without the explicit decision this card then asks for.
+      const restored = { ...stored.values } as FormValues;
+      setValues(restored);
+      valuesRef.current = restored;
+      setPairedBaseline(stored.readBaseline);
       setDirty(true);
+      dirtyRef.current = true;
     } else if (stored === undefined && dirtyRef.current) {
       // Input typed before the identity resolved is persisted as soon as it
-      // can be scoped, so a refresh never silently drops it.
-      setValues((current) => {
-        if (current !== null)
-          writeRuleDraft(
-            principalValue,
-            session.family,
-            draftKey,
-            current as Record<string, RuleFormValue>,
-          );
-        return current;
-      });
+      // can be scoped, so a refresh never silently drops it; it is written
+      // with the very read the visible form is composed against.
+      const current = valuesRef.current;
+      if (current !== null) {
+        writeRuleDraft(
+          principalValue,
+          session.family,
+          draftKey,
+          current as Record<string, RuleFormValue>,
+          pairedBaseline,
+        );
+      }
     }
-  }, [principal, session.family, draftKey]);
+  }, [principal, session.family, draftKey, pairedBaseline]);
+
+  // A restored draft only pairs with the read that produced it. When the
+  // card's own read carries a *different* Active identity, the two may never
+  // be stitched into one savable snapshot: save stays blocked until the
+  // operator explicitly adopts the current value or keeps the input after a
+  // re-check (B54-01 / AC-3, AC-10, AC-11).
+  const draftMismatch =
+    dirty &&
+    pairedBaseline !== null &&
+    projection !== null &&
+    projection.ok &&
+    !sameReadIdentity(pairedBaseline, projection.baseline);
+
+  const draftVerify: VerifyPanelState | null =
+    draftMismatch &&
+    projection !== null &&
+    projection.ok &&
+    projection.values !== null
+      ? {
+          ...EMPTY_VERIFY,
+          reason: "draft",
+          verdict:
+            values !== null &&
+            sameCandidate(
+              values as Record<string, unknown>,
+              projection.values as Record<string, unknown>,
+            )
+              ? "matched"
+              : "modified",
+          current: { values: projection.values, baseline: projection.baseline },
+          active: projection.baseline,
+        }
+      : null;
 
   // A retained record for this subject keeps the verification panel open even
   // before any local action: `verifyState` is the local decision state or the
@@ -417,7 +486,7 @@ export function RulesObjectCard({
     verify ??
     (storedRecord !== null && principal.resolved
       ? { ...EMPTY_VERIFY, reason: "unknown" }
-      : null);
+      : draftVerify);
 
   // Leaving with unsaved input warns the browser; the in-app exits below are
   // the coordinated Continue/Discard decision.
@@ -460,6 +529,22 @@ export function RulesObjectCard({
 
   const clearDraft = () => {
     clearRuleDraft(principalRef.current, session.family, draftKey);
+  };
+
+  /**
+   * The safe side of the discard choice: withdraw the prompt and cancel any
+   * held browser Back (restoring this card's own address/history position)
+   * while keeping the input, its read pairing and the open subject intact.
+   */
+  const continueEditing = () => {
+    setDiscardArmed(false);
+    const current = blockerRef.current;
+    if (current.status === "blocked") current.reset();
+    window.requestAnimationFrame(() => {
+      card.layerRef.current
+        ?.querySelector<HTMLElement>(".mf-modal-close")
+        ?.focus({ preventScroll: true });
+    });
   };
 
   const commitClose = () => {
@@ -535,11 +620,14 @@ export function RulesObjectCard({
     setValues(next);
     setDirty(true);
     if (principalRef.current !== null) {
+      // The draft always records the read its content pairs with, so a later
+      // reopen can compare instead of guessing.
       writeRuleDraft(
         principalRef.current,
         session.family,
         draftKey,
         next as Record<string, RuleFormValue>,
+        pairedBaseline,
       );
     }
     setIssues((current) => {
@@ -606,7 +694,9 @@ export function RulesObjectCard({
       });
       return;
     }
-    const current: FormValues = { ...(objectOutcome.model.value as FormValues) };
+    const current: FormValues = {
+      ...(objectOutcome.model.value as FormValues),
+    };
     const baseline = authorityIdentity(objectOutcome.model.active);
     const frozenCandidate = frozen?.candidate ?? null;
     const matched =
@@ -649,8 +739,20 @@ export function RulesObjectCard({
     if (verifyState.reason === "unknown") clearUnknownRecord();
     clearDraft();
     setValues(adopted.values);
-    setProjection({ ok: true, baseline: adopted.baseline, name: null });
+    setProjection({
+      ok: true,
+      baseline: adopted.baseline,
+      name:
+        typeof adopted.values.name === "string"
+          ? (adopted.values.name as string)
+          : null,
+      values: adopted.values,
+    });
+    // The adopted value and its baseline become the new pairing together —
+    // never the input under one and the read under the other.
+    setPairedBaseline(adopted.baseline);
     setDirty(false);
+    dirtyRef.current = false;
     setFrozenState(null);
     setVerify(null);
     onNotice(
@@ -682,7 +784,25 @@ export function RulesObjectCard({
     }
     const fresh = authorityIdentity(activeOutcome.model.active);
     if (reason === "unknown") clearUnknownRecord();
-    setProjection({ ok: true, baseline: fresh, name: null });
+    // The explicit review re-pairs the retained input with this fresh Active
+    // read in one visible step: the draft store records the same pairing, so
+    // a later refresh compares instead of reopening a decision already made.
+    if (values !== null && principalRef.current !== null) {
+      writeRuleDraft(
+        principalRef.current,
+        session.family,
+        draftKey,
+        values as Record<string, RuleFormValue>,
+        fresh,
+      );
+    }
+    setProjection({
+      ok: true,
+      baseline: fresh,
+      name: projection !== null && projection.ok ? projection.name : null,
+      values: projection !== null && projection.ok ? projection.values : values,
+    });
+    setPairedBaseline(fresh);
     setFrozenState(null);
     setVerify(null);
     onNotice(
@@ -694,7 +814,10 @@ export function RulesObjectCard({
   // Save
   // ------------------------------------------------------------------
   const ready =
-    authority !== null && values !== null && projection !== null && projection.ok;
+    authority !== null &&
+    values !== null &&
+    projection !== null &&
+    projection.ok;
   const projectionFailed = projection !== null && !projection.ok;
 
   const saveDisabled =
@@ -720,7 +843,8 @@ export function RulesObjectCard({
       return;
     }
     setIssues(new Map());
-    const observed = projection !== null && projection.ok ? projection.baseline : null;
+    const observed =
+      projection !== null && projection.ok ? projection.baseline : null;
     if (observed === null) {
       setState({
         kind: "known-failure",
@@ -856,21 +980,44 @@ export function RulesObjectCard({
   const verifyPanel = (verifyState: VerifyPanelState): ReactNode => {
     const subjectName =
       frozen?.objectId ??
-      (session.mode === "edit" ? session.objectId : verifyObjectId ?? "");
+      (session.mode === "edit" ? session.objectId : (verifyObjectId ?? ""));
     const facts = (
       <>
-        <p>
-          {verifyState.reason === "unknown"
-            ? "无法确认上次保存是否生效(结果未知)。系统不会自动重发;核对完成之前,普通保存已被阻止。"
-            : "当前 Active 与保存时的基线不一致(stale),本次没有发布任何内容,输入已保留。"}
-        </p>
-        <p className="mf-rules-verify-facts">
-          原请求:{modeLabel(session.mode)} {subjectName}
-          {frozen !== null
-            ? `,提交于 ${formatSubmitTime(frozen.submittedAt)},提交时 Active 序号 ${frozen.baseline.expectedVersion}`
-            : ""}
-          。
-        </p>
+        {verifyState.reason === "draft" ? (
+          <>
+            <p>
+              恢复的输入来自更早的一次读取,它与当前读取不是配套的一对;决定之前
+              保存已被阻止,系统不会自动换底、不会自动保存,也不会重发任何命令。
+            </p>
+            <p className="mf-rules-verify-facts">
+              本卡片:{modeLabel(session.mode)} {subjectName},输入读取于 Active
+              序号
+              {pairedBaseline !== null
+                ? ` ${pairedBaseline.expectedVersion}`
+                : " -"}
+              ;当前读取序号
+              {verifyState.active !== null
+                ? ` ${verifyState.active.expectedVersion}`
+                : " -"}
+              。
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              {verifyState.reason === "unknown"
+                ? "无法确认上次保存是否生效(结果未知)。系统不会自动重发;核对完成之前,普通保存已被阻止。"
+                : "当前 Active 与保存时的基线不一致(stale),本次没有发布任何内容,输入已保留。"}
+            </p>
+            <p className="mf-rules-verify-facts">
+              原请求:{modeLabel(session.mode)} {subjectName}
+              {frozen !== null
+                ? `,提交于 ${formatSubmitTime(frozen.submittedAt)},提交时 Active 序号 ${frozen.baseline.expectedVersion}`
+                : ""}
+              。
+            </p>
+          </>
+        )}
         {verifyState.failureCode ? (
           <p className="mf-rules-verify-facts">
             结果分类:{ruleFailureCopy(verifyState.failureCode)}
@@ -918,7 +1065,8 @@ export function RulesObjectCard({
         <>
           <p>
             当前 Active 序号 {verifyState.active?.expectedVersion ?? "-"};该对象
-            <strong>已不在当前 Active 中</strong>。这既可能是原保存没有生效,也可能是
+            <strong>已不在当前 Active 中</strong>
+            。这既可能是原保存没有生效,也可能是
             它之后被其他管理员移除;读取结果不能单独证明原请求的成功或失败。
           </p>
           <div className="mf-actions">
@@ -931,21 +1079,39 @@ export function RulesObjectCard({
               onClick={() => void recheckKeepInput()}
               disabled={verifyState.busy !== null}
             >
-              {verifyState.busy === "recheck" ? "正在复核..." : "保留输入,重新复核"}
+              {verifyState.busy === "recheck"
+                ? "正在复核..."
+                : "保留输入,重新复核"}
             </button>
           </div>
         </>
       );
     } else {
       const matched = verifyState.verdict === "matched";
+      const isDraftDecision = verifyState.reason === "draft";
       body = (
         <>
           <p>
-            当前 Active 序号 {verifyState.active?.expectedVersion ?? "-"};该对象
-            <strong>{matched ? "与原提交内容一致" : "与原提交内容不同"}</strong>
-            {matched
-              ? ";这与原保存生效相符,但当前同值本身不能单独证明原请求已成功。"
-              : ";当前值来自另一次发布,它不是原请求成功或失败的证明。"}
+            当前 Active 序号 {verifyState.active?.expectedVersion ?? "-"};
+            {isDraftDecision ? (
+              <>
+                恢复的输入与当前读取的内容
+                <strong>{matched ? "一致" : "不同"}</strong>
+                {matched
+                  ? ";两者同样都必须由你明确选定一套(输入与它的旧基线,或当前值与当前基线),不能互相拼接。"
+                  : ";当前值来自另一次发布,它不属于你的输入。采用当前值会保留它并丢弃这份输入;保留输入会在重新复核配套当前基线后再提交你的候选,请先在下方查看当前值。"}
+              </>
+            ) : (
+              <>
+                该对象
+                <strong>
+                  {matched ? "与原提交内容一致" : "与原提交内容不同"}
+                </strong>
+                {matched
+                  ? ";这与原保存生效相符,但当前同值本身不能单独证明原请求已成功。"
+                  : ";当前值来自另一次发布,它不是原请求成功或失败的证明。"}
+              </>
+            )}
           </p>
           {verifyState.current ? (
             <details className="mf-rules-verify-current">
@@ -956,9 +1122,7 @@ export function RulesObjectCard({
                 <dt>名称</dt>
                 <dd>{String(verifyState.current.values.name ?? "-")}</dd>
               </dl>
-              <pre>
-                {JSON.stringify(verifyState.current.values, null, 2)}
-              </pre>
+              <pre>{JSON.stringify(verifyState.current.values, null, 2)}</pre>
             </details>
           ) : null}
           <div className="mf-actions">
@@ -976,7 +1140,9 @@ export function RulesObjectCard({
               onClick={() => void recheckKeepInput()}
               disabled={verifyState.busy !== null}
             >
-              {verifyState.busy === "recheck" ? "正在复核..." : "保留输入,重新复核"}
+              {verifyState.busy === "recheck"
+                ? "正在复核..."
+                : "保留输入,重新复核"}
             </button>
           </div>
         </>
@@ -986,9 +1152,9 @@ export function RulesObjectCard({
     return (
       <div
         className={
-          verifyState.reason === "unknown"
-            ? "mf-rules-save-unknown"
-            : "mf-rules-save-failure"
+          verifyState.reason === "stale"
+            ? "mf-rules-save-failure"
+            : "mf-rules-save-unknown"
         }
         role={verifyState.reason === "unknown" ? "status" : "alert"}
         data-testid="rules-verify-panel"
@@ -996,7 +1162,9 @@ export function RulesObjectCard({
         <h3>
           {verifyState.reason === "unknown"
             ? "上次保存结果未知,需要核对"
-            : "保存被拒绝:当前 Active 已变化"}
+            : verifyState.reason === "draft"
+              ? "恢复的输入需要先核对当前值"
+              : "保存被拒绝:当前 Active 已变化"}
         </h3>
         {facts}
         {body}
@@ -1065,7 +1233,7 @@ export function RulesObjectCard({
                 type="button"
                 className="mf-button mf-button-secondary"
                 id="mf-rules-discard-continue"
-                onClick={() => setDiscardArmed(false)}
+                onClick={continueEditing}
               >
                 继续编辑
               </button>
@@ -1113,7 +1281,11 @@ export function RulesObjectCard({
               : "当前身份无法确认,保存已暂停以避免重复发布;请刷新页面重试。"}
           </p>
         ) : null}
-        <div className="mf-rules-card-tabs" role="tablist" aria-label="卡片区域">
+        <div
+          className="mf-rules-card-tabs"
+          role="tablist"
+          aria-label="卡片区域"
+        >
           <button
             type="button"
             role="tab"
@@ -1188,10 +1360,10 @@ export function RulesObjectCard({
       closeDisabled={savingLocked || exit.closing}
       onRequestClose={attemptClose}
       size="form"
-      cardClassName={`mf-rules-card${
+      cardClassName={`mf-rules-form-card${
         session.family === "recognitionRules" ||
         session.family === "classificationPolicies"
-          ? " mf-rules-card-complex"
+          ? " mf-rules-form-card-complex"
           : ""
       }`}
       bodyClassName="mf-rules-card-body"

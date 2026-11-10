@@ -13,23 +13,33 @@ a real Chromium browser through the existing Rules journey:
 * the inventory keeps a separate title/description row, a left blue Add and a
   right icon-bearing keyword/state filter, then a full-width real table;
 * each inventory retains one local keyword input; Overview has no search;
-* every one of the seven families opens its purpose-built Add drawer with real
-  domain sections, the backend-derived required marker and an accessible enable
-  switch only where the family actually supports enable state;
+* every one of the seven families opens the unified Add card with real domain
+  sections, the backend-derived required marker and an accessible enable switch
+  only where the family actually supports enable state;
 * Classification exposes a compact internal-rule inventory with an inner
   ``添加规则`` distinct from the outer ``添加分类规则``;
-* the Rules drawer keeps its title/footer pinned while the body scrolls, offers
-  Cancel then Save at the right, and is styled through Rules-scoped classes so
-  Files drawer CSS cannot change its geometry;
+* the unified Rules card keeps its title/footer pinned while the body scrolls,
+  offers Cancel then Save at the right, and is styled under its own
+  ``mf-rules-form-card`` name so Files drawer CSS and the eight-navigation
+  ``.mf-rules-card`` geometry cannot reach it;
+* a bounded Create entry survives a real browser refresh + reconnection with
+  its input (B54-04), a held browser Back continues on the same edit address
+  with the input and read pairing intact (B54-03), and a Copy card carries the
+  backend-generated new ID and its default-disabled state (B54-02);
+* the object-local test keeps its business conclusion/actual output/reason/
+  next step first with family, revision and call counters behind one closed
+  diagnostics disclosure (B54-05);
 * saved screenshots cover 1536×1024, a representative narrow 760 px width and a
   mobile 390 px width, and a reference-by-reference comparison matrix records
   the measured bounds for the header, navigation, table and drawer.
 
 Safety is proven at the Python boundary rather than only in the browser: the
 harness reads the real configuration authority and the real SQLite runtime
-database before and after the whole journey and requires the Active revision,
-digest, activation count and executable Task/Job work to be unchanged. The
-journey must issue no mutating HTTP request.
+database before and after the whole journey. The evidence is phased — every
+open/edit/close/refresh/verification step stays mutation-free, one explicit
+Edit Save is the single permitted publication (exactly one mutating request,
+exactly one new activation), analysis submissions are read-only local
+evaluation evidence, and executable Task/Job work stays unchanged.
 
 No production service, credential, user media or external network is involved.
 Every token here is a throwaway value scoped to temporary resources.
@@ -143,15 +153,32 @@ async function bounds(locator) {
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1536, height: 1024 } });
+  // A dirty card warns before a real reload; the journey deliberately accepts
+  // leaving so the durable draft restore itself is what gets verified.
+  page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
   const mutations = [];
+  const unexpectedMutations = [];
+  const publishWindow = { active: false };
   page.on('request', (request) => {
     const method = request.method();
-    if (request.url().includes('/api/') && method !== 'GET' && method !== 'HEAD') {
-      mutations.push(`${method} ${new URL(request.url()).pathname}`);
+    const url = new URL(request.url());
+    if (!url.pathname.includes('/api/') || method === 'GET' || method === 'HEAD') return;
+    // The local test endpoint is read-only evaluation evidence: it publishes
+    // nothing and creates no executable work.
+    if (url.pathname.includes('/analysis')) return;
+    mutations.push(`${method} ${url.pathname}`);
+    if (!publishWindow.active) {
+      unexpectedMutations.push(`${method} ${url.pathname}`);
     }
   });
 
-  const evidence = { viewports: {}, referenceComparisons: {}, screenshots: [] };
+  const evidence = {
+    viewports: {},
+    referenceComparisons: {},
+    screenshots: [],
+    mutations: [],
+    unexpectedMutations: [],
+  };
 
   // -- desktop: shared header, navigation, inventory, drawer ---------------
   await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1024);
@@ -289,9 +316,10 @@ try {
       switch: true,
       sections: [
         '基本信息',
-        '元数据服务与媒体类型',
+        '元数据服务与查询类型',
         '语言与地区',
-        '候选与匹配',
+        '候选接受与匹配',
+        '请求限制(高级)',
         '状态',
       ],
     },
@@ -331,9 +359,13 @@ try {
       .click();
     const drawer = page.getByRole('dialog', { name: `添加${family.label}` });
     await expect(drawer).toBeVisible();
-    await expect(drawer).toHaveClass(/mf-rules-drawer/);
+    await expect(drawer).toHaveClass(/mf-rules-form-card/);
     if (await drawer.evaluate((node) => node.classList.contains('mf-files-drawer'))) {
-      throw new Error(`${family.label} drawer still carries Files drawer classes`);
+      throw new Error(`${family.label} card still carries Files drawer classes`);
+    }
+    // The eight-navigation-card class must never reach the dialog shell.
+    if ((await drawer.getAttribute('class') ?? '').split(/\s+/).includes('mf-rules-card')) {
+      throw new Error(`${family.label} card borrows the navigation card geometry`);
     }
     // Opening a drawer precedes its async authority/form read. Wait for the
     // existing form entry before inspecting its sections.
@@ -430,7 +462,7 @@ try {
       requiredLabel: requiredBox,
     };
     // Footer stays pinned and aligned right in 取消, 保存 order.
-    const footer = drawer.locator('.mf-rules-drawer-actions');
+    const footer = drawer.locator('.mf-modal-footer');
     const footerButtons = footer.locator('button');
     await expect(footerButtons).toHaveCount(2);
     await expect(footerButtons.nth(0)).toHaveText('取消');
@@ -446,15 +478,15 @@ try {
     }
     // The body scrolls independently of the pinned title and footer.
     const bodyOverflow = await drawer
-      .locator('.mf-rules-drawer-body')
+      .locator('.mf-rules-card-scroll')
       .evaluate((node) => getComputedStyle(node).overflowY);
     if (!['auto', 'scroll'].includes(bodyOverflow)) {
       throw new Error(`${family.label} body does not scroll independently (${bodyOverflow})`);
     }
     drawerEvidence[family.label] = {
       drawer: await bounds(drawer),
-      header: await bounds(drawer.locator('.mf-rules-drawer-header')),
-      body: await bounds(drawer.locator('.mf-rules-drawer-body')),
+      header: await bounds(drawer.locator('.mf-modal-header')),
+      body: await bounds(drawer.locator('.mf-rules-card-scroll')),
       footer: footerBox,
       sections: legends,
     };
@@ -544,6 +576,141 @@ try {
   await refusalDrawer.getByRole('button', { name: '放弃并关闭' }).click();
   await expect(refusalDrawer).toHaveCount(0);
 
+  // -- B54-04: the bounded Create entry survives refresh + reconnection -----
+  await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1024);
+  await page.getByRole('button', { name: '添加识别类型' }).first().click();
+  const createCard = page.getByRole('dialog', { name: '添加识别类型' });
+  await expect(createCard).toBeVisible();
+  await createCard.getByLabel(/^ID/).fill('proof-refresh');
+  // A real reload drops the memory-only token; the reconnect rebuilds the
+  // exact card from the bounded allowlisted `dialog=create` entry.
+  await page.reload();
+  if (await page.getByLabel('API token').count()) await connect(page);
+  await expect(page.getByRole('navigation', { name: '规则分类' })).toBeVisible();
+  const refreshedCreate = page.getByRole('dialog', { name: '添加识别类型' });
+  await expect(refreshedCreate).toBeVisible();
+  if (!page.url().includes('dialog=create')) {
+    throw new Error('create intent lost on refresh/reconnect: ' + page.url());
+  }
+  await expect(refreshedCreate.getByLabel(/^ID/)).toHaveValue('proof-refresh');
+  evidence.screenshots.push(await shoot(page, 'create-refresh-reconnect'));
+  // Only the explicit discard forgets the restored input.
+  await refreshedCreate.getByRole('button', { name: '取消' }).click();
+  await refreshedCreate.getByRole('button', { name: '放弃并关闭' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  if (page.url().includes('dialog=')) {
+    throw new Error('discard left the card entry behind: ' + page.url());
+  }
+
+  // -- B54-03: a held browser Back continues on the exact edit address ------
+  const backRow = page.getByRole('row', { name: /Normal Movie/ });
+  await backRow.getByRole('button', { name: '编辑' }).click();
+  const backCard = page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' });
+  await expect(backCard).toBeVisible();
+  const backName = backCard.getByLabel(/^名称/);
+  const originalName = await backName.inputValue();
+  const editedName = originalName + ' · 看板副本';
+  await backName.fill(editedName);
+  await page.goBack().catch(() => null);
+  await expect(page.getByText(/表单中有未保存的输入/)).toBeVisible();
+  await backCard.getByRole('button', { name: '继续编辑' }).click();
+  await expect(page.getByText(/表单中有未保存的输入/)).toHaveCount(0);
+  await expect(
+    page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' }),
+  ).toBeVisible();
+  // Real browser history: the held Back was cancelled and the address came
+  // back to the exact edit route — not to the inventory list.
+  await expect(page).toHaveURL(/\/rules\/edit\/recognitionTypes\/A(\?|$)/);
+  await expect(backName).toHaveValue(editedName);
+  evidence.screenshots.push(await shoot(page, 'back-continue-edit'));
+  // Refresh + reconnection keep the same object, address and input.
+  await page.reload();
+  if (await page.getByLabel('API token').count()) await connect(page);
+  await expect(
+    page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/rules\/edit\/recognitionTypes\/A(\?|$)/);
+  await expect(
+    page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' }).getByLabel(/^名称/),
+  ).toHaveValue(editedName);
+  // Explicit discard leaves for the originating family list; no write.
+  const backCardAfter = page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' });
+  await backCardAfter.getByRole('button', { name: '取消' }).click();
+  await backCardAfter.getByRole('button', { name: '放弃并关闭' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/rules\?section=recognitionTypes/);
+
+  // -- B54-02: a Copy card carries the backend new-ID candidate -------------
+  const copyRow = page.getByRole('row', { name: /Normal Movie/ });
+  const sourceId = (await copyRow.locator('code').first().innerText()).trim();
+  await copyRow.getByRole('button', { name: '复制' }).click();
+  const copyCard = page.getByRole('dialog', { name: '复制识别类型' });
+  await expect(copyCard).toBeVisible();
+  const copyId = (await copyCard.getByLabel(/^ID/).inputValue()).trim();
+  if (!copyId || copyId === sourceId) {
+    throw new Error(`copy candidate kept the source id: '${copyId}' of '${sourceId}'`);
+  }
+  await expect(copyCard.getByRole('switch', { name: '启用' })).not.toBeChecked();
+  evidence.screenshots.push(await shoot(page, 'copy-card'));
+  // A pristine copy closes without any discard choice and issues no write.
+  await copyCard.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByText(/表单中有未保存的输入/)).toHaveCount(0);
+
+  // -- RO-2 readability: conclusion first, diagnostics collapsed ------------
+  const publishRow = page.getByRole('row', { name: /Normal Movie/ });
+  await publishRow.getByRole('button', { name: '编辑' }).click();
+  const publishCard = page.getByRole('dialog', { name: '编辑识别类型 · Normal Movie' });
+  await expect(publishCard).toBeVisible();
+  await publishCard.getByRole('tab', { name: '单项测试' }).click();
+  const testAction = publishCard.getByRole('button', { name: '测试该识别类型' });
+  const testActionClass = (await testAction.getAttribute('class')) ?? '';
+  if (!testActionClass.includes('mf-button')) {
+    throw new Error('the test action is not styled like the other buttons: ' + testActionClass);
+  }
+  await testAction.click();
+  const localResult = publishCard.locator('.mf-rules-object-test-result').first();
+  await expect(localResult).toBeVisible();
+  // The finished result renders its conclusion-first summary asynchronously.
+  await expect(
+    localResult.locator('.mf-rules-object-test-summary dt').first(),
+  ).toHaveText('结论');
+  const summaryTerms = (await localResult
+    .locator('.mf-rules-object-test-summary dt')
+    .allTextContents())
+    .map((item) => item.trim());
+  if (JSON.stringify(summaryTerms) !== JSON.stringify(['结论', '实际输出', '原因', '下一步'])) {
+    throw new Error('local-test summary order drifted: ' + JSON.stringify(summaryTerms));
+  }
+  const diagnostics = localResult.locator('.mf-rules-object-test-diagnostics');
+  await expect(diagnostics.locator('summary')).toHaveText('诊断信息');
+  if (await diagnostics.evaluate((node) => node.open)) {
+    throw new Error('diagnostics disclosure is not collapsed by default');
+  }
+  await diagnostics.locator('summary').click();
+  await expect(diagnostics).toContainText('validated_non_active');
+  await expect(diagnostics).toContainText('Provider 调用 / Storage 读取');
+  evidence.screenshots.push(await shoot(page, 'desktop-edit-local-test'));
+
+  // -- exactly one publication, in its own phase ----------------------------
+  await publishCard.getByRole('tab', { name: '设置' }).click();
+  await publishCard.getByLabel(/^名称/).fill('Normal Movie · Proof Published');
+  publishWindow.active = true;
+  await publishCard.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByText(/已发布为新的 Active/)).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/rules\?section=recognitionTypes/);
+  publishWindow.active = false;
+  evidence.screenshots.push(await shoot(page, 'edit-published-notice'));
+  if (mutations.length !== 1) {
+    throw new Error(
+      'the journey expected exactly one publication, observed: ' + mutations.join(', '),
+    );
+  }
+  if (!mutations[0].startsWith('PUT /api/v1/operations/rules/objects/recognitionTypes/')) {
+    throw new Error('the single mutating request is not the Edit publication: ' + mutations[0]);
+  }
+
   // -- representative narrow and mobile widths -----------------------------
   for (const viewport of VIEWPORTS) {
     if (viewport.name.startsWith('desktop')) continue;
@@ -613,13 +780,23 @@ try {
     };
   }
 
-  if (mutations.length > 0) {
-    throw new Error('the presentation journey issued mutations: ' + mutations.join(', '));
-  }
+  // Every step outside the single publication window stayed read-only.
+  evidence.mutations = mutations;
+  evidence.unexpectedMutations = unexpectedMutations;
   fs.writeFileSync(
     path.join(ARTIFACTS, 'evidence.json'),
     JSON.stringify(evidence, null, 2),
   );
+  if (unexpectedMutations.length > 0) {
+    throw new Error(
+      'mutations outside the publication phase: ' + unexpectedMutations.join(', '),
+    );
+  }
+  if (mutations.length !== 1) {
+    throw new Error(
+      'expected exactly one publishing request, observed: ' + mutations.join(', '),
+    );
+  }
   console.log(JSON.stringify({ ok: true, screenshots: evidence.screenshots.length }));
 } finally {
   await browser.close();
@@ -857,20 +1034,49 @@ def main() -> int:
                 f"workspace browser journey failed:\n{result.stdout}\n{result.stderr}"
             )
         print("   " + result.stdout.strip().splitlines()[-1])
+        evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
 
         active_after = api("GET", "/api/v1/operations/rules/form-authority")["active"]
         activations_after = _activation_count(database_path)
         work_after = _executable_work(database_path)
-        if active_before["revisionId"] != active_after["revisionId"]:
-            raise RuntimeError("the presentation journey changed the Active revision")
-        if active_before["digest"] != active_after["digest"]:
-            raise RuntimeError("the presentation journey changed the Active digest")
-        if activations_before != activations_after:
-            raise RuntimeError("the presentation journey published a configuration")
+        # Phased safety: every presentation/refresh/verification step stayed
+        # read-only, and the one explicit Edit publication is accounted for
+        # exactly — one mutating request, one new activation, one Active
+        # successor, no executable work.
+        mutations_seen = list(evidence.get("mutations", []))
+        if evidence.get("unexpectedMutations"):
+            raise RuntimeError(
+                "mutations outside the publication window: "
+                + json.dumps(evidence["unexpectedMutations"])
+            )
+        if len(mutations_seen) != 1 or not mutations_seen[0].startswith(
+            "PUT /api/v1/operations/rules/objects/"
+        ):
+            raise RuntimeError(
+                "expected exactly the Edit publication as the only mutation, observed: "
+                + json.dumps(mutations_seen)
+            )
+        if active_before["revisionId"] == active_after["revisionId"]:
+            raise RuntimeError("the explicit publication did not produce a successor Active")
+        if active_before["digest"] == active_after["digest"]:
+            raise RuntimeError("the explicit publication did not change the Active digest")
+        if active_after["version"] != active_before["version"] + 1:
+            raise RuntimeError(
+                "the publication must advance the Active version by exactly one "
+                f"({active_before['version']} -> {active_after['version']})"
+            )
+        # The rules publication writes its own `rules_*` audit action rather
+        # than a separate `activate` row: the CLI-style activation counter
+        # must therefore stay untouched while the Active version advanced by
+        # exactly the one Save above.
+        if activations_after != activations_before:
+            raise RuntimeError(
+                "the journey ran a configuration activation beyond the single publication "
+                f"({activations_before} -> {activations_after})"
+            )
         if work_before != work_after:
             raise RuntimeError("the presentation journey created executable work")
 
-        evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
         matrix = {
             "task": "PATCH-20261029-4",
             "slice": None,
@@ -879,13 +1085,24 @@ def main() -> int:
             "referenceHashes": references,
             "measured": evidence,
             "safety": {
-                "activeRevisionUnchanged": active_before["revisionId"],
-                "activeDigestUnchanged": active_before["digest"],
+                "phaseModel": (
+                    "open/edit/close/refresh/reconnect/verification read-only; "
+                    "one explicit Edit publication window (exactly one PUT, Active "
+                    "version +1, activation counter untouched); analysis is "
+                    "read-only evidence"
+                ),
+                "activeRevisionBefore": active_before["revisionId"],
+                "activeRevisionAfter": active_after["revisionId"],
+                "activeDigestBefore": active_before["digest"],
+                "activeDigestAfter": active_after["digest"],
+                "activeVersionBefore": active_before["version"],
+                "activeVersionAfter": active_after["version"],
                 "activationsBefore": activations_before,
                 "activationsAfter": activations_after,
                 "executableWorkBefore": work_before,
                 "executableWorkAfter": work_after,
-                "mutatingRequests": [],
+                "mutatingRequests": mutations_seen,
+                "unexpectedMutations": [],
             },
             "comparison": [
                 {

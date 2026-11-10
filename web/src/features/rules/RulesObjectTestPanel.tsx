@@ -704,6 +704,46 @@ function OrganizeEvidence({
   );
 }
 
+/**
+ * The one-line business output of a finished run: what the local test
+ * actually produced for this family. Everything technical (family id, raw
+ * enums, revisions, call counters) stays in the diagnostics disclosure below.
+ */
+function analysisOutput(
+  family: RuleFormFamily,
+  model: RulesAnalysisModel,
+): string {
+  const result = record(model.result) ?? {};
+  if (family === "namingPolicies") {
+    return `目录 ${text(result.directory) ?? "-"} · 文件名 ${text(result.filename) ?? "-"}`;
+  }
+  if (family === "classificationPolicies") {
+    const library = text(result.mediaLibraryId);
+    const path = text(result.relativePath);
+    return `匹配 ${text(result.matchedRuleId) ?? "无"} · 目标 ${library ?? "无"}${library ? "/" : ""}${path ?? "无"}`;
+  }
+  if (family === "recognitionRules") {
+    return `输出类型 ${text(result.outputRecognitionType) ?? "-"} · 测试路径 ${text(result.testedPath) ?? "-"}`;
+  }
+  if (family === "recognitionTypes") {
+    const definition = record(result.definition);
+    const rules = list(result.associatedRules);
+    return `类型 ${text(definition?.id) ?? "-"} · 关联规则试识别 ${rules.length} 条`;
+  }
+  if (family === "typeBindings") {
+    const policies = record(result.resolvedPolicies);
+    const resolved = Object.values(policies ?? {}).filter(
+      (item) => record(item)?.resolved === true,
+    ).length;
+    return `识别类型 ${text(result.recognitionType) ?? "-"} · 四项策略已解析 ${resolved}/4`;
+  }
+  if (family === "metadataPolicies") {
+    const settings = record(result.effectiveSettings);
+    return `模式 ${text(result.mode) ?? "-"} · Provider ${text(settings?.providerId) ?? "-"} · 查询 ${text(result.queryType) ?? "-"}`;
+  }
+  return `操作 ${text(result.operation) ?? "-"} · 冲突策略 ${text(result.conflictStrategy) ?? "-"}`;
+}
+
 function AnalysisEvidence({
   family,
   result,
@@ -895,7 +935,7 @@ export function RulesObjectTestPanel({
       <h2 id="rules-object-test-title">测试与预览</h2>
       <p>{spec.summary}</p>
       <p className="mf-rules-object-test-scope">
-        测试对象:{family}
+        测试对象:{RULE_FAMILY_LABELS[family]}
         {objectId ? ` · ${objectId}` : " · 新建/复制候选"}
         。打开、编辑、导航、刷新或重连都不会自动提交测试。
       </p>
@@ -1115,91 +1155,135 @@ export function RulesObjectTestPanel({
         </label>
       ) : null}
       <div className="mf-actions">
-        <button type="button" onClick={() => void run()} disabled={busy}>
+        <button
+          type="button"
+          className="mf-button mf-button-primary"
+          onClick={() => void run()}
+          disabled={busy}
+        >
           {spec.action}
         </button>
       </div>
-      {runs.map((item) => (
+      {runs.map((runItem, runIndex) => (
         <article
-          key={item.id}
+          key={runItem.id}
           className="mf-rules-object-test-result"
           aria-live="polite"
         >
-          <h3>{family} 本地测试结果</h3>
-          <p>样本/上下文: {item.sampleLabel}</p>
-          {item.pending ? (
+          <h3>本地测试结果 #{runIndex + 1}</h3>
+          <p>样本/上下文: {runItem.sampleLabel}</p>
+          {runItem.pending ? (
             <p role="status">正在测试提交时的未保存对象...</p>
           ) : null}
-          {item.stale || item.model?.stale ? (
+          {runItem.stale || runItem.model?.stale ? (
             <p role="status">
               该结果已过期;当前表单、样本或 Active 已变化,请显式重新运行。
             </p>
           ) : null}
-          {item.error ? (
-            <div role="alert">
-              <p>
-                测试失败: {item.error}。失败阶段:{item.failureStage ?? "未知"}。
-              </p>
-              <p>
-                输入仍保留;下一步:
-                {item.nextAction ?? "检查相关输入与当前 Active 后显式重跑"}。
-              </p>
-            </div>
-          ) : null}
-          {item.model ? (
-            <>
-              <dl className="mf-rules-object-test-outcome">
+          {runItem.error ? (
+            <div className="mf-rules-object-test-summary" role="alert">
+              <dl>
                 <dt>结论</dt>
-                <dd>{item.model.conclusion}</dd>
-                <dt>结果类别</dt>
+                <dd>测试未完成:提交前的输入被拒绝,没有产生测试结论。</dd>
+                <dt>原因</dt>
                 <dd>
-                  {OUTCOME_LABEL[item.model.outcome] ?? item.model.outcome}
+                  {runItem.error}(阶段:
+                  {runItem.failureStage ?? "未知"})。
                 </dd>
-                <dt>适用性</dt>
+                <dt>下一步</dt>
                 <dd>
-                  {APPLICABILITY_LABEL[item.model.applicability] ??
-                    item.model.applicability}
-                </dd>
-                <dt>运行时资格</dt>
-                <dd>
-                  {item.model.runtimeEligibility === "separate"
-                    ? "与本次本地结论分开判定"
-                    : item.model.runtimeEligibility}
-                </dd>
-                <dt>完整流程就绪</dt>
-                <dd>
-                  {item.model.readiness === null
-                    ? "不适用(本地测试不判定完整流程)"
-                    : item.model.readiness === "complete_plan_ready"
-                      ? "完整计划就绪"
-                      : "受阻"}
-                </dd>
-                <dt>Provider 调用 / Storage 读取</dt>
-                <dd>
-                  {item.model.providerCalls} / {item.model.storageReads}
+                  {runItem.nextAction ?? "检查相关输入与当前 Active 后显式重跑"}
+                  。输入仍保留。
                 </dd>
               </dl>
-              <p>
-                候选修订 {item.model.revisionId.slice(0, 8)}… · 版本{" "}
-                {item.model.revisionVersion} · {item.model.candidateState}
+            </div>
+          ) : null}
+          {runItem.model ? (
+            <>
+              <div className="mf-rules-object-test-summary">
+                <dl>
+                  <dt>结论</dt>
+                  <dd>{runItem.model.conclusion}</dd>
+                  <dt>实际输出</dt>
+                  <dd>{analysisOutput(family, runItem.model)}</dd>
+                  <dt>原因</dt>
+                  <dd>
+                    {runItem.model.message ??
+                      "基于当前未保存候选与所选样本完成本地求值。"}
+                  </dd>
+                  <dt>下一步</dt>
+                  <dd>
+                    {runItem.model.nextAction ??
+                      "按结论决定是否保持或修正候选;本地测试不代替发布或完整流程检查。"}
+                  </dd>
+                </dl>
+              </div>
+              <p className="mf-rules-object-test-meta">
+                结果类别{" "}
+                {OUTCOME_LABEL[runItem.model.outcome] ?? runItem.model.outcome}·
+                适用性{" "}
+                {APPLICABILITY_LABEL[runItem.model.applicability] ??
+                  runItem.model.applicability}{" "}
+                · 运行时资格{" "}
+                {runItem.model.runtimeEligibility === "separate"
+                  ? "与本次本地结论分开判定"
+                  : runItem.model.runtimeEligibility}{" "}
+                · 完整流程就绪{" "}
+                {runItem.model.readiness === null
+                  ? "不适用(本地测试不判定完整流程)"
+                  : runItem.model.readiness === "complete_plan_ready"
+                    ? "完整计划就绪"
+                    : "受阻"}
               </p>
               <p>本地测试不发布、不激活、不产生可执行工作,也不授予执行权限。</p>
-              {item.model.message ? <p>{item.model.message}</p> : null}
-              {item.model.nextAction ? (
-                <p>下一步: {item.model.nextAction}</p>
-              ) : null}
-              <Blockers blockers={item.model.blockers} />
-              <AnalysisEvidence family={family} result={item.model.result} />
+              <Blockers blockers={runItem.model.blockers} />
+              <AnalysisEvidence family={family} result={runItem.model.result} />
+              <details className="mf-rules-object-test-diagnostics">
+                <summary>诊断信息</summary>
+                <dl>
+                  <dt>family / objectId</dt>
+                  <dd>
+                    {runItem.model.family} / {runItem.model.objectId ?? "-"}
+                  </dd>
+                  <dt>原始结果类别 / 适用性</dt>
+                  <dd>
+                    {runItem.model.outcome} / {runItem.model.applicability}
+                  </dd>
+                  <dt>候选状态</dt>
+                  <dd>{runItem.model.candidateState}</dd>
+                  <dt>候选修订 / 版本</dt>
+                  <dd>
+                    {runItem.model.revisionId.slice(0, 8)}... ·{" "}
+                    {runItem.model.revisionVersion}
+                  </dd>
+                  <dt>Provider 调用 / Storage 读取</dt>
+                  <dd>
+                    {runItem.model.providerCalls} / {runItem.model.storageReads}
+                  </dd>
+                  <dt>失败类别 / 合成身份</dt>
+                  <dd>
+                    {runItem.model.failureCategory ?? "-"} /{" "}
+                    {runItem.model.syntheticIdentity ? "是" : "否"}
+                  </dd>
+                </dl>
+              </details>
               <details className="mf-rules-object-test-advanced">
                 <summary>高级 / 支持:查看完整证据 JSON</summary>
-                <pre>{JSON.stringify(item.model.result, null, 2)}</pre>
+                <pre>{JSON.stringify(runItem.model.result, null, 2)}</pre>
               </details>
             </>
           ) : null}
-          {!item.pending ? (
-            <button type="button" onClick={() => void run()} disabled={busy}>
-              用当前输入重新运行此项
-            </button>
+          {!runItem.pending ? (
+            <div className="mf-actions">
+              <button
+                type="button"
+                className="mf-button"
+                onClick={() => void run()}
+                disabled={busy}
+              >
+                用当前输入重新运行此项
+              </button>
+            </div>
           ) : null}
         </article>
       ))}

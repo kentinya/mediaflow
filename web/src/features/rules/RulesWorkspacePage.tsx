@@ -57,7 +57,7 @@ import {
   type RulesCardSession,
 } from "./rules-card-session";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
-import { readRuleDraft } from "./rules-workspace-labels";
+import { hasRuleDraft } from "./rules-workspace-labels";
 import { Icon } from "../../shared/ui/Icons";
 import { Button } from "../../shared/ui/Button";
 import { useReadReveal } from "../../shared/ui/read-reveal";
@@ -760,7 +760,8 @@ export function RulesWorkspacePage({
     clearRulesList();
     if (snapshot.focusObjectId === null) return;
     const timer = window.setTimeout(() => {
-      const entries = document.querySelectorAll<HTMLElement>("[data-edit-entry]");
+      const entries =
+        document.querySelectorAll<HTMLElement>("[data-edit-entry]");
       for (const entry of Array.from(entries)) {
         if (entry.getAttribute("data-edit-entry") === snapshot.focusObjectId) {
           entry.focus({ preventScroll: true });
@@ -860,7 +861,9 @@ export function RulesWorkspacePage({
     }
     setPending(null);
     closeCard();
-    void queryClient.invalidateQueries({ queryKey: ["rules-workspace", token] });
+    void queryClient.invalidateQueries({
+      queryKey: ["rules-workspace", token],
+    });
   };
 
   const handleCommanded = (message: string) => {
@@ -876,7 +879,7 @@ export function RulesWorkspacePage({
     (family) =>
       family !== section &&
       principal.resolved &&
-      readRuleDraft(principal.principalId, family, null) !== undefined,
+      hasRuleDraft(principal.principalId, family),
   );
 
   return (
@@ -897,7 +900,11 @@ export function RulesWorkspacePage({
                 <h1>{RULES_WORKSPACE_TITLE}</h1>
                 <p>{RULES_WORKSPACE_DESCRIPTION}</p>
               </div>
-              <Button variant="secondary" onClick={refresh} disabled={isFetching}>
+              <Button
+                variant="secondary"
+                onClick={refresh}
+                disabled={isFetching}
+              >
                 {isFetching ? "刷新中…" : "刷新"}
               </Button>
             </header>
@@ -922,114 +929,117 @@ export function RulesWorkspacePage({
               </>
             );
           const family = section === "overview" ? null : section;
-        const items =
-          family === null
-            ? []
-            : data.sections[family].filter((item) => {
-                const needle = search.trim().toLocaleLowerCase();
-                const matchesText =
-                  !needle ||
-                  [
-                    item.id,
-                    item.name,
-                    item.description ?? "",
-                    item.summary,
-                  ].some((value) => value.toLocaleLowerCase().includes(needle));
-                const matchesState =
-                  enabled === "all" || item.enabled === (enabled === "enabled");
-                return matchesText && matchesState;
-              });
+          const items =
+            family === null
+              ? []
+              : data.sections[family].filter((item) => {
+                  const needle = search.trim().toLocaleLowerCase();
+                  const matchesText =
+                    !needle ||
+                    [
+                      item.id,
+                      item.name,
+                      item.description ?? "",
+                      item.summary,
+                    ].some((value) =>
+                      value.toLocaleLowerCase().includes(needle),
+                    );
+                  const matchesState =
+                    enabled === "all" ||
+                    item.enabled === (enabled === "enabled");
+                  return matchesText && matchesState;
+                });
           return (
-          <>
-            {header}
-            <FamilyNavigation section={section} onSelect={goToSection} />
-            {draftFamilies.length > 0 && (
-              <p className="mf-rules-verified" role="status">
-                仍有未保存的输入保存在本次会话中:
-                {draftFamilies.map((item) => LABELS[item]).join("、")}
-                。再次打开对应的添加或编辑表单即可继续修正。
-              </p>
-            )}
-            {section === "overview" ? (
-              <Overview model={data} token={token ?? ""} />
-            ) : (
-              <section
-                className="mf-rules-family"
-                aria-labelledby="rules-family-title"
-              >
-                <div className="mf-rules-family-head">
-                  <h2 id="rules-family-title" tabIndex={-1}>
-                    {LABELS[section]}
-                  </h2>
-                  <p>{RULE_FAMILY_INVENTORY_DESCRIPTIONS[section]}</p>
-                </div>
-                <div className="mf-rules-family-actions">
-                  {data.canManage && isFormFamily(section) ? (
-                    <button
-                      type="button"
-                      className="mf-button mf-button-primary mf-rules-add"
-                      onClick={() => openCreate(section as RuleFormFamily)}
-                    >
-                      <span aria-hidden="true">+</span> 添加{LABELS[section]}
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <div className="mf-rules-family-filters">
-                    <span className="mf-rules-search">
-                      <Icon name="search" />
-                      <input
-                        type="search"
-                        aria-label={RULE_FAMILY_SEARCH[section].label}
-                        placeholder={RULE_FAMILY_SEARCH[section].placeholder}
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                      />
-                    </span>
-                    <span className="mf-rules-state-filter">
-                      <Icon name="list" />
-                      <select
-                        aria-label="状态"
-                        value={enabled}
-                        onChange={(event) =>
-                          setEnabled(event.target.value as typeof enabled)
-                        }
-                      >
-                        <option value="all">全部</option>
-                        <option value="enabled">已启用</option>
-                        <option value="disabled">已停用</option>
-                      </select>
-                    </span>
+            <>
+              {header}
+              <FamilyNavigation section={section} onSelect={goToSection} />
+              {draftFamilies.length > 0 && (
+                <p className="mf-rules-verified" role="status">
+                  仍有未保存的输入保存在本次会话中:
+                  {draftFamilies.map((item) => LABELS[item]).join("、")}
+                  。再次打开对应的添加或编辑表单即可继续修正。
+                </p>
+              )}
+              {section === "overview" ? (
+                <Overview model={data} token={token ?? ""} />
+              ) : (
+                <section
+                  className="mf-rules-family"
+                  aria-labelledby="rules-family-title"
+                >
+                  <div className="mf-rules-family-head">
+                    <h2 id="rules-family-title" tabIndex={-1}>
+                      {LABELS[section]}
+                    </h2>
+                    <p>{RULE_FAMILY_INVENTORY_DESCRIPTIONS[section]}</p>
                   </div>
-                </div>
-                <Inventory
-                  family={section}
-                  items={items}
-                  totalInFamily={data.sections[section].length}
-                  model={data}
+                  <div className="mf-rules-family-actions">
+                    {data.canManage && isFormFamily(section) ? (
+                      <button
+                        type="button"
+                        className="mf-button mf-button-primary mf-rules-add"
+                        onClick={() => openCreate(section as RuleFormFamily)}
+                      >
+                        <span aria-hidden="true">+</span> 添加{LABELS[section]}
+                      </button>
+                    ) : (
+                      <span />
+                    )}
+                    <div className="mf-rules-family-filters">
+                      <span className="mf-rules-search">
+                        <Icon name="search" />
+                        <input
+                          type="search"
+                          aria-label={RULE_FAMILY_SEARCH[section].label}
+                          placeholder={RULE_FAMILY_SEARCH[section].placeholder}
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                        />
+                      </span>
+                      <span className="mf-rules-state-filter">
+                        <Icon name="list" />
+                        <select
+                          aria-label="状态"
+                          value={enabled}
+                          onChange={(event) =>
+                            setEnabled(event.target.value as typeof enabled)
+                          }
+                        >
+                          <option value="all">全部</option>
+                          <option value="enabled">已启用</option>
+                          <option value="disabled">已停用</option>
+                        </select>
+                      </span>
+                    </div>
+                  </div>
+                  <Inventory
+                    family={section}
+                    items={items}
+                    totalInFamily={data.sections[section].length}
+                    model={data}
+                    canManage={data.canManage}
+                    onAdd={openCreate}
+                    onCopy={openCopy}
+                    onEdit={openEdit}
+                    pending={pending}
+                    setPending={setPending}
+                    onCommanded={handleCommanded}
+                  />
+                </section>
+              )}
+              {dialogSession !== null ? (
+                <RulesObjectCard
+                  key={rulesCardSubject(dialogSession)}
+                  session={dialogSession}
                   canManage={data.canManage}
-                  onAdd={openCreate}
-                  onCopy={openCopy}
-                  onEdit={openEdit}
-                  pending={pending}
-                  setPending={setPending}
-                  onCommanded={handleCommanded}
+                  onClose={closeCard}
+                  onPublished={handlePublished}
+                  onNotice={setNotice}
                 />
-              </section>
-            )}
-            {dialogSession !== null ? (
-              <RulesObjectCard
-                key={rulesCardSubject(dialogSession)}
-                session={dialogSession}
-                canManage={data.canManage}
-                onClose={closeCard}
-                onPublished={handlePublished}
-                onNotice={setNotice}
-              />
-            ) : null}
-          </>
-        );
-      }}
+              ) : null}
+            </>
+          );
+        }}
       </AuthorizedReadBoundary>
     </section>
   );

@@ -997,6 +997,21 @@ export function allowlistedDestinationSearch(
     ) {
       allowed.set("section", section);
     }
+    // The bounded open-card intent of this Task rides the same allowlist: one
+    // closed dialog mode plus, for a Copy, one source ID bounded by the
+    // backend rules identifier contract. A dialog without its valid family or
+    // a source outside the contract is dropped instead of replayed, and the
+    // workspace resolves nothing from it. Edit keeps its own route.
+    const dialog = current.get("dialog");
+    if (allowed.has("section") && dialog === "create") {
+      allowed.set("dialog", "create");
+    } else if (allowed.has("section") && dialog === "copy") {
+      const source = current.get("source");
+      if (source !== null && RULES_ID_SEGMENT.test(source)) {
+        allowed.set("dialog", "copy");
+        allowed.set("source", source);
+      }
+    }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/explore") {

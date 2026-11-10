@@ -14,11 +14,14 @@ import { rulesPayload } from "../../entities/rules/rules-workspace.test";
 import {
   editProjectionPayload,
   formAuthorityPayload,
+  saveSuccessPayload,
 } from "./rules-form-fixtures";
+import { __resetRuleDraftsForTests } from "./rules-workspace-labels";
 
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  __resetRuleDraftsForTests();
   vi.unstubAllGlobals();
 });
 
@@ -176,9 +179,7 @@ describe("RulesEditPage edit card", () => {
       within(dialog).getByRole("tab", { name: "单项测试" }),
     );
     await act(async () => {
-      resolveAnalysis?.(
-        new Response(JSON.stringify(localAnalysisPayload({}))),
-      );
+      resolveAnalysis?.(new Response(JSON.stringify(localAnalysisPayload({}))));
       await pending;
     });
     expect(await within(dialog).findByText(/该结果已过期/)).toBeVisible();
@@ -267,9 +268,7 @@ describe("RulesEditPage edit card", () => {
     // The typed identity sample belongs to the card and travels with the
     // exact candidate; the evidence leads with the actual matched rule and
     // the real destination while full JSON stays in diagnostics.
-    await userEvent.click(
-      within(dialog).getByLabelText("测试样本识别类型"),
-    );
+    await userEvent.click(within(dialog).getByLabelText("测试样本识别类型"));
     await userEvent.type(
       within(dialog).getByLabelText("测试样本识别类型"),
       "C",
@@ -324,9 +323,7 @@ describe("RulesEditPage edit card", () => {
           bodies.push(
             JSON.parse(String(init?.body)) as Record<string, unknown>,
           );
-          return new Response(
-            JSON.stringify(localAnalysisPayload({})),
-          );
+          return new Response(JSON.stringify(localAnalysisPayload({})));
         }
         return new Response(JSON.stringify({ error: { code: "not_found" } }), {
           status: 404,
@@ -351,9 +348,7 @@ describe("RulesEditPage edit card", () => {
       within(dialog).getByRole("button", { name: "测试该识别类型" }),
     );
     expect(
-      await within(dialog).findByText(
-        /需要一个不超过 4096 个字符的合成路径/,
-      ),
+      await within(dialog).findByText(/需要一个不超过 4096 个字符的合成路径/),
     ).toBeVisible();
     expect(bodies).toHaveLength(0);
     // Correcting the input in place re-runs explicitly with the fixed sample.
@@ -408,7 +403,9 @@ describe("RulesEditPage classification save recovery", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         calls.push({ method, url });
         if (url.endsWith("/auth/principal"))
-          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }));
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(classificationAuthority));
         if (url.endsWith("/inventory"))
@@ -495,7 +492,9 @@ describe("RulesEditPage object identity", () => {
         const url = String(input);
         requested.push(url);
         if (url.endsWith("/auth/principal"))
-          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }));
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+          );
         if (url.endsWith("/form-authority"))
           return new Response(JSON.stringify(formAuthorityPayload));
         if (url.endsWith("/inventory"))
@@ -578,5 +577,170 @@ describe("RulesEditPage object identity", () => {
       expect(objectReads).toHaveLength(0);
       vi.mocked(fetch).mockClear();
     }
+  });
+});
+
+describe("RulesEditPage restored-draft pairing against a newer read", () => {
+  // 乙 publishes a newer successor of the same object while 甲 keeps a draft
+  // composed against the older read (B54-01). The stub lets the page see the
+  // newer projection on the next open, exactly as a refresh would.
+  const v2Active = {
+    ...formAuthorityPayload.active,
+    revisionId: "22222222-2222-4222-8222-222222222222",
+    revisionSequence: 2,
+    version: 2,
+    digest: "2".repeat(64),
+  };
+  const v2Projection = {
+    ...editProjectionPayload,
+    object: {
+      id: "C",
+      name: "Special",
+      description: "乙的新说明",
+      enabled: true,
+    },
+    active: v2Active,
+  };
+
+  interface DraftHarness {
+    readonly puts: Record<string, unknown>[];
+    readonly state: {
+      projection: unknown;
+      authority: unknown;
+    };
+  }
+
+  function stubDraftJourney(): DraftHarness {
+    const harness: DraftHarness = {
+      puts: [],
+      state: {
+        projection: editProjectionPayload,
+        authority: formAuthorityPayload,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        const json = (payload: unknown, status = 200) =>
+          new Response(JSON.stringify(payload), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          });
+        if (url.endsWith("/auth/principal"))
+          return json({ principal_id: "rules-principal-a" });
+        if (method === "PUT") {
+          harness.puts.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>,
+          );
+          return json(saveSuccessPayload);
+        }
+        if (url.endsWith("/form-authority"))
+          return json(harness.state.authority);
+        if (url.endsWith("/inventory")) return json(rulesPayload);
+        if (url.includes("/objects/recognitionTypes/C"))
+          return json(harness.state.projection);
+        return json({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    return harness;
+  }
+
+  /** 甲 opens object C, replaces the name and leaves without an explicit save. */
+  async function leaveDraft(input: string): Promise<void> {
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    const user = userEvent.setup();
+    const name = within(dialog).getByLabelText(/^名称/) as HTMLInputElement;
+    await user.clear(name);
+    await user.type(name, input);
+    expect(name.value).toBe(input);
+    cleanup();
+  }
+
+  it("blocks the restored draft until adopting the current value keeps 乙's publication", async () => {
+    const harness = stubDraftJourney();
+    await leaveDraft("候选甲");
+
+    // 乙 published a successor; 甲 refreshes and reconnects on the same route.
+    harness.state.projection = v2Projection;
+    harness.state.authority = { ...formAuthorityPayload, active: v2Active };
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    // The restored input is visible pairing with its own older read, and the
+    // decision is demanded before anything could be published.
+    expect(within(dialog).getByLabelText(/^名称/)).toHaveValue("候选甲");
+    const panel = await within(dialog).findByTestId("rules-verify-panel");
+    expect(panel).toHaveTextContent("恢复的输入需要先核对当前值");
+    expect(within(dialog).getByLabelText(/^描述/)).toHaveValue(
+      "Special handling",
+    );
+    const save = within(dialog).getByRole("button", { name: "保存" });
+    expect(save).toBeDisabled();
+    expect(harness.puts).toHaveLength(0);
+
+    // Adopting the current value keeps 乙's description under the v2 pairing.
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "采用当前值" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("rules-verify-panel")).toBeNull(),
+    );
+    expect(within(dialog).getByLabelText(/^名称/)).toHaveValue("Special");
+    expect(within(dialog).getByLabelText(/^描述/)).toHaveValue("乙的新说明");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(1));
+    const body = harness.puts[0] as {
+      expectedVersion: number;
+      object: Record<string, unknown>;
+    };
+    expect(body.expectedVersion).toBe(2);
+    expect(body.object.name).toBe("Special");
+    expect(body.object.description).toBe("乙的新说明");
+  });
+
+  it("submits the kept input only after the explicit re-check pairs it with the newer read", async () => {
+    const harness = stubDraftJourney();
+    await leaveDraft("候选甲");
+
+    harness.state.projection = v2Projection;
+    harness.state.authority = { ...formAuthorityPayload, active: v2Active };
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    await within(dialog).findByTestId("rules-verify-panel");
+    const save = within(dialog).getByRole("button", { name: "保存" });
+    expect(save).toBeDisabled();
+
+    // Keeping the input re-pairs the baseline with the fresh Active read in
+    // one visible step; only then may the same candidate be published.
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "保留输入,重新复核" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("rules-verify-panel")).toBeNull(),
+    );
+    expect(within(dialog).getByLabelText(/^名称/)).toHaveValue("候选甲");
+    expect(within(dialog).getByRole("button", { name: "保存" })).toBeEnabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(1));
+    const body = harness.puts[0] as {
+      expectedVersion: number;
+      object: Record<string, unknown>;
+    };
+    expect(body.expectedVersion).toBe(2);
+    expect(body.object.name).toBe("候选甲");
+    // The kept candidate is submitted as it was kept — the decided pairing,
+    // never a mix of the old input under a silently swapped baseline.
+    expect(body.object.description).toBe("Special handling");
   });
 });

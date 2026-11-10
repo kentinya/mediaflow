@@ -26,8 +26,16 @@ export type RulesCardMode = "create" | "copy" | "edit";
 
 export type RulesCardSession =
   | { readonly mode: "create"; readonly family: RuleFormFamily }
-  | { readonly mode: "copy"; readonly family: RuleFormFamily; readonly sourceId: string }
-  | { readonly mode: "edit"; readonly family: RuleFormFamily; readonly objectId: string };
+  | {
+      readonly mode: "copy";
+      readonly family: RuleFormFamily;
+      readonly sourceId: string;
+    }
+  | {
+      readonly mode: "edit";
+      readonly family: RuleFormFamily;
+      readonly objectId: string;
+    };
 
 const FORM_FAMILIES: ReadonlySet<string> = new Set(RULE_FORM_FAMILIES);
 
@@ -46,13 +54,19 @@ export function rulesCardSubject(session: RulesCardSession): string {
   return `edit|${session.family}|${session.objectId}`;
 }
 
-/** The correctable-draft identity of one card (create shares one per family). */
-export function rulesCardDraftKey(
-  session: RulesCardSession,
-): string | null {
-  if (session.mode === "create") return null;
-  if (session.mode === "copy") return session.sourceId;
-  return session.objectId;
+/**
+ * The correctable-draft identity of one card: subject = mode + object/source.
+ *
+ * Copying object `A` and editing object `A` are two different cards with two
+ * different inputs, and Create is its own mode — a draft written by one is
+ * never restorable by another. Together with the principal session and the
+ * family (composed by the draft store), every entry is scoped as
+ * principal + family + mode + subject.
+ */
+export function rulesCardDraftKey(session: RulesCardSession): string {
+  if (session.mode === "create") return "create|*";
+  if (session.mode === "copy") return `copy|${session.sourceId}`;
+  return `edit|${session.objectId}`;
 }
 
 /**
@@ -82,7 +96,11 @@ export function rulesDialogSearch(
   if (session.mode === "create")
     return { section: session.family, dialog: "create" };
   if (session.mode === "copy")
-    return { section: session.family, dialog: "copy", source: session.sourceId };
+    return {
+      section: session.family,
+      dialog: "copy",
+      source: session.sourceId,
+    };
   return { section: session.family };
 }
 

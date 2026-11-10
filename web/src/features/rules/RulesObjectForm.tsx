@@ -978,7 +978,12 @@ export function RulesObjectForm({
           {number("maxSearchPages", 1, 10, "最大搜索页数")}
         </div>
         <div className="mf-rules-pair">
-          {number("maxProviderRequests", 1, 100, "单次查询的最大 Provider 请求数")}
+          {number(
+            "maxProviderRequests",
+            1,
+            100,
+            "单次查询的最大 Provider 请求数",
+          )}
           {number("maxCandidateEnrichments", 0, 100, "最大候选补全数")}
         </div>
         <div className="mf-rules-pair">
@@ -1073,11 +1078,7 @@ export function RulesObjectForm({
       </Section>,
       ...(otherTemplates.length > 0
         ? [
-            <Section
-              key="other"
-              title="其他模板"
-              description={variableHint}
-            >
+            <Section key="other" title="其他模板" description={variableHint}>
               {otherTemplates.map((template) =>
                 text(template, variableHint, true, true),
               )}
@@ -1362,6 +1363,7 @@ function DestinationContractNotice({
       </p>
       <button
         type="button"
+        className="mf-button mf-button-secondary"
         disabled={disabled}
         onClick={onConvert}
         aria-label={`移除规则 ${index + 1} 的旧版目标前缀`}
@@ -1537,6 +1539,7 @@ function ClassificationRules({
                   </span>
                   <button
                     type="button"
+                    className="mf-button mf-button-secondary"
                     disabled={disabled}
                     aria-label={`修正规则 ${index + 1}`}
                     onClick={() => openRuleEditor(index)}
@@ -1897,7 +1900,11 @@ function ClassificationRules({
               </p>
             ))}
           <div className="mf-actions">
-            <button type="button" onClick={() => setOpenIndex(null)}>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => setOpenIndex(null)}
+            >
               完成
             </button>
           </div>

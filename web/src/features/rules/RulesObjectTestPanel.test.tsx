@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -804,5 +810,56 @@ describe("Rules complete-flow check", () => {
     expect(await screen.findByText("缺失阶段")).toBeVisible();
     expect(screen.getByText(/尚未配置可解析的下游绑定/)).toBeVisible();
     expect(screen.getByText("受阻")).toBeVisible();
+  });
+});
+
+describe("Rules local-test result readability", () => {
+  it("leads with 结论/实际输出/原因/下一步 and keeps technical facts in diagnostics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubRulesRoutes(() => new Response(JSON.stringify(analysisPayload()))),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
+    const runButton = await screen.findByRole("button", {
+      name: "测试该识别规则",
+    });
+    // The explicit actions share the same button styling as the rest of the UI.
+    expect(runButton.className).toContain("mf-button");
+    expect(runButton.className).toContain("mf-button-primary");
+    await userEvent.click(runButton);
+
+    const heading = await screen.findByRole("heading", {
+      name: "本地测试结果 #1",
+    });
+    const article = heading.closest("article");
+    expect(article).not.toBeNull();
+    if (article === null) return;
+    // The operator reads the business outcome first: the four summary fields
+    // lead the result, in that order.
+    const labels = Array.from(article.querySelectorAll("dl dt"))
+      .slice(0, 4)
+      .map((node) => node.textContent);
+    expect(labels).toEqual(["结论", "实际输出", "原因", "下一步"]);
+    expect(article.textContent).toContain("规则在提交路径上匹配");
+    // family, candidate state and the call counters live behind one closed
+    // diagnostics disclosure — still complete, never first in the reading.
+    const diagnostics = article.querySelector(
+      ".mf-rules-object-test-diagnostics",
+    ) as HTMLDetailsElement | null;
+    expect(diagnostics).not.toBeNull();
+    expect(diagnostics?.open).toBe(false);
+    expect(diagnostics?.querySelector("summary")?.textContent).toBe("诊断信息");
+    const diagnosticsText = diagnostics?.textContent ?? "";
+    expect(diagnosticsText).toContain("recognitionRules");
+    expect(diagnosticsText).toContain("validated_non_active");
+    expect(diagnosticsText).toContain("candidate-revision-1234".slice(0, 8));
+    expect(diagnosticsText).toContain("Provider 调用 / Storage 读取");
+    // The rerun control shares the same button styling too.
+    const rerun = within(article).getByRole("button", {
+      name: "用当前输入重新运行此项",
+    });
+    expect(rerun.className).toContain("mf-button");
   });
 });

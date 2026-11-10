@@ -17,7 +17,10 @@
  */
 
 import { Link, useParams } from "@tanstack/react-router";
-import { RULE_FORM_FAMILIES, type RuleFormFamily } from "../../entities/rules/rules-form";
+import {
+  RULE_FORM_FAMILIES,
+  type RuleFormFamily,
+} from "../../entities/rules/rules-form";
 import { isRulesObjectId } from "../../shared/api/api-client";
 import { RULE_RETURN_TO_LABEL } from "./rules-workspace-labels";
 import { RulesWorkspacePage } from "./RulesWorkspacePage";
@@ -34,8 +37,7 @@ export function RulesEditPage() {
     family?: string;
     objectId?: string;
   };
-  const valid =
-    isRuleEditFamily(family) && isRulesObjectId(objectId);
+  const valid = isRuleEditFamily(family) && isRulesObjectId(objectId);
   if (!valid) {
     // A rejected identity is read-only: no object projection travels and the
     // existing inventory stays untouched behind one bounded recovery state.

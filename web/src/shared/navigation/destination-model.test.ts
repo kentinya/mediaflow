@@ -9,6 +9,7 @@ import {
   isDestinationPath,
   shellPageForPath,
 } from "./destination-model";
+import { readRulesDialogSession } from "../../features/rules/rules-card-session";
 
 describe("destination model", () => {
   it("defines one operator-oriented route contract", () => {
@@ -279,6 +280,82 @@ describe("destination model", () => {
       ]) {
         expect(allowlistedDestinationSearch("/rules", search)).toBeNull();
       }
+    });
+
+    it("carries the bounded Rules open-card intent through reconnect", () => {
+      // Create and Copy ride the inventory search: a refresh or auth return
+      // must rebuild the same card instead of dropping the entry point.
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&dialog=create&token=secret",
+        ),
+      ).toBe("section=recognitionTypes&dialog=create");
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&dialog=copy&source=C&revision=sha256:abc",
+        ),
+      ).toBe("section=recognitionTypes&dialog=copy&source=C");
+      // The source keeps exactly the backend rules identifier contract,
+      // including `+`, internal space, `@` and dots.
+      for (const source of [
+        "proof+type",
+        "proof type",
+        "proof@type",
+        "proof.type",
+      ]) {
+        const allowed = allowlistedDestinationSearch(
+          "/rules",
+          `section=recognitionTypes&dialog=copy&source=${encodeURIComponent(source)}`,
+        );
+        expect(new URLSearchParams(allowed ?? "").get("source"), source).toBe(
+          source,
+        );
+      }
+      // A dialog without its family, a foreign mode, a missing or out-of-
+      // contract source never survives: only the plain section does.
+      expect(
+        allowlistedDestinationSearch("/rules", "dialog=create"),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&dialog=teleport",
+        ),
+      ).toBe("section=recognitionTypes");
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&dialog=copy",
+        ),
+      ).toBe("section=recognitionTypes");
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&dialog=copy&source=..%2f..%2fetc",
+        ),
+      ).toBe("section=recognitionTypes");
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=not-a-family&dialog=create",
+        ),
+      ).toBeNull();
+      // Whatever survives stays resolvable by the open-card reader itself.
+      const kept = allowlistedDestinationSearch(
+        "/rules",
+        `section=recognitionTypes&dialog=copy&source=${encodeURIComponent("proof+type")}`,
+      );
+      const parsed: Record<string, unknown> = {};
+      for (const [key, value] of new URLSearchParams(kept ?? "")) {
+        parsed[key] = value;
+      }
+      expect(readRulesDialogSession(parsed, "recognitionTypes")).toEqual({
+        mode: "copy",
+        family: "recognitionTypes",
+        sourceId: "proof+type",
+      });
     });
 
     it("keeps only the bounded Explore detail token through reconnect", () => {

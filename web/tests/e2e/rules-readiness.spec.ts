@@ -475,7 +475,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     expect(traffic.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
   });
 
-  test("every family keeps its purpose-built Add form, applicable enable switch and pinned drawer actions", async ({
+  test("every family keeps its purpose-built Add form, applicable enable switch and pinned card actions", async ({
     page,
   }) => {
     await resetRules(page);
@@ -524,12 +524,12 @@ test.describe("Rules reference-aligned workspace presentation", () => {
           drawer.getByRole("switch", { name: "启用" }),
         ).toBeVisible();
       else await expect(drawer.getByRole("switch")).toHaveCount(0);
-      // The drawer title and footer stay usable while the body scrolls, and the
-      // footer offers Cancel then Save at the right.
+      // The unified card title and footer stay usable while the body scrolls,
+      // and the footer offers Cancel then Save at the right.
       await expect(
         drawer.getByRole("button", { name: "关闭规则表单" }),
       ).toBeVisible();
-      const footerButtons = drawer.locator(".mf-rules-drawer-actions button");
+      const footerButtons = drawer.locator(".mf-modal-footer button");
       await expect(footerButtons).toHaveCount(2);
       await expect(footerButtons.nth(0)).toHaveText("取消");
       await expect(footerButtons.nth(1)).toHaveText("保存");
@@ -540,7 +540,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     }
   });
 
-  test("Rules drawer geometry is scoped and Files drawers keep their own layout", async ({
+  test("Rules card geometry is scoped and Files drawers keep their own layout", async ({
     page,
   }) => {
     await resetRules(page);
@@ -549,18 +549,24 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     const drawer = page.getByRole("dialog", { name: "添加分类规则" });
     await expect(drawer).toBeVisible();
 
-    // The Rules drawer carries Rules-scoped classes only, so Files drawer CSS
-    // cannot change its geometry.
-    await expect(drawer).toHaveClass(/mf-rules-drawer/);
+    // The unified Rules card carries its own style name under the shared
+    // modal shell: neither Files drawer CSS nor the eight-navigation-card
+    // `.mf-rules-card` grid geometry can reach it.
+    await expect(drawer).toHaveClass(/mf-rules-form-card/);
     await expect(drawer).not.toHaveClass(/mf-files-drawer/);
+    const cardClasses = ((await drawer.getAttribute("class")) ?? "").split(
+      /\s+/,
+    );
+    expect(cardClasses).not.toContain("mf-rules-card");
     await expect(drawer.locator(".mf-files-drawer-header")).toHaveCount(0);
-    await expect(drawer.locator(".mf-rules-drawer-header")).toHaveCount(1);
-    await expect(drawer.locator(".mf-rules-drawer-body")).toHaveCount(1);
-    await expect(drawer.locator(".mf-rules-drawer-actions")).toHaveCount(1);
+    await expect(drawer.locator(".mf-rules-drawer-header")).toHaveCount(0);
+    await expect(drawer.locator(".mf-modal-header")).toHaveCount(1);
+    await expect(drawer.locator(".mf-rules-card-scroll")).toHaveCount(1);
+    await expect(drawer.locator(".mf-modal-footer")).toHaveCount(1);
 
     const box = await drawer.boundingBox();
     expect(box).not.toBeNull();
-    // A complex conditions drawer uses more than the simple 500–560px width.
+    // The complex conditions card uses more than the simple 500–560px width.
     expect(box!.width).toBeGreaterThanOrEqual(500);
 
     // Narrow viewports keep the drawer inside the available width with every

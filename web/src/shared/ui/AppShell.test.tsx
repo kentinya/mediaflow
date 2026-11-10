@@ -544,21 +544,38 @@ describe("AppShell", () => {
     authStore.setToken("shell-test-token");
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ error: { code: "not_found" } }), {
-            status: 404,
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        // The inventory background loads; the object/authority reads fail, so
+        // the unified edit card states the failure itself.
+        if (url.endsWith("/inventory")) {
+          return new Response(JSON.stringify(rulesPayload), {
+            status: 200,
             headers: { "Content-Type": "application/json" },
-          }),
-      ),
+          });
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
     );
     renderApp("/ui-v2/rules/edit/recognitionTypes/C");
 
-    // The Edit route keeps its own subject heading; the shared shell must not
-    // add a Rules title above it.
+    // The Edit route keeps the unified card as its subject context — the
+    // failed read is stated inside that card — while the shared registry
+    // shell must not add a second Rules title above the inventory background.
+    const card = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · C",
+    });
+    expect(await within(card).findByRole("alert")).toBeVisible();
+    // Exactly one Rules title: the inventory background's own content header.
+    // The registry shell itself never renders a second Rules heading above it.
+    expect(screen.getAllByRole("heading", { name: "整理规则" })).toHaveLength(
+      1,
+    );
     expect(
-      await screen.findByRole("heading", { name: "无法读取该对象" }),
-    ).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "整理规则" })).toBeNull();
+      document.querySelector(".mf-shell-topbar h1, .mf-shell-topbar h2"),
+    ).toBeNull();
   });
 });

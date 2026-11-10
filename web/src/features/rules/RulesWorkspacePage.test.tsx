@@ -354,10 +354,13 @@ describe("RulesWorkspacePage", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         const url = String(input);
         if (url.endsWith("/api/v1/auth/principal"))
-          return new Response(JSON.stringify({ principal_id: "rules-principal-a" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ principal_id: "rules-principal-a" }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         if (method === "POST")
           return new Response(JSON.stringify(rejection), {
             status: 409,
@@ -453,9 +456,7 @@ describe("RulesWorkspacePage", () => {
     expect(posts).toBe(1);
     // The retained record blocks any unprotected re-submit until it is
     // reconciled; nothing is replayed automatically.
-    expect(
-      within(dialog).getByRole("button", { name: "保存" }),
-    ).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "保存" })).toBeDisabled();
     await user.click(
       within(dialog).getByRole("button", { name: "读取当前 Active 核对" }),
     );
@@ -477,15 +478,15 @@ describe("RulesWorkspacePage", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "关闭规则表单" }),
     );
-    await user.click(within(dialog).getByRole("button", { name: "放弃并关闭" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "放弃并关闭" }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
     const reopened = await screen.findByRole("dialog", {
       name: "添加识别类型",
     });
-    expect(
-      within(reopened).getByText(/提交时 Active 序号/),
-    ).toBeVisible();
+    expect(within(reopened).getByText(/提交时 Active 序号/)).toBeVisible();
     expect(
       within(reopened).getByRole("button", { name: "保存" }),
     ).toBeDisabled();
@@ -520,16 +521,16 @@ describe("RulesWorkspacePage", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "关闭规则表单" }),
     );
-    await user.click(
-      within(dialog).getByRole("button", { name: "继续编辑" }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: "继续编辑" }));
     expect(screen.queryByText(/表单中有未保存的输入/)).toBeNull();
     expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
     // Only an explicit discard forgets the candidate.
     await user.click(
       within(dialog).getByRole("button", { name: "关闭规则表单" }),
     );
-    await user.click(within(dialog).getByRole("button", { name: "放弃并关闭" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "放弃并关闭" }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
     const empty = await screen.findByRole("dialog", { name: "添加识别类型" });
@@ -1385,8 +1386,11 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
     expect(within(dialog).getByLabelText(/^描述/).tagName).toBe("TEXTAREA");
     const enable = within(dialog).getByRole("switch", { name: "启用" });
     expect(enable).toBeChecked();
-    // The card uses the shared modal geometry; Files drawer classes stay out.
-    const card = dialog.closest(".mf-rules-card") as HTMLElement;
+    // The card uses the shared modal geometry under its own style name; the
+    // eight-navigation-card class and Files drawer classes both stay out.
+    const card = dialog.closest(".mf-modal-card") as HTMLElement;
+    expect(card.className).toContain("mf-rules-form-card");
+    expect(card.className.split(" ")).not.toContain("mf-rules-card");
     expect(card.className).not.toContain("mf-files-drawer");
     expect(card.querySelector(".mf-modal-header")).not.toBeNull();
     expect(card.querySelector(".mf-rules-card-scroll")).not.toBeNull();
@@ -1687,5 +1691,183 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
     expect(
       within(dialog).getByText(/复用下游策略不会改变类型身份/),
     ).toBeVisible();
+  });
+});
+
+describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
+  it("keeps one object's Edit draft out of its Copy card, and Create out of both", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("navigation", { name: "规则分类" });
+    const user = userEvent.setup();
+    // 甲 edits object C, replaces the name and "refreshes" without an
+    // explicit discard: the input stays in its Edit-scoped draft.
+    const row = await screen.findByRole("row", { name: /Special/ });
+    await user.click(within(row).getByRole("button", { name: "编辑" }));
+    const editDialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    const draftName = within(editDialog).getByLabelText(
+      /^名称/,
+    ) as HTMLInputElement;
+    await user.clear(draftName);
+    await user.type(draftName, "编辑候选甲");
+    expect(draftName.value).toBe("编辑候选甲");
+    cleanup();
+
+    // Copy of the same object holds the backend copy candidate — its new ID,
+    // its own name and the default disabled state — never the Edit draft.
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("navigation", { name: "规则分类" });
+    const copyUser = userEvent.setup();
+    const copyRow = await screen.findByRole("row", { name: /Special/ });
+    await copyUser.click(within(copyRow).getByRole("button", { name: "复制" }));
+    const copyDialog = await screen.findByRole("dialog", {
+      name: "复制识别类型",
+    });
+    expect(within(copyDialog).getByLabelText(/^ID/)).toHaveValue("C-copy");
+    expect(within(copyDialog).getByLabelText(/^名称/)).toHaveValue(
+      "Special copy",
+    );
+    expect(
+      within(copyDialog).getByRole("switch", { name: "启用" }),
+    ).not.toBeChecked();
+    // A pristine Copy closes without any discard decision and writes nothing.
+    await copyUser.click(
+      within(copyDialog).getByRole("button", { name: "取消" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The same object's Edit draft survived the Copy journey untouched.
+    const editRowAgain = await screen.findByRole("row", { name: /Special/ });
+    await copyUser.click(
+      within(editRowAgain).getByRole("button", { name: "编辑" }),
+    );
+    const editAgain = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    expect(within(editAgain).getByLabelText(/^名称/)).toHaveValue("编辑候选甲");
+    // Explicit discard closes only this Edit draft.
+    await copyUser.click(
+      within(editAgain).getByRole("button", { name: "取消" }),
+    );
+    await copyUser.click(
+      within(editAgain).getByRole("button", { name: "放弃并关闭" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Create is its own mode: its input survives its own refresh. While that
+    // Create draft exists, the Edit card still reads the pristine object —
+    // one card never restores another mode's input.
+    await copyUser.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const createDialog = await screen.findByRole("dialog", {
+      name: "添加识别类型",
+    });
+    await copyUser.type(
+      within(createDialog).getByLabelText(/^ID/),
+      "keep-create",
+    );
+    cleanup();
+
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("navigation", { name: "规则分类" });
+    const reopen = userEvent.setup();
+    const editRowWhileCreateDrafted = await screen.findByRole("row", {
+      name: /Special/,
+    });
+    await reopen.click(
+      within(editRowWhileCreateDrafted).getByRole("button", { name: "编辑" }),
+    );
+    const reopenedEdit = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    expect(within(reopenedEdit).getByLabelText(/^名称/)).toHaveValue("Special");
+    await reopen.click(
+      within(reopenedEdit).getByRole("button", { name: "取消" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await reopen.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const reopenedCreate = await screen.findByRole("dialog", {
+      name: "添加识别类型",
+    });
+    expect(within(reopenedCreate).getByLabelText(/^ID/)).toHaveValue(
+      "keep-create",
+    );
+    // The restored Create input demands the same explicit discard before it
+    // is forgotten; cancelling alone never drops it.
+    await reopen.click(
+      within(reopenedCreate).getByRole("button", { name: "取消" }),
+    );
+    expect(await screen.findByText(/表单中有未保存的输入/)).toBeVisible();
+    await reopen.click(
+      within(reopenedCreate).getByRole("button", { name: "放弃并关闭" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("Continuing a blocked browser Back cancels the leave and keeps the exact card address", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    const { router } = renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("navigation", { name: "规则分类" });
+    const user = userEvent.setup();
+    const row = await screen.findByRole("row", { name: /Special/ });
+    await user.click(within(row).getByRole("button", { name: "编辑" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    const name = within(dialog).getByLabelText(/^名称/) as HTMLInputElement;
+    await user.type(name, " + Back");
+    expect(name.value).toBe("Special + Back");
+
+    // Leaving the open card is held by the same resolver a browser Back
+    // drives in a real history (the native-verified journey lives in
+    // scripts/rules_workspace_browser_proof.py): the address is not
+    // committed while the choice is open.
+    void router.navigate({
+      to: "/rules",
+      search: { section: "recognitionTypes" },
+    });
+    expect(await screen.findByText(/表单中有未保存的输入/)).toBeVisible();
+    expect(router.state.location.pathname).toBe(
+      "/rules/edit/recognitionTypes/C",
+    );
+
+    // 继续编辑 cancels the held navigation itself: the prompt withdraws, the
+    // card, the address, the read pairing and the input all stay put.
+    await user.click(within(dialog).getByRole("button", { name: "继续编辑" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/表单中有未保存的输入/)).toBeNull(),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "编辑识别类型 · Special" }),
+    ).toBeVisible();
+    expect(
+      (within(dialog).getByLabelText(/^名称/) as HTMLInputElement).value,
+    ).toBe("Special + Back");
+    expect(router.state.location.pathname).toBe(
+      "/rules/edit/recognitionTypes/C",
+    );
+
+    // The blocker stays armed: the next leave reaches the same choice again…
+    void router.navigate({
+      to: "/rules",
+      search: { section: "recognitionTypes" },
+    });
+    expect(await screen.findByText(/表单中有未保存的输入/)).toBeVisible();
+    // …and only an explicit discard honours the leave, returning to the
+    // originating family list.
+    await user.click(
+      within(dialog).getByRole("button", { name: "放弃并关闭" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.pathname).toBe("/rules"));
+    expect(router.state.location.search).toEqual({
+      section: "recognitionTypes",
+    });
   });
 });

@@ -558,11 +558,15 @@ body {
   color: #3c4a63;
 }
 /* --- Slice54 RO-1: one centered card per family/mode ---------------------- */
-.mf-rules-card {
-  width: min(720px, 100%);
+/* The form card is a `.mf-modal-card` variant with its own style name; the
+   eight-navigation-card `.mf-rules-card` name (grid geometry, centered
+   alignment, hover, nowrap smalls) never reaches the dialog shell, so the
+   header, body and footer fill the real card width at every viewport. */
+.mf-modal-card.mf-rules-form-card {
+  width: min(760px, 100%);
 }
 
-.mf-rules-card-complex {
+.mf-modal-card.mf-rules-form-card-complex {
   width: min(880px, 100%);
 }
 
@@ -788,11 +792,58 @@ body {
   padding-left: 18px;
 }
 
-.mf-rules-object-test-outcome {
-  padding: 8px 10px;
-  border: 1px solid #d8e2ef;
+/* The conclusion-first summary: 结论 / 实际输出 / 原因 / 下一步 read before any
+   technical detail; raw enums and counters live in the diagnostics below. */
+.mf-rules-object-test-summary {
+  padding: 10px 12px;
+  border: 1px solid #b9cdf3;
   border-radius: 8px;
   background: #fff;
+}
+
+.mf-rules-object-test-summary dt {
+  color: #14223c;
+  font-weight: 700;
+}
+
+.mf-rules-object-test-meta {
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-rules-object-test-diagnostics {
+  border: 1px dashed #c9d3e2;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 6px 10px;
+}
+
+.mf-rules-object-test-diagnostics summary {
+  cursor: pointer;
+  color: #41506b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mf-rules-object-test-diagnostics dl {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+.mf-rules-object-test-diagnostics dt {
+  color: #5f6b7d;
+  font-weight: 600;
+}
+
+.mf-rules-object-test-diagnostics dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #334155;
 }
 
 .mf-rules-object-test-advanced {

@@ -126,15 +126,24 @@ test.describe("Rules object identity", () => {
     // After an explicit disconnect the token is memory-only: re-entering the
     // same deep link, connecting, and the boundary continuation must return to
     // the same edit context with the same identity; the object identity never
-    // depends on the browser session.
+    // depends on the browser session. The open edit card makes the background
+    // inert, so the close decision comes first — an untouched card closes
+    // without arming any discard.
+    const openEditCard = page.getByRole("dialog", {
+      name: /编辑识别类型 · .*proof\.type/,
+    });
+    await openEditCard.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.getByRole("button", { name: "Disconnect" }).click();
     await page.goto("/ui-v2/rules/edit/recognitionTypes/proof.type");
     await connectAs(page);
     await expect(
+      page.getByRole("dialog", { name: /编辑识别类型 · .*proof\.type/ }),
+    ).toBeVisible();
+    await expect(
       page.getByRole("heading", { name: "proof.type" }),
     ).toBeVisible();
     expect(page.url()).toContain("/rules/edit/recognitionTypes/proof.type");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // Every file-like identity refreshes into the same exact editor. Each
     // direct entry is a fresh document, so the boundary continuation connects
@@ -203,24 +212,23 @@ test.describe("Rules object identity", () => {
       .getByRole("row", { name: /proof\+type/ })
       .getByRole("button", { name: "编辑" })
       .click();
-    await expect(
-      page.getByRole("heading", { name: "proof+type" }),
-    ).toBeVisible();
-    await expect(page.getByText(/ID 不可更改/)).toBeVisible();
+    const editCard = page.getByRole("dialog", {
+      name: "编辑识别类型 · proof+type",
+    });
+    await expect(editCard).toBeVisible();
+    await expect(editCard.getByText(/ID .+ 不可更改/)).toBeVisible();
 
-    // Name-only Save: the ID stays immutable and a successor publishes.
+    // Name-only Save: the ID stays immutable and a successor publishes; the
+    // card then returns to the originating list with the publish fact.
     const nameField = page.getByLabel(/^名称/);
     await nameField.fill("加号对象改名");
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByText(/已发布为新的 Active/)).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "proof+type" }),
-    ).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("row", { name: /加号对象改名/ })).toBeVisible();
 
-    // Copy opens a distinct candidate with a backend-selected ID. The edit
-    // page renders the same return action twice (header + footer actions);
-    // either one is the same explicit return.
-    await page.getByRole("link", { name: "返回整理规则清单" }).first().click();
+    // Copy opens a distinct candidate with a backend-selected ID, already
+    // on the inventory the card returned to.
     await expect(
       page.getByRole("heading", { name: "识别类型", exact: true }),
     ).toBeVisible();
@@ -234,11 +242,11 @@ test.describe("Rules object identity", () => {
     // object keeps its identity and the candidate is not Active until an
     // explicit Save.
     await expect(copyDrawer.getByLabel(/^ID/)).toHaveValue("proof+type-copy-1");
-    // Closing an untouched candidate arms the discard warning; the second
-    // click is the explicit discard.
-    await copyDrawer.getByRole("button", { name: "关闭规则表单" }).click();
+    // An untouched candidate closes on the first explicit close: nothing was
+    // typed, so there is no discard choice and no write.
     await copyDrawer.getByRole("button", { name: "关闭规则表单" }).click();
     await expect(copyDrawer).toHaveCount(0);
+    await expect(page.getByText(/表单中有未保存的输入/)).toHaveCount(0);
 
     // Disable from the list publishes an explicit successor.
     await page
