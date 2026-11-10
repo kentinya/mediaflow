@@ -48,8 +48,10 @@ Fixed Base e43a40674eb14aa12615a440a348fe675cd50c4e; no implementation Head.
 User authorized activation and A acting as B to plan the first coherent Task on 2026-11-10.
 The role exception is planning-only; implementation, Task acceptance and A Final Review are separate.
 Scope remains seven families' Add/Copy/Edit dialogs, settings/local-test readability and Overview-only
-complete-flow checking. TARGET is not delivered CURRENT. Next: first-Task planning, without code
-implementation, push or deployment. Slice53 and earlier acceptance/deferrals remain fixed.
+complete-flow checking. TARGET is not delivered CURRENT.
+[Task54.1](../TASK.md) now has a High/T4 planning draft under NO ACTIVE IMPLEMENTATION TASK.
+Next: explicit implementation authorization; no code, push or deployment in this planning action.
+Slice53 and earlier acceptance/deferrals remain fixed.
 
 ## Accepted boundary references
 
