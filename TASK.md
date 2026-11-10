@@ -17,7 +17,7 @@ Slice53 当前 **FIX REQUIRED**；A53-01 证明未知提交在兄弟重分析后
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 8a468b7685d5750bcd7607fc291a61ae70b7000c
 Reviewed Head: 263e1043516be73fc9a8e215ab7223f2b9e10296
@@ -28,7 +28,8 @@ Planner / Reviewer: B
 Planning Checkpoint Input: fded2cff4e3f9c131dce3416c916117bd72babd1
 Role Exception: USER AUTHORIZED A TO PERFORM THIS B CORRECTION PLAN ONLY
 Development Authorization: USER ACTIVATED A53-01 CORRECTION ON 2026-11-10
-Next Action: DEVELOPER IMPLEMENTS A53-01; SAME TASK FIX LOOP
+Correction Checkpoint: 8c1b2b1e262d483b594e99a06ad67e747b13bfa4
+Next Action: B REVIEWS THE A53-01 CORRECTION CANDIDATE; SAME TASK FIX LOOP
 ```
 
 ## Planning preflight
@@ -52,7 +53,7 @@ Next Action: DEVELOPER IMPLEMENTS A53-01; SAME TASK FIX LOOP
 本轮只补齐 A53-01 的原请求核对与交接，不重做已交付弹窗。
 
 实际代码缺口：`ManualOrganizeDialog.tsx` 的 Execute mutation 仍从当前 `preview` 读取
-previewId；未知状态只保留 itemIds／intentVersion／两个效果授权值，reconcileMutation
+previewId；未知状态只保留 itemIds／intentVersion／两个效果授权值，rereconcileMutation
 再次从当前 `preview` 取 ID。兄弟重分析发布新摘要后，原提交和新摘要被错误组合。
 现有 `fetchOrganizeAdmissionOutcome` 已支持传入完整 previewId／子集／版本／效果，
 后端原记录也仍可正确返回 known 和原 Task，无需新增 API、schema 或受理模型。
@@ -199,12 +200,79 @@ npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests
 不自动重提、重放已完成／不确定效果、忽略兄弟、猜最新任务，不以全面禁用兄弟纠正操作
 规避原请求绑定。不做无关清理、下一个 Task／Slice、生产验证、推送或部署。
 
-## Developer Completion Report — pending correction
+## Developer Completion Report — A53-01 修正实施
 
-- Checkpoint：待实现；提交后记录完整 SHA，Status 为 READY FOR B REVIEW。
-- 简述原提交身份如何捕获／使用、兄弟独立行为与准确任务交接、实际改动文件。
-- 记录上述受影响命令的实际结果和 A53-01 真实入口证明；失败／未运行／环境限制保持。
-- 全量和独立验收待 B；原 B PASS 与 A FIX REQUIRED 不构成本轮修正通过。
+**Status: READY FOR B REVIEW。** 源码 checkpoint
+`8c1b2b1e262d483b594e99a06ad67e747b13bfa4`(main;Task Base `95c24cd0` 未变),
+本报告随后的文档 checkpoint 为最终候选 HEAD。报告不声称 PASS、不关闭 Slice、
+不代行 B 验收与 A 终审;未推送、未发布、未部署。
+
+### 本轮改动与行为(A53-01)
+
+- **提交身份一次捕获:** `ManualOrganizeDialog.tsx` 新增只读
+  `OrganizeSubmissionIdentity`(previewId、复制的 itemIds、intentVersion、
+  allowOverwrite、allowSourceCleanup)。确认按钮 onClick 时一次性捕获,同一份身份
+  同时作为 Execute mutation 的变量;发送与响应处理不再在异步回调读取当前视图。
+  在途双击锁、`retry: false`、后端单次提交锁与校验保持。
+- **未知态只绑定原身份:** `unknownSubmission` 保存 message 加该完整身份;首次/重复
+  核对(reconcileMutation)只读该身份,完全移除对当前 `preview` 对象的读取——摘要被
+  新方案替换、清空或仍在加载都不改变核对对象。known/not_equivalent/not_admitted
+  真实语义与准确 Task 交接保持;读失败只显示核对未完成,原未知限制不清除、不自动
+  重提、不猜最新任务;只有原请求权威 not_admitted 才解除限制。
+- **兄弟独立与授权:** 摘要切换仍按既有 summaryKey 同步清空当前复核的覆盖/清理授权
+  与选择键;未选兄弟的保存/重新分析、草稿与路由阻断照常。未知期间仍只有一次 Execute
+  (确认按钮持续禁用),浏览/保存不被全面禁用。
+- **实际改动文件(4):** `web/src/features/operations/ManualOrganizeDialog.tsx`、
+  `web/src/features/operations/ManualOrganizeDialog.test.tsx`、
+  `web/tests/e2e/manual-organize-dialog.python.spec.ts`、
+  `scripts/operations_inventory_harness.py`(仅夹具:Dialog 目录下两个专用来源
+  `DialogReconcile.2027.mkv`/`DialogUnselected.2028.mkv`、识别规则正则、两个无歧义
+  Provider 候选 709/710、manual-file-state 白名单两项)。未改 typed API、共享恢复、
+  后端、schema、权限、任务中心详情;未新增产品或测试 HTTP 入口。
+
+### 实际验证(Developer 受影响范围,命令与 cwd 如下)
+
+- 仓库根:开工时 `python3 scripts/check_governance.py` → **PASS**;收尾前
+  `git diff --check` → clean,治理检查再次 PASS。
+- 单测反证(旧实现):把 reconcile 临时改回读取当前 `preview.previewId` 后,
+  新组合用例失败于 `expected 'preview-2' to be 'preview-1'`(核对读到了新摘要),
+  与 A 定位一致;恢复修正后通过。
+- `web/`:`npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/library/StorageFilesPage.test.tsx` → **3 files / 88 passed**;
+  其中 ManualOrganizeDialog 单文件 **20 passed**(19 既有 + 1 新增)。
+- `web/`:`npm run typecheck`、`npm run lint` → passed;
+  `npx prettier --check` 三个改动 Web/spec 文件 → all matched;`npm run build` →
+  通过(仅既有 bundle 体积提示)。
+- `web/`:`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **8 passed(50.1s)**,
+  新用例 6.0s。新真实旅程:真实 Files 选择两个专用临时来源进入、只确认其一并令真实
+  API 受理后仅丢浏览器响应 → 断言仅 1 次 Execute → 真实 Worker 完成 MOVE(源消失、
+  目标恰 1 个,兄弟源/目标不变)→ 未选兄弟改 RecognitionType C、保存并重新分析 →
+  反复驱动真实 Worker 直到新摘要被真实读取 → 一次“核对提交结果”:admission GET
+  唯一、路径等于原 preview,`itemIds/expectedIntentVersion/allowOverwrite/
+  allowSourceCleanup` 逐项等于原 Execute body → 打开的 `run=` 等于真实 Worker 返回的
+  原 taskId;结束时仍仅 1 次 Execute、兄弟未执行。入口全部为现有产品 UI,未伪造
+  产品状态或成功响应。
+- e2e 反证(旧实现):将 reconcile 改回旧读取并重建后,同一新用例真实失败于核对后
+  未交接(地址停留 Files 页,30s 超时,即 A 记录的错误核对行为);恢复修正、重建后
+  同一用例 6.2s 通过。
+- 夹具:`.venv/bin/ruff check scripts/operations_inventory_harness.py` 与
+  `.venv/bin/ruff format --check` → 通过;`python3 -m py_compile` 通过。
+
+### 未运行 / 剩余风险 / 限制保持
+
+- 全量 Python/Web/Node E2E、wheel 打包与 smoke、广域视觉/安全矩阵未运行——按工作流
+  归 B(T4);无 API/共享恢复改动,故未另跑 api-client、operations-api、
+  TaskItemRecoveryPanel 定向套件。
+- 根目录 `ruff .` 仍被预存未跟踪 `.explore_adapter_block.py` 阻断(既有披露事实,
+  本轮未动该文件);7 项环境跳过等前轮限制保持。本轮受影响检查与反证交错执行,
+  测试累计约 5 分钟,低于本轮总时间的 30%。
+- 单测后端桩新增“按真实 Files 选择裁剪摘要条目”能力与按 preview 区分的受理回答,
+  仅作用于测试桩;真实后端语义由上述真实 e2e 覆盖。
+- 预存脏文件 `mediaflow/.DS_Store` 与全部未跟踪调查脚本/日志/`15`/`output/` 材料
+  保留未提交;分支领先 origin 未推送。
+- 全量回归与独立验收待 B;原 B PASS 与 A FIX REQUIRED 不构成本轮修正通过。
 
 ## B Review Result — 退回前的历史验收
 
