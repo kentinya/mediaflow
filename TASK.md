@@ -5,7 +5,9 @@ Slice53 当前 **FIX REQUIRED**；A53-01 证明未知提交在兄弟重分析后
 用户于 2026-11-10 明确“代替B规划Task吧”，授权当前 A 执行者**仅代行本次 B 修正规划**。
 按已提交 `fded2cff4e3f9c131dce3416c916117bd72babd1:SLICE.md` 接续原 Task53.1；
 范围合法继续，不重规划 Slice、不重设 Base、不清除退回、不新建 minor bug 或新 Task。
-本轮到计划提交为止，不实施；本例外不延伸为 Developer、后续独立 B 验收或 A 终审代行授权。
+修正计划已提交于 `e60bc28db5d57339b5bef025fe900c871e6513be`。用户随后于 2026-11-10
+明确“激活Task”，授权 Developer 按下述计划实施 A53-01；当前 Task 转为 IN PROGRESS。
+本次仅提交激活状态，不代行 Developer；原角色例外不延伸为后续独立 B 验收或 A 终审代行授权。
 本文件下方保留**退回前的 B PASS 和 Closure Packet**；完整计划、开发指导及历轮修正报告见
 [固定 Task53.1 记录](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md)。
 生命周期以 [Development Workflow](docs/development-workflow.md) 为准；
@@ -15,7 +17,7 @@ Slice53 当前 **FIX REQUIRED**；A53-01 证明未知提交在兄弟重分析后
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: IN PROGRESS
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 8a468b7685d5750bcd7607fc291a61ae70b7000c
 Reviewed Head: 263e1043516be73fc9a8e215ab7223f2b9e10296
@@ -25,7 +27,8 @@ Test Level: T4
 Planner / Reviewer: B
 Planning Checkpoint Input: fded2cff4e3f9c131dce3416c916117bd72babd1
 Role Exception: USER AUTHORIZED A TO PERFORM THIS B CORRECTION PLAN ONLY
-Next Action: DEVELOPER IMPLEMENTS A53-01 WHEN INSTRUCTED; SAME TASK FIX LOOP
+Development Authorization: USER ACTIVATED A53-01 CORRECTION ON 2026-11-10
+Next Action: DEVELOPER IMPLEMENTS A53-01; SAME TASK FIX LOOP
 ```
 
 ## Planning preflight
@@ -33,8 +36,12 @@ Next Action: DEVELOPER IMPLEMENTS A53-01 WHEN INSTRUCTED; SAME TASK FIX LOOP
 2026-11-10；仓库 `/Users/songzhidong/mediaflow`，分支 `main`，规划前 HEAD
 `fded2cff4e3f9c131dce3416c916117bd72babd1`，治理检查 PASS，暂存区为空，仓库／Git 可写。
 保留已修改 `mediaflow/.DS_Store` 和全部未跟踪 `.DS_Store`、`.explore_adapter_block.py`、
-日志、`15`、`output/` 材料；本轮只提交 TASK，不纳入这些文件或私有配置。
-`Status: FIX REQUIRED` 保留 A 退回状态，不能把计划提交当作修复完成或重新 PASS。
+日志、`15`、`output/` 材料；原规划仅提交 TASK，本次激活仅更新 TASK／SLICE 状态字段，
+不纳入这些文件或私有配置。
+规划时 Task 为 FIX REQUIRED；本次用户激活后转 IN PROGRESS。Slice 的 A FIX REQUIRED
+及全部失败／验收事实保持，不能把计划或激活提交当作修复完成或重新 PASS。
+激活前 HEAD 为 `e60bc28db5d57339b5bef025fe900c871e6513be`，分支仍为 `main`，
+治理检查 PASS；暂存区为空，预存脏文件与规划时一致并全部保留。
 
 ## Goal / actual gap
 
@@ -126,7 +133,7 @@ previewId；未知状态只保留 itemIds／intentVersion／两个效果授权�
 
 ## Required tests
 
-以下是实施／验收计划，**本次仅规划，未执行这些产品测试**。遵循
+以下是实施／验收计划，**规划与激活检查点均未执行这些产品测试**。遵循
 [Workflow §6](docs/development-workflow.md#6-test-levels)，维持原 High／T4，不因修正行数少降级。
 
 ### Developer — affected tests
