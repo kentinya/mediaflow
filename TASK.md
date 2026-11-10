@@ -16,14 +16,14 @@ Slice53 的接受、原退回／修正与验证限制保留于
 Task ID: 54.1
 Task Type: SLICE
 Parent Slice: 54
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6351b60433f0e79dac6f5f7150884a1fecb0da43
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: A acting as B for planning only / B independent review
 Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
-Implementation Checkpoint: 7584bd3fd5274822b403e8b9758dcc87d9322670
-Next Action: DEVELOPER CORRECTS TASK54.1 EDIT BACKGROUND STABILITY
+Implementation Checkpoint: 2aedd74e1085aa42c96fe7b438ee3ffc606572d7
+Next Action: B REVIEWS THE B54-07 CORRECTED TASK54.1 CANDIDATE
 ~~~
 
 ## Goal
@@ -237,135 +237,85 @@ npm run test:e2e -- --config=playwright.python.config.ts --output=../.git/valida
 
 ~~~text
 Status: READY FOR B REVIEW
-Implementation Checkpoint: 7584bd3fd5274822b403e8b9758dcc87d9322670
-Candidate range: cd9b5c7e..7584bd3f(本报告随后单独 docs 提交)
+Implementation Checkpoint: 2aedd74e1085aa42c96fe7b438ee3ffc606572d7
+Candidate range: 576aca45..2aedd74e(本报告随后单独 docs 提交)
 ~~~
 
-### B54-06 修正落点
+### B54-07 修正落点
 
-- **同一核对上下文贯穿核对/采用/复核。**`VerifyPanelState` 增加随
-  `runVerification` 同一次双读带回的 `formAuthority`:
-  a)“采用当前值”在替换值与配套基线的同时 `setAuthority(formAuthority)`,
-  表单目录、`save()` 校验和 `RulesObjectTestPanel` 的
-  `authorityIdentity(authority.active)` 一起切到已核对 Active;
-  b)“保留输入,重新复核”把本次 `fetchRuleFormAuthority` 的模型与保留
-  输入、fresh 基线一同落地,投影改记“当前输入 + 其配套基线”(此前
-  旧读值配新基线属拼接,按指导不可保留);c)草稿核对的采用也携带
-  开卡读取到的配套 authority。采用/复核前的阻断、读回失败保留输入与
-  核对入口,均为既有行为未变。
-- **读到不同版本保持待核对。**新增 `divergent` 结论:核对双读
-  (form-authority 与对象投影)或草稿核对(authority 与 projection)
-  观察到不同 Active 身份时,展示两次读取序号、不提供采用/复核按钮、
-  不保存不重发,仅提供“重新核对”;读取对齐后重新核对即恢复可采用
-  的一致上下文。不改后端并发规则与分析协议。
-- **Active 变化使旧证据失效而不自动重跑。**卡片向测试面板传
-  `publicationEpoch={pairedBaseline.expectedVersion}`:采用或复核使
-  配套 Active 移动时(即使候选内容不变)旧结果立即标记过期,重跑由
-  操作者显式执行并提交当前候选。
-
-责任定位与 B 指导一致:`runVerification` 早已读到新 form-authority,
-此前只取其 identity,`authority` 状态停留于开卡读取——本修复把该读取
-作为核对上下文的一部分传递下去。
-
-### 新增测试(RulesEditPage.test.tsx,3 例)
-
-夹具按真实围栏语义服务:过期 PUT、过期 analysis 都以当前 Active 版本
-拒绝(409 `configuration_version_conflict`),当前身份才 200。
-
-1. **采用后单项测试**:初读 v1 → 乙发布 v2 → 保存 409 → 核对 →
-   采用 → 单项测试;断言分析请求 `expectedVersion/expectedRevisionId`
-   为 v2、`candidate.values` 为乙的新对象、结论显示且无“测试未完成”、
-   全程恰 1 次 PUT、保存重新可用且从未自动重发。
-2. **保留输入,重新复核**:v1 先跑一次(请求身份 1)→ 保存 409 →
-   核对 → 复核;候选未变而旧结果立即显示过期 → 重跑以 v2 身份提交
-   保持的候选(结论 ×2)→ 保存以 v2 基线恰一次 200 发布、关闭回
-   清单并显示发布事实。上轮草稿隔离与未知不重发用例保持通过。
-3. **分歧读取保持待核对**:核对时 form-authority v2、对象 v1 → 面板
-   显示“两次读取不能拼成同一套…”,无采用/复核、零 PUT/分析;读取
-   对齐后“重新核对”恢复为可采用的 v2 上下文。
-
-**失败复现(真实失败保留):**临时中和 adopt/recheck 的两处
-`setAuthority` 传递后,用例 1/2 如期失败于
-`expectedVersion: 1`(即 B54-06 的复现:分析仍带旧身份);恢复后
-18/18 通过。
-
-### 原生 proof 扩充(scripts/rules_workspace_browser_proof.py)
-
-在既有真实 Python/API/SQLite 夹具中加入双管理员冲突旅程:乙经真实
-HTTP PUT 发布(200)→ 甲带 v1 基线保存被真实围栏拒绝(409
-`configuration_version_conflict`)→ “读取当前 Active 核对”→ 采用 →
-旧结果过期 → 显式单项测试;随后唯一一次显式 Save 以采用后的上下文
-发布 200,回到清单。按实际请求核对:分析请求
-`expectedRevisionId/expectedVersion/expectedDigest` 恰为乙发布的
-Active 身份、`candidate.values` 为乙的新描述、HTTP 200、结论
-“类型定义有效;可选关联规则试识别未运行”写入 evidence。分阶段证据:
-浏览器恰 2 个 mutation(1 拒绝 + 1 发布)、窗口外零写、分析请求不
-计入 mutation、可执行工作前后一致。
-
-**计数语义更正(请 B 留意):**旧 `_activation_count` 查询的
-`managed_configuration_audit` 表在 mediaflow 源码中并不存在,计数恒
-为 0;上一轮“rules 发布记 rules_edit 而非 activate 行、激活计数不变”
-实际是对不存在表的空计数结论。本轮改查真实表
-`configuration_change_audits`,proof 现断言 journey 前后 `activate`
-行恰 +2(乙发布 + 甲发布;被拒的 409 不 compose 任何行)、
-`successor_draft_create`/`draft_edit` 恰 +4(2 次发布 + 2 次离线分析
-暂存)、`validate` +2,并以 Active revisionId/digest 更替与
-revisionSequence 单调前进佐证后继;`version` 字段(后继恒为 2,
-`create_successor_draft` 固定起点,非发布计数)只记录不断言。其余
-proof(files_toolbar/files_organize_discovery/rules_object_analysis)
-仍查询同一不存在表,属既有范围外问题,本轮未动,提请后续任务处理。
+- **根因与修正。**`AppShell` 的 `searchIsRules` 只匹配精确的 `/rules`,
+  而当前 Edit 路由已经由 `RulesEditPage` 挂载同一个 `RulesWorkspacePage`,
+  只在其上打开卡片。Shell 因此把 Edit 当成旧整页入口,新增只读文件搜索框
+  和 `Edit rule object` 位置行,使清单页头／导航／表格在打开与取消时一起
+  移动。修正复用已有 `pageIdentity === "rules"`(`shellPageForPath` 已把
+  `/rules` 与 `/rules/edit/...` 归为同一 Rules 页面身份)作为顶栏占位搜索与
+  `.mf-page-context` 的同一判定;七类 Edit、直达／刷新／重认证及 Add／Copy
+  共用该清单表面。未改公共 modal、表单、发布、认证、导航模型或其他页面布局。
+- **单测。**`AppShell.test.tsx` 的 Edit 深链用例改为断言同一 Rules 清单表面:
+  恰一个内容标题、无顶栏只读搜索、无 `.mf-page-context`、无
+  `Edit rule object`。`RulesWorkspacePage.test.tsx` 走真实列表旅程:
+  识别类型搜索 `Spec` → 行内编辑 → 卡片 → 取消,断言卡片打开期间 Shell
+  不增加行、背景分类仍为识别类型、返回后搜索 `Spec`、地址回到
+  `/rules?section=recognitionTypes`。
+- **原生 proof。**在既有真实 Python/API/临时 SQLite 主旅程中加入 B54-07:
+  1536×1000 下搜索 `Normal` → 编辑 → 取消,量取 `.mf-rules-header`、规则分类
+  导航、表格的位置与高度;打开／取消前后 `y=78/158/375` 完全一致
+  (B 退回读数曾为 `112/192/409`),`scrollY=0`,搜索 `Normal` 保持。
+  390×844 检查同一 Shell 无占位搜索／位置行、无整页横向溢出,保存前／中／后
+  截图;`scrollY=428` 返回后保持。另对七个真实分类清单逐个打开现有行编辑并
+  取消,七组页头／导航／表格几何全部不变。原有领域、发布、未知核对、
+  B54-06 双管理员 409／采用／显式发布断言保留;浏览器 mutation 仍仅为
+  既有的 1 次被拒 PUT + 1 次显式发布 PUT,窗口外零写,审计
+  `activate 1→3`、Active sequence `1→5`、可执行工作前后一致。
+- **失败保留。**proof 第 1 次虽然 PASS,但截图落在卡片入场透明帧;增加等待
+  卡片自身动画结束后重跑。七类循环第 3 次因识别规则清单存在两个 `table`
+  的定位歧义失败,改为限定 `.mf-rules-family` 内的首个清单表格;第 4 次
+  完整 PASS,39 张截图。
 
 ### 实际执行的 Developer 命令与结果
 
 - `python3 scripts/check_governance.py`:PASS(实施前、提交前各一次)。
 - 根目录 `.venv/bin/python -m unittest tests.test_v2_rules_workspace_commands
   tests.test_v2_rules_object_analysis tests.test_v2_rules_workspace_previews`:
-  184 tests OK(11.6s)。
+  184 tests OK(12.264s)。
 - `git diff --check`:PASS。
-- `web/` `npm run typecheck`:PASS;`npx eslint src/features/rules
-  src/routes/router.tsx src/shared/ui/modal-card.tsx
-  src/shared/navigation/destination-model.ts`:PASS;
-  `npx prettier --check`(同范围):PASS。
-- `web/ npm run test` 受影响批次 9 文件 157 项 PASS(13.5s;上轮
-  154 项 + 本轮 3 项新用例)。
-- `web/ npm run build`:PASS,产物 `index-B8zhZdNT.js`、
-  `index-ByxQof0I.css`(含本轮新文案)。
+- `web/ npm run typecheck`:PASS。
+- `web/ npx eslint src/features/rules src/routes/router.tsx
+  src/shared/ui/modal-card.tsx src/shared/ui/AppShell.tsx
+  src/shared/ui/AppShell.test.tsx`:PASS;`npx prettier --check` 同范围加
+  `src/shared/ui/styles.css`:PASS。
+- `web/ npm run test -- run` 受影响 8 文件 128 项 PASS(13.42s);
+  AppShell／RulesWorkspacePage／RulesEditPage 3 文件 96 项 PASS(10.27s);
+  触及共享 Shell 后消费者 8 文件 187 项 PASS(33.33s)。
+- `web/ npm run build`:PASS,产物 `index-BwvmhXD_.js`、
+  `index-ByxQof0I.css`。
 - `web/ npm run test:e2e -- tests/e2e/rules-readiness.spec.ts
-  tests/e2e/rules-identity.spec.ts`:17 passed(15.4s)。
-- 原生主旅程第 4 次运行 PASS:
-  `MF_PROOF_ARTIFACTS=$PWD/.git/validation-evidence/task54-1/developer-rules-workspace-b54-06`
+  tests/e2e/rules-identity.spec.ts`:17 passed(15.5s)。
+- 原生主旅程 4 次执行,最终 PASS:
+  `MF_PROOF_ARTIFACTS=$PWD/.git/validation-evidence/task54-1/developer-rules-workspace-b54-07`
   `.venv/bin/python scripts/rules_workspace_browser_proof.py` →
   `PASS: reference-aligned rules workspace through the real Python boundary`,
-  33 张截图(新增 `stale-conflict-verify`、`stale-conflict-adopted-test`),
-  evidence `b54_06`:乙发布 200、甲 409、分析请求身份 = 乙的
-  Active 身份、结论非空、最终发布 200;审计
-  `{activate:1, draft_import:1, validate:1}` →
-  `{activate:3, draft_edit:4, successor_draft_create:4, validate:3}`,
-  Active revisionSequence 1→5 / version 1→2,
-  `unexpectedMutations=[]`。前三次失败保留并按真实行为修正:
-  ①RO-2 后卡停在“单项测试”页,未切回“设置”导致名称不可见;
-  ②③按 `version` 断言 +2 失败,据此改用真实审计表计数(见上)。
-- 变更 proof 文件:`ruff check`/`ruff format --check` PASS,
-  `python -m compileall -q scripts/rules_workspace_browser_proof.py` PASS;
-  根预存 `.explore_adapter_block.py` 未触碰。
+  39 张截图;evidence.json 含 `b54_07.journeys`(desktop/mobile)与
+  `b54_07.families`(七类)。
+- 变更 proof 文件:`ruff check`／`ruff format --check`／
+  `python -m compileall -q` PASS。根预存 `.explore_adapter_block.py` 未触碰。
 
 ### 本轮用时与测试占比
 
-本轮总用时约 55 分钟;测试执行累计约 7 分钟(受影响单测与静态检查约
-1.5 分钟、build/e2e 约 1 分钟、proof 4 次约 4.5 分钟),占比约 13%,
-低于本轮要求的 30%。
+本轮自 B 退回后的开发、证据与文档约 18 分钟;测试执行累计约 3.5 分钟
+(含 proof 4 次、失败复现与受影响单测／静态检查／build／e2e),占比约
+20%,低于本轮要求的 30%。
 
 ### 剩余风险与限制(交 B)
 
-- T4 全量门禁(Python/Web 全量、Node E2E、打包与源码外 smoke)及其余
-  三个原生 proof(analysis/identity/classification)归 B;本轮未执行。
-- “activate 恰 +2”为本轮新断言口径(更正旧空计数),B 复跑时可直接
-  对照 evidence `safety.auditBefore/auditAfter`;如对发布计数口径有
-  不同意见请在审查中指出。
-- 核对双读分歧在原生层由单测用例 3(Fetch 桩)覆盖,proof 未构造
-  服务端两读分歧夹具;与既有 B54-01 双管理员原生复现的分工不变。
-- 未改后端并发规则、分析协议、`modal-card`、preview 后端/API;Slice/
-  Roadmap/Progress 与产品文档本轮未改。
+- T4 全量门禁(Python/Web 全量、Node E2E 全量、打包与源码外 smoke)及其余
+  三个原生 proof(analysis/identity/classification)仍归 B;本轮未执行。
+- 七类背景几何均以取消返回验证;真实保存返回仅既有识别类型发布旅程,
+  其余六类未逐类重新发布(避免无关写入;B54-07 是呈现修正)。
+- 390px 只断言 Shell／背景无整页溢出与截图,未对窄屏页头／导航／表格做
+  数值位置断言;桌面已做前／中／后精确几何对照。
+- 预存系统元数据、日志、调查材料和私有文件保持原样;本轮只提交上述
+  4 个源码／测试文件,Slice／Roadmap／Progress 与产品文档未改。
 
 ## B Review Result
 
