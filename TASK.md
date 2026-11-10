@@ -9,14 +9,14 @@ Read the [B](docs/agent-experience/task-planner-reviewer.md) or
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Checkpoint: f58c25d83bddc71d96dd90276e99e67395e3ac7f
+Implementation Checkpoint: 8248adc1372c4e63196de9c2c62df7c79216db2f
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER-AUTHORIZED TASK ACTIVATION — READY FOR IMPLEMENTATION
-Next Action: DEVELOPER FIXES PREPARATION HANDOFF AND VISIBLE ANALYSIS RECOVERY
+Next Action: B INDEPENDENTLY REVIEWS PREPARATION HANDOFF AND VISIBLE ANALYSIS RECOVERY ON A FRESH T4 CANDIDATE
 ```
 
 用户于 2026-11-09 明确“把这些在Task明确后激活Task”。本 Task 已正式激活，替换上一轮
@@ -694,3 +694,86 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
 - 视觉证据来自临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
   用户数据库、私有配置、凭据或生产媒体。预存 `.DS_Store`、未跟踪调查脚本／日志／
   `15`／`output/` 材料保持未动、未提交；本轮未推送或发布。
+
+## Developer Completion Report — 准备交接与分析反馈 P1
+
+**Status:** READY FOR B REVIEW。代码 checkpoint 为
+`8248adc1372c4e63196de9c2c62df7c79216db2f`（main；Task Base 未变），本报告随后的
+文档 checkpoint 为最终候选 HEAD。本报告不声称 PASS，不关闭 Slice，不替代 B 的 T4
+验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- **准备到摘要的读取交接。** 整理弹窗不再把 `completed／partial_success` 单独当作
+  整个准备已结束。只要该准入仍在自动准备中、已有冻结来源、没有材料拒绝且尚未关联
+  精确摘要，弹窗就继续读取同一 discovery；真正结束、失败、取消、暂停、空范围、预算／
+  安全拒绝、材料拒绝和只读历史仍按原边界停止，不重新创建、不保存、不执行。冻结完成
+  而摘要尚未关联时，标题说明“遍历已完成，正在关联分析摘要”，不再显示过期的
+  “准备完成”与旧意图提示。
+- **准备级分析动作的就近反馈。** “运行分析并生成计划摘要”自身拥有独立的请求中／
+  已受理／明确拒绝／读取失败事实，不再写入不存在的空 TaskItem 或用户尚进不去的
+  整批确认页。按钮在途显示“正在请求分析...”；受理后说明零变更分析与自动显示；
+  拒绝保留后端的 code 与 nextAction，并立即重读同一准备。版本过期得到的
+  `discovery_conflict` 因此会显示拒绝原因、零执行事实和重新读取入口；若同一准备
+  已有新摘要，弹窗直接进入该摘要。拒绝提示保留到下一次明确动作或摘要更新，不会
+  自动重提。
+- **真实合同夹具同步。** 用真实 API 捕获更新
+  `web/src/entities/operations/__fixtures__/manual-operations.json`，只新增两处
+  `problemTaskItemId: null`；`tests.test_manual_operations_contract` 的完整比较
+  保留，没有删除字段或放宽断言。
+- **Harness 隔离夹具与同步观察。** 新增独立 `DialogFreeze.2020.mkv`、
+  `DialogPrepAction.2026.mkv` 及各自 synthetic provider 候选；新增一次性
+  freeze 观察路由，让真实 Worker 在发布冻结准备（completed、无 Preview）后暂停，
+  浏览器读取该真实持久阶段后才继续。它不写产品状态、不构造新阶段、不改变权限；
+  仅把真实 `freeze→analysis` 窗口放宽到可稳定观察。
+- **格式。** `scripts/operations_inventory_harness.py`、`tests/test_organize_preparation.py`
+  已按 B 指示执行 Ruff 格式化。
+
+### 实际验证（Developer 受影响范围）
+
+- `web/`：`NODE_ENV=test npx vitest run
+  src/features/library/StorageFilesPage.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/ui/modal-card.test.tsx
+  src/shared/navigation/destination-model.test.ts` → **8 files / 166 passed**。
+  新增覆盖：遍历 completed→冻结→摘要自动显示且零 analyze；准备级分析拒绝
+  `discovery_conflict` 的原因、零执行与本准备重读；受理后的可见事实；既有 10 项
+  候选、未知提交、冲突、健康兄弟、草稿保护和焦点覆盖保留。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed（仅既有
+  bundle 体积提示）；4 个改动 Web／夹具文件 `npx prettier --check` → all matched。
+- 仓库根：`.venv/bin/python -m unittest tests.test_organize_preparation
+  tests.test_v2_manual_organize tests.test_manual_organize_execution
+  tests.test_organize_source_history tests.test_manual_operations_contract`
+  → **141 passed（10.1s）**。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **6 passed（39.3s）**。新增
+  真实用例：**3.8s** 完成 Files→批量整理→真实 Worker 发布冻结准备→浏览器读到
+  “遍历已完成，正在关联分析摘要”→释放后真实分析关联摘要→同一弹窗
+  `第 1 / 1 个`，全程 **0 次 analyze POST、0 次 Execute**；**4.3s** 完成准备级
+  “运行分析并生成计划摘要”的受理与零变更分析可见反馈，最终进入同一准备的摘要，
+  **1 次 analyze POST、0 次 Execute**。既有 10 项、未知提交、冲突和健康兄弟用例
+  继续通过。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（38.3s）**，Files 弹窗与既有
+  manual organize 假服务回归无变化。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → clean；
+  `ruff check`、`ruff format --check`（本 Task 两个 Python 文件）→ clean。
+
+### 剩余风险 / 未运行
+
+- B 的 T4 全量门禁仍由 B 执行：Web／Python 全量、wheel／打包、重启、Docker 影响
+  评估、完整桌面／390px／矮窗口视觉与真实键盘／返回／reduced-motion 验收。本报告
+  不声称 PASS。
+- 真实 Python harness 证明了冻结准备→摘要的自动交接与准备级动作受理；强制
+  `discovery_conflict` 的拒绝呈现由进入真实 Files 入口与真实弹窗的单元回归覆盖
+  （后端边界为既有 stub），没有在真实 harness 中人为制造 409。B 若要同视口复核
+  拒绝画面，需按真实陈旧版本场景触发，不应以伪造响应替代。
+- 自动准备在 Worker 不可用时仍会按 1.5s 持续读取同一准备以等待摘要；弹窗同时显示
+  Worker 不可用说明，关闭即停止。未新增后台轮询或持久状态。
+- 新 Python 验证使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；
+  未读取用户数据库、私有配置、凭据或生产媒体。预存 `mediaflow/.DS_Store` 及其余
+  未跟踪调查脚本／日志／`15`／`output/` 材料保持未动、未提交；本轮未推送或发布。
