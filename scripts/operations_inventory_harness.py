@@ -52,6 +52,12 @@ infrastructure, not product endpoints, and never touch product documents):
   time-range boundaries and server paging;
 - ``POST /__harness__/append-inventory-poll-failure`` appends a terminal Task
   so the browser can prove that a visible terminal-only inventory refreshes;
+- ``POST /__harness__/arm-preparation-freeze`` makes the next real
+  discovery Worker pass pause *after* it publishes the frozen preparation and
+  leave the analysis unpublished; ``GET /__harness__/preparation-freeze-state``
+  reports that a pause was reached and ``POST /__harness__/release-preparation-freeze``
+  resumes the same real pass.  This only widens a real freeze→analysis window
+  for the browser proof; it writes no product state and fabricates no stage;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
   to durable state;
@@ -385,9 +391,7 @@ def build_managed_fixture(
     # Slice53 conflict regression: an isolated source whose first explicit COPY
     # leaves a target, so the next ordinary MOVE produces a real destination
     # conflict without borrowing another journey's file.
-    (dialog_root / "DialogConflict.2022.mkv").write_bytes(
-        b"slice53 conflict synthetic media"
-    )
+    (dialog_root / "DialogConflict.2022.mkv").write_bytes(b"slice53 conflict synthetic media")
     (dialog_root / "DialogSibling.2023.mkv").write_bytes(
         b"slice53 conflict sibling synthetic media"
     )
@@ -398,10 +402,21 @@ def build_managed_fixture(
     (dialog_root / "DialogRename.2024.mkv").write_bytes(
         b"slice53 metadata correction synthetic media"
     )
+    # Slice53 preparation-handoff regression: its own unambiguous source, so
+    # the real Worker can publish the frozen walk before the linked plan while
+    # the browser observes both durable stages.
+    (dialog_root / "DialogFreeze.2020.mkv").write_bytes(
+        b"slice53 preparation handoff synthetic media"
+    )
+    (dialog_root / "DialogPrepAction.2026.mkv").write_bytes(
+        b"slice53 preparation analysis action synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogRename.2024.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogFreeze.2020.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogPrepAction.2026.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -1040,6 +1055,24 @@ def build_managed_fixture(
                         genres=("Animation",),
                         countries=("JP",),
                     ),
+                    MediaCandidate(
+                        "tmdb",
+                        "705",
+                        MediaType.MOVIE,
+                        "DialogFreeze",
+                        year=2020,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "706",
+                        MediaType.MOVIE,
+                        "DialogPrepAction",
+                        year=2026,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
                 )
             ),
         )
@@ -1103,6 +1136,11 @@ class AppState:
         self.time_filter_population: dict[str, object] | None = None
         #: The real resident cadence consumers the settings proof starts.
         self.resident_consumers: tuple[_HarnessResidentConsumer, ...] | None = None
+        #: One-shot synchronization for the real freeze→analysis race: the
+        #: Worker publishes the frozen preparation and waits here until the
+        #: browser journey has observed that durable stage. Test infrastructure
+        #: only; it never writes or invents product state.
+        self.preparation_freeze_gate: dict[str, threading.Event] | None = None
 
     @property
     def database(self) -> Path:
@@ -2083,28 +2121,81 @@ def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
         return worker.run_next()
 
 
+def arm_preparation_freeze_gate(state: AppState) -> dict[str, object]:
+    """Arm the one-shot real freeze→analysis synchronization boundary."""
+
+    gate = {"reached": threading.Event(), "release": threading.Event()}
+    state.preparation_freeze_gate = gate
+    return {"armed": True}
+
+
+def preparation_freeze_gate_state(state: AppState) -> dict[str, object]:
+    """Whether the real Worker published the frozen preparation yet."""
+
+    gate = state.preparation_freeze_gate
+    return {
+        "armed": gate is not None,
+        "reached": gate is not None and gate["reached"].is_set(),
+    }
+
+
+def release_preparation_freeze_gate(state: AppState) -> dict[str, object]:
+    """Release the Worker paused after its real frozen publication."""
+
+    gate = state.preparation_freeze_gate
+    if gate is None:
+        return {"released": False}
+    gate["release"].set()
+    state.preparation_freeze_gate = None
+    return {"released": True}
+
+
 def _run_discovery_step(state: AppState):
     from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
 
-    advanced = MediaDiscoveryWorker(
-        state.api._media_discovery,
-        worker_id="harness-discovery-worker",
-        notice=lambda _line: None,
-    ).run_next()
-    if advanced is not None:
-        return advanced
-    # Settle a discovery Task through the production Task engine only when that
-    # exact link exists.  The generic claim must not consume an unrelated
-    # queued Task merely because this fixture route was called.
-    linked = [
-        item.organize_task_id
-        for item in state.repository.list_media_discoveries(limit=100)
-        if not item.terminal and item.organize_task_id
-    ]
-    if not linked:
-        return None
-    task = _run_manual_task_once(state, task_id=linked[0])
-    return state.repository.get_media_discovery_for_task(task.task_id) if task else None
+    service = state.api._media_discovery
+    gate = state.preparation_freeze_gate
+    persist_frozen = getattr(service, "_persist_frozen", None)
+    if gate is not None and callable(persist_frozen):
+
+        def observed_persist_frozen(*args, **kwargs):
+            linked = persist_frozen(*args, **kwargs)
+            if (
+                linked.intent_id is not None
+                and linked.preview_id is None
+                and linked.status.value in {"completed", "partial_success"}
+            ):
+                # The frozen walk is durable and the plan is not linked yet.
+                # Hold the Worker only until the browser has read this exact
+                # stage; the next real pass analyzes as usual.
+                gate["reached"].set()
+                gate["release"].wait(timeout=15)
+            return linked
+
+        service._persist_frozen = observed_persist_frozen
+    try:
+        advanced = MediaDiscoveryWorker(
+            service,
+            worker_id="harness-discovery-worker",
+            notice=lambda _line: None,
+        ).run_next()
+        if advanced is not None:
+            return advanced
+        # Settle a discovery Task through the production Task engine only when
+        # that exact link exists.  The generic claim must not consume an
+        # unrelated queued Task merely because this fixture route was called.
+        linked = [
+            item.organize_task_id
+            for item in state.repository.list_media_discoveries(limit=100)
+            if not item.terminal and item.organize_task_id
+        ]
+        if not linked:
+            return None
+        task = _run_manual_task_once(state, task_id=linked[0])
+        return state.repository.get_media_discovery_for_task(task.task_id) if task else None
+    finally:
+        if gate is not None and callable(persist_frozen):
+            service._persist_frozen = persist_frozen
 
 
 def run_discovery_worker_once(state: AppState) -> dict[str, object]:
@@ -6085,6 +6176,12 @@ def application(environ, start_response):
                 if requested_discovery
                 else run_discovery_worker_once(STATE)
             )
+        elif path == "/__harness__/arm-preparation-freeze" and method == "POST":
+            document = arm_preparation_freeze_gate(STATE)
+        elif path == "/__harness__/preparation-freeze-state" and method == "GET":
+            document = preparation_freeze_gate_state(STATE)
+        elif path == "/__harness__/release-preparation-freeze" and method == "POST":
+            document = release_preparation_freeze_gate(STATE)
         elif path == "/__harness__/seed-task-center-problems" and method == "POST":
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":

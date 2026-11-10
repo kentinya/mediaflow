@@ -1153,6 +1153,7 @@
             "organizePolicyId": "A",
             "recognitionTypePolicyId": "type-A"
           },
+          "problemTaskItemId": null,
           "recognitionType": "A",
           "warnings": [],
           "zeroMutation": true
@@ -1408,6 +1409,7 @@
             "organizePolicyId": "A",
             "recognitionTypePolicyId": "type-A"
           },
+          "problemTaskItemId": null,
           "recognitionType": "A",
           "warnings": [],
           "zeroMutation": true

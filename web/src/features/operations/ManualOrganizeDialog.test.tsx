@@ -71,6 +71,16 @@ function makeBackend() {
     // The number of leading discovery reads that still report an unchanged
     // waiting state before the plan links.
     waitingReads: 0 as number,
+    // The real Worker publishes the completed walk before it freezes and enters
+    // analysis.  These two counts stage exactly that gap: an unfrozen completed
+    // walk, then the frozen intent whose analysis is still linking the plan.
+    walkOnlyReads: 0 as number,
+    frozenOnlyReads: 0 as number,
+    // A live analysis request whose durable stage is analysing before the plan
+    // links, and a bounded rejection of the preparation's own action.
+    analyzingReads: 0 as number,
+    analyzeShowsAnalyzing: false as boolean,
+    rejectAnalysisOnce: false as boolean,
     discoveryReads: 0 as number,
     // A real no-candidate problem on the first file, plus the durable
     // metadata-correction decision the same TaskItem exposes after analysis.
@@ -188,7 +198,15 @@ function makeBackend() {
     value["intentId"] = INTENT_ID;
     value["previewRequired"] = true;
     const latestPlan = value["latestPlan"] as Json | null;
-    if (latestPlan !== null) latestPlan["previewId"] = state.previewId;
+    if (latestPlan !== null) {
+      // During the staged walk→freeze→analysis gap the intent is already
+      // durable, but it has not published the linked plan yet.
+      if (state.discoveryReads <= state.walkOnlyReads + state.frozenOnlyReads) {
+        value["latestPlan"] = null;
+      } else {
+        latestPlan["previewId"] = state.previewId;
+      }
+    }
     value["actions"] = {
       choice: {
         available: true,
@@ -599,6 +617,44 @@ function makeBackend() {
             "the whole scope was visited, but some sources are not yet proven stable";
           return jsonResponse(waiting);
         }
+        if (state.analyzingReads > 0) {
+          state.analyzingReads -= 1;
+          const analyzing = discoveryDocument();
+          analyzing["status"] = "analyzing";
+          analyzing["previewId"] = null;
+          analyzing["prepared"] = false;
+          const progress = analyzing["progress"] as Json;
+          progress["phase"] = "analyzing";
+          progress["message"] =
+            "the reviewed source list is frozen; the analysis is building the plan summary";
+          return jsonResponse(analyzing);
+        }
+        if (
+          state.discoveryReads <=
+          state.walkOnlyReads + state.frozenOnlyReads
+        ) {
+          const intermediate = discoveryDocument();
+          intermediate["previewId"] = null;
+          intermediate["prepared"] = false;
+          if (state.discoveryReads <= state.walkOnlyReads) {
+            // The completed walk is durable, but freezing the reviewed source
+            // list and entering analysis have not been published yet.
+            intermediate["intentId"] = null;
+            intermediate["frozen"] = false;
+            intermediate["nextAction"] =
+              "wait for the resident Processing Worker to finish the bounded discovery";
+          } else {
+            intermediate["intentId"] = INTENT_ID;
+            intermediate["frozen"] = true;
+            const prepare = (intermediate["actions"] as Json)[
+              "prepare"
+            ] as Json;
+            prepare["available"] = true;
+            prepare["path"] =
+              `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`;
+          }
+          return jsonResponse(intermediate);
+        }
         return jsonResponse(discoveryDocument());
       }
 
@@ -687,9 +743,33 @@ function makeBackend() {
         method === "POST"
       ) {
         calls.analyzePosts.push(JSON.parse(String(init?.body ?? "{}")) as Json);
+        if (state.rejectAnalysisOnce) {
+          // The Worker published a newer preparation while this page still
+          // showed the older walk.  The same preparation is re-read next.
+          state.rejectAnalysisOnce = false;
+          state.walkOnlyReads = 0;
+          state.frozenOnlyReads = 0;
+          state.analyzingReads = 0;
+          return jsonResponse(
+            {
+              error: {
+                code: "discovery_conflict",
+                message: "the preparation changed since it was read",
+                details: {
+                  nextAction:
+                    "reload the discovery and retry the same deliberate action",
+                },
+              },
+            },
+            409,
+          );
+        }
+        state.walkOnlyReads = 0;
+        state.frozenOnlyReads = 0;
         if (state.flipPreviewOnAnalyze) {
           state.previewId = "preview-2";
         }
+        if (state.analyzeShowsAnalyzing) state.analyzingReads = 2;
         return jsonResponse(discoveryDocument());
       }
 
@@ -1613,6 +1693,94 @@ describe("ManualOrganizeDialog", () => {
     expect(within(card()).getAllByText("Movie.01.mkv").length).toBeGreaterThan(
       0,
     );
+  }, 20_000);
+
+  it("keeps the same preparation open from the completed walk until its linked plan arrives", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      // The real Worker publishes the completed walk first, then freezes and
+      // enters analysis.  Neither intermediate state is the whole preparation.
+      value.state.walkOnlyReads = 1;
+      value.state.frozenOnlyReads = 1;
+    });
+
+    await screen.findByText("遍历已完成，正在关联分析摘要");
+    // The completed walk has not frozen an intent yet: the analysis action is
+    // not advertised, and the card must keep reading instead of settling here.
+    expect(
+      screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
+    ).toBeNull();
+
+    // The frozen intent is durable while the plan is still linking.  The card
+    // keeps polling and then shows the linked plan without a second submit.
+    await screen.findByRole(
+      "button",
+      { name: "运行分析并生成计划摘要" },
+      { timeout: 5_000 },
+    );
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 10 个/ },
+      { timeout: 5_000 },
+    );
+    expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("reports a rejected preparation analysis nearby and re-reads the same updated preparation", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      // Keep the card on the stale frozen walk while its real plan is already
+      // linked in durable state: this is the version-conflict the operator hit.
+      value.state.frozenOnlyReads = 100;
+      value.state.rejectAnalysisOnce = true;
+    });
+
+    const analyze = await screen.findByRole(
+      "button",
+      { name: "运行分析并生成计划摘要" },
+      { timeout: 5_000 },
+    );
+    await user.click(analyze);
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+
+    // The rejection names the durable refusal and the zero-mutation fact; the
+    // same preparation is then re-read instead of asking for a second submit.
+    await screen.findByText(/分析请求未获受理\(discovery_conflict\)/);
+    await screen.findByText(/没有执行任何整理/);
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 10 个/ },
+      { timeout: 10_000 },
+    );
+    expect(backend.calls.analyzePosts).toHaveLength(1);
+    expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("shows the preparation analysis request as accepted while the same preparation links its plan", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.frozenOnlyReads = 100;
+      value.state.analyzeShowsAnalyzing = true;
+    });
+
+    const analyze = await screen.findByRole(
+      "button",
+      { name: "运行分析并生成计划摘要" },
+      { timeout: 5_000 },
+    );
+    await user.click(analyze);
+    await screen.findByText(/零变更分析正在运行/);
+    expect(backend.calls.analyzePosts).toHaveLength(1);
+
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 10 个/ },
+      { timeout: 10_000 },
+    );
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
 
   it("keeps an ended flow as a read-only original summary with no confirmation", async () => {

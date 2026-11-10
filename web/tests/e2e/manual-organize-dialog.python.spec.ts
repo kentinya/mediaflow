@@ -533,6 +533,152 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   });
 });
 
+test("follows the completed walk into the same preparation's linked plan without a second submission", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const handoffFile = "DialogFreeze.2020.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, handoffFile);
+  await selectFiles(page, [handoffFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  const analyzePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    );
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+
+  // The real Worker publishes the completed walk and then freezes the reviewed
+  // sources.  Hold it at that exact durable boundary so the browser reads the
+  // real intermediate stage instead of a fabricated response.
+  const armed = await request.post(
+    `${BASE}/__harness__/arm-preparation-freeze`,
+  );
+  expect(armed.ok()).toBe(true);
+  const workerPass = request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+  );
+  await expect
+    .poll(
+      async () => {
+        const state = await request.get(
+          `${BASE}/__harness__/preparation-freeze-state`,
+        );
+        return ((await state.json()) as { readonly reached: boolean }).reached;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+
+  // The completed walk is not the end of the preparation: the card keeps
+  // reading the same durable record instead of settling on a stale state.
+  await expect(card.getByText("遍历已完成，正在关联分析摘要")).toBeVisible({
+    timeout: 10_000,
+  });
+  expect(analyzePosts()).toHaveLength(0);
+
+  // Release the paused real Worker; its next passes enter the analysis and
+  // link the exact plan.  The card follows the same admitted preparation into
+  // the per-file review without any operator re-submission.
+  const released = await request.post(
+    `${BASE}/__harness__/release-preparation-freeze`,
+  );
+  expect(released.ok()).toBe(true);
+  await workerPass;
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText(handoffFile).first()).toBeVisible();
+  expect(analyzePosts()).toHaveLength(0);
+  expect(executePosts()).toHaveLength(0);
+});
+
+test("reports the preparation's own analysis request as accepted while the same preparation links", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const actionFile = "DialogPrepAction.2026.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, actionFile);
+  await selectFiles(page, [actionFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  const analyzePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    );
+
+  expect(
+    (await request.post(`${BASE}/__harness__/arm-preparation-freeze`)).ok(),
+  ).toBe(true);
+  const workerPass = request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+  );
+  await expect
+    .poll(
+      async () => {
+        const state = await request.get(
+          `${BASE}/__harness__/preparation-freeze-state`,
+        );
+        return ((await state.json()) as { readonly reached: boolean }).reached;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  await expect(card.getByText("遍历已完成，正在关联分析摘要")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  // The preparation's own action is real: its acceptance and running analysis
+  // are visible on the same preparation, and no Execute exists.
+  await card.getByRole("button", { name: "运行分析并生成计划摘要" }).click();
+  await expect(card.getByText(/零变更分析正在运行/)).toBeVisible({
+    timeout: 10_000,
+  });
+  expect(analyzePosts()).toHaveLength(1);
+
+  const released = await request.post(
+    `${BASE}/__harness__/release-preparation-freeze`,
+  );
+  expect(released.ok()).toBe(true);
+  await workerPass;
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText(actionFile).first()).toBeVisible();
+  expect(analyzePosts()).toHaveLength(1);
+});
+
 test("a missing metadata candidate is corrected on the current file and confirmed into the exact Task", async ({
   page,
   request,

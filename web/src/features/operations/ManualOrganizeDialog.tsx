@@ -235,6 +235,14 @@ export function ManualOrganizeDialog({
   const [decisionDrafts, setDecisionDrafts] = useState<
     Readonly<Record<string, TaskItemDecisionDraft>>
   >({});
+  /**
+   * The preparation's own analysis action has no TaskItem: its in-flight,
+   * accepted or rejected fact belongs to this one durable preparation, never
+   * to an invented empty item or a confirmation page that cannot be reached.
+   */
+  const [preparationNotice, setPreparationNotice] = useState<SaveNotice | null>(
+    null,
+  );
   const [result, setResult] = useState<string | null>(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   const [allowSourceCleanup, setAllowSourceCleanup] = useState(false);
@@ -319,6 +327,12 @@ export function ManualOrganizeDialog({
       // Per-file save/analysis notices stay keyed by the durable itemId: a new
       // exact plan must not hide what the operator's last explicit action did.
       setResult(null);
+      // An accepted analysis request is superseded by the plan it produced; a
+      // rejection stays visible beside that plan because the refusal itself is
+      // still the operator's next-step fact.
+      setPreparationNotice((previous) =>
+        previous?.kind === "success" ? null : previous,
+      );
     }
     // The visible file itself is anchored by durable itemId, never by array
     // position, so no re-indexing is needed when a newer summary arrives.
@@ -334,7 +348,14 @@ export function ManualOrganizeDialog({
     mutationFn: async (options: {
       readonly itemId: string;
       readonly onlyAnalysis: boolean;
-    }): Promise<{ readonly saved: boolean; readonly analyzed: boolean }> => {
+    }): Promise<{
+      readonly saved: boolean;
+      readonly analyzed: boolean;
+      readonly analysisFailure?: {
+        readonly code: string;
+        readonly nextAction: string | null;
+      };
+    }> => {
       const item = intent?.items.find((row) => row.itemId === options.itemId);
       if (preparation === undefined) throw { stage: "save", code: "not_ready" };
       if (!options.onlyAnalysis) {
@@ -391,15 +412,52 @@ export function ManualOrganizeDialog({
         expectedVersion: preparation.version,
       });
       if (!analyzed.ok) {
-        return { saved: !options.onlyAnalysis, analyzed: false };
+        return {
+          saved: !options.onlyAnalysis,
+          analyzed: false,
+          analysisFailure: {
+            code: analyzed.code,
+            nextAction: analyzed.nextAction,
+          },
+        };
       }
       return { saved: true, analyzed: true };
     },
     retry: false,
     onMutate: () => {
       setResult(null);
+      // A fresh explicit action supersedes the last preparation-level
+      // request fact; the refetch (or rejection) below reports this one.
+      setPreparationNotice(null);
     },
     onSuccess: (value, variables) => {
+      if (variables.onlyAnalysis && variables.itemId === "") {
+        if (value.analyzed) {
+          setPreparationNotice({
+            kind: "success",
+            text: "分析请求已受理;零变更分析正在运行,新的精确方案就绪后会在本弹窗自动显示。查看与保存不会修改任何文件。",
+            retryAnalysis: false,
+          });
+          void preparationQuery.refetch();
+          void intentQuery.refetch();
+          return;
+        }
+        const failure = value.analysisFailure;
+        setPreparationNotice({
+          kind: "error",
+          text: `分析请求未获受理(${failure?.code ?? "analysis_rejected"});没有执行任何整理,已保存的选择保持不变。${
+            failure?.nextAction ?? "请重新读取同一准备,按当前状态继续。"
+          }`,
+          retryAnalysis: true,
+        });
+        // The refusal may mean this page's version is already superseded by
+        // the plan the Worker just linked.  Re-read the same preparation; a
+        // current summary replaces the stale walk view instead of asking the
+        // operator to submit the same analysis again.
+        void preparationQuery.refetch();
+        void intentQuery.refetch();
+        return;
+      }
       if (variables.onlyAnalysis) {
         if (value.analyzed) {
           setNotices((previous) => ({
@@ -414,11 +472,12 @@ export function ManualOrganizeDialog({
           void intentQuery.refetch();
           return;
         }
+        const failure = value.analysisFailure;
         setNotices((previous) => ({
           ...previous,
           [variables.itemId]: {
             kind: "warning",
-            text: "重新分析暂未完成,尚未获得可确认的新摘要;没有重复保存,也没有执行任何整理。可再次重新分析。",
+            text: `重新分析暂未完成${failure ? `(${failure.code})` : ""};尚未获得可确认的新摘要;没有重复保存,也没有执行任何整理。可再次重新分析。`,
             retryAnalysis: true,
           },
         }));
@@ -460,6 +519,15 @@ export function ManualOrganizeDialog({
         stage === "save"
           ? `选择未保存(${code}),分析未请求;文件未被修改。请检查选择后重试。`
           : `分析请求未完成(${code});没有执行任何整理,已保存的选择保持不变。`;
+      if (variables.onlyAnalysis && variables.itemId === "") {
+        setPreparationNotice({
+          kind: "error",
+          text: message,
+          retryAnalysis: true,
+        });
+        void preparationQuery.refetch();
+        return;
+      }
       // The current file owns this failure: name the stage, the durable state
       // and the safe next action next to the control the operator just used.
       setNotices((previous) => ({
@@ -470,7 +538,6 @@ export function ManualOrganizeDialog({
           retryAnalysis: stage === "analysis",
         },
       }));
-      if (variables.itemId === "") setResult(message);
     },
   });
 
@@ -790,20 +857,33 @@ export function ManualOrganizeDialog({
 
   // ---- polling while a durable Worker stage still runs ----------------
   const preparationStatus = preparation?.status;
+  /**
+   * A full preparation publishes its completed walk *before* it freezes and
+   * enters the analysis stage, so `completed` alone does not prove that the
+   * whole preparation ended.  While this exact admitted preparation still has
+   * sources an automatic analysis is expected to link, the card keeps reading
+   * the same durable record instead of settling on the intermediate walk
+   * state and missing the plan.
+   */
+  const preparationPlanExpected =
+    preparation !== undefined &&
+    preparation.previewId === null &&
+    (preparationStatus === "completed" ||
+      preparationStatus === "partial_success") &&
+    preparation.primarySourceCount > 0 &&
+    preparation.progress.materialRefusal === null &&
+    (preparation.autoPrepare || preparation.frozen);
+  const preparationPolling =
+    preparationStatus !== undefined &&
+    !organizeFlowEnded &&
+    preparation?.previewId == null &&
+    !["failed", "cancelled", "paused"].includes(preparationStatus) &&
+    (["queued", "running", "waiting_stability", "analyzing"].includes(
+      preparationStatus,
+    ) ||
+      preparationPlanExpected);
   useEffect(() => {
-    if (
-      preparationStatus === undefined ||
-      organizeFlowEnded ||
-      [
-        "completed",
-        "partial_success",
-        "failed",
-        "cancelled",
-        "paused",
-      ].includes(preparationStatus)
-    ) {
-      return;
-    }
+    if (!preparationPolling) return;
     // An interval, not a self-rescheduling timeout: a poll whose response is
     // structurally identical (the common `waiting_stability` case) produces no
     // render, so a timeout would never be armed again.  The read stays bounded
@@ -812,7 +892,7 @@ export function ManualOrganizeDialog({
       void preparationQuery.refetch();
     }, 1_500);
     return () => window.clearInterval(timer);
-  }, [preparationStatus, organizeFlowEnded, preparationQuery]);
+  }, [preparationPolling, preparationQuery]);
 
   // ---- helpers --------------------------------------------------------
   // The page derives from the durable item anchor whenever the item is still
@@ -909,6 +989,41 @@ export function ManualOrganizeDialog({
 
   const pageTitle = "整理所选文件";
   const titleId = "mf-organize-dialog-title";
+
+  /** The preparation's own analysis request, reported where it was made. */
+  const renderPreparationNotice = () =>
+    preparationNotice === null ? null : (
+      <StatusBanner
+        variant={
+          preparationNotice.kind === "success"
+            ? "success"
+            : preparationNotice.kind === "warning"
+              ? "warning"
+              : "error"
+        }
+        title={
+          preparationNotice.kind === "success"
+            ? "分析请求已受理"
+            : "分析请求未完成"
+        }
+      >
+        <p role="status">{preparationNotice.text}</p>
+        {preparationNotice.retryAnalysis ? (
+          <div className="mf-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={preparationQuery.isFetching}
+              onClick={() => void preparationQuery.refetch()}
+            >
+              {preparationQuery.isFetching
+                ? "正在重新读取..."
+                : "重新读取准备状态"}
+            </Button>
+          </div>
+        ) : null}
+      </StatusBanner>
+    );
 
   // ---- body -----------------------------------------------------------
   const renderPreparationContent = () => {
@@ -1080,9 +1195,20 @@ export function ManualOrganizeDialog({
                 ? "warning"
                 : "info"
           }
-          title={label(PREPARATION_STATUS_LABELS, preparation.status)}
+          title={
+            preparationPlanExpected
+              ? "遍历已完成，正在关联分析摘要"
+              : label(PREPARATION_STATUS_LABELS, preparation.status)
+          }
         >
-          <p>{preparation.nextAction}</p>
+          {preparationPlanExpected ? (
+            <p role="status">
+              同一准备的完整零变更分析正在运行;精确计划摘要关联后会在本弹窗
+              自动显示,无需重新提交,也不会修改任何文件。
+            </p>
+          ) : (
+            <p>{preparation.nextAction}</p>
+          )}
           {preparation.progress.message !== "" ? (
             <p>{preparation.progress.message}</p>
           ) : null}
@@ -1182,13 +1308,17 @@ export function ManualOrganizeDialog({
                 saveMutation.mutate({ itemId: "", onlyAnalysis: true })
               }
             >
-              运行分析并生成计划摘要
+              {saveMutation.isPending &&
+              saveMutation.variables?.onlyAnalysis === true
+                ? "正在请求分析..."
+                : "运行分析并生成计划摘要"}
             </Button>
             <span className="mf-dashboard-meta">
               只重新运行零变更分析;不执行任何整理。
             </span>
           </div>
         ) : null}
+        {renderPreparationNotice()}
       </>
     );
   };
@@ -1981,6 +2111,7 @@ export function ManualOrganizeDialog({
       </div>
     ) : (
       <>
+        {renderPreparationNotice()}
         {preparationStatusRunning ? (
           <StatusBanner variant="info" title="正在重新分析,当前方案不可确认">
             <p role="status">
