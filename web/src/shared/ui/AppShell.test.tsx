@@ -540,7 +540,7 @@ describe("AppShell", () => {
     );
   });
 
-  it("does not put a second Rules header on the dedicated Edit route", async () => {
+  it("keeps the same Rules list surface on the dedicated Edit route", async () => {
     authStore.setToken("shell-test-token");
     vi.stubGlobal(
       "fetch",
@@ -577,5 +577,12 @@ describe("AppShell", () => {
     expect(
       document.querySelector(".mf-shell-topbar h1, .mf-shell-topbar h2"),
     ).toBeNull();
+    // The Edit address is the same Rules list surface. The shell adds neither
+    // its read-only search placeholder nor the English location line above
+    // the card background, so opening or closing the card cannot add a row
+    // and move the inventory.
+    expect(document.querySelector(".mf-shell-topbar input")).toBeNull();
+    expect(document.querySelector(".mf-page-context")).toBeNull();
+    expect(screen.queryByText("Edit rule object", { exact: true })).toBeNull();
   });
 });

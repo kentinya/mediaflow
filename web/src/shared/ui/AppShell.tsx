@@ -192,7 +192,11 @@ export function AppShell({ children }: AppShellProps) {
   // owns only the creation-time range, and the other views own their own
   // explicit filters. Account/notification controls stay in the top bar.
   const searchIsOperations = pathname === "/operations";
-  const searchIsRules = pathname === "/rules";
+  // The Rules inventory and its pre-existing Edit address render the same
+  // list background (the Edit route mounts that inventory and only adds its
+  // card). Both keep the shell's placeholder search and location line out of
+  // the surface, so opening or closing the card never moves the list.
+  const isRulesSurface = pageIdentity === "rules";
   // Explore owns its one labelled workspace region and its own works search.
   // It has no separate visible page title; the shell's read-only file-search
   // field and duplicate location line would only add an unusable placeholder.
@@ -322,7 +326,7 @@ export function AppShell({ children }: AppShellProps) {
       <div className="mf-shell-content">
         <header className="mf-shell-topbar">
           {!searchIsOperations &&
-            !searchIsRules &&
+            !isRulesSurface &&
             !searchIsExplore &&
             searchField}
           {shellActions}
@@ -335,7 +339,7 @@ export function AppShell({ children }: AppShellProps) {
             {destination !== undefined &&
             destination.id !== "operations" &&
             !isAutomationListSurface(pathname) &&
-            !searchIsRules &&
+            !isRulesSurface &&
             !searchIsExplore ? (
               <p className="mf-page-context">{destination.label}</p>
             ) : null}

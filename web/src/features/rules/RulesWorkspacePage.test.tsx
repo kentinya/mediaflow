@@ -545,14 +545,25 @@ describe("RulesWorkspacePage", () => {
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
+    const localSearch = screen.getByRole("searchbox", {
+      name: "搜索类型名称或描述",
+    });
+    await user.type(localSearch, "Spec");
     const row = await screen.findByRole("row", { name: /Special/ });
     await user.click(within(row).getByRole("button", { name: "编辑" }));
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
     // The family inventory stays as the card background; there is no second
-    // full-page editor surface.
+    // full-page editor surface. The Edit address is the same Rules list
+    // surface inside the shell: no placeholder search or location line is
+    // added above the inventory, so opening the card cannot move it.
     expect(screen.getByRole("heading", { name: "识别类型" })).toBeVisible();
+    expect(document.querySelector(".mf-shell-topbar input")).toBeNull();
+    expect(document.querySelector(".mf-page-context")).toBeNull();
+    expect(
+      screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    ).toHaveValue("Spec");
     expect(router.state.location.pathname).toBe(
       "/rules/edit/recognitionTypes/C",
     );
@@ -563,13 +574,18 @@ describe("RulesWorkspacePage", () => {
     expect(
       calls.some((call) => call.url.includes("/objects/recognitionTypes/C")),
     ).toBe(true);
-    // Cancel returns to the exact family list behind the card.
+    // Cancel returns to the exact family list behind the card with the same
+    // filter, and the shell still contributes no extra row above it.
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(router.state.location.pathname).toBe("/rules");
     expect(router.state.location.search).toEqual({
       section: "recognitionTypes",
     });
+    expect(document.querySelector(".mf-page-context")).toBeNull();
+    expect(
+      screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    ).toHaveValue("Spec");
   });
 
   it("enable/disable and remove need explicit final intent and reference impact", async () => {

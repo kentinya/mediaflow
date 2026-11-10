@@ -159,6 +159,17 @@ async function bounds(locator) {
   };
 }
 
+/** Capture the settled card, not its entry animation's first transparent frame. */
+async function settleCard(card) {
+  await card.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
+  });
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1536, height: 1024 } });
@@ -857,6 +868,171 @@ try {
     }
   }
 
+  // -- B54-07: an ordinary Edit card never moves its list background --------
+  // The list and the pre-existing Edit address are one Rules surface. Measure
+  // the real list geometry before, during and after the card at the reported
+  // desktop viewport, and repeat the shell/chrome and screenshot checks at the
+  // mobile width. The card's own scroll lock must not move the background.
+  const backgroundJourneys = [];
+  for (const setup of [
+    { name: 'desktop-1536x1000', width: 1536, height: 1000, measure: true },
+    { name: 'mobile-390x844', width: 390, height: 844, measure: false },
+  ]) {
+    await open(page, '/ui-v2/rules?section=recognitionTypes', setup.width, setup.height);
+    const local = page.getByRole('searchbox', { name: '搜索类型名称或描述' });
+    await local.fill('Normal');
+    const row = page.getByRole('row', { name: /Normal Movie/ });
+    await expect(row).toBeVisible();
+    await row.scrollIntoViewIfNeeded();
+    const backgroundOf = async () => ({
+      header: await bounds(page.locator('.mf-rules-header')),
+      navigation: await bounds(page.getByRole('navigation', { name: '规则分类' })),
+      table: await bounds(page.getByRole('table')),
+      scrollY: await page.evaluate(() => Math.round(window.scrollY)),
+    });
+    const listState = await backgroundOf();
+    const before = await shoot(page, `b54-07-${setup.name}-list`);
+    await row.getByRole('button', { name: '编辑' }).click();
+    const card = page.getByRole('dialog', { name: /^编辑识别类型/ });
+    await expect(card).toBeVisible();
+    await settleCard(card);
+    // Opening the card must not add the shell's read-only search field or its
+    // English location line above the inventory background.
+    await expect(page.locator('.mf-shell-topbar input')).toHaveCount(0);
+    await expect(page.locator('.mf-page-context')).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: '整理规则', exact: true }),
+    ).toHaveCount(1);
+    const openedState = await backgroundOf();
+    const during = await shoot(page, `b54-07-${setup.name}-edit`);
+    if (setup.measure) {
+      for (const region of ['header', 'navigation', 'table']) {
+        if (
+          Math.abs(openedState[region].y - listState[region].y) > 1 ||
+          Math.abs(openedState[region].height - listState[region].height) > 1
+        ) {
+          throw new Error(
+            `B54-07 ${setup.name}: ${region} moved when the card opened ` +
+              `${JSON.stringify(listState[region])} -> ${JSON.stringify(openedState[region])}`,
+          );
+        }
+      }
+      if (openedState.scrollY !== listState.scrollY) {
+        throw new Error(
+          `B54-07 ${setup.name}: the card moved the list scroll ` +
+            `${listState.scrollY} -> ${openedState.scrollY}`,
+        );
+      }
+    }
+    await card.getByRole('button', { name: '取消' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
+    await expect(local).toHaveValue('Normal');
+    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) {
+      throw new Error(`B54-07 ${setup.name}: the returned list overflows the viewport`);
+    }
+    const returnedState = await backgroundOf();
+    const after = await shoot(page, `b54-07-${setup.name}-return`);
+    evidence.screenshots.push(before, during, after);
+    if (setup.measure) {
+      for (const region of ['header', 'navigation', 'table']) {
+        if (
+          Math.abs(returnedState[region].y - listState[region].y) > 1 ||
+          Math.abs(returnedState[region].height - listState[region].height) > 1
+        ) {
+          throw new Error(
+            `B54-07 ${setup.name}: ${region} did not return to its list position ` +
+              `${JSON.stringify(listState[region])} -> ${JSON.stringify(returnedState[region])}`,
+          );
+        }
+      }
+      if (returnedState.scrollY !== listState.scrollY) {
+        throw new Error(
+          `B54-07 ${setup.name}: the returned list did not restore its scroll ` +
+            `${listState.scrollY} -> ${returnedState.scrollY}`,
+        );
+      }
+    }
+    backgroundJourneys.push({
+      name: setup.name,
+      screenshots: { before, during, after },
+      listState,
+      openedState,
+      returnedState,
+      searchRetained: (await local.inputValue()) === 'Normal',
+      shellSearchPresent: (await page.locator('.mf-shell-topbar input').count()) > 0,
+      pageContextPresent: (await page.locator('.mf-page-context').count()) > 0,
+    });
+  }
+  evidence.b54_07 = { journeys: backgroundJourneys };
+
+  // Every one of the seven real inventories keeps its measured background
+  // through an existing row's Edit card and its cancel/return. This is the
+  // same route-level shell contract, exercised through each family entry.
+  const familyBackground = [];
+  await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1000);
+  for (const label of [
+    '识别类型',
+    '识别规则',
+    '类型策略',
+    '元数据策略',
+    '命名规则',
+    '分类规则',
+    '整理策略',
+  ]) {
+    await page
+      .getByRole('navigation', { name: '规则分类' })
+      .getByRole('button', { name: label, exact: true })
+      .click();
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+    const table = page.locator('.mf-rules-family table').first();
+    const edit = table.getByRole('button', { name: '编辑', exact: true }).first();
+    await expect(edit).toBeVisible();
+    edit.scrollIntoViewIfNeeded();
+    const backgroundOf = async () => ({
+      header: await bounds(page.locator('.mf-rules-header')),
+      navigation: await bounds(page.getByRole('navigation', { name: '规则分类' })),
+      table: await bounds(table),
+      scrollY: await page.evaluate(() => Math.round(window.scrollY)),
+    });
+    const listState = await backgroundOf();
+    await edit.click();
+    const card = page.getByRole('dialog', { name: /^编辑/ });
+    await expect(card).toBeVisible();
+    await settleCard(card);
+    await expect(page.locator('.mf-shell-topbar input')).toHaveCount(0);
+    await expect(page.locator('.mf-page-context')).toHaveCount(0);
+    const openedState = await backgroundOf();
+    for (const region of ['header', 'navigation', 'table']) {
+      if (
+        Math.abs(openedState[region].y - listState[region].y) > 1 ||
+        Math.abs(openedState[region].height - listState[region].height) > 1
+      ) {
+        throw new Error(
+          `B54-07 ${label}: ${region} moved when the Edit card opened ` +
+            `${JSON.stringify(listState[region])} -> ${JSON.stringify(openedState[region])}`,
+        );
+      }
+    }
+    await card.getByRole('button', { name: '取消' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
+    const returnedState = await backgroundOf();
+    for (const region of ['header', 'navigation', 'table']) {
+      if (
+        Math.abs(returnedState[region].y - listState[region].y) > 1 ||
+        Math.abs(returnedState[region].height - listState[region].height) > 1
+      ) {
+        throw new Error(
+          `B54-07 ${label}: ${region} did not return to its list position ` +
+            `${JSON.stringify(listState[region])} -> ${JSON.stringify(returnedState[region])}`,
+        );
+      }
+    }
+    familyBackground.push({ family: label, listState, openedState, returnedState });
+  }
+  evidence.b54_07.families = familyBackground;
+
   // -- representative narrow and mobile widths -----------------------------
   for (const viewport of VIEWPORTS) {
     if (viewport.name.startsWith('desktop')) continue;
@@ -1289,6 +1465,29 @@ def main() -> int:
             )
         if work_before != work_after:
             raise RuntimeError("the presentation journey created executable work")
+        background = evidence.get("b54_07") or {}
+        journeys = background.get("journeys") or []
+        if len(journeys) != 2:
+            raise RuntimeError(
+                "the B54-07 list-background journeys are missing: "
+                + json.dumps(background, ensure_ascii=False)[:400]
+            )
+        for journey in journeys:
+            if (
+                journey.get("searchRetained") is not True
+                or journey.get("shellSearchPresent") is not False
+                or journey.get("pageContextPresent") is not False
+            ):
+                raise RuntimeError(
+                    "the Edit card did not keep the plain Rules list surface: "
+                    + json.dumps(journey, ensure_ascii=False)
+                )
+        family_background = background.get("families") or []
+        if len(family_background) != 7 or any(not item.get("family") for item in family_background):
+            raise RuntimeError(
+                "the seven-family Edit background journeys are missing: "
+                + json.dumps(family_background, ensure_ascii=False)[:400]
+            )
 
         matrix = {
             "task": "PATCH-20261029-4",
