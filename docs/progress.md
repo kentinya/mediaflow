@@ -8,12 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice53](../SLICE.md) is **ACTIVE**, fixed Base
-`95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation has not started.
-User-authorized planning/activation covers the Files organizing modal and exact Task Center handoff;
-Task Center task-detail UI stays frozen. Scope was checkpointed first; [Task53.1](../TASK.md) is
-PLANNED and ready for implementation.
-There is no new acceptance or closure entry. Slice52 remains the latest accepted large Slice;
+[Slice53](../SLICE.md) is **READY FOR A REVIEW**, fixed Base
+`95c24cd0a3cc51acd6143e37e72371445cb15a72`, implementation
+`8a468b7685d5750bcd7607fc291a61ae70b7000c`. [Task53.1](../TASK.md) has passed B's independent
+review; all three outcomes are complete and its Closure Packet is ready. No implementation Task
+is active. Independent A Final Review is next; Task Center task-detail UI stays frozen.
+There is no new A acceptance or closure entry. Slice52 remains the latest accepted large Slice;
 all previous identities, deferrals and evidence limits remain unchanged.
 
 ## Latest accepted closure — Slice52

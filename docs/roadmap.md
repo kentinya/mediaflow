@@ -42,12 +42,15 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **ACTIVE**.
-Base `95c24cd0a3cc51acd6143e37e72371445cb15a72` is fixed; implementation has not started.
-The user authorized formalizing and activating the clarified Task. Scope was checkpointed before
-[Task53.1](../TASK.md), now PLANNED and ready for implementation. The new modal/handoff is TARGET, not delivered;
-Task Center task-detail layout/content/progress/results/recovery UI is explicitly frozen.
-Slice52 and prior acceptance, deferrals and evidence limits remain unchanged. No push or deployment.
+[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **READY FOR A REVIEW**.
+The roadmap row remains ACTIVE until A accepts closure. Fixed Base
+`95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation
+`8a468b7685d5750bcd7607fc291a61ae70b7000c` has passed B review through [Task53.1](../TASK.md).
+All three required outcomes are complete; there is no active implementation Task.
+Independent A Final Review is next. The modal/handoff contract remains TARGET pending A acceptance;
+Task Center task-detail layout/content/progress/results/recovery UI stays frozen.
+Slice52 and prior acceptance, deferrals and evidence limits remain unchanged.
+GitHub push is user-authorized; production deployment is outside this action.
 
 ## Accepted boundary references
 

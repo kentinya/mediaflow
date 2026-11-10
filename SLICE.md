@@ -4,24 +4,24 @@
 Slice ID: 53
 Name: Manual Organize Dialog and Task Center Handoff
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 95c24cd0a3cc51acd6143e37e72371445cb15a72
-Implementation Head: NOT SET
+Implementation Head: 8a468b7685d5750bcd7607fc291a61ae70b7000c
 Working Branch: main
-Development Authorization: USER-AUTHORIZED TASK ACTIVATION; NO IMPLEMENTATION STARTED IN THIS TURN
+Development Authorization: IMPLEMENTATION COMPLETE; B PASS; A FINAL REVIEW PENDING
 Risk: High
 Accepted Test Level: T4
-Next Action: DEVELOPER IMPLEMENTS ACTIVE TASK53.1
+Next Action: INDEPENDENT A FINAL REVIEW
 ```
 
 ## Authority and accepted baseline
 
 用户先要求只调查，随后要求规划 Task，并逐项明确：每页一个文件、候选确认流程、
 统一确认整理后在任务中心看结果、本 Task 不更改任务中心任务详情弹窗。
-2026-11-09 用户明确“把这些在Task明确后激活Task”。本轮按该授权依次完成 A 的新
-Slice 范围 checkpoint 和 B 的正式 Task 规划／激活，不启动 Developer 实现，不推送／部署。
-同一规划执行者完成范围设置及 Task 正式化，只是规划，不构成 B 独立验收或 A 终审；
-后续验收必须保持与实现独立，B 不代行同一 Slice 的 A Final Review。
+2026-11-09 用户明确“把这些在Task明确后激活Task”，范围先提交、Task 随后激活。
+Task53.1 已由 B 独立验收 PASS，当前进入 A 终审等待；原规划不构成 A 终审。
+2026-11-10 用户另授权文档治理并推送 GitHub，本次只同步已发生的交付／审查事实，
+不改变范围或作出 A 终审结论，不部署。B 不代行同一 Slice 的 A Final Review。
 
 这是已接受整理旅程的呈现／交接重设计，不能借独立 minor bug 扩大已关闭 Slice。
 Base 固定为调查／规划前 `95c24cd0a3cc51acd6143e37e72371445cb15a72`，后续规划提交不重设。
@@ -52,11 +52,11 @@ Slice52 的原 Base／已审 Head／PASS 保留于
 | RO-2 当前文件修正与集中确认 | 候选／四类合法决定就近保存并重新分析，逐项状态独立，最后核对精确子集及危险影响 | `V2-OPS-018`、`V2-OPS-010/012/015–017`、`REQ-RECOVERY-004–009` |
 | RO-3 精确任务中心交接       | 正常受理及未知响应核对成功均关闭弹窗并打开准确 Task，沿用既有详情／结果／恢复  | `V2-OPS-019`、`REQ-WEB-005`                                    |
 
-新合同是 **TARGET，未交付**；见 [V2 TARGET](docs/v2-requirements.md#target--manual-organize-dialog-slice53-active)、
-[完整 TARGET 旅程](docs/product-experience.md#target--manual-organize-dialog-slice53-active) 和
-[架构 TARGET](docs/architecture.md#target--manual-organize-dialog-slice53-active)。
+新合同已实现并通过 B 验收，仍为 **TARGET，待独立 A 终审接受**；见 [V2 TARGET](docs/v2-requirements.md#target--manual-organize-dialog-slice53-ready-for-a-review)、
+[完整 TARGET 旅程](docs/product-experience.md#target--manual-organize-dialog-slice53-ready-for-a-review) 和
+[架构 TARGET](docs/architecture.md#target--manual-organize-dialog-slice53-ready-for-a-review)。
 CURRENT 的早期耐久准入、来源占用、五态／独立结果和准确确认语义保持；TARGET 只替换
-本次 Files 准备／复核的旧整页呈现及确认后默认执行页交接，不宣称已修改运行行为。
+本次 Files 准备／复核的旧整页呈现及确认后默认执行页交接；A 终审后协调为 CURRENT。
 
 ## Required outcomes and surfaces
 
@@ -108,7 +108,8 @@ Files 的库／目录／选择／滚动保持，不先跳页回顶再恢复。
 
 延期：任务中心详情／列表／四类恢复 UI 重设计、自动化／库配置改造、媒体库整理、
 跨任务批量恢复、任意历史重处理、全站样式／路由／API 清理、新结果中心、历史执行产品
-全面退出、自动忽略／重试／取消／覆盖／清理／回滚、生产服务验证、推送／发布／部署。
+全面退出、自动忽略／重试／取消／覆盖／清理／回滚、生产服务验证、发布／部署。
+用户本次单独授权 GitHub 推送，不代表授权生产部署。
 
 ## Acceptance and final validation
 
@@ -129,6 +130,12 @@ B 独立审查固定 Base..candidate，承担真实 Python／SQLite／Worker 浏
 
 ## Closure Packet and A Final Review
 
-尚无实现、B 验收或 A 终审。Implementation Head 保持 NOT SET；Slice ACTIVE 不表示交付。
-完成全部结果后按工作流提供 B Closure Packet，再由独立 A 审查整个 Base..Head；
-本轮没有 PASS／CLOSED 结论。
+Task53.1 已 **B PASS**；RO-1／RO-2／RO-3 与全部必需表面经 B 重评完成，不再规划 Task。
+固定 B 审查：[8a5f295b 的完整验收](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md#b-review-result)；
+当前 [Closure Packet](TASK.md#closure-packet--slice53) 保留精确范围、实际门禁、环境跳过、
+本地证据位置和文档协调事项。B reviewed candidate 为
+`263e1043516be73fc9a8e215ab7223f2b9e10296`，其后仅作审查记录与文档治理。
+
+A 须独立审查固定 Base 到上述 Implementation Head 的完整变更和交付旅程。
+当前没有 A Final Review 或 Slice PASS / CLOSED 结论；最终接受后再协调 CURRENT、
+Roadmap／Progress 关闭记录和根 Task 下一步。此前接受身份、证据限制及延期不变。
