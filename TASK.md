@@ -159,7 +159,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organi
 `.venv/bin/ruff format --check scripts/operations_inventory_harness.py`；真实浏览器回归验证该夹具。
 无后端生产变更时不额外给 Developer 全 Python／Web／Node E2E 或打包全量。
 
-### B — independent acceptance and full regression
+### B — acceptance and full regression
 
 1. 先从真实 Files 入口独立复现 FIX-AC-2，比较原 POST、后续 GET 的完整身份，核实原
    Task／Result／文件效果、准确详情交接及一次 Execute；再覆盖 FIX-AC-1–6 和原 AC-1–12。
