@@ -4,22 +4,24 @@
 Slice ID: 54
 Name: Organizing Rules Dialogs and Readability
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY — NO IMPLEMENTATION AUTHORIZED
+Development Authorization: SLICE ACTIVE — FIRST TASK PLANNING ONLY; NO IMPLEMENTATION AUTHORIZED
 Risk: High
 Accepted Test Level: T4
-Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
+Next Action: A ACTING AS B PLANS TASK54.1 UNDER USER AUTHORIZATION
 ```
 
 ## Authority and accepted baseline
 
 用户先授权只读调查：概览保留完整流程验证，其他规则表面只保留单项检查；七类添加
 改为与自动化／文件页协调的居中弹窗。随后补充七类编辑也改为弹窗，并改善这些表单
-内容的美观与可读性。2026-11-10 用户明确“按 A 的权限规划一个 Slice”。本轮只规划
-合同及 TARGET，不激活、不创建实现 Task、不修改产品代码、不推送或部署。
+内容的美观与可读性。2026-11-10 用户先授权 A 规划，合同提交于 022d7777；随后明确
+“激活 Slice 并代替 B 规划第一个 Task”。本次将 Slice 激活并先提交合同，再由 A 按用户
+授权代行 B 规划首个 Task。该角色例外仅限本次 Task 规划，不包含自审实现或代行最终
+A 验收。首个 Task 保留规划状态；本轮不开始实现、不修改产品代码、不推送或部署。
 
 Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 原退回／修正、
 验证限制及 B 转任 A 的用户授权例外均保留于
@@ -48,10 +50,10 @@ Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 �
 | RO-2 内容可读与协调 | 七类设置／内部规则／单项测试 → 有层级的输入和结果 → 直接纠正 → 精确重测／保存 | TARGET `V2-RULES-011`；`V2-RULES-003–009` |
 | RO-3 完整流程入口收敛 | 概览完整图检查；其余表单仅当前对象检查 → 各自结论／失效／恢复 | TARGET `V2-RULES-012`；`V2-RULES-006/009` |
 
-本合同是 **TARGET / PLANNED**，未交付、不改称 CURRENT。见
-[V2 TARGET](docs/v2-requirements.md#target--organizing-rules-dialogs-and-readability-slice54-planned)、
-[完整 TARGET 旅程](docs/product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-planned) 和
-[架构 TARGET](docs/architecture.md#target--organizing-rules-dialogs-and-readability-slice54-planned)。
+本合同是 **TARGET / ACTIVE**，未交付、不改称 CURRENT。见
+[V2 TARGET](docs/v2-requirements.md#target--organizing-rules-dialogs-and-readability-slice54-active)、
+[完整 TARGET 旅程](docs/product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-active) 和
+[架构 TARGET](docs/architecture.md#target--organizing-rules-dialogs-and-readability-slice54-active)。
 接受后替换既有 Rules Add／Copy 抽屉、独立整页 Edit 及编辑器内完整链路预览的呈现约定；
 当前发布、安全、识别身份、局部分析和共享完整规划的业务语义保持。
 
@@ -164,7 +166,7 @@ T4 因七类表单直接承载 Active 配置发布、危险策略输入和未知
 [共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)，包括精确新构建／
 安装 smoke。外部 Provider 用本地假服务，Storage 用临时根；生产服务不是必需验收环境。
 无容器执行路径变更时 Docker 广域矩阵不适用，B 说明依据并保留失败／跳过／未运行限制。
-B 激活后据实际代码组织连贯 Task，不按七类、字段或纯技术层机械拆分；本规划不代 B 写 Task。
+首个 Task 由 A 按本次明确授权代行 B 规划，依据实际代码组织连贯行为，不按七类、字段或纯技术层机械拆分。
 
 ## Closure Packet and A Final Review
 

@@ -831,8 +831,8 @@ CURRENT；未明确列出的后续目标不得描述为已实现。
 
 #### **V2 已交付增量 — 现有页面改进（Slice 44）**
 
-后续 [Slice54 的统一规则弹窗与可读性 TARGET](v2-requirements.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
-仅获规划授权，尚未实现；下述已接受的抽屉／整页基线继续为 CURRENT，交付后再协调。
+后续 [Slice54 的统一规则弹窗与可读性 TARGET](v2-requirements.md#target--organizing-rules-dialogs-and-readability-slice54-active)
+已激活并获首个 Task 规划授权，尚未实现；下述已接受的抽屉／整页基线继续为 CURRENT，交付后再协调。
 
 - ResourceLibrary / MediaLibrary 普通维护采用同一行为与各自库类型权限；指纹可选，但服务端已观察
   的指纹仍绑定。Rename / Delete 元数据校验不读取选中文件内容；批量/长 Delete 持久化独立结果，

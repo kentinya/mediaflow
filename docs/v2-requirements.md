@@ -519,10 +519,10 @@ No new Task engine/schema/permissions/Provider or Task Center redesign is author
 The [CURRENT journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)
 supplies the complete operator sequence. Earlier accepted safety and deferral contracts remain authoritative.
 
-## TARGET — Organizing rules dialogs and readability (Slice54 PLANNED)
+## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
 
-[Slice54](../SLICE.md) is planning-only, fixed Base
-e43a40674eb14aa12615a440a348fe675cd50c4e; implementation is not authorized or accepted.
+[Slice54](../SLICE.md) is ACTIVE with first-Task planning authorized, fixed Base
+e43a40674eb14aa12615a440a348fe675cd50c4e; implementation and acceptance remain pending.
 This TARGET replaces the presentation portions of V2-RULES-001/006/009 only after acceptance.
 Until then the existing Rules drawer/full-page editor baseline remains CURRENT. Prior
 Slice41/44/50/53 acceptance identities, safety and deferrals remain unchanged.
@@ -533,8 +533,8 @@ Slice41/44/50/53 acceptance identities, safety and deferrals remain unchanged.
 | V2-RULES-011 | Rules settings and object-local tests are readable, purpose-built and visually consistent inside those dialogs. | All seven families retain supported fields/hidden values and meaningful grouping. Make condition/output and type/four-policy relationships clear; separate Metadata matching from request limits; distinguish movie/TV templates with centralized variable help; make Classification internal list/current-rule/target editing usable; group Organize effects, attachments, duplicate limits and risky cleanup with clear labels/units. Settings and local tests have distinct usable areas without one undifferentiated long form. Style local-test inputs, nested actions and results consistently. Default results lead with conclusion, actual output, failure/correction and next action; technical IDs/revisions/raw JSON remain in diagnostics. Relevant edits invalidate evidence, late replies do not cross objects, explicit live Metadata and synthetic identities stay truthful. Desktop/390px/short viewport and complex/long/error content must be visually inspected. |
 | V2-RULES-012 | Overview is the sole complete-flow testing entry in the Rules Web workspace. | Keep its explicit exact-Active complete-graph check, real competition/resolution/planning, synthetic identity labels and separate live Metadata intent. Remove the editor's legacy complete-chain preview region and controls from every Add/Copy/Edit surface, rather than leaving them collapsed. Editors retain only current-object/necessary-dependency tests; local success never proves whole-flow readiness/publication/execution authority. Guidance to Overview explains it checks published Active, not the unsaved candidate. Save still independently validates the complete successor and applicable evidence; shared backend tests, APIs, configuration checks, organizing DryRun and Automation preflight are preserved. |
 
-The [complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
-and [architecture boundary](architecture.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
+The [complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-active)
+and [architecture boundary](architecture.md#target--organizing-rules-dialogs-and-readability-slice54-active)
 apply together. No new Provider, Storage operation, schema, permission/publication protocol,
 rule domain, execution engine or recovery model is selected. Other pages and the accepted Slice53
 journey keep their behavior. Backend/API retirement, broad inventory/Overview redesign and

@@ -706,9 +706,9 @@ checked conversion with destination-impact acknowledgement. Preserve path; do no
 legacy label. Old snapshots/Previews/Tasks/grants retain their original meaning; failed conversion
 keeps prior Active and correctable input.
 
-## TARGET — Organizing rules dialogs and readability (Slice54 PLANNED)
+## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
 
-[Slice54](../SLICE.md) and V2-RULES-010–012 are authorized planning only, not delivered CURRENT.
+[Slice54](../SLICE.md) and V2-RULES-010–012 are ACTIVE TARGET with first-Task planning authorized, not delivered CURRENT.
 This replaces Add/Copy drawers, full-page Edit and legacy editor chain-preview presentation only
 after acceptance; existing publication, local analysis and safety semantics remain.
 

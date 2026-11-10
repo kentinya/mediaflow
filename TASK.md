@@ -11,7 +11,8 @@ Task53.1 **B PASS**；Slice53 **A PASS / CLOSED**（2026-11-10）。
   [B 最终验收摘要](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#b-closure-packet--task531-pass) 保留实测结果及本机原日志位置。
 - 用户明确授权同一执行者由 B 转任本次 A 终审；该例外与结论见 Slice53。
 
-[Slice54](SLICE.md) 已由 A 规划为 **PLANNED**；仅授权整理规则统一弹窗与可读性的
-合同／TARGET 规划，尚未授权激活、B Task 规划或代码实现。Slice53 的接受事实保持。
+[Slice54](SLICE.md) 已按用户授权激活为 **ACTIVE**；下一步由 A 按本次用户授权
+代行 B 规划首个 Task。该角色例外只含本次规划，不授权代码实现或任何验收。
+Slice53 的接受事实保持。
 
-Next Action: USER AUTHORIZES SLICE54 ACTIVATION; THEN B PLANS THE FIRST TASK
+Next Action: A ACTING AS B PLANS TASK54.1; NO IMPLEMENTATION AUTHORIZED
