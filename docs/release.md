@@ -18,7 +18,32 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-[Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) is the latest accepted development Slice,
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) is the latest accepted development Slice,
+**PASS / CLOSED** on 2026-11-11. Original Base
+`e43a40674eb14aa12615a440a348fe675cd50c4e` through accepted implementation
+`aef044e51dc91655372bf5fe39c6116da976c3b4` delivers the seven Rules families' Add/Copy/Edit
+cards, readable settings/object-local tests and Overview-only complete-flow checking. The A-for-B
+exception covered first-Task planning only; B review and A Final Review were independent.
+
+The [fixed B report](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review) records Python 2678 tests OK
+(7 optional external-service/endurance skips), 1516 Web unit tests and 268 default browser tests
+passing, plus real-Python Rules/recovery/consumer journeys, quality checks, fresh Web assets and
+wheel/installed-consumer smoke. Wheel SHA-256:
+`778d2ab258f0d4eaa7b7964eb5cff49c7342e5bad6ddfc7858d461bdd9dce338`.
+A independently repeated real-Python/temporary-SQLite Rules and recovery journeys, including a
+real published Save with its response lost: refresh retained the original request and exactly one
+PUT was sent. Desktop/narrow/short-window visual evidence was reviewed.
+
+Root Ruff's pre-existing untracked-script error remains beside passing tracked-source checks.
+Automation's first 34-pass/one-failure run stopped on list/authority reread timing before its
+intended second request; the original trace, isolated passing case and final 35-pass run remain
+recorded. No test assertion, timeout or retry setting was weakened. Raw evidence remains local at
+`.git/validation-evidence/aef044e5/task54-1-b/` and
+`.git/validation-evidence/aef044e5/slice54-a/`; it is not remote CI. No broad Docker matrix was
+applicable to this Rules frontend change; no production external-service validation or V2 release
+is claimed. Later documentation-only reconciliation changes no executable validation inputs.
+
+Prior [Slice53 acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) remains unchanged,
 **PASS / CLOSED** on 2026-11-10. Its original Base is
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`, accepted implementation
 `8c1b2b1e262d483b594e99a06ad67e747b13bfa4`, reviewed through

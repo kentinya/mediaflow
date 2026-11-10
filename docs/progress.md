@@ -21,7 +21,7 @@ settings/object-local tests, and Overview as the sole complete-flow Web entry. A
 input/read pairing, explicit discard, publication/conflict recovery and unknown non-replay remain.
 `V2-RULES-010–012`, the journey, architecture and configuration guidance are CURRENT.
 
-The [A Final Review](../SLICE.md#a-final-review--pass--closed) records the complete range,
+The [fixed A Final Review](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) records the complete range,
 independent real Python/SQLite journeys and reviewed visual evidence. The [fixed B review/packet](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)
 retains T4 full results, B54-01–07 corrections, original failures, optional skips and packaging limits.
 The A-for-B exception covered first-Task planning only; B acceptance and A Final Review were independent.
@@ -40,6 +40,7 @@ rewrite older acceptance. Detailed prior closure/validation pointers remain at
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
+| 54 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review) |
 | 53 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#a-final-review--pass--closed); [prior A53-01 / FIX REQUIRED](https://github.com/kentinya/mediaflow/blob/fded2cff4e3f9c131dce3416c916117bd72babd1/SLICE.md#a-final-review--fix-required) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#b-closure-packet--task531-pass) |
 | 52 | `19a458eb6c1a6afb8693d2757755487a58213a4f:SLICE.md` | `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md` |
 | 51 | `c0a02875e53f249f1ac7d22b9b667c6a453c87b9:SLICE.md` | `e26b399c682e7c09f4e675b6ebe412f5adcf770a:TASK.md` |

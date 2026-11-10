@@ -16,4 +16,4 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 完整 B 验收、B54-01–07 修正、原始失败／限制与 Closure Packet 交接保留于
 [固定 B 终审](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)；
 原 Task 计划／Developer 交接保留于 Git。A 的完整范围及独立验收见
-[SLICE.md](SLICE.md#a-final-review--pass--closed)。当前不授权下一 Task、推送或部署。
+[固定 A 终审](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed)。下一 Task 的规划／实施及发布／部署需分别授权。

@@ -709,7 +709,7 @@ keeps prior Active and correctable input.
 
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
-[Slice54](../SLICE.md) passed independent A Final Review on 2026-11-11; V2-RULES-010–012
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-11; V2-RULES-010–012
 and the following complete journey are CURRENT. Centered Add/Copy/Edit cards replace the
 former drawers and standalone Edit page; only Overview retains complete-flow testing. Existing
 publication, local analysis and safety semantics remain.

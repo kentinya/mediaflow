@@ -1033,7 +1033,7 @@ to Rules; shared shell navigation/authentication and other business routes retai
 
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
-[Slice54](../SLICE.md) passed independent A Final Review on 2026-11-11. V2-RULES-010–012
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-11. V2-RULES-010–012
 and the [complete current journey](product-experience.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)
 replace the earlier drawer/full-page presentation; shared Python authority remains unchanged.
 

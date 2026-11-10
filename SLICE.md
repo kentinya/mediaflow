@@ -29,7 +29,7 @@ A 验收。用户随后明确“激活 Task”，正式授权 Task54.1 实施；
 Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 原退回／修正、
 验证限制及 B 转任 A 的用户授权例外均保留于
 [固定关闭记录](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)。
-本 Slice 不重开 Slice41／44／50／53；当前接受基线为
+本 Slice 不重开 Slice41／44／50／53；原始实施基线为
 `e43a40674eb14aa12615a440a348fe675cd50c4e`。Base 固定，后续纯规划／激活提交不重设；
 若实现前出现独立产品变更，A 应先明确基线／范围的合法处理，不能静默重定 Base。
 生命周期以 [Development Workflow](docs/development-workflow.md) 为唯一依据。
@@ -104,8 +104,8 @@ Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 �
 | 分类规则 | 内部规则清单与当前规则编辑层级明确，条件、优先级、目标媒体库和相对路径可读；复杂表格不依赖整页横向溢出，内部“完成”与最终“保存”意图区分。 |
 | 整理策略 | 操作／冲突、附件、重复检测及回滚／清理分组，枚举有可懂中文、数值有单位；覆盖／删除等实际危险影响就近明确，不默认授权或承诺万能回滚。 |
 
-统一表单标签、控件、帮助、错误、按钮和结果样式，包含当前缺少配套 CSS 的
-`RulesObjectTestPanel` 及分类内部动作。单项测试保留必要样本，按当前类型／用途组织，
+统一表单标签、控件、帮助、错误、按钮和结果样式，包含
+`RulesObjectTestPanel` 的配套样式及分类内部动作。单项测试保留必要样本，按当前类型／用途组织，
 显示真实作用域；默认先看结论、实际输出、失败原因和下一步。技术 family、修订／版本、
 原始类别、调用统计及完整 JSON 放入诊断展开，不作为普通操作前置条件。不能用隐藏
 真实阻塞、截断关键路径、删除证据或一律绿色成功来美化。样本、输入、Active／对象
@@ -194,7 +194,7 @@ A Final Review: PASS / CLOSED — 2026-11-11
 
 固定 Task 审查范围为 `6351b60433f0e79dac6f5f7150884a1fecb0da43` 到上述 Head；B 已重评
 全部 Slice 结果与表面，不再规划 Task。最后产品检查点后的提交仅为交接文字。
-详细验收、命令与原始失败说明见 [B final Task review](TASK.md#b-final-task-review)。
+详细验收、命令与原始失败说明见 [固定 B 终审](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)。
 
 ### Final tests and safety evidence
 
@@ -211,7 +211,7 @@ Rules 主原生、analysis／identity／classification 三项原生证明与补�
 共享消费者：自动化最终 35 项、存储 8 项、整理／Task 交接 10 项、包含两种库实际保存
 的原生用例 1 项 PASS；两种库取消返回背景稳定且参考旅程零写。自动化首次运行有
 1 项因连续复制时清单尚未读完而没有发出第二次请求，原失败／trace、单项诊断及
-最终完整结果全部保留，详见 Task。未通过修改用例或重试配置掩盖原失败。
+最终完整结果全部保留，详见上述固定 B 终审。未通过修改用例或重试配置掩盖原失败。
 
 ### Known non-blocking issues / explicit deferrals
 

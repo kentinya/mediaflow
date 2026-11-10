@@ -57,7 +57,7 @@ and all explicit deferrals remain; push/release/deployment are not part of this 
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice54 Contract/A review](../SLICE.md#a-final-review--pass--closed).
+Latest acceptance: [fixed Slice54 Contract/A review](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

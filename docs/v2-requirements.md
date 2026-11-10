@@ -521,7 +521,7 @@ supplies the complete operator sequence. Earlier accepted safety and deferral co
 
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
-[Slice54](../SLICE.md) passed independent A Final Review on 2026-11-11, from fixed Base
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-11, from fixed Base
 `e43a40674eb14aa12615a440a348fe675cd50c4e` through implementation
 `aef044e51dc91655372bf5fe39c6116da976c3b4`. V2-RULES-010–012 are CURRENT and replace
 the former Add/Copy drawer, standalone full-page Edit and editor complete-chain preview

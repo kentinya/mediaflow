@@ -68,7 +68,8 @@ or another Provider lookup at summary generation. The per-file organizer support
 saving its existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
 [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity) explains current behavior.
 
-[Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED.
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) is the latest accepted development Slice,
+PASS / CLOSED on 2026-11-11.
 [TASK.md](TASK.md) has no active implementation; the next large Slice is selected separately.
 [Progress](docs/progress.md) keeps immutable acceptance references, original Base/Head, role
 exceptions, deferrals and validation limits for all accepted Slices and corrections.
@@ -96,7 +97,11 @@ polling updates quietly and normal same-query refresh preserves visible content 
 
 The [Rules workspace](docs/configuration.md#native-v2-organizing-rules-management) keeps its title,
 description and refresh in the content header. Overview has no inventory search; each of the seven
-families keeps one local search and state filter. Settings retains configuration diagnostics/recovery.
+families keeps one local search and state filter. Add/Copy/Edit opens a centered card over its
+inventory, with readable settings and object-local tests; only Overview offers the complete-flow
+check of published Active. Save publishes the exact checked successor and returns to the list;
+unknown publication keeps its original request for explicit verification without automatic replay.
+Settings retains configuration diagnostics/recovery.
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
