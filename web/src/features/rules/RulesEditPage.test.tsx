@@ -744,3 +744,301 @@ describe("RulesEditPage restored-draft pairing against a newer read", () => {
     expect(body.object.description).toBe("Special handling");
   });
 });
+
+describe("RulesEditPage single-item test after a second administrator publishes (B54-06)", () => {
+  const v2Active = {
+    ...formAuthorityPayload.active,
+    revisionId: "33333333-3333-4333-8333-333333333333",
+    revisionSequence: 2,
+    version: 2,
+    digest: "3".repeat(64),
+  };
+  const v2Projection = {
+    ...editProjectionPayload,
+    object: {
+      id: "C",
+      name: "Special",
+      description: "乙的新说明",
+      enabled: true,
+    },
+    active: v2Active,
+  };
+  const v2Authority = { ...formAuthorityPayload, active: v2Active };
+
+  interface ConflictHarness {
+    readonly puts: Record<string, unknown>[];
+    readonly analyses: {
+      expectedVersion: number;
+      expectedRevisionId: string;
+      values: Record<string, unknown>;
+    }[];
+    state: { projection: unknown; authority: unknown };
+    /**
+     * Serves the form-authority read from v2 while the object read still
+     * reports v1 — one deliberately racing verification pass.
+     */
+    divergingReads: boolean;
+  }
+
+  function stubConflictJourney(): ConflictHarness {
+    const harness: ConflictHarness = {
+      puts: [],
+      analyses: [],
+      state: {
+        projection: editProjectionPayload,
+        authority: formAuthorityPayload,
+      },
+      divergingReads: false,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        const json = (payload: unknown, status = 200) =>
+          new Response(JSON.stringify(payload), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          });
+        const currentVersion = () => {
+          const active = (
+            harness.state.authority as { active: Record<string, unknown> }
+          ).active;
+          return (active.revisionSequence ?? active.version) as number;
+        };
+        if (url.endsWith("/auth/principal"))
+          return json({ principal_id: "rules-principal-a" });
+        if (method === "PUT") {
+          const body = JSON.parse(String(init?.body)) as {
+            expectedVersion?: unknown;
+          };
+          harness.puts.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>,
+          );
+          // The real persistence fence: a stale baseline is refused while
+          // the current Active stays intact.
+          if (body.expectedVersion !== currentVersion())
+            return json(
+              { error: { code: "configuration_version_conflict" } },
+              409,
+            );
+          return json(saveSuccessPayload);
+        }
+        if (url.includes("/analysis/")) {
+          const body = JSON.parse(String(init?.body)) as {
+            expectedVersion: number;
+            expectedRevisionId: string;
+            candidate: { values: Record<string, unknown> };
+          };
+          harness.analyses.push({
+            expectedVersion: body.expectedVersion,
+            expectedRevisionId: body.expectedRevisionId,
+            values: body.candidate.values,
+          });
+          // The staged-candidate fence behaves like Save: a stale identity
+          // produces the same 409 the reproduction reported.
+          if (body.expectedVersion !== currentVersion())
+            return json(
+              { error: { code: "configuration_version_conflict" } },
+              409,
+            );
+          return json(localAnalysisPayload({}));
+        }
+        if (url.endsWith("/form-authority")) {
+          if (harness.divergingReads) return json(v2Authority);
+          return json(harness.state.authority);
+        }
+        if (url.endsWith("/inventory")) return json(rulesPayload);
+        if (url.includes("/objects/recognitionTypes/C")) {
+          if (harness.divergingReads) return json(editProjectionPayload);
+          return json(harness.state.projection);
+        }
+        return json({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    return harness;
+  }
+
+  /** 甲 opens C at v1; the stub switches to乙's v2 Active before 甲 saves. */
+  async function openAtV1(harness: ConflictHarness) {
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    // Both reads have landed on v1; 乙 now publishes v2 through the API.
+    harness.state.projection = v2Projection;
+    harness.state.authority = v2Authority;
+    return { dialog, user: userEvent.setup() };
+  }
+
+  it("adopts the verified v2 value and the local test then travels with the v2 identity", async () => {
+    const harness = stubConflictJourney();
+    const { dialog, user } = await openAtV1(harness);
+
+    // 甲 saves with the v1 baseline and is genuinely refused (409).
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(1));
+    expect(
+      (harness.puts[0] as { expectedVersion: number }).expectedVersion,
+    ).toBe(1);
+    expect(
+      await within(dialog).findByText(/保存被拒绝:当前 Active 已变化/),
+    ).toBeVisible();
+    // Nothing may run a local test before the context is verified.
+    expect(harness.analyses).toHaveLength(0);
+
+    // The explicit verification reads both documents at v2…
+    await user.click(
+      within(dialog).getByRole("button", { name: "读取当前 Active 核对" }),
+    );
+    expect(await within(dialog).findByText(/与原提交内容不同/)).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", { name: "采用当前值" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("rules-verify-panel")).toBeNull(),
+    );
+    expect(within(dialog).getByLabelText(/^描述/)).toHaveValue("乙的新说明");
+    expect(harness.puts).toHaveLength(1);
+
+    // …and adopting applies that one verified context to the local test.
+    await user.click(within(dialog).getByRole("tab", { name: "单项测试" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "测试该识别类型" }),
+    );
+    await waitFor(() => expect(harness.analyses).toHaveLength(1));
+    expect(harness.analyses[0]).toMatchObject({
+      expectedVersion: 2,
+      expectedRevisionId: v2Active.revisionId,
+      values: expect.objectContaining({
+        id: "C",
+        description: "乙的新说明",
+      }),
+    });
+    expect(await within(dialog).findByText(/本地检查通过/)).toBeVisible();
+    expect(within(dialog).queryByText(/测试未完成/)).toBeNull();
+    // The verified context also re-enables one explicit Save on v2 without
+    // any automatic re-submission in between.
+    expect(within(dialog).getByRole("button", { name: "保存" })).toBeEnabled();
+    expect(harness.puts).toHaveLength(1);
+  });
+
+  it("re-checks the kept input onto v2, marks older evidence stale and reruns with the re-checked context", async () => {
+    const harness = stubConflictJourney();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    const dialog = await screen.findByRole("dialog", {
+      name: "编辑识别类型 · Special",
+    });
+    const user = userEvent.setup();
+
+    // A local test first travels with the v1 identity and concludes.
+    await user.click(within(dialog).getByRole("tab", { name: "单项测试" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "测试该识别类型" }),
+    );
+    await waitFor(() => expect(harness.analyses).toHaveLength(1));
+    expect(harness.analyses[0].expectedVersion).toBe(1);
+    expect(await within(dialog).findByText(/本地检查通过/)).toBeVisible();
+
+    // 乙 publishes v2; 甲's equally-sized Save with the v1 baseline is refused.
+    harness.state.projection = v2Projection;
+    harness.state.authority = v2Authority;
+    await user.click(within(dialog).getByRole("tab", { name: "设置" }));
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(1));
+    expect(
+      await within(dialog).findByText(/保存被拒绝:当前 Active 已变化/),
+    ).toBeVisible();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "读取当前 Active 核对" }),
+    );
+    expect(await within(dialog).findByText(/与原提交内容不同/)).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", { name: "保留输入,重新复核" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("rules-verify-panel")).toBeNull(),
+    );
+
+    // The candidate is unchanged; only the re-checked Active context moved,
+    // which is exactly what invalidates the earlier evidence.
+    expect(within(dialog).getByRole("button", { name: "保存" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("tab", { name: "单项测试" }));
+    expect(await within(dialog).findByText(/该结果已过期/)).toBeVisible();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "用当前输入重新运行此项" }),
+    );
+    await waitFor(() => expect(harness.analyses).toHaveLength(2));
+    expect(harness.analyses[1]).toMatchObject({
+      expectedVersion: 2,
+      expectedRevisionId: v2Active.revisionId,
+      values: expect.objectContaining({
+        id: "C",
+        description: "Special handling",
+      }),
+    });
+    await waitFor(() =>
+      expect(within(dialog).getAllByText(/本地检查通过/)).toHaveLength(2),
+    );
+
+    // Save and test share the explicitly re-checked identity: the kept input
+    // publishes once on the v2 baseline and the card closes with the result.
+    await user.click(within(dialog).getByRole("tab", { name: "设置" }));
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(2));
+    const published = harness.puts[1] as {
+      expectedVersion: number;
+      object: Record<string, unknown>;
+    };
+    expect(published.expectedVersion).toBe(2);
+    expect(published.object.description).toBe("Special handling");
+    expect(harness.analyses).toHaveLength(2);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText(/已发布为新的 Active/)).toBeVisible();
+  });
+
+  it("keeps a racing verification pending instead of stitching two Active readings", async () => {
+    const harness = stubConflictJourney();
+    const { dialog, user } = await openAtV1(harness);
+
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(harness.puts).toHaveLength(1));
+
+    // The verification pass reads the form authority at v2 and the object at
+    // v1: the same race the guidance called out for B54-06.
+    harness.divergingReads = true;
+    await user.click(
+      within(dialog).getByRole("button", { name: "读取当前 Active 核对" }),
+    );
+    expect(
+      await within(dialog).findByText(/两次读取不能拼成同一套/),
+    ).toBeVisible();
+    expect(harness.analyses).toHaveLength(0);
+    expect(
+      within(dialog).queryByRole("button", { name: "采用当前值" }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: "保留输入,重新复核" }),
+    ).toBeNull();
+    expect(harness.puts).toHaveLength(1);
+
+    // After both reads line up again, the explicit re-check yields exactly
+    // the adoptable v2 context — no decision was taken from the race.
+    harness.divergingReads = false;
+    await user.click(within(dialog).getByRole("button", { name: "重新核对" }));
+    expect(await within(dialog).findByText(/与原提交内容不同/)).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", { name: "采用当前值" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("rules-verify-panel")).toBeNull(),
+    );
+    expect(within(dialog).getByLabelText(/^描述/)).toHaveValue("乙的新说明");
+    expect(harness.puts).toHaveLength(1);
+    expect(harness.analyses).toHaveLength(0);
+  });
+});

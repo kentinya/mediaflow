@@ -29,6 +29,12 @@ a real Chromium browser through the existing Rules journey:
 * the object-local test keeps its business conclusion/actual output/reason/
   next step first with family, revision and call counters behind one closed
   diagnostics disclosure (B54-05);
+* a second administrator publishes through the real API while the card still
+  holds the older Active: the operator's Save is genuinely refused at 409, the
+  explicit verification adopts one coherent verified context (value + baseline
+  + form authority together) and the object-local test then travels with that
+  exact Active identity, the adopted object values and a real conclusion
+  (B54-06);
 * saved screenshots cover 1536×1024, a representative narrow 760 px width and a
   mobile 390 px width, and a reference-by-reference comparison matrix records
   the measured bounds for the header, navigation, table and drawer.
@@ -36,9 +42,12 @@ a real Chromium browser through the existing Rules journey:
 Safety is proven at the Python boundary rather than only in the browser: the
 harness reads the real configuration authority and the real SQLite runtime
 database before and after the whole journey. The evidence is phased — every
-open/edit/close/refresh/verification step stays mutation-free, one explicit
-Edit Save is the single permitted publication (exactly one mutating request,
-exactly one new activation), analysis submissions are read-only local
+open/edit/close/refresh/verification step stays mutation-free; the only
+publications are the second administrator's real API write and one explicit
+Edit Save. Exactly two Save attempts leave the browser (one genuinely refused
+at 409, one published); the Active advances by exactly those two successors
+and the real `configuration_change_audits` table records exactly those two
+checked `activate` publications, analysis submissions are read-only local
 evaluation evidence, and executable Task/Job work stays unchanged.
 
 No production service, credential, user media or external network is involved.
@@ -692,23 +701,160 @@ try {
   await expect(diagnostics).toContainText('Provider 调用 / Storage 读取');
   evidence.screenshots.push(await shoot(page, 'desktop-edit-local-test'));
 
-  // -- exactly one publication, in its own phase ----------------------------
+  // -- B54-06: a stale Save adopts one verified context for the local test --
+  // 乙 (a second administrator) publishes through the real API while 甲 keeps
+  // the card read from the older Active. The journeys below run against the
+  // real persistence fence: the refusal, the verification reads and the local
+  // test are all observed as actual HTTP requests.
+  const conflictObjectId = (await publishCard.getByLabel(/^ID/).inputValue()).trim();
+  const objectUrl =
+    `${BASE}/api/v1/operations/rules/objects/recognitionTypes/` +
+    encodeURIComponent(conflictObjectId);
+  const peerHeaders = {
+    Authorization: `Bearer ${TOKEN}`,
+    'Content-Type': 'application/json',
+  };
+  const peerRead = await (await fetch(objectUrl, { headers: peerHeaders })).json();
+  const peerPublish = await fetch(objectUrl, {
+    method: 'PUT',
+    headers: peerHeaders,
+    body: JSON.stringify({
+      object: {
+        ...peerRead.object,
+        description: 'Second administrator revised the description',
+      },
+      expectedRevisionId: peerRead.active.revisionId,
+      expectedVersion: peerRead.active.revisionSequence,
+      expectedDigest: peerRead.active.digest,
+    }),
+  });
+  const peerResult = await peerPublish.json();
+  if (peerPublish.status !== 200) {
+    throw new Error('the second-administrator publication failed: ' + peerPublish.status);
+  }
+  evidence.b54_06 = {
+    secondAdmin: {
+      status: peerPublish.status,
+      revisionId: peerResult.active.revisionId,
+      version: peerResult.active.revisionSequence,
+      digest: peerResult.active.digest,
+      description: 'Second administrator revised the description',
+    },
+  };
+  // 甲 names their own candidate; the Save still carries the v1 baseline.
   await publishCard.getByRole('tab', { name: '设置' }).click();
-  await publishCard.getByLabel(/^名称/).fill('Normal Movie · Proof Published');
+  await publishCard.getByLabel(/^名称/).fill('Normal Movie · 甲的候选');
+  const refusalWait = page.waitForResponse(
+    (response) => response.url() === objectUrl && response.request().method() === 'PUT',
+  );
   publishWindow.active = true;
   await publishCard.getByRole('button', { name: '保存' }).click();
+  const staleRefusal = await refusalWait;
+  publishWindow.active = false;
+  const staleRefusalBody = await staleRefusal.json();
+  if (
+    staleRefusal.status() !== 409
+    || staleRefusalBody.error?.code !== 'configuration_version_conflict'
+  ) {
+    throw new Error(
+      'the stale Save was not refused by the real Active fence: ' + staleRefusal.status(),
+    );
+  }
+  evidence.b54_06.refusal = {
+    status: staleRefusal.status(),
+    code: staleRefusalBody.error.code,
+    currentVersion: staleRefusalBody.error.details?.currentVersion,
+  };
+  await expect(
+    publishCard.getByText(/保存被拒绝:当前 Active 已变化/),
+  ).toBeVisible();
+  // The explicit verification reads both documents at 乙's newer Active.
+  await publishCard.getByRole('button', { name: '读取当前 Active 核对' }).click();
+  await expect(publishCard.getByText('与原提交内容不同')).toBeVisible();
+  evidence.screenshots.push(await shoot(page, 'stale-conflict-verify'));
+  // Adopting applies value, baseline and form authority as one context.
+  await publishCard.getByRole('button', { name: '采用当前值' }).click();
+  await expect(publishCard.getByLabel(/^描述/)).toHaveValue(
+    'Second administrator revised the description',
+  );
+  await expect(publishCard.getByRole('button', { name: '保存' })).toBeEnabled();
+  // Nothing ran automatically: only the explicit request below submits.
+  await publishCard.getByRole('tab', { name: '单项测试' }).click();
+  await expect(publishCard.getByText(/该结果已过期/)).toBeVisible();
+  const analysisWait = page.waitForResponse(
+    (response) =>
+      response.url().includes('/analysis/recognitionTypes')
+      && response.request().method() === 'POST',
+  );
+  await publishCard.getByRole('button', { name: '测试该识别类型' }).click();
+  const analysisResponse = await analysisWait;
+  const analysisRequest = analysisResponse.request().postDataJSON();
+  const analysisBody = await analysisResponse.json();
+  if (analysisResponse.status() !== 200) {
+    throw new Error('the local test after adopt was refused: ' + JSON.stringify(analysisBody));
+  }
+  if (
+    analysisRequest.expectedRevisionId !== evidence.b54_06.secondAdmin.revisionId
+    || analysisRequest.expectedVersion !== evidence.b54_06.secondAdmin.version
+    || analysisRequest.expectedDigest !== evidence.b54_06.secondAdmin.digest
+  ) {
+    throw new Error(
+      'the local test did not travel with the adopted Active identity: '
+      + JSON.stringify(analysisRequest),
+    );
+  }
+  if (
+    analysisRequest.candidate?.values?.description
+      !== 'Second administrator revised the description'
+  ) {
+    throw new Error('the local test did not carry the adopted object values');
+  }
+  const adoptedResult = publishCard.locator('.mf-rules-object-test-result').nth(1);
+  await expect(
+    adoptedResult.locator('.mf-rules-object-test-summary dt').first(),
+  ).toHaveText('结论');
+  const adoptedConclusion = (
+    await adoptedResult.locator('.mf-rules-object-test-summary dd').first().innerText()
+  ).trim();
+  if (!adoptedConclusion || adoptedConclusion.includes('测试未完成')) {
+    throw new Error('the adopted local test produced no conclusion: ' + adoptedConclusion);
+  }
+  evidence.b54_06.analysis = {
+    status: analysisResponse.status(),
+    request: analysisRequest,
+    conclusion: adoptedConclusion,
+    previousEvidenceStale: true,
+  };
+  evidence.screenshots.push(await shoot(page, 'stale-conflict-adopted-test'));
+
+  // -- exactly one explicit Edit publication, in its own phase -------------
+  await publishCard.getByRole('tab', { name: '设置' }).click();
+  await publishCard.getByLabel(/^名称/).fill('Normal Movie · Proof Published');
+  const publishWait = page.waitForResponse(
+    (response) => response.url() === objectUrl && response.request().method() === 'PUT',
+  );
+  publishWindow.active = true;
+  await publishCard.getByRole('button', { name: '保存' }).click();
+  const publishResponse = await publishWait;
+  publishWindow.active = false;
+  if (publishResponse.status() !== 200) {
+    throw new Error('the explicit publication was not accepted: ' + publishResponse.status());
+  }
+  evidence.b54_06.publicationStatus = publishResponse.status();
   await expect(page.getByText(/已发布为新的 Active/)).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/rules\?section=recognitionTypes/);
-  publishWindow.active = false;
   evidence.screenshots.push(await shoot(page, 'edit-published-notice'));
-  if (mutations.length !== 1) {
+  if (mutations.length !== 2) {
     throw new Error(
-      'the journey expected exactly one publication, observed: ' + mutations.join(', '),
+      'the journey expected the refused Save and the publication, observed: '
+      + mutations.join(', '),
     );
   }
-  if (!mutations[0].startsWith('PUT /api/v1/operations/rules/objects/recognitionTypes/')) {
-    throw new Error('the single mutating request is not the Edit publication: ' + mutations[0]);
+  for (const entry of mutations) {
+    if (!entry.startsWith('PUT /api/v1/operations/rules/objects/recognitionTypes/')) {
+      throw new Error('an unexpected mutating request travelled: ' + entry);
+    }
   }
 
   // -- representative narrow and mobile widths -----------------------------
@@ -780,7 +926,7 @@ try {
     };
   }
 
-  // Every step outside the single publication window stayed read-only.
+  // Every step outside the two declared Save windows stayed read-only.
   evidence.mutations = mutations;
   evidence.unexpectedMutations = unexpectedMutations;
   fs.writeFileSync(
@@ -792,9 +938,10 @@ try {
       'mutations outside the publication phase: ' + unexpectedMutations.join(', '),
     );
   }
-  if (mutations.length !== 1) {
+  if (mutations.length !== 2) {
     throw new Error(
-      'expected exactly one publishing request, observed: ' + mutations.join(', '),
+      'expected exactly the refused Save and one publication, observed: '
+      + mutations.join(', '),
     );
   }
   console.log(JSON.stringify({ ok: true, screenshots: evidence.screenshots.length }));
@@ -901,11 +1048,37 @@ def _activation_count(database_path: Path) -> int:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        if "managed_configuration_audit" not in tables:
+        if "configuration_change_audits" not in tables:
             return 0
         return connection.execute(
-            "SELECT COUNT(*) FROM managed_configuration_audit WHERE action = 'activate'"
+            "SELECT COUNT(*) FROM configuration_change_audits WHERE action = 'activate'"
         ).fetchone()[0]
+    finally:
+        connection.close()
+
+
+def _audit_counts(database_path: Path) -> dict[str, int]:
+    """All durable audit actions with their counts, for publication accounting."""
+
+    if not database_path.exists():
+        return {}
+    connection = sqlite3.connect(str(database_path))
+    try:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        if "configuration_change_audits" not in tables:
+            return {}
+        return {
+            str(action): int(count)
+            for action, count in connection.execute(
+                "SELECT action, COUNT(*) FROM configuration_change_audits "
+                "GROUP BY action ORDER BY action"
+            ).fetchall()
+        }
     finally:
         connection.close()
 
@@ -1009,6 +1182,7 @@ def main() -> int:
         database_path = root / "runtime.sqlite3"
         active_before = api("GET", "/api/v1/operations/rules/form-authority")["active"]
         activations_before = _activation_count(database_path)
+        audits_before = _audit_counts(database_path)
         work_before = _executable_work(database_path)
 
         result = subprocess.run(
@@ -1038,41 +1212,80 @@ def main() -> int:
 
         active_after = api("GET", "/api/v1/operations/rules/form-authority")["active"]
         activations_after = _activation_count(database_path)
+        audits_after = _audit_counts(database_path)
         work_after = _executable_work(database_path)
+        print("   active identity before: " + json.dumps(active_before, sort_keys=True))
+        print("   active identity after:  " + json.dumps(active_after, sort_keys=True))
+        print("   audit before: " + json.dumps(audits_before, sort_keys=True))
+        print("   audit after:  " + json.dumps(audits_after, sort_keys=True))
         # Phased safety: every presentation/refresh/verification step stayed
-        # read-only, and the one explicit Edit publication is accounted for
-        # exactly — one mutating request, one new activation, one Active
-        # successor, no executable work.
+        # read-only, and the three publications are accounted for exactly —
+        # the second administrator's real API write, one genuinely refused
+        # browser Save (409, no Active change) and one explicit Edit
+        # publication; two browser mutations, Active +2, no executable work.
         mutations_seen = list(evidence.get("mutations", []))
         if evidence.get("unexpectedMutations"):
             raise RuntimeError(
                 "mutations outside the publication window: "
                 + json.dumps(evidence["unexpectedMutations"])
             )
-        if len(mutations_seen) != 1 or not mutations_seen[0].startswith(
-            "PUT /api/v1/operations/rules/objects/"
+        if len(mutations_seen) != 2 or any(
+            not item.startswith("PUT /api/v1/operations/rules/objects/") for item in mutations_seen
         ):
             raise RuntimeError(
-                "expected exactly the Edit publication as the only mutation, observed: "
-                + json.dumps(mutations_seen)
+                "expected the refused Save and the Edit publication as the only "
+                "browser mutations, observed: " + json.dumps(mutations_seen)
             )
+        conflict = evidence.get("b54_06") or {}
+        if conflict.get("secondAdmin", {}).get("status") != 200:
+            raise RuntimeError(
+                "the second-administrator publication evidence is missing: "
+                + json.dumps(conflict, ensure_ascii=False)
+            )
+        refusal = conflict.get("refusal") or {}
+        if refusal.get("status") != 409 or refusal.get("code") != "configuration_version_conflict":
+            raise RuntimeError(
+                "the stale browser Save was not genuinely refused: " + json.dumps(refusal)
+            )
+        analysis = conflict.get("analysis") or {}
+        if analysis.get("status") != 200 or not analysis.get("conclusion"):
+            raise RuntimeError(
+                "the adopted local test did not conclude: "
+                + json.dumps(analysis, ensure_ascii=False)[:400]
+            )
+        analysis_request = analysis.get("request") or {}
+        if (
+            analysis_request.get("expectedRevisionId") != conflict["secondAdmin"].get("revisionId")
+            or analysis_request.get("expectedVersion") != conflict["secondAdmin"].get("version")
+            or analysis_request.get("expectedDigest") != conflict["secondAdmin"].get("digest")
+        ):
+            raise RuntimeError(
+                "the local test identity is not the adopted Active: "
+                + json.dumps(analysis_request, ensure_ascii=False)
+            )
+        if conflict.get("publicationStatus") != 200:
+            raise RuntimeError("the explicit Edit publication was not recorded as 200")
         if active_before["revisionId"] == active_after["revisionId"]:
             raise RuntimeError("the explicit publication did not produce a successor Active")
         if active_before["digest"] == active_after["digest"]:
             raise RuntimeError("the explicit publication did not change the Active digest")
-        if active_after["version"] != active_before["version"] + 1:
+        sequence_before = active_before.get("revisionSequence") or active_before["version"]
+        sequence_after = active_after.get("revisionSequence") or active_after["version"]
+        if sequence_after <= sequence_before:
             raise RuntimeError(
-                "the publication must advance the Active version by exactly one "
-                f"({active_before['version']} -> {active_after['version']})"
+                "the durable Active sequence must advance across the two publications "
+                f"({sequence_before} -> {sequence_after})"
             )
-        # The rules publication writes its own `rules_*` audit action rather
-        # than a separate `activate` row: the CLI-style activation counter
-        # must therefore stay untouched while the Active version advanced by
-        # exactly the one Save above.
-        if activations_after != activations_before:
+        # Exact publication accounting lives in the real audit table: the two
+        # writes above are exactly the second administrator's publication and
+        # the one explicit Edit Save, each performing one checked activation
+        # (the refused 409 Save composes nothing, and discovery/read journeys
+        # stay read-only). Analysis staging rows are non-Active evidence and
+        # never activate.
+        if activations_after != activations_before + 2:
             raise RuntimeError(
-                "the journey ran a configuration activation beyond the single publication "
-                f"({activations_before} -> {activations_after})"
+                "expected exactly the second-administrator write and the Edit "
+                f"publication to activate ({activations_before} -> {activations_after})"
             )
         if work_before != work_after:
             raise RuntimeError("the presentation journey created executable work")
@@ -1087,9 +1300,11 @@ def main() -> int:
             "safety": {
                 "phaseModel": (
                     "open/edit/close/refresh/reconnect/verification read-only; "
-                    "one explicit Edit publication window (exactly one PUT, Active "
-                    "version +1, activation counter untouched); analysis is "
-                    "read-only evidence"
+                    "one second-administrator API publication + one refused Save "
+                    "(409, no Active change) + one explicit Edit publication "
+                    "window (exactly two browser PUTs; exactly two checked "
+                    "activations in configuration_change_audits; Active "
+                    "revisionId/digest/sequence advanced by the two successors)"
                 ),
                 "activeRevisionBefore": active_before["revisionId"],
                 "activeRevisionAfter": active_after["revisionId"],
@@ -1097,12 +1312,17 @@ def main() -> int:
                 "activeDigestAfter": active_after["digest"],
                 "activeVersionBefore": active_before["version"],
                 "activeVersionAfter": active_after["version"],
+                "activeSequenceBefore": active_before.get("revisionSequence"),
+                "activeSequenceAfter": active_after.get("revisionSequence"),
                 "activationsBefore": activations_before,
                 "activationsAfter": activations_after,
+                "auditBefore": audits_before,
+                "auditAfter": audits_after,
                 "executableWorkBefore": work_before,
                 "executableWorkAfter": work_after,
                 "mutatingRequests": mutations_seen,
                 "unexpectedMutations": [],
+                "b54_06Conflict": conflict,
             },
             "comparison": [
                 {

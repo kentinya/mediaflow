@@ -173,7 +173,13 @@ interface VerifyPanelState {
    */
   readonly reason: "unknown" | "stale" | "draft";
   readonly verdict:
-    "unverified" | "reading" | "matched" | "modified" | "absent" | "unreadable";
+    | "unverified"
+    | "reading"
+    | "matched"
+    | "modified"
+    | "absent"
+    | "unreadable"
+    | "divergent";
   readonly readCode: string | null;
   /** The freshly read current value + the exact baseline it was read with. */
   readonly current: {
@@ -182,6 +188,22 @@ interface VerifyPanelState {
   } | null;
   /** Current Active identity observed by the verification read. */
   readonly active: ActiveAuthorityIdentity | null;
+  /**
+   * The form-authority model read together with the current value: adopt
+   * applies it with the value/baseline as one decision, so the form, Save and
+   * the single-item test all compose against the same verified Active context
+   * (B54-06).
+   */
+  readonly formAuthority: RuleFormAuthority | null;
+  /**
+   * Two reads of one verification pass that observed different Active
+   * versions: they may never be stitched into one savable/testable context,
+   * so the panel keeps waiting for a re-check instead of offering a decision.
+   */
+  readonly divergent: {
+    readonly formVersion: number;
+    readonly objectVersion: number;
+  } | null;
   readonly failureCode: string | null;
   readonly busy: "adopt" | "recheck" | null;
 }
@@ -192,6 +214,8 @@ const EMPTY_VERIFY: VerifyPanelState = {
   readCode: null,
   current: null,
   active: null,
+  formAuthority: null,
+  divergent: null,
   failureCode: null,
   busy: null,
 };
@@ -458,25 +482,48 @@ export function RulesObjectCard({
     projection.ok &&
     !sameReadIdentity(pairedBaseline, projection.baseline);
 
+  // Adopting from the restored draft applies this card's form-authority read
+  // together with the projection values, so the two must be the same Active
+  // reading; a divergence keeps the decision pending rather than offering a
+  // stitched context (B54-06).
+  const draftAuthorityIdentity =
+    authority !== null ? authorityIdentity(authority.active) : null;
+
   const draftVerify: VerifyPanelState | null =
     draftMismatch &&
     projection !== null &&
     projection.ok &&
     projection.values !== null
-      ? {
-          ...EMPTY_VERIFY,
-          reason: "draft",
-          verdict:
-            values !== null &&
-            sameCandidate(
-              values as Record<string, unknown>,
-              projection.values as Record<string, unknown>,
-            )
-              ? "matched"
-              : "modified",
-          current: { values: projection.values, baseline: projection.baseline },
-          active: projection.baseline,
-        }
+      ? draftAuthorityIdentity !== null &&
+        !sameReadIdentity(draftAuthorityIdentity, projection.baseline)
+        ? {
+            ...EMPTY_VERIFY,
+            reason: "draft",
+            verdict: "divergent",
+            active: projection.baseline,
+            divergent: {
+              formVersion: draftAuthorityIdentity.expectedVersion,
+              objectVersion: projection.baseline.expectedVersion,
+            },
+          }
+        : {
+            ...EMPTY_VERIFY,
+            reason: "draft",
+            verdict:
+              values !== null &&
+              sameCandidate(
+                values as Record<string, unknown>,
+                projection.values as Record<string, unknown>,
+              )
+                ? "matched"
+                : "modified",
+            current: {
+              values: projection.values,
+              baseline: projection.baseline,
+            },
+            active: projection.baseline,
+            formAuthority: authority,
+          }
       : null;
 
   // A retained record for this subject keeps the verification panel open even
@@ -674,6 +721,8 @@ export function RulesObjectCard({
         ...base,
         verdict: "unreadable",
         readCode: activeOutcome.code,
+        formAuthority: null,
+        divergent: null,
         busy: null,
       });
       return;
@@ -690,6 +739,10 @@ export function RulesObjectCard({
         readCode: missing ? null : objectOutcome.code,
         active,
         current: null,
+        // Nothing form-consistent exists to adopt: the panel keeps its
+        // re-check entry and the operator's input stays untouched (B54-06).
+        formAuthority: null,
+        divergent: null,
         busy: null,
       });
       return;
@@ -698,6 +751,25 @@ export function RulesObjectCard({
       ...(objectOutcome.model.value as FormValues),
     };
     const baseline = authorityIdentity(objectOutcome.model.active);
+    if (!sameReadIdentity(active, baseline)) {
+      // The two reads of this pass saw different Active versions: keep the
+      // panel pending instead of pairing one version's form authority under
+      // another version's object value (B54-06).
+      setVerify({
+        ...base,
+        verdict: "divergent",
+        readCode: null,
+        current: null,
+        active: baseline,
+        formAuthority: null,
+        divergent: {
+          formVersion: active.expectedVersion,
+          objectVersion: baseline.expectedVersion,
+        },
+        busy: null,
+      });
+      return;
+    }
     const frozenCandidate = frozen?.candidate ?? null;
     const matched =
       frozenCandidate !== null &&
@@ -708,6 +780,10 @@ export function RulesObjectCard({
       current: { values: current, baseline },
       active,
       readCode: null,
+      // Value, baseline and form authority come from one Active reading:
+      // adopt applies all three together (B54-06).
+      formAuthority: activeOutcome.model,
+      divergent: null,
       busy: null,
     });
   };
@@ -738,6 +814,11 @@ export function RulesObjectCard({
     const adopted = verifyState.current;
     if (verifyState.reason === "unknown") clearUnknownRecord();
     clearDraft();
+    // The verified form authority travels with the adopted value and their
+    // shared baseline: form, Save and the single-item test all switch to that
+    // one verified Active context instead of the card's first read (B54-06).
+    if (verifyState.formAuthority !== null)
+      setAuthority(verifyState.formAuthority);
     setValues(adopted.values);
     setProjection({
       ok: true,
@@ -778,6 +859,8 @@ export function RulesObjectCard({
         ...(verifyState ?? EMPTY_VERIFY),
         verdict: "unreadable",
         readCode: activeOutcome.code,
+        formAuthority: null,
+        divergent: null,
         busy: null,
       });
       return;
@@ -796,11 +879,17 @@ export function RulesObjectCard({
         fresh,
       );
     }
+    // One re-checked context for form, Save and single-item test: the new
+    // form authority, the kept input and its paired baseline all come from
+    // this re-check — never the previous read's values under a fresh
+    // baseline (B54-06).
+    setAuthority(activeOutcome.model);
     setProjection({
       ok: true,
       baseline: fresh,
-      name: projection !== null && projection.ok ? projection.name : null,
-      values: projection !== null && projection.ok ? projection.values : values,
+      name:
+        values !== null && typeof values.name === "string" ? values.name : null,
+      values,
     });
     setPairedBaseline(fresh);
     setFrozenState(null);
@@ -1086,6 +1175,28 @@ export function RulesObjectCard({
           </div>
         </>
       );
+    } else if (verifyState.verdict === "divergent") {
+      body = (
+        <>
+          <p role="alert">
+            核对读取期间当前 Active 又发生了变化:表单字段与权限读取于序号
+            {verifyState.divergent?.formVersion ?? "-"},对象读取于序号
+            {verifyState.divergent?.objectVersion ?? "-"}
+            。两次读取不能拼成同一套
+            可保存、可测试的上下文;现在保持待核对,没有采用任何值,也没有重发任何
+            命令。
+          </p>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-primary"
+              onClick={() => void beginVerify()}
+            >
+              重新核对
+            </button>
+          </div>
+        </>
+      );
     } else {
       const matched = verifyState.verdict === "matched";
       const isDraftDecision = verifyState.reason === "draft";
@@ -1337,6 +1448,10 @@ export function RulesObjectCard({
             objectId={session.mode === "edit" ? session.objectId : null}
             authority={authority}
             values={values}
+            // The Active the current input pairs with: adopting or explicitly
+            // re-checking moves it, making earlier local evidence stale without
+            // running anything automatically (B54-06 / RO-2).
+            publicationEpoch={pairedBaseline?.expectedVersion ?? 0}
           />
           <p className="mf-rules-test-scope-note">
             单项测试只检查当前未保存的候选与必要样本;完整流程检查只在「概览」的完整流程
