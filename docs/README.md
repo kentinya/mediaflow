@@ -1,6 +1,6 @@
 # 文档导航与职责
 
-[Slice53](../SLICE.md#closure-packet-and-a-final-review) — 逐文件整理弹窗与任务中心交接 —
+[Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) — 逐文件整理弹窗与任务中心交接 —
 已于 2026-11-10 **PASS / CLOSED**；原 Base
 `95c24cd0a3cc51acd6143e37e72371445cb15a72` 至已审实现
 `8c1b2b1e262d483b594e99a06ad67e747b13bfa4`，完整复核至
@@ -37,7 +37,7 @@ Slice52／51／50及更早接受身份、延期保持；开发关闭与发布事
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
 | 发布与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；当前支持 fresh 新工作及同版本恢复，旧任务迁移/跨版本升级和 V1 不在支持范围；开发关闭和 Git 推送不等于发布 |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；图片是视觉参考，不是运行数据或权限 |
-| 逐文件整理与任务交接（CURRENT） | [Slice53 Contract/A 终审](../SLICE.md#closure-packet-and-a-final-review) / [现行要求](v2-requirements.md#current--manual-organize-dialog-slice53-pass--closed) / [完整旅程](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)；Files 单项／批量／有界文件夹在弹窗逐项复核、保存分析并一次确认；未知响应核对原请求后打开准确任务，原任务详情保持；角色例外与测试限制见 Contract |
+| 逐文件整理与任务交接（CURRENT） | [Slice53 Contract/A 终审](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) / [现行要求](v2-requirements.md#current--manual-organize-dialog-slice53-pass--closed) / [完整旅程](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)；Files 单项／批量／有界文件夹在弹窗逐项复核、保存分析并一次确认；未知响应核对原请求后打开准确任务，原任务详情保持；角色例外与测试限制见 Contract |
 | 七项体验修整（CURRENT） | [Slice52 Contract](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md) / [现行要求](v2-requirements.md#current--slice52-experience-refinement-slice52-pass--closed) / [现行旅程](product-experience.md#current--slice52-experience-refinement-slice52-pass--closed) / [现行架构](architecture.md#current--slice52-experience-refinement-slice52-pass--closed)；探索整页美观／详情滚动／浏览长度可控，全部九个主页面切换及读取接入没有突兀闪烁／非预期抖动（含两种库刷新提示），允许正常目标页布局差异与稳定加载反馈；自动化旧打开链路退出，普通分页与动效参数为实现方案，已独立验收；失败与证据限制见 Contract |
 | 探索首页（CURRENT） | [Slice51 Contract](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) / [稳定要求](v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) / [完整旅程](product-experience.md#current--v2-explore-homepage-slice51-pass--closed) / [架构](architecture.md#current--v2-explore-homepage-slice51-pass--closed)；TMDB 电影／剧集、筛选／搜索、详情和准确返回，Dashboard Web／API／CLI 及专属实现全退出，无兼容；已接受，证据限制见 Contract |
 | 弹卡、可读性与主页面切换（CURRENT） | [Slice50 Contract](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / [原八项与自动化弹卡稳定性补充](v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed) / [完整现行旅程](product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)；目录树/抽屉替换、V2 侧栏主页面切换与自动化新建/编辑抖动修复均已接受，保留既有业务与接受事实 |

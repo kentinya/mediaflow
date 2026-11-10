@@ -18,7 +18,7 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-[Slice53](../SLICE.md#closure-packet-and-a-final-review) is the latest accepted development Slice,
+[Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) is the latest accepted development Slice,
 **PASS / CLOSED** on 2026-11-10. Its original Base is
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`, accepted implementation
 `8c1b2b1e262d483b594e99a06ad67e747b13bfa4`, reviewed through

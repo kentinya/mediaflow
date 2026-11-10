@@ -18,31 +18,19 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 
 ## Authority and accepted baseline
 
-用户先要求只调查，随后要求规划 Task，并逐项明确：每页一个文件、候选确认流程、
-统一确认整理后在任务中心看结果、本 Task 不更改任务中心任务详情弹窗。
-2026-11-09 用户明确“把这些在Task明确后激活Task”，范围先提交、Task 随后激活。
-Task53.1 此前已由 B 独立验收 PASS；2026-11-10 独立 A 终审发现 A53-01，退回同一 Task 修正。
-Developer 在原 Task 修正，B 完成全范围复核并重新 PASS。用户随后明确“给你A的权限审查”，
-授权同一执行者由 B 转任本轮 A 终审；这是显式角色例外，本次 A 与前轮 B 不是两个独立执行者。
-本轮接受依据为下方全范围复核和实际验证；原退回结论、失败证据及旧验收事实保留。
-2026-11-10 用户另授权的文档治理／GitHub 推送只同步了当时交付／审查事实，
-没有改变范围或作出当时的 A 终审结论、没有部署。本次终审的角色授权以上述新指令为准。
+用户于 2026-11-09 激活本 Slice：Files 单项／批量／有界文件夹复用居中弹窗，每页一个
+主文件及附件，逐项修正后一次确认就绪子集，受理后在任务中心查看原任务；任务详情 UI 冻结。
+Base 固定为 `95c24cd0a3cc51acd6143e37e72371445cb15a72`；后续规划、修正和文档提交均不重设。
+Slice52 的 [固定关闭记录](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md)
+及此前 [独立修正验收](https://github.com/kentinya/mediaflow/blob/379c3746de2c4cd31ed8a1f558f42c3d2175c2dd/TASK.md#b-final-review--pass)
+保留原接受身份、范围与延期。
 
-这是已接受整理旅程的呈现／交接重设计，不能借独立 minor bug 扩大已关闭 Slice。
-Base 固定为调查／规划前 `95c24cd0a3cc51acd6143e37e72371445cb15a72`，后续规划提交不重设。
-Slice52 的原 Base／已审 Head／PASS 保留于
-[固定关闭记录](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md)，
-此前独立修正保留于
-[固定 B 验收](https://github.com/kentinya/mediaflow/blob/379c3746de2c4cd31ed8a1f558f42c3d2175c2dd/TASK.md#b-final-review--pass)。
-所有旧接受、延期和证据限制保持，不重开、不追改。生命周期以
-[Development Workflow](docs/development-workflow.md) 为唯一依据。
-
-规划前治理检查 PASS；main／HEAD 如上述 Base，暂存区为空，仓库与 Git 可写。
-预存 `TASK.md` 是本次上一轮草案；`mediaflow/.DS_Store` 以及未跟踪系统元数据、
-调查脚本／日志、`15`、`output/` 材料均保留，不纳入本 Slice checkpoint。
-调查使用代码及隔离假服务；未读取用户运行数据库、私有配置、凭据或生产媒体。
-假计划的文件数不等于所选数量，不能当成生产数量缺陷；自动化表单仅核对现有卡片实现／
-外壳，不把假服务加载状态当成生产验收。调查不替代后续真实 Python 旅程验收。
+原 A53-01 退回在同一 Task53.1 修正并由 B 复核。用户随后明确“给你A的权限审查”，授权
+同一执行者由 B 转任最终 A；该角色例外、原退回和最终证据见下方审查记录及
+[固定关闭检查点](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)。
+完整计划／开发指导在 [固定 Task](https://github.com/kentinya/mediaflow/blob/8482d77d3d7db5b89edbaca4022c1bf6f154ca5e/TASK.md)；详细过程在 Git，
+生命周期以 [Development Workflow](docs/development-workflow.md) 为唯一依据。
+原预存脏文件保持；验证使用隔离临时库和本地假服务，原环境限制保留。
 
 ## User goal and requirement mapping
 
@@ -141,7 +129,7 @@ B 独立审查固定 Base..candidate，承担真实 Python／SQLite／Worker 浏
 作出 FIX REQUIRED：真实 Files 只确认一个文件、丢失响应、Worker 已完成移动后，用户
 修改未选兄弟并重分析；核对错误读取新摘要，否认了原受理及真实效果。
 引入提交 `99328d5d22e3110eb2f97415af436c76e5545a3a`；未证明重复执行或数据丢失。
-原完整结论保留在 `fded2cff4e3f9c131dce3416c916117bd72babd1:SLICE.md`；原本机证据
+原完整结论保留在 [固定退回记录](https://github.com/kentinya/mediaflow/blob/fded2cff4e3f9c131dce3416c916117bd72babd1/SLICE.md#a-final-review--fix-required)；原本机证据
 `.git/validation-evidence/9d845aed/a53-review/` 保留。该次失败未追改为通过。
 
 ### B Closure Packet — Task53.1 PASS
@@ -196,8 +184,9 @@ Execute、未知状态与每次核对共用该身份。当前复核摘要和未�
 Ruff 工作区限制与打包初次污染均如实保留。A 未机械重复 B 全量。
 本轮本机证据 `.git/validation-evidence/8482d77d/a53-review/`，包含 build／dialog 日志、
 wheel 核验、审查与最终文档检查；材料仅本机可达。
+关闭检查点 `8bc3ef90` 提交后，治理检查 PASS，文档消费者 28 tests 通过（6.409s）。
 
 **决定：PASS / CLOSED。** RO-1／RO-2／RO-3 和全部必需表面已完成；CURRENT 要求、
 旅程、架构及操作指导随本关闭提交协调，Roadmap／Progress 记录本接受，Task 置为
 NO ACTIVE IMPLEMENTATION TASK。原 Base、已审 Implementation Head、旧失败与全部延期
-保持。下一步由 A 另行选择大版本 Slice；本轮不选择、不推送、不部署。
+保持。下一步由 A 另行选择大版本 Slice；GitHub 同步依据用户单独授权执行，发布／部署保持延期。

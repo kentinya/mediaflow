@@ -50,11 +50,11 @@ correction/one exact subset confirmation and accurate Task handoff are CURRENT. 
 unknown request remains fixed across sibling reanalysis; original Task detail UI is preserved.
 The user authorized the B reviewer to perform this final A review; that exception, prior failure,
 actual validation and environment limits remain in the Contract. Next: A selects the next large Slice
-separately. This local closure includes no push or production deployment.
+separately. Development acceptance and Git synchronization remain separate from production release.
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice53 Contract/A review](../SLICE.md#closure-packet-and-a-final-review).
+Latest acceptance: [Slice53 Contract/A review](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

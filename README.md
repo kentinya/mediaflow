@@ -68,56 +68,26 @@ or another Provider lookup at summary generation. The per-file organizer support
 saving its existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
 [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity) explains current behavior.
 
-[Slice49](https://github.com/kentinya/mediaflow/blob/6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0/SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
-a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
-correction places Copy beside Edit and uses a compact enable switch saved through the form.
-[Slice51](https://github.com/kentinya/mediaflow/blob/c0a02875e53f249f1ac7d22b9b667c6a453c87b9/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07:
-TMDB Explore is the default homepage, with browse → filter/search → detail → return, truthful empty
-states and independent read recovery. Dashboard Web/API/CLI, dedicated backend and consumers have
-fully retired without compatibility; shared statistics and durable history remain. Original Base
-`214b69b1e64b24fc22068c2e1760cd1b0c6ac787` through implementation `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` is accepted.
-[CURRENT requirements](docs/v2-requirements.md#current--v2-explore-homepage-slice51-pass--closed) define the delivered boundary.
-The user-authorized B planning substitutions remain disclosed in that fixed Contract; Task
-acceptance and A Final Review were independent. Development acceptance is distinct from a release
-or deployment.
+[Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED.
+[TASK.md](TASK.md) has no active implementation; the next large Slice is selected separately.
+[Progress](docs/progress.md) keeps immutable acceptance references, original Base/Head, role
+exceptions, deferrals and validation limits for all accepted Slices and corrections.
 
-[Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) is PASS / CLOSED after independent A Final Review
-on 2026-11-08: coordinated whole-page Explore layout, complete scrollable details, bounded ordinary
-pagination with accurate return, smooth transitions/read feedback/content handoff across all nine
-main pages including both library refresh cases, and old Automation Open Web retirement. Original
-Base `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` through implementation `f5409da41191c6e4bbf238bb7def601229fc59dc`
-is accepted; [CURRENT requirements](docs/v2-requirements.md#current--slice52-experience-refinement-slice52-pass--closed)
-define the delivered boundary and the Contract retains failures/evidence limits. The first-Task
-planning role exception and independent B review remain disclosed. [TASK.md](TASK.md) has no active
-implementation Task; A selects the next large Slice separately. No release or deployment is claimed.
+[Explore](docs/product-experience.md#current--v2-explore-homepage-slice51-pass--closed) is the
+homepage: browse → filter/search → detail → return, with truthful empty states and local read
+recovery. The coordinated layout, scrollable detail and nine-page read transitions follow the
+[accepted experience](docs/product-experience.md#current--slice52-experience-refinement-slice52-pass--closed).
+Dashboard and old Automation Open/definition/editor Web entries remain retired; current cards,
+commands and durable history remain available.
 
-Two subsequent standalone Explore corrections passed independent B review on 2026-11-08.
-[PATCH-20261108-1](https://github.com/kentinya/mediaflow/blob/6220e369b4f8b7830a8a67ae9c8a6a3fd6e81134/TASK.md)
-delivered MoviePilot-style labelled filter rows, a compact TMDB detail action, sidebar attribution
-and preserved background position when opening and returning from details.
-[PATCH-20261108-2](https://github.com/kentinya/mediaflow/blob/2ed492b10a87e2d4a7de7279bb35fa740ba85d43/TASK.md)
-removed the visible Explore title, aligned its content edges with the compact workspaces, and made
-the detail backdrop decorative so the main facts and overview start are readable before scrolling.
-The fixed reviews retain validation results, existing test failures reproduced at their respective
-Bases and evidence limits. Slice51/52 acceptance identities stay unchanged.
+[OpenList metadata queries](docs/configuration.md#openlist-metadata-and-content-reads) use cached
+directory listings, while content reads obtain download links separately. Files supports native
+moves and renames with per-file verification. [Release validation](docs/release.md#current-v2-validation-boundary)
+keeps the exact-source test/packaging results, skips and recorded failures.
 
-[PATCH-20261108-3](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) passed B product review on 2026-11-08
-at implementation `cf680df6e24725ba40ada378e158d6a0e44710e5`. OpenList metadata queries use
-cached directory listings; content reads obtain download links separately. The Files journey
-completes native moves and renames with per-file verification. Python 3.11 startup and the existing
-validation cases were corrected. [Release validation](docs/release.md#current-v2-validation-boundary)
-records the complete results, including two intermittent browser-script failures.
-
-[Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) is PASS / CLOSED after independent A Final Review on 2026-11-07: readable Task
-cards, Storage/library cards and menus, both page-local trees removed, nine main-page transitions,
-consistent library loading and stable Automation create/edit. [CURRENT requirements](docs/v2-requirements.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)
-preserve existing business/safety boundaries. [Progress](docs/progress.md) keeps original Base/Head,
-closure evidence, deferrals and validation limits. This is unreleased V2 development acceptance.
-
-The subsequent [accepted readability/navigation correction](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md) presents Task details as flow status → processed range → file results. File evidence explains the
-captured work identity, naming and classification before technical diagnostics. Cancellation appears
-with Task actions when available. Automation has no standing header refresh button; failed reads
-retain local reload actions and successful commands update the list.
+Task details present flow status → processed range → file results. File evidence explains work
+identity, naming and classification before technical diagnostics. Available cancellation stays
+with Task actions; Automation uses local read recovery and command feedback to update its list.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
