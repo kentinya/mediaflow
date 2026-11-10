@@ -706,6 +706,65 @@ checked conversion with destination-impact acknowledgement. Preserve path; do no
 legacy label. Old snapshots/Previews/Tasks/grants retain their original meaning; failed conversion
 keeps prior Active and correctable input.
 
+## TARGET — Organizing rules dialogs and readability (Slice54 PLANNED)
+
+[Slice54](../SLICE.md) and V2-RULES-010–012 are authorized planning only, not delivered CURRENT.
+This replaces Add/Copy drawers, full-page Edit and legacy editor chain-preview presentation only
+after acceptance; existing publication, local analysis and safety semantics remain.
+
+- **Goal/entry:** from any of the seven Rules inventories, explicitly Add (including empty state),
+  Copy or Edit. Entering a category never opens a form or submits work. A saved edit URL, refresh,
+  browser Back/Forward and normal reauthentication still identify the exact family/object.
+- **Visible state:** one centered card over the originating inventory, coordinated with Automation
+  and file-page library cards. Direct edit entry uses the matching-family list as background and
+  default close destination. Title uses action/category/readable name; exact edit ID stays available
+  and immutable. Preserve list filters/scroll/width. Permission/object loading, refusal, missing
+  object and read failure stay stable and distinct; stale cached authority cannot enable Save,
+  and late reads cannot populate a different object's form.
+- **Settings/action:** types stay compact; recognition rules clearly connect nested conditions to
+  output type; bindings show one type and four downstream policies. Metadata separates query/locale,
+  matching and request limits. Naming separates movie/TV templates, centralizes variable help and
+  supports long templates. Classification separates the internal list/current rule, conditions and
+  MediaLibrary/path destination, with clear internal Done versus final Save. Organize groups
+  operation/conflict, attachments, duplicate detection and rollback/cleanup, explains units and
+  destructive effects without promising universal rollback. Existing fields, hidden values and
+  explicit legacy destination conversion remain available; no domain defaults or new semantics.
+- **Local test:** settings and test have distinct card areas/views, preserving form/sample/result
+  state on switching. Relevant synthetic path/identity/reference inputs use the same controls,
+  spacing and button language as settings. Only explicit Test submits the exact candidate.
+  Offline local tests call no Provider/media Storage; live Metadata needs separate explicit intent.
+  Default output leads with conclusion, actual rendered name/destination or condition/reference/
+  effect evidence, failure and corrective next action. Technical family/revision/version, raw
+  categories/call counts and full JSON remain available in diagnostics. Relevant edits invalidate
+  evidence; late results cannot overwrite a newer subject/sample as current.
+- **Complete flow:** only Overview offers the complete-flow check against published Active.
+  All Add/Copy/Edit surfaces remove legacy complete-chain regions/buttons. Local success never
+  proves whole-flow readiness, publication or execution authority. Guidance to Overview explains
+  that unsaved candidates are not silently substituted. Save still validates the whole successor.
+- **Success/return:** one Save checks and atomically publishes the exact successor, updates/readbacks
+  the inventory and returns there with a truthful result. A read failure after known publication
+  does not undo the command or make it safe to repeat. Safe close restores family/filter/scroll/focus;
+  closing never executes media work.
+- **Failure/recovery:** field/reference/permission/stale-publication failures retain old Active and
+  correctable input with named correction or explicit authority refresh. Unknown Save explains
+  publication may have happened, keeps verification available and never automatically resends;
+  close/reopen or switching objects cannot fabricate failure or lose the need to verify before
+  repeating it. In-flight submission blocks duplicate Save and unsafe exits. Unsaved close, Escape
+  and route/back navigation offer Continue editing/Discard; repeated close is not explicit discard.
+  Existing tab-scoped input restoration after refresh/reauthentication remains, without persisting
+  credentials or treating drafts as Active.
+- **Visual/accessible completion:** coordinated entry/exit, stable loading-to-ready geometry,
+  pinned title/close/footer, internal long-content scrolling, background lock/gutter compensation,
+  inert background, Tab trapping and focus return. Desktop, 390px and short windows must support
+  nested conditions, multiple classification rows, long templates/paths and failures without page
+  horizontal overflow or unreachable actions. Reduced-motion works; reads/interaction do not wait
+  for artificial animation, and modal changes do not replay whole-page transitions.
+
+All seven families and all three modes, direct links, success, invalid input, conflict, known
+failure, unknown publication and recovery are required. Inventory/Overview wholesale redesign,
+other-page business changes, backend/API retirement, new domains, batch authoring/version rollback
+and deployment are deferred. C→A identity, exact publication, audit/redaction and non-replay remain.
+
 ## Real Storage Files
 
 - **Goal/entry:** browse physical sources at `文件` (`/ui-v2/resourcelib/files`) or a
@@ -902,7 +961,7 @@ preparation context, with no global discovery block.
 
 ## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-Accepted `V2-OPS-018/019` under [Slice53](../SLICE.md) supplies the current Files review and
+Accepted `V2-OPS-018/019` under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) supplies the current Files review and
 post-confirmation handoff. Existing early Task admission, exact confirmation, independent effects
 and the Tasks/recovery journey below remain.
 

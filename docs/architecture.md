@@ -1030,6 +1030,39 @@ its allowlisted Settings return context. Category cards, inventory layouts, expl
 drawers and full-page Edit retain their existing behavior. Styles are scoped to Rules; shared
 shell navigation/authentication and other business routes retain their behavior.
 
+## TARGET — Organizing rules dialogs and readability (Slice54 PLANNED)
+
+[Slice54](../SLICE.md), V2-RULES-010–012 and the
+[complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
+are planning-only. The CURRENT Rules presentation above stays delivered until acceptance.
+
+Rules inventory hosts all seven families' Add/Copy/Edit cards. Existing allowlisted edit URLs
+retain exact family/object identity but render the same card above the appropriate inventory.
+Direct links, refresh/authentication continuation and history keep that identity and a legal default
+close destination. This replaces standalone full-page editing without retiring edit/read APIs or
+the legal-ID/static-entry contract. Separate list return state, per-family/object draft, test
+sample/evidence and exact publication authority.
+
+Reuse the feature-independent modal shell/lifecycle where practical, with only necessary compatible
+extensions. Rules owns subject-bound reads, drafts, discard/in-flight/unknown-save behavior, focused
+commands and inventory readback. Background/focus/stable geometry/motion are presentation concerns.
+Shared Automation/library/Storage/task consumers retain accepted behavior, including Slice53
+original-request reconciliation and exact handoff.
+
+Object tests continue through RulesObjectAnalysisService and existing analysis routes with exact
+candidate/purpose/sample/currentness. Overview alone exposes complete-graph checking of Active.
+Remove legacy complete-preview UI from form consumers, not the shared production pipeline,
+configuration checks, DryRun or preview APIs. Unused form-only UI may be removed after consumer
+verification; no general backend/API cleanup is selected. Structured evidence remains available
+when technical details move behind diagnostics.
+
+Save still uses exact read-baseline concurrency, existing command services, whole-successor
+validation/applicable evidence and atomic publication. Layout cannot rebind authority, lose hidden
+fields, weaken stale/reference/permission checks or replay uncertain publication. No new schema,
+Provider, Storage operation, permission/publication protocol, rule engine, execution/recovery model
+or persistence authority. At acceptance reconcile prior drawer/full-page presentation wording;
+prior pins/history remain unchanged.
+
 ## Persistence
 
 The runtime SQLite repository persists Tasks, TaskItems, Results, locks, review queues,
@@ -1438,7 +1471,7 @@ credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 
 ### CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-Accepted [Slice53](../SLICE.md), `V2-OPS-018/019`, reuses existing typed API/query, durable
+Accepted [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review), `V2-OPS-018/019`, reuses existing typed API/query, durable
 discovery/intent/plan, exact selected execution and original-request reconciliation. CURRENT
 Files-admitted Task/source ownership above remains in force; engine/schema/authority are unchanged.
 

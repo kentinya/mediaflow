@@ -504,7 +504,7 @@ page. Shared chrome does not create another authority or imply unrelated busines
 
 ## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-Accepted 2026-11-10 under [Slice53](../SLICE.md), including the corrected original-request
+Accepted 2026-11-10 under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review), including the corrected original-request
 reconciliation after sibling reanalysis. The user explicitly authorized the B reviewer to perform
 the final A review; that role exception and evidence limits remain in the Contract.
 These requirements refine `V2-OPS-010/012/017` presentation and post-confirmation navigation;
@@ -518,3 +518,24 @@ early durable admission and execution authority remain unchanged.
 No new Task engine/schema/permissions/Provider or Task Center redesign is authorized.
 The [CURRENT journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)
 supplies the complete operator sequence. Earlier accepted safety and deferral contracts remain authoritative.
+
+## TARGET — Organizing rules dialogs and readability (Slice54 PLANNED)
+
+[Slice54](../SLICE.md) is planning-only, fixed Base
+e43a40674eb14aa12615a440a348fe675cd50c4e; implementation is not authorized or accepted.
+This TARGET replaces the presentation portions of V2-RULES-001/006/009 only after acceptance.
+Until then the existing Rules drawer/full-page editor baseline remains CURRENT. Prior
+Slice41/44/50/53 acceptance identities, safety and deferrals remain unchanged.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-RULES-010 | Seven Rules families use coordinated centered Add/Copy/Edit dialogs over their inventory. | Cover toolbar/empty-state Add and row Copy/Edit for bindings, types, recognition rules, Metadata, Naming, Classification and Organize. Follow existing Automation/library card visuals and motion; stable header/footer, bounded body scroll and loading/failure/ready geometry, background scroll/width, keyboard/focus and reduced-motion. Existing edit URLs, legal special IDs, refresh, Back/Forward and reauthentication open the same exact object's dialog, with a matching-family background/default close return on direct entry. Preserve filters, drafts, immutable edit IDs and exact read authority; no standalone full-page editor remains. One Save publishes the exact checked successor, updates the list and returns; known failures retain input/old Active, unknown publication remains reconcilable and cannot auto-resubmit on close/reopen. All leave paths protect in-flight work and require explicit discard of unsaved changes. |
+| V2-RULES-011 | Rules settings and object-local tests are readable, purpose-built and visually consistent inside those dialogs. | All seven families retain supported fields/hidden values and meaningful grouping. Make condition/output and type/four-policy relationships clear; separate Metadata matching from request limits; distinguish movie/TV templates with centralized variable help; make Classification internal list/current-rule/target editing usable; group Organize effects, attachments, duplicate limits and risky cleanup with clear labels/units. Settings and local tests have distinct usable areas without one undifferentiated long form. Style local-test inputs, nested actions and results consistently. Default results lead with conclusion, actual output, failure/correction and next action; technical IDs/revisions/raw JSON remain in diagnostics. Relevant edits invalidate evidence, late replies do not cross objects, explicit live Metadata and synthetic identities stay truthful. Desktop/390px/short viewport and complex/long/error content must be visually inspected. |
+| V2-RULES-012 | Overview is the sole complete-flow testing entry in the Rules Web workspace. | Keep its explicit exact-Active complete-graph check, real competition/resolution/planning, synthetic identity labels and separate live Metadata intent. Remove the editor's legacy complete-chain preview region and controls from every Add/Copy/Edit surface, rather than leaving them collapsed. Editors retain only current-object/necessary-dependency tests; local success never proves whole-flow readiness/publication/execution authority. Guidance to Overview explains it checks published Active, not the unsaved candidate. Save still independently validates the complete successor and applicable evidence; shared backend tests, APIs, configuration checks, organizing DryRun and Automation preflight are preserved. |
+
+The [complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
+and [architecture boundary](architecture.md#target--organizing-rules-dialogs-and-readability-slice54-planned)
+apply together. No new Provider, Storage operation, schema, permission/publication protocol,
+rule domain, execution engine or recovery model is selected. Other pages and the accepted Slice53
+journey keep their behavior. Backend/API retirement, broad inventory/Overview redesign and
+production release are deferred. Closure must reconcile superseded CURRENT presentation wording.
