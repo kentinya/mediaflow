@@ -22,8 +22,8 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: A acting as B for planning only / B independent review
 Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
-Implementation Checkpoint: a326d201bf6fa9d2d883c17c8ba4931b47e91449
-Next Action: DEVELOPER CORRECTS TASK54.1
+Implementation Checkpoint: c96cc4aa3ad88ed576391b776d1c17063b226abb
+Next Action: B REVIEWS THE CORRECTED TASK54.1 CANDIDATE
 ~~~
 
 ## Goal
@@ -235,10 +235,109 @@ npm run test:e2e -- --config=playwright.python.config.ts --output=../.git/valida
 
 ## Developer Completion Report
 
-现有实现检查点为 `a326d201bf6fa9d2d883c17c8ba4931b47e91449`；提交说明报告 TypeScript、
-受影响 ESLint、规则组件 96 项及 routes/entities/api/styles 35 项通过，但根 Task 未更新
-交接状态或填写完成报告。B 已直接审查该实际候选；本段不代替 Developer 交接。
-修正后填写新 checkpoint、READY FOR B REVIEW、实际受影响命令／结果／用时和剩余限制。
+~~~text
+Status: READY FOR B REVIEW
+Implementation Checkpoint: c96cc4aa3ad88ed576391b776d1c17063b226abb
+Candidate range: 6351b604..c96cc4aa(本报告随后单独 docs 提交)
+~~~
+
+### 同 Task 修正(B54-01–05)落点
+
+- **B54-01**:`rules-workspace-labels` 的草稿记录改为
+  `{ values, readBaseline }` 候选与读取身份成对持久化;`RulesObjectCard`
+  以 `pairedBaseline` 跟踪当前输入的配套基线,重开后与本次真实读取的
+  Active 身份比较,不一致时直接进入本卡已有的“采用当前值 / 保留输入,
+  重新复核”决策面板并阻断保存;采用同时替换值与配套基线,复核保留输入
+  时把同一输入与刚读取的 Active 成对重写后才允许保存。双管理员旅程由
+  新增单测覆盖(决定前无 PUT、采用后带 v2 说明、复核后带 v2 基线提交)。
+- **B54-02**:`rulesCardDraftKey` 改为 `create|*` / `copy|<id>` /
+  `edit|<id>`,草稿存储键统一为 principal+family+mode+subject(v3,
+  旧版键丢弃);清单草稿提示改用 `hasRuleDraft` 扫描。恢复、采用、
+  显式放弃、成功保存只处置对应模式的草稿;Copy 保持后端新 ID + 默认
+  停用,单测与原生 proof 同时验证。
+- **B54-03**:“继续编辑”改为 `blocker.reset()`(与 Automation 卡
+  `cancelDiscard` 同一机制),同时收回放弃提示并把焦点交回卡片;仅
+  显式放弃才 `proceed()` 原导航目的地。单元测试验证 prompt 收回、卡片/
+  地址/输入保持与再次阻断;真实浏览器地址回退由原生 proof 的
+  `goBack → 继续编辑 → toHaveURL(edit)` 旅程验证。
+- **B54-04**:`allowlistedDestinationSearch` 的 `/rules` 分支在有效
+  family 之外携带闭集 `dialog=create|copy` 与满足后端规则 ID 契约的
+  `source`,其余一律丢弃;`destination-model.test` 补 auth-return 用例并
+  以 `readRulesDialogSession` 端到端核对;真实浏览器刷新+重连旅程由
+  proof 验证(地址、模式与输入均恢复)。
+- **B54-05**:单项测试结果以 `结论 / 实际输出 / 原因 / 下一步` 四字段
+  开头(新增 `analysisOutput` 按 family 输出实际结果),结果类别/修订/
+  family/调用统计/`validated_non_active` 全部进入默认折叠的“诊断信息”,
+  完整结构证据与 JSON 保留;测试/重跑与分类内部动作(修正、完成、
+  旧版目标转换)接入 `mf-button` 体系;弹窗类名改为 `mf-rules-form-card`
+  (限定 `.mf-modal-card` 特异性),与八区导航 `.mf-rules-card` 彻底解耦,
+  标题/正文/底栏按卡宽铺开,复杂族 880px。
+
+共享方面:`modal-card.tsx`、preview 后端/API、发布协议、领域行为均未改动;
+`AppShell`、e2e 与 proof 的旧断言按统一卡现实更新(见下)。Slice/Roadmap/
+Progress/产品文档本轮未改。
+
+### 实际执行的 Developer 命令与结果
+
+- `python3 scripts/check_governance.py`:PASS(实施前与提交前各一次)。
+- 根目录 `.venv/bin/python -m unittest tests.test_v2_rules_workspace_commands
+  tests.test_v2_rules_object_analysis tests.test_v2_rules_workspace_previews`:
+  184 tests OK(11.0s)。
+- `git diff --check`:PASS。
+- `web/ npm run typecheck`:PASS;`npx eslint src/features/rules
+  src/routes/router.tsx src/shared/ui/modal-card.tsx
+  src/shared/navigation/destination-model.ts`:PASS;
+  `npx prettier --check`(同范围 + 两个 rules e2e spec + AppShell.test):
+  PASS(B 实际失败的 8 个文件已全部格式化)。
+- `web/ npm run test` 受影响批次:8 文件 125 项 PASS;含
+  `destination-model.test` 为 9 文件 154 项 PASS(14.19s);共享消费者
+  批次(modal-card/AppShell/destination 及 Automation/Storage/分类弹窗等)
+  8 文件 187 项 PASS。新增用例:B54-01 采用/复核双旅程、B54-02
+  编辑↔复制↔创建隔离、B54-03 阻断导航继续/放弃、B54-04 白名单回放、
+  B54-05 结论优先结构。首批跑出 5 处失败均为新用例自身的适配问题
+  (memory history 的 `back()` 不经过 blocker、`expectedVersion` 取
+  `revisionSequence`),按实际语义修正“测试写法而非删除覆盖”。
+- `web/ npm run build`:PASS,产物 `index-3MBk4Ns8.js`、`index-ByxQof0I.css`。
+- `web/ npm run test:e2e -- tests/e2e/rules-readiness.spec.ts
+  tests/e2e/rules-identity.spec.ts`:最终 17 passed(14.8s)。更新的旧断言:
+  统一卡选择器(`mf-rules-form-card`/`.mf-modal-header`/`.mf-modal-footer`/
+  `.mf-rules-card-scroll`)、编辑深链断开前先关闭卡片、保存后回清单而非
+  旧整页编辑标题、“ID 不可更改”定位到卡内描述、未触碰副本一次关闭、
+  AppShell “不出现第二个 Rules 标题”改为单一清单头 + topbar 无标题。
+  首轮暴露 3 处失败,修订后全绿;领域断言(特殊 ID、发布/复制/开关/移除、
+  零伪造引用)全部保留。
+- 原生主旅程(第 4 次运行 PASS):
+  `MF_PROOF_ARTIFACTS=$PWD/.git/validation-evidence/task54-1/developer-rules-workspace`
+  `.venv/bin/python scripts/rules_workspace_browser_proof.py` →
+  `PASS: reference-aligned rules workspace through the real Python boundary`,
+  31 张截图(含 `create-refresh-reconnect`、`back-continue-edit`、`copy-card`、
+  `desktop-edit-local-test`、`edit-published-notice`)、evidence.json
+  `mutations=[PUT …/objects/recognitionTypes/A]` 恰一条、Active 版本 +1、
+  激活计数不变、可执行工作前后一致。前三次失败保留并已修正:①脚本侧
+  Metadata 分区名过期(按当前表单 legend 更新期望);②结果摘要异步等待;
+  ③激活计数语义(rules 发布记 `rules_edit` 审计而非 `activate` 行,
+  按真实后端语义改为“审计激活计数不变 + Active 版本恰 +1”)。
+- 变更 proof 文件:`ruff check`/`ruff format --check` PASS,
+  `python -m compileall` PASS;根预存 `.explore_adapter_block.py` 未触碰。
+
+### 本轮用时与测试占比
+
+本轮总用时约 70 分钟;测试执行累计约 11 分钟(单测批次约 2 分钟、
+三组 e2e 约 3 分钟、proof 4 次约 6 分钟,含 build/静态检查约 1 分钟),
+占比约 16%,低于本轮要求的 30%。
+
+### 剩余风险与限制(交 B)
+
+- 双管理员跨发布恢复(B54-01)在原生层的完整双会话复现本轮由确定性
+  单测覆盖(读取/恢复/决定/保存全链真实 HTTP stub);原生 proof 已覆盖
+  同机制的 Refresh/重连恢复与真实 Back 地址回退,建议 B 用其复现脚本补跑
+  双管理员原生旅程作验收复核。
+- T4 全量门禁(Python 全量/Web 全量/Node E2E/打包与源码外 smoke)与
+  其余三个原生 proof(analysis/identity/classification)未执行,归 B 按
+  Required Tests 进行;proof 改为分阶段证据后旧“全程零写”断言已按范围
+  要求重构为“除发布窗口外零写 + 恰一次发布”,B 验收时留意该语义变化。
+- JS 内 `unexpectedMutations`/本地测试无 Provider 调用的证明限于该
+  proof 旅程本身;无外部服务、endurance 环境验证未声称。
 
 ## B Review Result
 
