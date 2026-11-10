@@ -773,3 +773,87 @@ PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未
 - 新 Python 验证使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；
   未读取用户数据库、私有配置、凭据或生产媒体。预存 `mediaflow/.DS_Store` 及其余
   未跟踪调查脚本／日志／`15`／`output/` 材料保持未动、未提交；本轮未推送或发布。
+
+## Developer Completion Report — 取消后退后的准备地址同步 P1
+
+**Status:** READY FOR B REVIEW。代码 checkpoint 为
+`8a468b76`（main；Task Base `95c24cd0` 未变），本报告随后的文档 checkpoint 为最终候选
+HEAD。本报告不声称 PASS，不关闭 Slice，不替代 B 的 T4 验收；未推送、未发布、未部署。
+
+### 本轮改动
+
+- **根因：** `StorageFilesPage` 的三处 Files 自有路由写入都用
+  `window.history.replaceState(null, ...)`。浏览器历史状态同时承载路由的
+  `__TSR_index`/key；用 `null` 覆盖后，路由器把真实浏览器后退判为未知／前进方向，
+  `继续编辑` 时 `history.go(-delta)` 回到的不是原 Files 条目，地址丢掉
+  `organizeDiscovery`，随后刷新／重认证只能回到普通 Files。
+- **修正：** 新增一个 Files 路由搜索写入helper，只增删当前条目的有界键
+  （`resourceLibraryId`、`path`、`organizeDiscovery`），并把浏览器现有
+  `window.history.state` 原样写回；URL 未变化时不写。库／目录／准备三处写入共用它，
+  因此本旅程中先前的库选择不再破坏同一 history 条目。保留原有路由、返回上下文与
+  授权模型；未改任务中心详情、Provider／Storage／schema／权限／恢复引擎，未改
+  RecognitionType C 使用命名／分类 A 的映射。
+- **弹窗会话与地址同源：** 受理写入同一 discovery 身份，取消后退的
+  `继续编辑` 保留原地址、原准备与原未保存候选；刷新可丢弃未保存输入，重认证后从同一
+  耐久 discovery 重开同一弹窗；普通关闭仍只移除重开标识，不取消耐久工作。
+- **测试：** 真实 Python 浏览器 spec 新增一个完整用例（Files→真实 Worker 候选→
+  未保存“候选 2”→真实浏览器后退→草稿提示→继续编辑→核对准确地址→刷新＋正常重认证→
+  同一准备／摘要），并断言全过程 1 次准入、0 保存、0 继续分析、0 执行；新增单测证明
+  受理进入与关闭离开 Files 地址时路由 history 条目身份保持。隔离夹具
+  `Dialog/ DialogBack.2025.mkv` 与其两项同分候选仅服务本用例，不执行、不产生目标。
+
+### 实际验证（Developer 受影响范围）
+
+- 旧源码反证：新真实用例在未修正实现上失败于
+  `expect(page).toHaveURL(/organizeDiscovery=.../)`，实际地址为
+  `http://127.0.0.1:4183/ui-v2/`；新单测在未修正实现上失败于
+  `expect(window.history.state).toEqual(routerState)`（受理后 state 变成 `null`）。
+  两者在修正候选上通过。
+- `web/`：`NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/OrganizeCreationPage.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/ui/modal-card.test.tsx src/shared/navigation/destination-model.test.ts`
+  → **8 files / 167 passed（24.4s）**。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run build` → passed（仅既有
+  bundle 体积提示）；3 个改动 Web／spec 文件 `npx prettier --check` → all matched。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts` → **7 passed（43.3s）**；新用例
+  **4.3s**。真实 Worker 生成两项同分候选；真实浏览器后退出现既有草稿提示，
+  `继续编辑` 后地址仍为 `?resourceLibraryId=source&organizeDiscovery=<同一 id>`，
+  `候选 2` 仍选中；`page.reload()` 后走正常 token 重认证，回到同一 Files 地址并显示
+  `第 1 / 1 个`、同一文件与同一候选；全程只有最初 1 次 discovery 准入 POST，
+  0 recovery decision／continue、0 analyze、0 Execute；普通关闭后地址只移除
+  `organizeDiscovery`，充分证明耐久准备未被取消。
+- 手动真实浏览器核对（同一隔离 harness，非提交用例）：取消后退并
+  `继续编辑` 后地址与候选保持；显式 `放弃草稿并离开` 离开到 `/ui-v2/explore`、
+  弹窗卸载，期间 0 POST。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts
+  tests/e2e/organize-source-history.python.spec.ts` → **46 passed（1.4m）**，任务中心
+  既有“继续整理”／只读摘要与历史未知效果入口保持。
+- `web/`：`npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-organize.spec.ts` → **63 passed（38.4s）**，Files 弹窗与既有
+  manual organize 假服务回归无变化。
+- 仓库根：`.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_organize_source_history
+  tests.test_organize_preparation` → **137 passed（10.8s）**。
+- 仓库根：`ruff check`、`ruff format --check`、`py_compile`
+  （`scripts/operations_inventory_harness.py`）→ clean；`python3
+  scripts/check_governance.py` → PASS；`git diff --check` → clean。
+- 本轮实际测试执行约 6–7 分钟（含旧源码反证与真实浏览器手动核对），低于本轮
+  总用时 30%。
+
+### 剩余风险 / 未运行
+
+- B 的 T4 全量门禁仍由 B 执行：Web／Python 全量、wheel／打包、重启、Docker 影响
+  评估、完整桌面／390px／矮窗口视觉与真实键盘／返回／reduced-motion 验收。本报告
+  不声称 PASS。
+- 修正依赖浏览器条目自带的路由 history state；tracked 代码中其余生产写入
+  （`MediaLibraryFilesPage`）已保留该状态，没有其他 `replaceState` 写入者。若将来
+  新增直接清空 `history.state` 的写入者，会重新引入同类症状。
+- 真实回归使用临时 SQLite／Local Storage／synthetic provider／真实 Worker；未读取
+  用户数据库、私有配置、凭据或生产媒体。预存 `mediaflow/.DS_Store` 与全部未跟踪
+  调查脚本／日志／`15`／`output/` 材料保持未动、未提交。
