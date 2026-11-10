@@ -16,14 +16,14 @@ Slice53 的接受、原退回／修正与验证限制保留于
 Task ID: 54.1
 Task Type: SLICE
 Parent Slice: 54
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 6351b60433f0e79dac6f5f7150884a1fecb0da43
 Difficulty: High
 Test Level: T4
-Planner / Reviewer: A acting as B for planning only / independent B review pending
+Planner / Reviewer: A acting as B for planning only / B independent review
 Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
-Implementation Checkpoint: NOT SET
-Next Action: DEVELOPER IMPLEMENTS TASK54.1
+Implementation Checkpoint: a326d201bf6fa9d2d883c17c8ba4931b47e91449
+Next Action: DEVELOPER CORRECTS TASK54.1
 ~~~
 
 ## Goal
@@ -34,7 +34,7 @@ Next Action: DEVELOPER IMPLEMENTS TASK54.1
 准确发布失败／未知核对保持完整。本 Task 不扩大或关闭 Slice。
 
 完整旅程见 [Product Experience TARGET](docs/product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-active)，
-七类内容矩阵及边界见 [SLICE.md](SLICE.md)。实际代码缺口：
+七类内容矩阵及边界见 [SLICE.md](SLICE.md)。规划时的实际代码缺口：
 
 - RulesWorkspacePage 的 Add／Copy 用 RulesObjectDrawer，Edit 经独立 RulesEditPage 挂载；
   清单本地搜索／状态／滚动没有统一的弹窗返回模型。Copy 等预填返回才打开，迟到读取
@@ -145,8 +145,9 @@ API 客户端仅作既有请求／投影的必要封装调整，不改后端发�
 ## Required Tests
 
 归属以 [test levels and ownership](docs/development-workflow.md#6-test-levels) 为准。
-以下是实施后必需命令；**激活检查点未执行产品验收、不作通过声明**。原生证明必须使用
+以下是实施后必需命令；本轮 B 实际结果见文末。原生证明必须使用
 精确生产构建、临时库／本地假 Provider，禁止私有配置、运行数据库或用户媒体。
+按本轮用户要求，测试执行累计时间（含失败复现）须小于本轮总用时的 50%，交接记录实际用时。
 
 ### Developer — affected tests
 
@@ -234,12 +235,61 @@ npm run test:e2e -- --config=playwright.python.config.ts --output=../.git/valida
 
 ## Developer Completion Report
 
-尚未实现，Implementation Checkpoint NOT SET。实施后填准确 checkpoint、READY FOR B REVIEW、
-实际变更／关键决定、affected commands／结果／失败／限制和剩余工作；全量仍待独立 B。
+现有实现检查点为 `a326d201bf6fa9d2d883c17c8ba4931b47e91449`；提交说明报告 TypeScript、
+受影响 ESLint、规则组件 96 项及 routes/entities/api/styles 35 项通过，但根 Task 未更新
+交接状态或填写完成报告。B 已直接审查该实际候选；本段不代替 Developer 交接。
+修正后填写新 checkpoint、READY FOR B REVIEW、实际受影响命令／结果／用时和剩余限制。
 
 ## B Review Result
 
-尚未审查实现，不作 PASS／FIX REQUIRED。后续记录 Reviewed Task Base..Head、
-实际独立审查／验收／失败／限制／具体阻塞和同 Task 修正。Task PASS 后重评全部
-Slice RO-1／RO-2／RO-3 与必需表面；全满足则停止规划，完成 Slice-final、交
-SLICE READY FOR A REVIEW，由 A 终审，不自行宣告 Slice CLOSED。
+~~~text
+Reviewed: 6351b60433f0e79dac6f5f7150884a1fecb0da43..a326d201bf6fa9d2d883c17c8ba4931b47e91449
+Decision: FIX REQUIRED
+Task blockers: B54-01–05 below
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+~~~
+
+已核对完整 Task 变更、已提交 Slice 合同与真实 Python/API/临时 SQLite 入口。统一卡片、
+设置／测试切换、Metadata 分组与命名变量帮助已有实现；表单专属完整预览已移除，共享
+后端/API 与概览完整检查仍在。RO-1 的草稿／返回／恢复未完成；RO-2 的结果与卡内布局
+未完成；RO-3 的入口收敛已落代码，其完整原生回归仍待修正候选。因此不提交 Slice Closure Packet。
+
+### 同 Task 修正与开发指导
+
+| 阻塞 | 已复现的完整操作与结果 | 修正指导与验收 |
+|---|---|---|
+| **B54-01 · P1：恢复旧草稿会覆盖其他管理员的新修改** | 甲编辑识别类型 A 的名称并留稿；乙修改同一对象说明并发布 v2；甲刷新、重认证后恢复 v1 输入。页面直接允许保存，请求带 `expectedVersion: 2`，返回 200，将乙的新说明还原成旧说明。 | 修改 `RulesObjectCard` 的读取／恢复与草稿记录：将候选与它原有的读取身份一起保留；重开／刷新后对照当前读取。旧输入不能自动换成新保存基线。版本变化时复用本卡片已有的当前值核对与明确采用／保留输入复核动作，决定后再配套更新。用上述双管理员旅程验收：决定前保存不可覆盖 v2；明确采用当前值后保留乙的说明；明确复核保留输入后才可提交对应候选。覆盖 AC-3/10/11。 |
+| **B54-02 · P1：复制和编辑共用一份草稿** | 在 A 的编辑弹窗改名留稿，刷新返回清单后点击 A 的“复制”。复制表单得到原 ID `A`、编辑草稿名称和启用状态 `true`，取代后端生成的新 ID／停用候选。 | `rulesCardDraftKey` 与 `rules-workspace-labels` 的读写清理统一使用 principal＋family＋mode＋subject。复制 A 与编辑 A 必须各有自己的输入；创建也有独立模式。恢复、采用当前值、明确放弃和成功保存只处置对应草稿。用同一对象的编辑→复制及复制→编辑验证；Copy 保持后端新 ID、支持时默认停用，原对象不变，Organize 不增 enabled。覆盖 AC-3/12。 |
+| **B54-03 · P1：后退后的“继续编辑”没有取消离开** | 清单→编辑 A→改名→浏览器后退→“继续编辑”。确认框仍显示，地址已是清单地址；刷新后编辑卡消失，无法从当前地址恢复 A。 | 将 Continue 的处理统一为取消当前 blocked navigation、撤销放弃提示并恢复准确编辑地址／历史位置，同时保留输入和读取身份。现有按钮只调用 `setDiscardArmed(false)`，没有处理 `blocker.reset()`；须核对真实浏览器 history 的地址回退结果。验证继续后提示关闭、URL 仍准确，刷新／重认证还在 A；明确放弃才继续原后退目的地。Add/Copy 的 Back 使用同一行为。覆盖 AC-2/4。 |
+| **B54-04 · P1：新建弹窗刷新后丢失入口** | 清单→添加识别类型→输入 ID→刷新→重新连接。地址由 `section=recognitionTypes&dialog=create` 变为仅 `section=recognitionTypes`，卡片消失。 | 在现有 `allowlistedDestinationSearch` 的 Rules 分支补齐本 Task 已采用的有界 dialog/source 状态，并复用现有 family／mode／合法 ID 解析。让 Create/Copy 在刷新与重认证后恢复相同模式／来源及对应输入；Edit 保持旧链接契约。同步 destination/auth-return 测试及现有真实浏览器旅程。覆盖 AC-2/4/11，不新增路由或认证协议。 |
+| **B54-05 · P1：单项结果与卡内布局尚未达到 RO-2** | 编辑 A→单项测试→“测试该识别类型”：普通结果首先堆叠 `recognitionTypes`、调用统计、候选修订／版本和 `validated_non_active`；测试按钮仍为浏览器原生样式。桌面编辑卡宽 760px，基本设置却缩在约 269px 的居中窄列；同卡测试区宽度又明显变化。 | 在 `RulesObjectTestPanel` 中完成已规划的业务结论／实际输出／原因／下一步层级；family、修订、原始类别和调用统计放诊断展开，保留完整证据。为测试／重跑／分类内部动作接入同一按钮样式。弹窗改用独立样式名或限定 `.mf-modal-card`，解除与八区导航 `.mf-rules-card` 的 `align-items:center`、padding、hover、small nowrap 串用；标题／正文／底栏按卡宽稳定铺开。按既有七类矩阵检查桌面／390px／矮窗口和复杂内容；以截图与操作验收，不以固定像素宽度为唯一标准。覆盖 AC-5/6/8。 |
+
+按 B54-01/02 整理已有草稿模型，再接通 B54-03/04 导航，最后完成 B54-05 展示；沿用现有
+组件、发布服务和核对动作。新增测试应覆盖上表真实操作。更新既有原生 proof 的旧抽屉／
+独立整页／完整预览选择器，完成原计划的七类与保存恢复覆盖；保持原安全断言。格式检查
+已实际失败的 8 个变更文件一并修正。以上均在 Task54.1 原 Goal／Base／Scope 内，Difficulty
+High、T4 与原 Developer/B 测试归属保持。
+
+### B 实际验证与限制
+
+候选 `a326d201` 新构建产物 `index-C9ecEgnu.js`、`index-o1KJ7X8m.css`；原始日志、
+复现脚本、请求结果和截图在本机稳定目录
+`.git/validation-evidence/a326d201/task54-1-b/`，不是远程证据链接。
+
+- `python3 scripts/check_governance.py`：PASS；完整 Task 范围 `git diff --check`：PASS。
+- `web/ npm run build`、`npm run typecheck`：PASS。
+- `web/ npm run test -- run src/features/rules/RulesWorkspacePage.test.tsx src/features/rules/RulesEditPage.test.tsx src/features/rules/RulesObjectTestPanel.test.tsx src/features/rules/ClassificationDestinationForm.test.tsx`：4 文件、96 项 PASS，8.71 秒；DOM 环境报告未实现 scrollTo。
+- `web/ npx prettier --check src/features/rules src/shared/ui/styles.css`：FAIL，8 个本次变更文件未格式化；见 `format-check.log`。
+- 复用 `scripts/rules_workspace_browser_proof.py` 的配置、CLI 导入激活和真实 Python 服务夹具，
+  通过清单 Add/Copy/Edit、浏览器 Back/刷新/重认证、既有 PUT 与局部分析入口复现上述结果；
+  最终记录 `native-evidence.json`／`native.log`。早次尝试日志保留：一次在 Back 后刷新未恢复
+  编辑卡处停下；一次为 B 脚本整页导航后漏重连导致等待复制超时，已纠正，未计为产品缺陷。
+  截图包括 desktop-edit、mobile-edit、back-continue、copy-after-edit-draft、mobile-naming
+  与 local-test-result。临时数据库／媒体根与本地测试身份随夹具清理。
+- 已有 P1 阻塞，按流程提前 FIX REQUIRED；T4 全量 Python/Web/E2E、其余原生与打包门禁
+  尚未执行，归 B 在修正候选验收。没有使用 Developer 缺少全量结果作为产品缺陷。
+
+预存系统元数据、日志、调查材料与私有文件均保留；本轮只更新根 Task，Slice／Roadmap／
+Progress 和产品代码不改。本轮测试执行（含失败复现、构建和静态检查）少于 2 分钟，低于
+本轮总用时的 50%。
