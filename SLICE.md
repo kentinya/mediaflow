@@ -4,14 +4,14 @@
 Slice ID: 53
 Name: Manual Organize Dialog and Task Center Handoff
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Head: 8a468b7685d5750bcd7607fc291a61ae70b7000c
 Working Branch: main
-Development Authorization: IMPLEMENTATION COMPLETE; B PASS; A FINAL REVIEW PENDING
+Development Authorization: A RETURNED; B MUST CONTINUE TASK53.1 BEFORE FURTHER IMPLEMENTATION
 Risk: High
 Accepted Test Level: T4
-Next Action: INDEPENDENT A FINAL REVIEW
+Next Action: B CONTINUES TASK53.1 FOR A53-01
 ```
 
 ## Authority and accepted baseline
@@ -19,9 +19,10 @@ Next Action: INDEPENDENT A FINAL REVIEW
 用户先要求只调查，随后要求规划 Task，并逐项明确：每页一个文件、候选确认流程、
 统一确认整理后在任务中心看结果、本 Task 不更改任务中心任务详情弹窗。
 2026-11-09 用户明确“把这些在Task明确后激活Task”，范围先提交、Task 随后激活。
-Task53.1 已由 B 独立验收 PASS，当前进入 A 终审等待；原规划不构成 A 终审。
-2026-11-10 用户另授权文档治理并推送 GitHub，本次只同步已发生的交付／审查事实，
-不改变范围或作出 A 终审结论，不部署。B 不代行同一 Slice 的 A Final Review。
+Task53.1 此前已由 B 独立验收 PASS；2026-11-10 独立 A 终审发现 A53-01，退回同一 Task 修正。
+原规划不构成 A 终审，原 B 验收与测试事实保留，但不能据此关闭当前 Slice。
+2026-11-10 用户另授权的文档治理／GitHub 推送只同步了当时交付／审查事实，
+没有改变范围或作出 A 终审结论、没有部署。B 不代行同一 Slice 的 A Final Review。
 
 这是已接受整理旅程的呈现／交接重设计，不能借独立 minor bug 扩大已关闭 Slice。
 Base 固定为调查／规划前 `95c24cd0a3cc51acd6143e37e72371445cb15a72`，后续规划提交不重设。
@@ -52,9 +53,9 @@ Slice52 的原 Base／已审 Head／PASS 保留于
 | RO-2 当前文件修正与集中确认 | 候选／四类合法决定就近保存并重新分析，逐项状态独立，最后核对精确子集及危险影响 | `V2-OPS-018`、`V2-OPS-010/012/015–017`、`REQ-RECOVERY-004–009` |
 | RO-3 精确任务中心交接       | 正常受理及未知响应核对成功均关闭弹窗并打开准确 Task，沿用既有详情／结果／恢复  | `V2-OPS-019`、`REQ-WEB-005`                                    |
 
-新合同已实现并通过 B 验收，仍为 **TARGET，待独立 A 终审接受**；见 [V2 TARGET](docs/v2-requirements.md#target--manual-organize-dialog-slice53-ready-for-a-review)、
-[完整 TARGET 旅程](docs/product-experience.md#target--manual-organize-dialog-slice53-ready-for-a-review) 和
-[架构 TARGET](docs/architecture.md#target--manual-organize-dialog-slice53-ready-for-a-review)。
+新合同此前通过 B 验收；A 终审因原请求核对缺口退回，仍为 **TARGET，未接受**；见 [V2 TARGET](docs/v2-requirements.md#target--manual-organize-dialog-slice53-fix-required)、
+[完整 TARGET 旅程](docs/product-experience.md#target--manual-organize-dialog-slice53-fix-required) 和
+[架构 TARGET](docs/architecture.md#target--manual-organize-dialog-slice53-fix-required)。
 CURRENT 的早期耐久准入、来源占用、五态／独立结果和准确确认语义保持；TARGET 只替换
 本次 Files 准备／复核的旧整页呈现及确认后默认执行页交接；A 终审后协调为 CURRENT。
 
@@ -130,12 +131,58 @@ B 独立审查固定 Base..candidate，承担真实 Python／SQLite／Worker 浏
 
 ## Closure Packet and A Final Review
 
-Task53.1 已 **B PASS**；RO-1／RO-2／RO-3 与全部必需表面经 B 重评完成，不再规划 Task。
+Task53.1 此前 **B PASS**；B 曾重评 RO-1／RO-2／RO-3 与全部必需表面完成。
+下方 A 终审发现 RO-3 必需核对／交接缺口，当前为 **FIX REQUIRED**，接续原 Task53.1。
 固定 B 审查：[8a5f295b 的完整验收](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md#b-review-result)；
 当前 [Closure Packet](TASK.md#closure-packet--slice53) 保留精确范围、实际门禁、环境跳过、
 本地证据位置和文档协调事项。B reviewed candidate 为
 `263e1043516be73fc9a8e215ab7223f2b9e10296`，其后仅作审查记录与文档治理。
 
-A 须独立审查固定 Base 到上述 Implementation Head 的完整变更和交付旅程。
-当前没有 A Final Review 或 Slice PASS / CLOSED 结论；最终接受后再协调 CURRENT、
-Roadmap／Progress 关闭记录和根 Task 下一步。此前接受身份、证据限制及延期不变。
+### A Final Review — FIX REQUIRED
+
+审查日期：2026-11-10。
+
+独立审查完整 `95c24cd0a3cc51acd6143e37e72371445cb15a72` →
+`8a468b7685d5750bcd7607fc291a61ae70b7000c` 的 38 文件范围；审查开始于 main／
+`9d845aedc204573e7943b74491f0f0f4681384cb`，实现 Head 后仅有审查／治理文档。
+本轮 A 未代行 B／Developer，未改产品实现、范围或原 Base；预存脏文件均保留。
+
+**A53-01 — P1：摘要更新后，未知执行错误地核对新摘要并否认原执行效果。**
+
+从已有 Files → Unified media source → Dialog 选择两个真实临时文件，逐项复核后只
+确认 `DialogConflict.2022.mkv`，保留未选 `DialogSibling.2023.mkv`。真实后端提交成功，
+仅丢失浏览器可见 Execute 响应；真实 Worker 完成该文件 MOVE。用户随后点击
+“返回逐项复核”，将未选兄弟识别类型改为 C，点击“保存并重新分析”，新摘要出现后
+再进“整批复核”点击“核对提交结果”。这些均为现有 UI 操作，没有构造产品入口或伪造状态。
+
+原摘要 `fc9d7f61-159e-4782-bcbf-3bf89ba12023` 的执行已完成；界面却读取新摘要
+`fdb38d8c-9ff3-48f2-9265-e5cadce60841` 的 admission，显示“没有被受理,没有发生整理变更”，
+清除未知限制且未交接。原受理读取仍证明 `known / completed`，准确 Task 为
+`0d5267c0-003e-497a-8804-0c0b1d885f11`，原文件已移走，目标存在。
+这违反 RO-3／`V2-OPS-019` 的原请求核对、准确任务交接和效果真实性；未证明重复执行或数据丢失。
+
+根因在 `ManualOrganizeDialog.tsx`：unknownSubmission 未固定 previewId，reconcileMutation
+将原 itemIds／intentVersion／效果范围与当前 render 的 `preview.previewId` 拼接；合法兄弟
+重分析会更新该值。引入于 `99328d5d22e3110eb2f97415af436c76e5545a3a`
+（2026-11-09 22:13:56 +0800），审查 Head 仍存在。
+
+**退回要求：** B 在原 Task53.1 内规划修正；未知请求必须独立固定完整原摘要／子集／版本／
+效果身份，后续浏览或新摘要不得改变任何核对对象。证明原受理后仍交接准确原 Task，
+保持兄弟独立操作、完成／未知效果非重放及冻结详情 UI。增加上述真实入口组合回归，
+包括原执行已完成后兄弟重分析、原请求核对和无第二次 Execute；按工作流分配 Developer
+受影响验证与 B 验收。不得自动重提、猜任务或扩大为任务中心重设计。
+
+独立验证：治理检查 PASS、Base..Head whitespace clean、Web build PASS；真实 Python
+dialog 旅程 **7 passed（44.0s）**。检查 B 原始全量／原生／打包日志，与 TASK 的计数相符；
+独立核对 wheel 摘要及 170 个打包 Python 源文件，全部匹配。查看同视口旧整页／新桌面、
+390px 候选、矮视口附件证据；任务中心详情未改。没有机械复跑 B 全量。
+7 项环境跳过、根目录 Ruff 被预存未跟踪脚本阻断等原限制全部保留。
+
+本轮本地证据 `.git/validation-evidence/9d845aed/a53-review/`：`review.md`、
+`dialog-e2e.log`、`probe-unknown-clean.log`、`unknown-original-proof.json`、
+`unknown-wrong-not-admitted.png` 与可重跑 `probe-unknown.mjs`。早期未成立／失败探测日志保留，
+不作额外产品结论；最终证明在兄弟修正前已核实原执行成功。材料仅本机可达。
+
+**决定：FIX REQUIRED，Slice53 不关闭。** RO-1／RO-2 的既有交付与通过测试保持，
+RO-3 及组合恢复尚未完成；TARGET 不转 CURRENT，不增加 Progress 关闭条目，
+不选择下一个 Slice、不推送或部署。修正后由 B 重评全部结果并重新交 A。

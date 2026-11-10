@@ -42,15 +42,16 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **READY FOR A REVIEW**.
-The roadmap row remains ACTIVE until A accepts closure. Fixed Base
+[Slice53](../SLICE.md) — **Manual Organize Dialog and Task Center Handoff** — **FIX REQUIRED**.
+The roadmap row remains ACTIVE. Fixed Base
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`; implementation
-`8a468b7685d5750bcd7607fc291a61ae70b7000c` has passed B review through [Task53.1](../TASK.md).
-All three required outcomes are complete; there is no active implementation Task.
-Independent A Final Review is next. The modal/handoff contract remains TARGET pending A acceptance;
+`8a468b7685d5750bcd7607fc291a61ae70b7000c` previously passed B review through [Task53.1](../TASK.md).
+Independent A review returned A53-01: sibling reanalysis changes the preview used to reconcile an
+unknown Execute, falsely denying the original admitted effects. B continues the same Task with a
+focused correction plan; RO-3 is incomplete. The modal/handoff contract remains TARGET;
 Task Center task-detail layout/content/progress/results/recovery UI stays frozen.
 Slice52 and prior acceptance, deferrals and evidence limits remain unchanged.
-GitHub push is user-authorized; production deployment is outside this action.
+This A review is a local checkpoint; no push or production deployment is performed.
 
 ## Accepted boundary references
 

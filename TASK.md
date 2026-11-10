@@ -1,16 +1,19 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task53.1 — A 终审退回，待 B 接续修正
 
-Task53.1 已 **B PASS**；Slice53 **READY FOR A REVIEW**，下一步由独立 A 终审。
-本文件保留当前验收和 Closure Packet；完整计划、开发指导及历轮修正报告见
+Slice53 当前 **FIX REQUIRED**；A53-01 证明未知提交在兄弟重分析后核对了错误摘要，
+详见 [A Final Review](SLICE.md#a-final-review--fix-required)。
+B 接续原 Task53.1，先更新修正计划与验收，再交 Developer；本次 A 仅记录退回事实，
+不代行 B 规划或 Developer 实现。Base／Goal／Scope 不变，不创建独立 minor bug 或新 Task。
+本文件下方保留**退回前的 B PASS 和 Closure Packet**；完整计划、开发指导及历轮修正报告见
 [固定 Task53.1 记录](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md)。
 生命周期以 [Development Workflow](docs/development-workflow.md) 为准；
-[Slice53](SLICE.md) 的范围、安全约束、延期及 Base 不变，不新增实现 Task。
+[Slice53](SLICE.md) 的范围、安全约束、延期及 Base 不变。
 
 ```text
 Task ID: 53.1
 Task Type: SLICE
 Parent Slice: 53
-Status: PASS
+Status: FIX REQUIRED
 Task Base: 95c24cd0a3cc51acd6143e37e72371445cb15a72
 Implementation Checkpoint: 8a468b7685d5750bcd7607fc291a61ae70b7000c
 Reviewed Head: 263e1043516be73fc9a8e215ab7223f2b9e10296
@@ -18,10 +21,10 @@ B Review Checkpoint: 8a5f295b900ff3a9563649e2fb6b6ed5c372f52a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: SLICE READY FOR A REVIEW
+Next Action: B CONTINUES TASK53.1 FOR A53-01; UPDATE PLAN BEFORE IMPLEMENTATION
 ```
 
-## B Review Result
+## B Review Result — 退回前的历史验收
 
 **PASS — B 独立复核，2026-11-10。** 最后一个取消后退／刷新阻塞已解除；
 AC-1–12 与 Slice53 的 RO-1／2／3 全部满足。停止规划，提交下方 Closure Packet，
@@ -100,6 +103,9 @@ AC-1–12 与 Slice53 的 RO-1／2／3 全部满足。停止规划，提交下�
   全量测试与合同／代码／证据审查交错执行，未将本轮主要时间用于重复测试。
 
 ### Closure Packet — Slice53
+
+以下为原 B 提交的 packet；2026-11-10 A53-01 退回已使 READY 结论失效。
+修正并由 B 重新核对后再提交，不删除此前实际测试／失败／跳过事实。
 
 - **Slice / Base / Implementation Head：** Slice53；
   `95c24cd0a3cc51acd6143e37e72371445cb15a72` →

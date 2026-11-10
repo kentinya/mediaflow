@@ -900,10 +900,11 @@ explicitly deferred; exact pins, source checks, independent results and non-repl
 Discovery controls/progress/readiness and return-to-Files remain in the exact admitted task/
 preparation context, with no global discovery block.
 
-## TARGET — Manual organize dialog (Slice53 READY FOR A REVIEW)
+## TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
 
-`V2-OPS-018/019` are implemented and B PASS; independent A acceptance is pending. This section
-retains TARGET status until CURRENT reconciliation; the preceding manual journey is the accepted baseline.
+`V2-OPS-018/019` previously passed B review; A returned A53-01 in unknown-submit reconciliation
+after sibling reanalysis. This section retains TARGET status until correction and acceptance;
+the preceding manual journey is the accepted baseline.
 [Slice53](../SLICE.md) changes pre-execution presentation and handoff only. Existing early Task
 admission, exact confirmation, independent effects and the Tasks/recovery journey below remain.
 

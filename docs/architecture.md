@@ -1436,11 +1436,12 @@ filters/selection through Files and recovery without a second address-bar-derive
 credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 `29a6d6d0064a5de766086446b345ae5ec2fe790f:docs/architecture.md`; it is not a second current contract.
 
-### TARGET — Manual organize dialog (Slice53 READY FOR A REVIEW)
+### TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
 
-[Slice53](../SLICE.md), `V2-OPS-018/019`: implementation is B PASS, awaiting independent A review.
-This section remains TARGET pending acceptance; CURRENT Files-admitted Task/source ownership
-above is preserved. This target reuses existing typed API/query, durable discovery/intent/plan,
+[Slice53](../SLICE.md), `V2-OPS-018/019`: implementation previously passed B review; A returned
+A53-01 because reconciliation uses a later preview after sibling reanalysis rather than the
+immutable original request. This section remains TARGET pending correction/acceptance; CURRENT
+Files-admitted Task/source ownership above is preserved. This target reuses existing typed API/query, durable discovery/intent/plan,
 exact selected execution and original-request reconciliation; no new engine/schema/authority.
 
 Files hosts the modal above its preserved background. Valid preparation/readonly deep links and

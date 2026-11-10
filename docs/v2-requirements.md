@@ -502,11 +502,12 @@ and Files composition. [Files specification](file-page-visual-spec.md) owns copy
 visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md) owns its separate
 page. Shared chrome does not create another authority or imply unrelated business-page redesign.
 
-## TARGET — Manual organize dialog (Slice53 READY FOR A REVIEW)
+## TARGET — Manual organize dialog (Slice53 FIX REQUIRED)
 
 User-authorized 2026-11-09 Task activation; [Slice53](../SLICE.md) fixes the scope.
-Implementation has passed B review; independent A acceptance is pending. These requirements
-remain TARGET until that review and CURRENT reconciliation. They refine `V2-OPS-010/012/017` presentation
+Implementation previously passed B review; A final review returned A53-01 for incorrect
+original-request reconciliation after sibling reanalysis. These requirements remain TARGET until
+correction, acceptance and CURRENT reconciliation. They refine `V2-OPS-010/012/017` presentation
 and post-confirmation navigation, without changing early durable admission or execution authority.
 
 | ID | Requirement | Acceptance meaning |
@@ -516,5 +517,5 @@ and post-confirmation navigation, without changing early durable admission or ex
 
 No new Task engine/schema/permissions/Provider or Task Center redesign is authorized.
 Accepted CURRENT contracts remain authoritative until A acceptance; the
-[TARGET journey](product-experience.md#target--manual-organize-dialog-slice53-ready-for-a-review) supplies the
+[TARGET journey](product-experience.md#target--manual-organize-dialog-slice53-fix-required) supplies the
 complete operator sequence.
