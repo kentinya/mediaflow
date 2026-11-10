@@ -22,8 +22,8 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: A acting as B for planning only / B independent review
 Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
-Implementation Checkpoint: c96cc4aa3ad88ed576391b776d1c17063b226abb
-Next Action: DEVELOPER CORRECTS TASK54.1 TEST CONTEXT AFTER RECONCILIATION
+Implementation Checkpoint: 7584bd3fd5274822b403e8b9758dcc87d9322670
+Next Action: B REVIEWS THE B54-06 CORRECTED TASK54.1 CANDIDATE
 ~~~
 
 ## Goal
@@ -237,107 +237,135 @@ npm run test:e2e -- --config=playwright.python.config.ts --output=../.git/valida
 
 ~~~text
 Status: READY FOR B REVIEW
-Implementation Checkpoint: c96cc4aa3ad88ed576391b776d1c17063b226abb
-Candidate range: 6351b604..c96cc4aa(本报告随后单独 docs 提交)
+Implementation Checkpoint: 7584bd3fd5274822b403e8b9758dcc87d9322670
+Candidate range: cd9b5c7e..7584bd3f(本报告随后单独 docs 提交)
 ~~~
 
-### 同 Task 修正(B54-01–05)落点
+### B54-06 修正落点
 
-- **B54-01**:`rules-workspace-labels` 的草稿记录改为
-  `{ values, readBaseline }` 候选与读取身份成对持久化;`RulesObjectCard`
-  以 `pairedBaseline` 跟踪当前输入的配套基线,重开后与本次真实读取的
-  Active 身份比较,不一致时直接进入本卡已有的“采用当前值 / 保留输入,
-  重新复核”决策面板并阻断保存;采用同时替换值与配套基线,复核保留输入
-  时把同一输入与刚读取的 Active 成对重写后才允许保存。双管理员旅程由
-  新增单测覆盖(决定前无 PUT、采用后带 v2 说明、复核后带 v2 基线提交)。
-- **B54-02**:`rulesCardDraftKey` 改为 `create|*` / `copy|<id>` /
-  `edit|<id>`,草稿存储键统一为 principal+family+mode+subject(v3,
-  旧版键丢弃);清单草稿提示改用 `hasRuleDraft` 扫描。恢复、采用、
-  显式放弃、成功保存只处置对应模式的草稿;Copy 保持后端新 ID + 默认
-  停用,单测与原生 proof 同时验证。
-- **B54-03**:“继续编辑”改为 `blocker.reset()`(与 Automation 卡
-  `cancelDiscard` 同一机制),同时收回放弃提示并把焦点交回卡片;仅
-  显式放弃才 `proceed()` 原导航目的地。单元测试验证 prompt 收回、卡片/
-  地址/输入保持与再次阻断;真实浏览器地址回退由原生 proof 的
-  `goBack → 继续编辑 → toHaveURL(edit)` 旅程验证。
-- **B54-04**:`allowlistedDestinationSearch` 的 `/rules` 分支在有效
-  family 之外携带闭集 `dialog=create|copy` 与满足后端规则 ID 契约的
-  `source`,其余一律丢弃;`destination-model.test` 补 auth-return 用例并
-  以 `readRulesDialogSession` 端到端核对;真实浏览器刷新+重连旅程由
-  proof 验证(地址、模式与输入均恢复)。
-- **B54-05**:单项测试结果以 `结论 / 实际输出 / 原因 / 下一步` 四字段
-  开头(新增 `analysisOutput` 按 family 输出实际结果),结果类别/修订/
-  family/调用统计/`validated_non_active` 全部进入默认折叠的“诊断信息”,
-  完整结构证据与 JSON 保留;测试/重跑与分类内部动作(修正、完成、
-  旧版目标转换)接入 `mf-button` 体系;弹窗类名改为 `mf-rules-form-card`
-  (限定 `.mf-modal-card` 特异性),与八区导航 `.mf-rules-card` 彻底解耦,
-  标题/正文/底栏按卡宽铺开,复杂族 880px。
+- **同一核对上下文贯穿核对/采用/复核。**`VerifyPanelState` 增加随
+  `runVerification` 同一次双读带回的 `formAuthority`:
+  a)“采用当前值”在替换值与配套基线的同时 `setAuthority(formAuthority)`,
+  表单目录、`save()` 校验和 `RulesObjectTestPanel` 的
+  `authorityIdentity(authority.active)` 一起切到已核对 Active;
+  b)“保留输入,重新复核”把本次 `fetchRuleFormAuthority` 的模型与保留
+  输入、fresh 基线一同落地,投影改记“当前输入 + 其配套基线”(此前
+  旧读值配新基线属拼接,按指导不可保留);c)草稿核对的采用也携带
+  开卡读取到的配套 authority。采用/复核前的阻断、读回失败保留输入与
+  核对入口,均为既有行为未变。
+- **读到不同版本保持待核对。**新增 `divergent` 结论:核对双读
+  (form-authority 与对象投影)或草稿核对(authority 与 projection)
+  观察到不同 Active 身份时,展示两次读取序号、不提供采用/复核按钮、
+  不保存不重发,仅提供“重新核对”;读取对齐后重新核对即恢复可采用
+  的一致上下文。不改后端并发规则与分析协议。
+- **Active 变化使旧证据失效而不自动重跑。**卡片向测试面板传
+  `publicationEpoch={pairedBaseline.expectedVersion}`:采用或复核使
+  配套 Active 移动时(即使候选内容不变)旧结果立即标记过期,重跑由
+  操作者显式执行并提交当前候选。
 
-共享方面:`modal-card.tsx`、preview 后端/API、发布协议、领域行为均未改动;
-`AppShell`、e2e 与 proof 的旧断言按统一卡现实更新(见下)。Slice/Roadmap/
-Progress/产品文档本轮未改。
+责任定位与 B 指导一致:`runVerification` 早已读到新 form-authority,
+此前只取其 identity,`authority` 状态停留于开卡读取——本修复把该读取
+作为核对上下文的一部分传递下去。
+
+### 新增测试(RulesEditPage.test.tsx,3 例)
+
+夹具按真实围栏语义服务:过期 PUT、过期 analysis 都以当前 Active 版本
+拒绝(409 `configuration_version_conflict`),当前身份才 200。
+
+1. **采用后单项测试**:初读 v1 → 乙发布 v2 → 保存 409 → 核对 →
+   采用 → 单项测试;断言分析请求 `expectedVersion/expectedRevisionId`
+   为 v2、`candidate.values` 为乙的新对象、结论显示且无“测试未完成”、
+   全程恰 1 次 PUT、保存重新可用且从未自动重发。
+2. **保留输入,重新复核**:v1 先跑一次(请求身份 1)→ 保存 409 →
+   核对 → 复核;候选未变而旧结果立即显示过期 → 重跑以 v2 身份提交
+   保持的候选(结论 ×2)→ 保存以 v2 基线恰一次 200 发布、关闭回
+   清单并显示发布事实。上轮草稿隔离与未知不重发用例保持通过。
+3. **分歧读取保持待核对**:核对时 form-authority v2、对象 v1 → 面板
+   显示“两次读取不能拼成同一套…”,无采用/复核、零 PUT/分析;读取
+   对齐后“重新核对”恢复为可采用的 v2 上下文。
+
+**失败复现(真实失败保留):**临时中和 adopt/recheck 的两处
+`setAuthority` 传递后,用例 1/2 如期失败于
+`expectedVersion: 1`(即 B54-06 的复现:分析仍带旧身份);恢复后
+18/18 通过。
+
+### 原生 proof 扩充(scripts/rules_workspace_browser_proof.py)
+
+在既有真实 Python/API/SQLite 夹具中加入双管理员冲突旅程:乙经真实
+HTTP PUT 发布(200)→ 甲带 v1 基线保存被真实围栏拒绝(409
+`configuration_version_conflict`)→ “读取当前 Active 核对”→ 采用 →
+旧结果过期 → 显式单项测试;随后唯一一次显式 Save 以采用后的上下文
+发布 200,回到清单。按实际请求核对:分析请求
+`expectedRevisionId/expectedVersion/expectedDigest` 恰为乙发布的
+Active 身份、`candidate.values` 为乙的新描述、HTTP 200、结论
+“类型定义有效;可选关联规则试识别未运行”写入 evidence。分阶段证据:
+浏览器恰 2 个 mutation(1 拒绝 + 1 发布)、窗口外零写、分析请求不
+计入 mutation、可执行工作前后一致。
+
+**计数语义更正(请 B 留意):**旧 `_activation_count` 查询的
+`managed_configuration_audit` 表在 mediaflow 源码中并不存在,计数恒
+为 0;上一轮“rules 发布记 rules_edit 而非 activate 行、激活计数不变”
+实际是对不存在表的空计数结论。本轮改查真实表
+`configuration_change_audits`,proof 现断言 journey 前后 `activate`
+行恰 +2(乙发布 + 甲发布;被拒的 409 不 compose 任何行)、
+`successor_draft_create`/`draft_edit` 恰 +4(2 次发布 + 2 次离线分析
+暂存)、`validate` +2,并以 Active revisionId/digest 更替与
+revisionSequence 单调前进佐证后继;`version` 字段(后继恒为 2,
+`create_successor_draft` 固定起点,非发布计数)只记录不断言。其余
+proof(files_toolbar/files_organize_discovery/rules_object_analysis)
+仍查询同一不存在表,属既有范围外问题,本轮未动,提请后续任务处理。
 
 ### 实际执行的 Developer 命令与结果
 
-- `python3 scripts/check_governance.py`:PASS(实施前与提交前各一次)。
+- `python3 scripts/check_governance.py`:PASS(实施前、提交前各一次)。
 - 根目录 `.venv/bin/python -m unittest tests.test_v2_rules_workspace_commands
   tests.test_v2_rules_object_analysis tests.test_v2_rules_workspace_previews`:
-  184 tests OK(11.0s)。
+  184 tests OK(11.6s)。
 - `git diff --check`:PASS。
-- `web/ npm run typecheck`:PASS;`npx eslint src/features/rules
+- `web/` `npm run typecheck`:PASS;`npx eslint src/features/rules
   src/routes/router.tsx src/shared/ui/modal-card.tsx
   src/shared/navigation/destination-model.ts`:PASS;
-  `npx prettier --check`(同范围 + 两个 rules e2e spec + AppShell.test):
-  PASS(B 实际失败的 8 个文件已全部格式化)。
-- `web/ npm run test` 受影响批次:8 文件 125 项 PASS;含
-  `destination-model.test` 为 9 文件 154 项 PASS(14.19s);共享消费者
-  批次(modal-card/AppShell/destination 及 Automation/Storage/分类弹窗等)
-  8 文件 187 项 PASS。新增用例:B54-01 采用/复核双旅程、B54-02
-  编辑↔复制↔创建隔离、B54-03 阻断导航继续/放弃、B54-04 白名单回放、
-  B54-05 结论优先结构。首批跑出 5 处失败均为新用例自身的适配问题
-  (memory history 的 `back()` 不经过 blocker、`expectedVersion` 取
-  `revisionSequence`),按实际语义修正“测试写法而非删除覆盖”。
-- `web/ npm run build`:PASS,产物 `index-3MBk4Ns8.js`、`index-ByxQof0I.css`。
+  `npx prettier --check`(同范围):PASS。
+- `web/ npm run test` 受影响批次 9 文件 157 项 PASS(13.5s;上轮
+  154 项 + 本轮 3 项新用例)。
+- `web/ npm run build`:PASS,产物 `index-B8zhZdNT.js`、
+  `index-ByxQof0I.css`(含本轮新文案)。
 - `web/ npm run test:e2e -- tests/e2e/rules-readiness.spec.ts
-  tests/e2e/rules-identity.spec.ts`:最终 17 passed(14.8s)。更新的旧断言:
-  统一卡选择器(`mf-rules-form-card`/`.mf-modal-header`/`.mf-modal-footer`/
-  `.mf-rules-card-scroll`)、编辑深链断开前先关闭卡片、保存后回清单而非
-  旧整页编辑标题、“ID 不可更改”定位到卡内描述、未触碰副本一次关闭、
-  AppShell “不出现第二个 Rules 标题”改为单一清单头 + topbar 无标题。
-  首轮暴露 3 处失败,修订后全绿;领域断言(特殊 ID、发布/复制/开关/移除、
-  零伪造引用)全部保留。
-- 原生主旅程(第 4 次运行 PASS):
-  `MF_PROOF_ARTIFACTS=$PWD/.git/validation-evidence/task54-1/developer-rules-workspace`
+  tests/e2e/rules-identity.spec.ts`:17 passed(15.4s)。
+- 原生主旅程第 4 次运行 PASS:
+  `MF_PROOF_ARTIFACTS=$PWD/.git/validation-evidence/task54-1/developer-rules-workspace-b54-06`
   `.venv/bin/python scripts/rules_workspace_browser_proof.py` →
   `PASS: reference-aligned rules workspace through the real Python boundary`,
-  31 张截图(含 `create-refresh-reconnect`、`back-continue-edit`、`copy-card`、
-  `desktop-edit-local-test`、`edit-published-notice`)、evidence.json
-  `mutations=[PUT …/objects/recognitionTypes/A]` 恰一条、Active 版本 +1、
-  激活计数不变、可执行工作前后一致。前三次失败保留并已修正:①脚本侧
-  Metadata 分区名过期(按当前表单 legend 更新期望);②结果摘要异步等待;
-  ③激活计数语义(rules 发布记 `rules_edit` 审计而非 `activate` 行,
-  按真实后端语义改为“审计激活计数不变 + Active 版本恰 +1”)。
+  33 张截图(新增 `stale-conflict-verify`、`stale-conflict-adopted-test`),
+  evidence `b54_06`:乙发布 200、甲 409、分析请求身份 = 乙的
+  Active 身份、结论非空、最终发布 200;审计
+  `{activate:1, draft_import:1, validate:1}` →
+  `{activate:3, draft_edit:4, successor_draft_create:4, validate:3}`,
+  Active revisionSequence 1→5 / version 1→2,
+  `unexpectedMutations=[]`。前三次失败保留并按真实行为修正:
+  ①RO-2 后卡停在“单项测试”页,未切回“设置”导致名称不可见;
+  ②③按 `version` 断言 +2 失败,据此改用真实审计表计数(见上)。
 - 变更 proof 文件:`ruff check`/`ruff format --check` PASS,
-  `python -m compileall` PASS;根预存 `.explore_adapter_block.py` 未触碰。
+  `python -m compileall -q scripts/rules_workspace_browser_proof.py` PASS;
+  根预存 `.explore_adapter_block.py` 未触碰。
 
 ### 本轮用时与测试占比
 
-本轮总用时约 70 分钟;测试执行累计约 11 分钟(单测批次约 2 分钟、
-三组 e2e 约 3 分钟、proof 4 次约 6 分钟,含 build/静态检查约 1 分钟),
-占比约 16%,低于本轮要求的 30%。
+本轮总用时约 55 分钟;测试执行累计约 7 分钟(受影响单测与静态检查约
+1.5 分钟、build/e2e 约 1 分钟、proof 4 次约 4.5 分钟),占比约 13%,
+低于本轮要求的 30%。
 
 ### 剩余风险与限制(交 B)
 
-- 双管理员跨发布恢复(B54-01)在原生层的完整双会话复现本轮由确定性
-  单测覆盖(读取/恢复/决定/保存全链真实 HTTP stub);原生 proof 已覆盖
-  同机制的 Refresh/重连恢复与真实 Back 地址回退,建议 B 用其复现脚本补跑
-  双管理员原生旅程作验收复核。
-- T4 全量门禁(Python 全量/Web 全量/Node E2E/打包与源码外 smoke)与
-  其余三个原生 proof(analysis/identity/classification)未执行,归 B 按
-  Required Tests 进行;proof 改为分阶段证据后旧“全程零写”断言已按范围
-  要求重构为“除发布窗口外零写 + 恰一次发布”,B 验收时留意该语义变化。
-- JS 内 `unexpectedMutations`/本地测试无 Provider 调用的证明限于该
-  proof 旅程本身;无外部服务、endurance 环境验证未声称。
+- T4 全量门禁(Python/Web 全量、Node E2E、打包与源码外 smoke)及其余
+  三个原生 proof(analysis/identity/classification)归 B;本轮未执行。
+- “activate 恰 +2”为本轮新断言口径(更正旧空计数),B 复跑时可直接
+  对照 evidence `safety.auditBefore/auditAfter`;如对发布计数口径有
+  不同意见请在审查中指出。
+- 核对双读分歧在原生层由单测用例 3(Fetch 桩)覆盖,proof 未构造
+  服务端两读分歧夹具;与既有 B54-01 双管理员原生复现的分工不变。
+- 未改后端并发规则、分析协议、`modal-card`、preview 后端/API;Slice/
+  Roadmap/Progress 与产品文档本轮未改。
 
 ## B Review Result
 
