@@ -23,7 +23,7 @@ Test Level: T4
 Planner / Reviewer: A acting as B for planning only / B independent review
 Implementation Authorization: USER AUTHORIZED TASK ACTIVATION ON 2026-11-10
 Implementation Checkpoint: 7584bd3fd5274822b403e8b9758dcc87d9322670
-Next Action: B REVIEWS THE B54-06 CORRECTED TASK54.1 CANDIDATE
+Next Action: DEVELOPER CORRECTS TASK54.1 EDIT BACKGROUND STABILITY
 ~~~
 
 ## Goal
@@ -370,77 +370,89 @@ proof(files_toolbar/files_organize_discovery/rules_object_analysis)
 ## B Review Result
 
 ~~~text
-Reviewed: 6351b60433f0e79dac6f5f7150884a1fecb0da43..d26e4b210e04f2ec9f617acbf8b1eddf5608ec67
-Implementation: c96cc4aa3ad88ed576391b776d1c17063b226abb
+Reviewed: 6351b60433f0e79dac6f5f7150884a1fecb0da43..576aca4562689d5b663eba1789837357711b5979
+Implementation: 7584bd3fd5274822b403e8b9758dcc87d9322670
 Decision: FIX REQUIRED
-Task blocker: B54-06 — 核对当前值后，单项测试仍使用旧版本
+Task blocker: B54-07 — 普通编辑弹窗使原清单上下跳动
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ~~~
 
-完整 Task Base..Head 与本轮修正均已审查；`c96cc4aa..d26e4b21` 只有 Task 交接文档，
-本轮构建和复现使用的产品代码与已交接实现一致。工作区 main，预存系统元数据、日志和
-调查材料保持原样；本轮只更新根 Task。
+已独立核对完整 Task Base..Head、当前已提交 Slice 合同及三项结果。实现到本轮交接
+`7584bd3f..576aca45` 只有 Task 文档，生产构建／原生／全量测试匹配当前实现。工作区
+main，预存系统元数据、日志、调查材料和私有文件保留；本轮只提交根 Task 的审查结果。
 
-### 上轮修正与 Slice 结果重评
+### 已通过的修正与 Slice 结果
 
-- B54-01：真实双管理员旅程中，刷新恢复旧草稿后保存被阻止；采用当前值保留另一管理员
-  的说明，明确复核保留输入后才允许保存；两条分支的真实保存均返回 200。
-- B54-02：编辑 A 留稿后复制 A，候选为 `A-copy`、默认停用且名称不串稿；复制自己的输入
-  也能刷新／重认证恢复。
-- B54-03/04：真实 Back→继续编辑→刷新／重认证保留准确 Edit URL 与输入；Create/Copy
-  的 dialog/source 和对应输入恢复，未退回普通清单。
-- B54-05：卡片与导航样式已分开，桌面正文铺开；测试按钮及结论／输出／原因／下一步
-  已呈现，技术信息可展开。核对了七类桌面表单及 390px 识别类型截图。完整复杂窄屏／
-  矮窗口／中间过程矩阵仍待最终验收，不将局部观察写作全部通过。
-- RO-1 的核对后恢复、RO-2 的精确单项测试仍受 B54-06 阻塞。RO-3 表单完整预览移除、
-  概览和共享后端保留已落代码，完整原生回归待修正候选。继续 Task54.1，不规划下一 Task，
-  不提交 Slice Closure Packet。
+- B54-06 已通过真实复现：甲持有 v1，乙发布 v2，甲保存收到真实 409，核对并采用后，
+  单项测试与显式重跑均使用 v2 revisionId／sequence／digest 和乙的新对象，HTTP 200，
+  显示真实结论。原生主脚本还验证旧结果过期、采用后再次明确保存 200。
+- 上轮草稿隔离、Back→继续→刷新／重认证、Create/Copy 恢复、双管理员草稿采用／复核、
+  真实发布丢响应后的未知核对均在本候选重新走通，未自动重发保存。
+- 七类各自的 Add/Copy/Edit 共 21 个真实入口均打开当前卡片；七类 Edit 的单项测试均
+  返回真实 200、Provider 调用与媒体 Storage 读取均为 0。其定义／条件／引用／命名／
+  分类／操作结果保持各自作用域，不作全图成功声明。
+- RO-2 的卡内分区、字段／内部动作和结论层级已有交付；检查了七类桌面、390px 与矮
+  窗口截图、底栏／关闭可达及 Tab 回圈。RO-3 的表单完整预览移除、概览完整流程和
+  共享 API 保留已通过当前原生／Python 回归。复杂内容与慢读取的最终视觉检查仍随
+  修正候选完成，不把现有顶层截图等同于全部视觉验收。
+- RO-1 的“背景位置稳定”未完成：如下 B54-07。保持同一 Task，不规划新 Task，暂不
+  提交 Slice Closure Packet；Slice／Roadmap／Progress 和既有接受事实不变。
 
-### B54-06 · P1：采用当前值后，单项测试仍带旧版本
+### B54-07 · P1：普通编辑弹窗挤动背景清单
 
-**完整复现：**甲从识别类型清单编辑 A 并改名；乙通过现有规则编辑 API 修改 A 的说明并
-发布 v2；甲保存收到 409，点击“读取当前 Active 核对”再“采用当前值”。表单已显示乙的
-新说明。甲切到“单项测试”并测试该识别类型，真实分析请求仍带 `expectedVersion: 1`，
-而候选内容已是 v2，服务端再次返回 409。页面显示英文刷新指引；点击重跑仍使用同一旧
-上下文。该完整恢复旅程没有完成 AC-3/8/10，属于既定 RO-1/RO-2 范围。
+**真实旅程：**1536×1000 下打开识别类型清单，搜索 `Normal`，点击现有行“编辑”。
+弹窗出现时，顶栏新增不可用的文件搜索框，主内容前新增 `Edit rule object`；原清单页头、
+分类导航与表格一起下移 34px。点击“取消”后三处又一起移回，搜索仍为 `Normal`、
+scrollY 始终为 0。具体读数：页头 y 78→112→78，导航 158→192→158，表格
+375→409→375。此处是实际画面上的整体位移，非仅 CSS 值或 DOM 形式差异。
 
-**开发指导：**在 `RulesObjectCard` 的当前值核对、采用与保留输入复核之间，统一传递
-本次配套的表单字段／引用权限、对象值与 Active 身份。现在 `runVerification` 已读取新
-form-authority，采用只更新 `projection`/`pairedBaseline`，而 `RulesObjectTestPanel`
-继续消费首次打开时的 `authority`。采用／明确复核之后，表单、保存及单项测试必须使用
-同一已核对上下文；读回失败保留原输入与核对入口，读到不同版本时保持待核对，不能拼接。
-复用现有读取与状态，不改后端并发规则或分析协议。
+这未满足 Slice RO-1 的背景位置稳定及 AC-2/7；既有独立整页 Edit 的 Shell 呈现进入了
+新的列表背景。根因在 `AppShell.tsx`：`searchIsRules` 只识别 `/rules`，而当前 Edit 路由
+已由 `RulesEditPage` 挂载同一 `RulesWorkspacePage`，仍被 Shell 当成旧整页入口。
 
-**验收与受影响测试：**
+**开发指导：**复用已有 Rules 主页面身份，将 Rules 清单与合法 Edit 路由按同一清单
+表面处理，统一顶栏占位搜索与 `.mf-page-context` 的显示判断。保持清单页头／导航／
+筛选／表格位置，保留卡片自己的类别／名称／ID 和原 Edit URL。仅调整必要的 Shell
+判定，不改其他页面布局、认证、发布或导航模型；原 Base/Goal/Scope、High/T4 保持。
 
-1. 在 `RulesEditPage.test.tsx` 补齐“初读 v1→乙发布 v2→保存 409→核对 v2→采用当前值→
-   单项测试”用例；断言分析请求使用 v2 身份、v2 对象并得到正常结论。
-2. 同一冲突入口覆盖“保留输入，重新复核”：保留候选后分析与保存均使用用户明确复核的
-   当前身份；已有旧结果应显示过期，重跑提交当前候选。保留上轮草稿隔离及未知不重发覆盖。
-3. 在现有 `scripts/rules_workspace_browser_proof.py` 中补入上述双管理员冲突后的单项
-   测试旅程，复用临时 Python/API/SQLite 夹具，按实际请求核对身份及结论。
-4. Developer 跑原 Required Tests 的受影响批次及变更 proof 的检查，提交同 Task 修正
-   checkpoint 和实际结果；T4 全量、其他原生及打包仍由 B 验收。原 Base/Goal/Scope、
-   High/T4 和测试归属保持。
+**验收与 Developer 受影响测试：**
 
-### B 实际验证与限制
+1. 从七类实际清单逐个打开编辑并取消／保存返回，原背景不因增删旧整页说明而上下
+   移动；列表／Add／Copy／Edit 使用一致的 Rules Shell，原筛选／合法滚动／回焦保持。
+2. 旧 Edit URL 的直达／刷新／重认证仍打开准确对象，桌面／390px 的顶栏与原列表协调；
+   同页弹卡不重播主页面动画。以同视口前／中／后截图和原列表元素位置核对。
+3. 在现有 `AppShell.test.tsx` 与 Rules 旅程补回上述实际约束；扩充主原生脚本的同视口
+   编辑返回场景，保留已通过的领域／发布／未知／B54-06 断言。不要另建测试平台。
+4. Developer 跑 `web/ npm run typecheck`，变更文件的 ESLint／Prettier，以及
+   `npm run test -- run src/shared/ui/AppShell.test.tsx src/features/rules/RulesWorkspacePage.test.tsx src/features/rules/RulesEditPage.test.tsx src/routes/router.test.tsx`；
+   新构建后跑原 Task 的 Rules 原生主旅程，变更 Python proof 的 Ruff／compileall。
+   其他直接受影响测试沿用 Required Tests；全量和最终矩阵仍由 B 负责。修正仍在 Task54.1。
 
-本轮证据目录：`.git/validation-evidence/d26e4b21/task54-1-b/`（本机）。
+### 本候选 B 全量、原生与打包证据
 
-- 治理检查、完整 Task `git diff --check`：PASS。
-- 新生产构建、TypeScript、受影响 ESLint、Prettier：PASS；产物
-  `index-3MBk4Ns8.js`、`index-ByxQof0I.css`。
-- Required Tests 的规则／entities／API／styles／routes 加 destination-model 受影响批次：
-  9 文件、154 项 PASS，12.42 秒；见 `affected-vitest.log`。
-- 原生主脚本 `MF_PROOF_ARTIFACTS="$PWD/.git/validation-evidence/d26e4b21/task54-1-b/workspace" .venv/bin/python scripts/rules_workspace_browser_proof.py`：PASS，31 张截图、恰一次明确
-  PUT 发布、Active 恰增一版、可执行工作不变；见 `workspace.log` 与其 evidence/matrix。
-- 本轮沿既有清单／编辑／分析入口复现 Back、Create/Copy 恢复、双管理员草稿恢复与两种
-  决定、真实发布后丢响应再刷新核对：通过，见 `native-evidence.json`（5.16 秒）。
-  保存仍在途时刷新／重认证也保留了原未知记录，见 `inflight-evidence.json`（1.70 秒）。
-- B54-06：真实 API 409、核对、采用与再次分析 409 均已记录于 `stale-evidence.json`，
-  截图 `stale-adopt-test.png`；显式重跑同样提交旧身份并返回 409。首轮复现 2.02 秒，
-  加入重跑操作的记录保留同目录。
-- 已证实 P1，按流程提前 FIX REQUIRED；本轮未启动 T4 全量及其他原生／打包门禁，
-  修正后由 B 执行。本轮测试执行约 40 秒（含构建、静态、原生及组件批次），占本轮
-  审查用时低于 50%。临时数据库／媒体根随夹具清理，未使用运行数据库或用户媒体。
+本机目录：`.git/validation-evidence/576aca45/task54-1-b/`。以下结果属于固定候选，
+不能作为后续可执行变更已通过的声明。
+
+| 检查（工作目录） | 实际结果／日志 |
+|---|---|
+| 治理、完整 Base..Head `git diff --check`（根） | PASS |
+| `.venv/bin/python -m unittest discover -s tests`（根） | 2678 tests OK，7 个既有外部服务／endurance skip，312.615s；`python-full.log` |
+| `npm run test -- run`（web） | 99 文件、1516 项 PASS，148.57s；`web-full-unit.log` |
+| `npm run test:e2e`（web） | Node 假服务 Chromium 268 项 PASS，190.95s；`node-e2e.log` 与产物目录 |
+| `npm run typecheck/lint/format:check/build`（web，各独立 npm 命令） | 全部 PASS；对应日志。新资产 `index-B8zhZdNT.js`／`index-ByxQof0I.css` |
+| Ruff（根） | 原始 `ruff format --check .`／`ruff check .` 被预存未跟踪 `.explore_adapter_block.py` 语法错误挡住，原日志保留；所有受版本控制 Python 文件的 format/check PASS（355 文件）。未修改或纳入该调查文件 |
+| compileall、pip check、两份 example config validate（根） | 全部 PASS；对应日志；禁止依赖检索 exit 1、无匹配 |
+| 新 wheel 与 `scripts/wheel_smoke_test.py <exact-wheel>`（根） | 构建、安装至独立临时 venv、源码外 CLI／持久化／消费者 smoke PASS；`wheel-build.log`／`wheel-smoke.log` |
+| `scripts/rules_workspace_browser_proof.py`（根，精确新资产） | PASS，33 张截图；真实乙发布→甲 409→核对采用→v2 分析→明确发布。真实审计 activate 1→3、Active sequence 1→5、可执行工作不变；`workspace.log` 与 workspace/evidence/matrix |
+| 原有 analysis／identity／classification 原生证明（根） | 三者 PASS；`analysis-proof.log`／`identity-proof.log`／`classification-proof.log`。B 在忽略目录仅将旧整页／抽屉／表单完整预览选择器适配为现有卡片和对象测试；原领域、特殊 ID、路径／显式转换、零效果断言保留，原始及适配 JS 并存。analysis 审计观察使用真实表名，入口仍为原脚本的真实 Python/API/SQLite 夹具 |
+| 补充真实旅程（同一 Python 夹具） | `recovery-journeys.log`／`native-evidence.json`：上轮恢复场景 PASS；`surfaces-evidence.json`：21 个模式、7 个离线局部结果及三视口记录，Active 未变；`background-evidence.json`：B54-07，截图 background-list/edit |
+
+wheel：`mediaflow-2.0.0.dev0-py3-none-any.whl`，SHA-256
+`20118bd0832468b77f6687126ed2c314b031505d7450591938b5f7b8aa991a92`。
+Docker／依赖／容器执行路径未变，广域 Docker 发布矩阵不适用；未声称外部服务或
+endurance 已运行。原生矩阵虽通过多个入口，B54-07 仍使本 Task 无法 PASS。
+
+本轮并行测试的实际墙钟区间约 335 秒（并行重叠不重复计时；各进程 real 累加约
+733 秒），记录在 `test-wall-time.json`；本轮审查总时长超过 12 分钟，按实际墙钟占比
+低于用户要求的 50%。未读取运行数据库、私有配置或用户媒体。
