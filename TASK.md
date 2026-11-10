@@ -1,9 +1,11 @@
-# Task53.1 — A 终审退回，待 B 接续修正
+# Task53.1 — 手动／批量整理逐文件弹窗与任务中心交接
 
 Slice53 当前 **FIX REQUIRED**；A53-01 证明未知提交在兄弟重分析后核对了错误摘要，
 详见 [A Final Review](SLICE.md#a-final-review--fix-required)。
-B 接续原 Task53.1，先更新修正计划与验收，再交 Developer；本次 A 仅记录退回事实，
-不代行 B 规划或 Developer 实现。Base／Goal／Scope 不变，不创建独立 minor bug 或新 Task。
+用户于 2026-11-10 明确“代替B规划Task吧”，授权当前 A 执行者**仅代行本次 B 修正规划**。
+按已提交 `fded2cff4e3f9c131dce3416c916117bd72babd1:SLICE.md` 接续原 Task53.1；
+范围合法继续，不重规划 Slice、不重设 Base、不清除退回、不新建 minor bug 或新 Task。
+本轮到计划提交为止，不实施；本例外不延伸为 Developer、后续独立 B 验收或 A 终审代行授权。
 本文件下方保留**退回前的 B PASS 和 Closure Packet**；完整计划、开发指导及历轮修正报告见
 [固定 Task53.1 记录](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md)。
 生命周期以 [Development Workflow](docs/development-workflow.md) 为准；
@@ -21,8 +23,181 @@ B Review Checkpoint: 8a5f295b900ff3a9563649e2fb6b6ed5c372f52a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: B CONTINUES TASK53.1 FOR A53-01; UPDATE PLAN BEFORE IMPLEMENTATION
+Planning Checkpoint Input: fded2cff4e3f9c131dce3416c916117bd72babd1
+Role Exception: USER AUTHORIZED A TO PERFORM THIS B CORRECTION PLAN ONLY
+Next Action: DEVELOPER IMPLEMENTS A53-01 WHEN INSTRUCTED; SAME TASK FIX LOOP
 ```
+
+## Planning preflight
+
+2026-11-10；仓库 `/Users/songzhidong/mediaflow`，分支 `main`，规划前 HEAD
+`fded2cff4e3f9c131dce3416c916117bd72babd1`，治理检查 PASS，暂存区为空，仓库／Git 可写。
+保留已修改 `mediaflow/.DS_Store` 和全部未跟踪 `.DS_Store`、`.explore_adapter_block.py`、
+日志、`15`、`output/` 材料；本轮只提交 TASK，不纳入这些文件或私有配置。
+`Status: FIX REQUIRED` 保留 A 退回状态，不能把计划提交当作修复完成或重新 PASS。
+
+## Goal / actual gap
+
+原目标仍是从资源库 Files 单项／批量／有界文件夹进入逐文件弹窗，完成合法修正与一次
+精确就绪子集确认，受理后交接准确 Task 的现有详情。原始 AC-1–12、RO-1／2／3、
+冻结详情 UI 和全部安全约束继续约束本 Task，见
+[固定完整计划](https://github.com/kentinya/mediaflow/blob/8a5f295b900ff3a9563649e2fb6b6ed5c372f52a/TASK.md#acceptance-criteria)。
+本轮只补齐 A53-01 的原请求核对与交接，不重做已交付弹窗。
+
+实际代码缺口：`ManualOrganizeDialog.tsx` 的 Execute mutation 仍从当前 `preview` 读取
+previewId；未知状态只保留 itemIds／intentVersion／两个效果授权值，reconcileMutation
+再次从当前 `preview` 取 ID。兄弟重分析发布新摘要后，原提交和新摘要被错误组合。
+现有 `fetchOrganizeAdmissionOutcome` 已支持传入完整 previewId／子集／版本／效果，
+后端原记录也仍可正确返回 known 和原 Task，无需新增 API、schema 或受理模型。
+现有未知测试未组合“原执行完成→未选兄弟重分析→再核对”。
+
+适用：`V2-OPS-018/019`、`V2-OPS-010/012/017`、`REQ-RECOVERY-006–009`、`REQ-WEB-005`。
+完整 [手动整理旅程](docs/product-experience.md#manual-organize)、
+[TARGET 旅程](docs/product-experience.md#target--manual-organize-dialog-slice53-fix-required)、
+[Tasks/results/recovery](docs/product-experience.md#tasks-results-and-per-item-recovery)、
+[CURRENT 来源占用合同](docs/architecture.md#current--files-admitted-organizing-task-and-verified-source-ownership-slice46)
+和 [TARGET 架构](docs/architecture.md#target--manual-organize-dialog-slice53-fix-required) 保持。
+
+## Complete correction journey
+
+1. **入口／状态：** 从已有 Files 行整理或批量整理进入同一弹窗；复核两个就绪文件，
+   暂不纳入一个兄弟，整批复核后明确确认另一项。正常响应仍使用既有准确 Task 交接。
+2. **未知：** 真实后端受理后，浏览器因断网丢失响应，显示执行结果未知，保留**首次提交的
+   原摘要、准确子集、版本和两项效果授权**；不再次 Execute，不改为猜测最新任务。
+3. **独立兄弟：** 原 Worker 可正常完成所选文件；用户仍能“返回逐项复核”，合法修改
+   未选兄弟、保存并重新分析。新摘要与新选择属于当前复核，不能改写原提交核对身份；
+   浏览／分析不会重放已受理兄弟，也不能把原危险授权继承给新方案。
+4. **核对／成功：** 再进整批复核点击“核对提交结果”，只 GET 原摘要的受理记录并携带
+   原子集／版本／效果；返回 known 时关闭整理弹窗，进入返回的准确原 Task 既有详情。
+   任务中心负责真实进度与独立文件结果；受理不等于文件成功。
+5. **失败／恢复：** 核对失败、仍未知或关联待核对时，沿用现有明确反馈和重读，保留原
+   请求并禁止第二次 Execute；下一次读取仍是同一原请求。只有原请求的权威 not_admitted
+   才能解除其未知限制，之后仍须复核当前方案并明确确认；不能用新摘要的空记录否认原效果。
+   关闭／后退／刷新／认证沿用原合法上下文与非重放规则，不新增请求持久化或会话系统。
+
+## Implementation scope / ordered steps
+
+1. 在整理弹窗内部建立只读的提交身份，至少含 previewId、复制的 itemIds、intentVersion、
+   allowOverwrite、allowSourceCleanup。一次确认时捕获同一份身份，作为 Execute mutation
+   的变量；发送与返回处理使用该份数据，不在异步回调重新拼接当前视图。保留后端校验、
+   单次提交锁和 `retry: false`，内部身份不增加用户输入或诊断常驻字段。
+2. 未知响应保留上述完整身份，所有首次／重复 reconciliation 只使用它，解除对当前
+   preview 对象的读取依赖。摘要暂时缺失、清空或替换不影响原核对。保留 known／unknown／
+   not_equivalent／not_admitted 的真实语义和准确任务交接；读失败不能清除原未知限制。
+3. 核对当前摘要同步、逐项草稿／选择、危险授权清理和路由保护的交互：当前方案更新只能
+   影响当前复核，不覆盖原请求。保留合法兄弟修改／分析；不能通过禁用全部浏览／保存、
+   自动重提、跳到最新任务或忽略错误提示来绕过 A53-01。
+4. 在 `ManualOrganizeDialog.test.tsx` 补足从真实 Files 路由进入的组合回归。用旧 Execute
+   请求和之后的 admission URL／参数逐项比较；覆盖新摘要到来前后与核对失败后的重读，
+   验证只有一次 Execute、known 使用原 Task、新方案危险授权不继承。既有未知成功用例保留。
+5. 在 `manual-organize-dialog.python.spec.ts` 加入 A53-01 的真实 Python／SQLite／Local
+   Storage／Worker 场景。给新用例独立的两个临时来源及无歧义 Provider 候选，避免复用
+   已移动的其他用例文件；必要夹具只扩展现有 `operations_inventory_harness.py`，复用已有
+   Worker 驱动／文件状态读，不新增产品或测试 HTTP 入口。先让真实受理提交，再只丢失
+   浏览器响应；**先核实所选文件实际移动完成，再修正未选兄弟**。核对旧请求、准确交接、
+   源／目标和兄弟未执行；不得伪造产品状态／成功响应，也不绕过 UI 保存决定。
+6. 运行本轮受影响检查后提交 coherent checkpoint 和下述完成报告，交独立 B。保留
+   A 失败证据与原 B 测试事实，更新本 Task 的当前结果；不得自行将 Slice 转 CURRENT／关闭。
+
+默认改动限弹窗及其单元／真实浏览器回归、必要隔离夹具；若实际确需改 typed API／共享
+恢复逻辑，先说明直接依赖并增加对应受影响检查，仍不得改变后端权限、执行与产品合同。
+
+## Acceptance criteria — A53-01 correction
+
+以下均待实施／验收；不是通过声明。原 AC-1–12 不因本轮聚焦而取消。
+
+- [ ] FIX-AC-1 Execute 与未知核对绑定同一原 previewId／精确子集／版本／效果授权，
+      itemIds 不共享可变选择数组。后续摘要替换、选择变化或重读不能改变其任一值。
+- [ ] FIX-AC-2 真实 Files 选择两项，只确认一项并丢响应；原 Worker 已成功移动该项后，
+      未选兄弟仍能合法保存／重分析。新摘要确认可见，再核对仍读取原摘要，后端 known，
+      打开原 Task 现有详情；不显示原提交“未受理／没有发生变更”。
+- [ ] FIX-AC-3 原核对第一次读取失败／仍未知后，可明确重读同一原请求；不能丢请求、
+      自动 Execute 或解除未证实的未知限制。原请求 not_admitted 才允许后续重新复核确认，
+      not_equivalent 或身份暂不可读不能猜测成功／未受理或换一个任务。
+- [ ] FIX-AC-4 正常响应、在途双击、未知直接核对、后退／关闭与刷新认证、原准备继续／
+      只读入口保持；0 项、无效／过期摘要和无权限不能新增执行。通过既有真实可达入口验证，
+      单元边界桩用于失败／竞态覆盖，不将伪造响应当成真实生产可达性证据。
+- [ ] FIX-AC-5 组合旅程仅一次准入和一次 Execute；保存／分析／核对不执行。原成功项
+      不重放，未选兄弟无媒体效果；新摘要／子集不继承旧覆盖或清理授权。后端 RBAC、pins、
+      fencing、Storage confinement、Executor-only mutation 与 C 使用命名／分类 A 后仍为 C 保持。
+- [ ] FIX-AC-6 Task Center 详情布局／内容／进度／结果／恢复 UI 和原继续／只读链接保持；
+      整理弹窗不增结果中心。独立 B 完成固定 Base..新候选审查、全部 Slice 结果重评和适用
+      T4 门禁，保留实际失败／跳过／环境限制后才能重交 A；本 Task 不自行关闭 Slice。
+
+## Required tests
+
+以下是实施／验收计划，**本次仅规划，未执行这些产品测试**。遵循
+[Workflow §6](docs/development-workflow.md#6-test-levels)，维持原 High／T4，不因修正行数少降级。
+
+### Developer — affected tests
+
+在仓库根先运行 `python3 scripts/check_governance.py`，结束前运行 `git diff --check`。
+在 `web/` 依次运行：
+
+```sh
+npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/library/StorageFilesPage.test.tsx
+npm run typecheck
+npm run lint
+npx prettier --check src/features/operations/ManualOrganizeDialog.tsx src/features/operations/ManualOrganizeDialog.test.tsx tests/e2e/manual-organize-dialog.python.spec.ts
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts
+```
+
+这些覆盖提交身份、未知读失败／重读、草稿／兄弟、新摘要授权、原 Files／准备路由及真实
+执行交接。Prettier 清单按实际改动增减；若改 API，另运行
+`npm run test -- run src/shared/api/api-client.test.ts src/shared/api/operations-api.test.ts`；
+若改共享 recovery，另运行 `npm run test -- run src/features/operations/TaskItemRecoveryPanel.test.tsx`。
+若改 Python 夹具，在根运行 `.venv/bin/ruff check scripts/operations_inventory_harness.py` 与
+`.venv/bin/ruff format --check scripts/operations_inventory_harness.py`；真实浏览器回归验证该夹具。
+无后端生产变更时不额外给 Developer 全 Python／Web／Node E2E 或打包全量。
+
+### B — independent acceptance and full regression
+
+1. 先从真实 Files 入口独立复现 FIX-AC-2，比较原 POST、后续 GET 的完整身份，核实原
+   Task／Result／文件效果、准确详情交接及一次 Execute；再覆盖 FIX-AC-1–6 和原 AC-1–12。
+   A 失败材料可在本机 `.git/validation-evidence/9d845aed/a53-review/` 查看，若不可用，
+   用已提交真实浏览器回归独立复现，不要求用户复制身份或制造不存在的产品入口。
+2. 审查原 Task Base `95c24cd0a3cc51acd6143e37e72371445cb15a72` 到新候选的完整范围，
+   重点核对 `8a468b7685d5750bcd7607fc291a61ae70b7000c` 后实现增量和任务中心冻结边界。
+   新候选按 [共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)
+   执行 Python／Web／Node E2E、静态、安全和精确新 wheel／源码外安装 smoke；不得用旧
+   B PASS 标签或可执行输入已变化的旧结果替代本轮所需验收。
+3. 先 `npm run build`，在 `web/` 用独立新 Python 进程分别运行以下命令；每条使用独立
+   结果目录／日志，避免共享数据库和文件互相影响：
+
+```sh
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/organize-source-history.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-settings.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts
+npm run test:e2e -- --config=playwright.openlist-metadata.python.config.ts tests/e2e/openlist-metadata.python.spec.ts
+npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
+```
+
+4. 视觉／操作验收对照本轮提交状态、原请求核对与交接，检查桌面／390px／矮视口的可达
+   操作及原任务详情不变。匹配的旧视觉输入只有在源码／样式／夹具与产物可证明不变时才能
+   按工作流复用；新状态需新证据。结果存于 `.git/validation-evidence/<candidate>/b53-review/`
+   或 CI，报告 SHA、命令／cwd、计数、失败／跳过和稳定原始日志；本机材料不称远程可达。
+5. 原 7 项可选外部服务／endurance 环境跳过和根目录 Ruff 被预存未跟踪
+   `.explore_adapter_block.py` 阻断的事实保持披露；原门禁仍按工作流运行，补做 tracked Python
+   检查不冒充根目录原命令通过。若 Docker／依赖／容器执行路径仍无变化，说明广域 Docker
+   矩阵不适用的依据；不需要生产媒体或生产 Provider／Storage 验收。
+6. 完成后重评全部 RO／表面；满足则停止规划，更新 Closure Packet 交独立 A，不增可选
+   清理 Task、不自行宣告 Slice PASS / CLOSED。若仍有本 Task 阻塞，继续同一修正循环。
+
+## Non-goals
+
+不改变 Slice53／原 Task53.1 的 Goal、Base、架构或危险授权规则；不改任务中心详情、
+列表／恢复 UI，不增后端／schema／存储操作／Provider／新会话系统或请求持久化。
+不自动重提、重放已完成／不确定效果、忽略兄弟、猜最新任务，不以全面禁用兄弟纠正操作
+规避原请求绑定。不做无关清理、下一个 Task／Slice、生产验证、推送或部署。
+
+## Developer Completion Report — pending correction
+
+- Checkpoint：待实现；提交后记录完整 SHA，Status 为 READY FOR B REVIEW。
+- 简述原提交身份如何捕获／使用、兄弟独立行为与准确任务交接、实际改动文件。
+- 记录上述受影响命令的实际结果和 A53-01 真实入口证明；失败／未运行／环境限制保持。
+- 全量和独立验收待 B；原 B PASS 与 A FIX REQUIRED 不构成本轮修正通过。
 
 ## B Review Result — 退回前的历史验收
 
