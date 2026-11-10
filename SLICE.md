@@ -4,14 +4,14 @@
 Slice ID: 54
 Name: Organizing Rules Dialogs and Readability
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
-Implementation Head: NOT SET
+Implementation Head: aef044e51dc91655372bf5fe39c6116da976c3b4
 Working Branch: main
 Development Authorization: TASK54.1 IMPLEMENTATION USER AUTHORIZED ON 2026-11-10
 Risk: High
 Accepted Test Level: T4
-Next Action: DEVELOPER IMPLEMENTS TASK54.1
+Next Action: A FINAL REVIEW OF ENTIRE SLICE BASE..IMPLEMENTATION HEAD
 ```
 
 ## Authority and accepted baseline
@@ -22,8 +22,8 @@ Next Action: DEVELOPER IMPLEMENTS TASK54.1
 “激活 Slice 并代替 B 规划第一个 Task”。本次将 Slice 激活并先提交合同，再由 A 按用户
 授权代行 B 规划首个 Task。该角色例外仅限本次 Task 规划，不包含自审实现或代行最终
 A 验收。用户随后明确“激活 Task”，正式授权 Task54.1 实施；原 Task ID／Base／Goal／Scope
-保持，移除规划草案通知。Task 当前 PLANNED、等待 Developer 进入 IN PROGRESS；
-本激活检查点不修改产品代码，不推送或部署。
+保持，移除规划草案通知。Task54.1 经 Developer 实施与同一 Task 修正，现由 B 独立
+复核 PASS；本 Slice 已提交 Closure Packet，等待 A 最终验收，尚未接受或关闭。
 
 Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 原退回／修正、
 验证限制及 B 转任 A 的用户授权例外均保留于
@@ -172,8 +172,59 @@ T4 因七类表单直接承载 Active 配置发布、危险策略输入和未知
 
 ## Closure Packet and A Final Review
 
-尚无实现、B 验收或 A Final Review；不得填写 PASS。完成后由 B 提交整个 Slice 的
-Outcome／Surface 覆盖、固定候选、实测／限制及文档协调清单，A 审查完整 Base..Head。
-A 接受后将上述 TARGET 与既有 CURRENT 的抽屉／整页／旧完整预览措辞一次协调，更新
-Requirements、Product Experience、Architecture、Configuration 指导、Roadmap／Progress
-和根 Task；保留 Slice41／44／50／53 的接受身份、原证据与延期。
+~~~text
+Slice: 54
+Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
+Implementation Head: aef044e51dc91655372bf5fe39c6116da976c3b4
+Last Product Checkpoint: 2aedd74e1085aa42c96fe7b438ee3ffc606572d7
+Required Outcomes and Surfaces: COMPLETE
+Tasks completed: Task54.1 — B PASS (High / T4)
+Decision: SLICE READY FOR A REVIEW
+A Final Review: PENDING
+~~~
+
+### Outcome / Surface coverage
+
+| Required Outcome | B 的完整结果核对 |
+|---|---|
+| RO-1 | 七类 Add／Copy／Edit 共 21 个真实入口共用清单背景上的居中卡片；旧链接／特殊 ID、刷新／重认证、草稿模式隔离、Back／继续、退出与在途保护、准确发布及未知核对完成。搜索 `Normal`→编辑→取消时页头／导航／表格全程 y=78／158／375，七类返回及 390px 已滚动背景保持 |
+| RO-2 | 七类设置与单项测试的内容矩阵完整；名称／ID、条件与输出、四策略引用、Metadata 分组、模板帮助、分类内部编辑及操作／附件／高风险权限保持。桌面、390px、矮窗口的复杂条件、模板／路径、多条分类规则、错误与慢读取／失败恢复可读可操作；局部结论／输出／原因／下一步与诊断分层 |
+| RO-3 | 三模式移除表单完整链路区域与动作；概览保持显式精确 Active 完整检查，未保存候选只做局部分析，保存仍校验完整后继。共享 preview／Python 能力保留，无旁路入口 |
+
+固定 Task 审查范围为 `6351b60433f0e79dac6f5f7150884a1fecb0da43` 到上述 Head；B 已重评
+全部 Slice 结果与表面，不再规划 Task。最后产品检查点后的提交仅为交接文字。
+详细验收、命令与原始失败说明见 [B final Task review](TASK.md#b-final-task-review)。
+
+### Final tests and safety evidence
+
+本机证据根目录 `.git/validation-evidence/aef044e5/task54-1-b/`：Python 2678 tests OK
+（7 个既有外部服务／endurance skip），Web 99 文件／1516 项、Node E2E 268 项 PASS；
+新生产资产、类型／lint／format、受版本控制 Python 的 Ruff、compileall、配置验证、
+新 wheel 与源码外安装 smoke PASS。根 Ruff 扫到预存未跟踪调查文件的语法失败保留。
+
+Rules 主原生、analysis／identity／classification 三项原生证明与补充恢复／视觉矩阵
+通过；七类局部分析零 Provider／媒体 Storage 读取，C 使用 A 命名／分类仍为 C。
+真实 409 后采用／复核所用对象、基线与分析一致；真实发布后丢响应保留原请求，
+刷新后没有第二次 PUT。打开／测试不创建执行工作，已接受的领域与权限语义保持。
+
+共享消费者：自动化最终 35 项、存储 8 项、整理／Task 交接 10 项、包含两种库实际保存
+的原生用例 1 项 PASS；两种库取消返回背景稳定且参考旅程零写。自动化首次运行有
+1 项因连续复制时清单尚未读完而没有发出第二次请求，原失败／trace、单项诊断及
+最终完整结果全部保留，详见 Task。未通过修改用例或重试配置掩盖原失败。
+
+### Known non-blocking issues / explicit deferrals
+
+无剩余 Task 或 Slice 结果阻塞。上述自动化用例的读取就绪时序作为非阻塞验证记录
+保留。外部服务／endurance 未运行；无 Docker／依赖／容器路径变更，广域 Docker
+矩阵不适用。本机证据未声明为远程 CI，原合同的延期及既有接受边界保持。
+
+### Documentation reconciliation needed / A handoff
+
+A 审查完整 `Base SHA..Implementation Head` 并作最终决定；本包不宣告 Slice PASS／CLOSED。
+A 接受后一次协调 Requirements、V2 Requirements、Product Experience、Architecture、
+`docs/configuration.md` 的抽屉／整页／旧表单完整预览 CURRENT／TARGET 措辞，以及
+Roadmap／Progress／根 Task 的关闭事实。B 本次不更新 Roadmap／Progress 或提前转换
+TARGET；保留 Slice41／44／50／53 的接受身份、原证据与延期。
+
+可复用经验候选：列表内弹窗路由复用后，同时核对 Shell 的搜索／位置行与原背景；
+新卡片自己的几何稳定并不能证明背景稳定。A 收尾时按各角色经验规则决定是否合并。
