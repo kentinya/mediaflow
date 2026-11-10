@@ -8,28 +8,28 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice54](../SLICE.md) is **ACTIVE**, fixed Base e43a40674eb14aa12615a440a348fe675cd50c4e.
-On 2026-11-10 the user authorized activation and A acting as B to plan the first Task.
-The role exception covers planning only. The user subsequently activated [Task54.1](../TASK.md)
-for implementation on 2026-11-10, preserving its Base/Goal/Scope. The formal High/T4 Task is PLANNED,
-ready for Developer; the no-active-implementation notice is removed.
-No product implementation or acceptance is claimed by this activation checkpoint.
-Scope remains seven Rules families' Add/Copy/Edit dialogs, form/local-test readability and
-Overview-only complete-flow checking. TARGET is not delivered and there is no new closure entry.
-Slice53 remains the latest accepted large Slice; its fixed acceptance, prior failure, role exception,
-validation limits and all earlier deferrals stay in the ledger/references below.
+[Slice54](../SLICE.md) is **PASS / CLOSED** after independent A Final Review on 2026-11-11.
+Its original Base is `e43a40674eb14aa12615a440a348fe675cd50c4e`, accepted implementation
+`aef044e51dc91655372bf5fe39c6116da976c3b4`; the report successor through `9220f344` changes
+only SLICE/TASK handoff text. [TASK.md](../TASK.md) has no active implementation Task.
+Next action: **A SELECTS THE NEXT LARGE SLICE**, separately from this closure.
 
-## Latest accepted closure — Slice53
+## Latest accepted closure — Slice54
 
-Closed on 2026-11-10: Files uses a centered per-file review/correction dialog and one exact ready
-subset confirmation. Proven normal or original-request admission opens the exact Task's unchanged
-detail, including after sibling reanalysis. `V2-OPS-018/019` are CURRENT.
+Seven Rules families use centered Add/Copy/Edit cards over their exact inventory, readable
+settings/object-local tests, and Overview as the sole complete-flow Web entry. Accurate edit links,
+input/read pairing, explicit discard, publication/conflict recovery and unknown non-replay remain.
+`V2-RULES-010–012`, the journey, architecture and configuration guidance are CURRENT.
 
-The [fixed Closure Packet/A Final Review](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)
-retains original Base/implementation/reviewed Head, the authorized B-to-A role exception, actual
-validation, prior A53-01 failure, seven environment skips, root Ruff's unrelated workspace error and
-fresh isolated wheel evidence. Raw logs, screenshots and artifacts remain local at the recorded paths.
-Earlier accepted outcomes and limitations remain in the fixed references and ledger below.
+The [A Final Review](../SLICE.md#a-final-review--pass--closed) records the complete range,
+independent real Python/SQLite journeys and reviewed visual evidence. The [fixed B review/packet](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)
+retains T4 full results, B54-01–07 corrections, original failures, optional skips and packaging limits.
+The A-for-B exception covered first-Task planning only; B acceptance and A Final Review were independent.
+Local raw evidence remains at `.git/validation-evidence/aef044e5/task54-1-b/` and
+`.git/validation-evidence/aef044e5/slice54-a/`, not remote CI. The root Ruff failure from an unrelated
+untracked investigation file, Automation's first-run read timing failure and later passing runs,
+7 optional external/endurance skips and non-applicable broad Docker matrix remain disclosed.
+Earlier accepted facts, failures, role exceptions and deferrals stay in the references/ledger below.
 
 ## Prior acceptance references
 
@@ -65,6 +65,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 54 — Organizing Rules Dialogs and Readability | PASS / CLOSED | `e43a40674eb14aa12615a440a348fe675cd50c4e` | `aef044e51dc91655372bf5fe39c6116da976c3b4` | Independent A Final Review PASS / CLOSED — 2026-11-11 | Seven families’ Add/Copy/Edit cards and exact list return; readable settings/local tests; Overview-only complete-flow check; coherent draft/read/verification context and unknown-save non-replay | New rule domains/algorithms, Providers/Storage/schema/permissions/publication protocol, execution/recovery engine, bulk/import/export/diff/rollback, V1, complete-test backend/API retirement, broad inventory/Overview/other-page redesign, production validation/release/deployment; original evidence limits retained |
 | 53 — Manual Organize Dialog and Task Center Handoff | PASS / CLOSED | `95c24cd0a3cc51acd6143e37e72371445cb15a72` | `8c1b2b1e262d483b594e99a06ad67e747b13bfa4` | A Final Review PASS / CLOSED — 2026-11-10; user-authorized B-to-A role exception | Per-file Files dialog and current-file legal correction/reanalysis; one exact subset confirmation; original-request reconciliation across sibling reanalysis and exact Task Center handoff; task-detail UI preserved | Task Center/list/recovery redesign, new engine/schema/permissions/Providers/Storage, broad configuration changes, MediaLibrary organizing, cross-Task recovery, arbitrary history replay, production validation/release/deployment; original evidence limits retained |
 | 52 — Explore, Navigation and Automation Entry Experience | PASS / CLOSED | `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` | `f5409da41191c6e4bbf238bb7def601229fc59dc` | A Final Review PASS / CLOSED — 2026-11-08 | Coordinated Explore layout/scrollable details; bounded ordinary paging and exact return; nine-page transitions/read handoff and two-library refresh stability; old Automation Open Web journey and exclusive dependencies retired, current cards/commands/history preserved | New sources/download/play, persistent detail sessions, whole-site business redesign, full backend retirement, new commands/schema/permissions/queue/recovery engine, historical conversion, production/full release matrix; original validation limits retained |
 | 51 — V2 Explore Homepage Replacing Dashboard | PASS / CLOSED | `214b69b1e64b24fc22068c2e1760cd1b0c6ac787` | `30c99f1bdcd9be2cb51ac82f78bc4b07eaea3113` | A Final Review PASS / CLOSED — 2026-11-07 | Default Explore; bounded movie/TV browse/filter/search/paging; exact poster detail/return; genuine zero-result recovery; trusted artwork/precise CSP; Dashboard Web/API/CLI and dedicated implementation/consumers fully retired, shared histories preserved | New sources, recommendations/subscriptions/download/play, standalone detail links and refresh/re-auth session restoration, dedicated no-Active startup, other-page redesign, new schema/permissions/engine, V1 expansion, production/full release matrix; original validation limits retained |

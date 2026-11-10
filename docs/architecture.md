@@ -975,8 +975,9 @@ preparation with atomic publication. A failure preserves prior Active and correc
 unknown publication is reconciled by reading authority before another submission.
 
 The eight inventories cover Overview, type binding, types, rules and Metadata/Naming/Classification/
-Organize policies. Default is full-width inventory; Add/Copy explicitly opens a create drawer and
-Edit a full-page route. Search/navigation creates no Draft, Provider call or work. Forms may retain
+Organize policies. Default is full-width inventory; explicit Add/Copy/Edit opens a centered card
+over the matching inventory. The existing Edit route retains its exact identity and read APIs.
+Search/navigation creates no Draft, Provider call or work. Forms may retain
 correctable tab-scoped values, never credentials or Active/execution authority. Unavailable impact
 evidence blocks removal. Backend-legal IDs share one grammar across API/navigation/static entry;
 only allowlisted edit routes accept a file-like final ID, not arbitrary dotted assets/traversal.
@@ -1026,15 +1027,15 @@ current section, filters and unsaved form input. The shared authorized-read boun
 authentication and read failures; it does not present cached data as a successful refresh.
 Normal workspace chrome omits the Active sequence and Settings handoff; exact Active publication
 checks remain authoritative, diagnostics stay in Settings, and unavailable configuration retains
-its allowlisted Settings return context. Category cards, inventory layouts, explicit Add/copy
-drawers and full-page Edit retain their existing behavior. Styles are scoped to Rules; shared
-shell navigation/authentication and other business routes retain their behavior.
+its allowlisted Settings return context. Category cards and inventory layouts retain their
+behavior; the centered form cards follow the accepted Slice54 contract below. Styles are scoped
+to Rules; shared shell navigation/authentication and other business routes retain their behavior.
 
-## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
+## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
-[Slice54](../SLICE.md), V2-RULES-010–012 and the
-[complete target journey](product-experience.md#target--organizing-rules-dialogs-and-readability-slice54-active)
-are ACTIVE TARGET with Task54.1 implementation authorized. The CURRENT Rules presentation above stays delivered until acceptance.
+[Slice54](../SLICE.md) passed independent A Final Review on 2026-11-11. V2-RULES-010–012
+and the [complete current journey](product-experience.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)
+replace the earlier drawer/full-page presentation; shared Python authority remains unchanged.
 
 Rules inventory hosts all seven families' Add/Copy/Edit cards. Existing allowlisted edit URLs
 retain exact family/object identity but render the same card above the appropriate inventory.
@@ -1045,23 +1046,27 @@ sample/evidence and exact publication authority.
 
 Reuse the feature-independent modal shell/lifecycle where practical, with only necessary compatible
 extensions. Rules owns subject-bound reads, drafts, discard/in-flight/unknown-save behavior, focused
-commands and inventory readback. Background/focus/stable geometry/motion are presentation concerns.
+commands and inventory readback. Correctable drafts are scoped by confirmed principal, family,
+mode and object/source, paired with the Active identity of their original read. A retained
+unknown Save freezes the submitted candidate/baseline; close/reopen/refresh never replays it.
+Adopt/recheck explicitly applies a coherent value/baseline/form-authority context. List return
+state preserves filters, scroll and focus independently of publication authority. Background, focus,
+stable geometry and motion are presentation concerns.
 Shared Automation/library/Storage/task consumers retain accepted behavior, including Slice53
 original-request reconciliation and exact handoff.
 
 Object tests continue through RulesObjectAnalysisService and existing analysis routes with exact
 candidate/purpose/sample/currentness. Overview alone exposes complete-graph checking of Active.
-Remove legacy complete-preview UI from form consumers, not the shared production pipeline,
-configuration checks, DryRun or preview APIs. Unused form-only UI may be removed after consumer
-verification; no general backend/API cleanup is selected. Structured evidence remains available
+The former form-only complete-preview component and its consumers are removed; the shared
+production pipeline, configuration checks, DryRun and preview APIs remain. No general backend/API
+cleanup is included. Structured evidence remains available
 when technical details move behind diagnostics.
 
 Save still uses exact read-baseline concurrency, existing command services, whole-successor
 validation/applicable evidence and atomic publication. Layout cannot rebind authority, lose hidden
 fields, weaken stale/reference/permission checks or replay uncertain publication. No new schema,
 Provider, Storage operation, permission/publication protocol, rule engine, execution/recovery model
-or persistence authority. At acceptance reconcile prior drawer/full-page presentation wording;
-prior pins/history remain unchanged.
+or persistence authority. Prior pins/history remain unchanged.
 
 ## Persistence
 

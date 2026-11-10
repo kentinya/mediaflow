@@ -39,25 +39,25 @@ only in [the development workflow](development-workflow.md).
 | 51 — V2 Explore Homepage Replacing Dashboard | Replace the homepage with TMDB movie/TV browsing, filtering/search, poster details and accurate return; fully retire Dashboard Web/API/CLI and dedicated backend/consumers without redirects, aliases or compatibility | PASS / CLOSED | Accepted50 and accepted subsequent standalone corrections at `214b69b1e64b24fc22068c2e1760cd1b0c6ac787`; explicit 2026-11-07 scope, Slice/Task51.1 activation and first-Task planning authorization, including complete Dashboard API/CLI retirement |
 | 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PASS / CLOSED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; independently accepted by A on 2026-11-08 through `f5409da41191c6e4bbf238bb7def601229fc59dc`; first-Task planning role exception retained, subsequent B review independent |
 | 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | PASS / CLOSED | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
-| 54 — Organizing Rules Dialogs and Readability | Seven Rules families use coordinated Add/Copy/Edit dialogs, readable settings and object-local tests; only Overview retains the complete-flow check, preserving exact checked publication and edit-link recovery | ACTIVE | Accepted53 and current baseline `e43a40674eb14aa12615a440a348fe675cd50c4e`; user authorized activation and A acting as B for first-Task planning on 2026-11-10 |
+| 54 — Organizing Rules Dialogs and Readability | Seven Rules families use coordinated Add/Copy/Edit dialogs, readable settings and object-local tests; only Overview retains the complete-flow check, preserving exact checked publication and edit-link recovery | PASS / CLOSED | Accepted53 baseline `e43a40674eb14aa12615a440a348fe675cd50c4e`; independent A Final Review on 2026-11-11 through `aef044e51dc91655372bf5fe39c6116da976c3b4`; first-Task planning role exception retained |
 
 ## Current boundary
 
-[Slice54](../SLICE.md) — **Organizing Rules Dialogs and Readability** — **ACTIVE**.
-Fixed Base e43a40674eb14aa12615a440a348fe675cd50c4e; no implementation Head.
-User authorized activation and A acting as B to plan the first coherent Task on 2026-11-10.
-The role exception is planning-only; implementation, Task acceptance and A Final Review are separate.
-Scope remains seven families' Add/Copy/Edit dialogs, settings/local-test readability and Overview-only
-complete-flow checking. TARGET is not delivered CURRENT.
-[Task54.1](../TASK.md) is now the authorized High/T4 implementation Task, Status PLANNED.
-User explicitly activated it on 2026-11-10; original Task Base/Goal/Scope remain unchanged.
-Next: Developer implements Task54.1. No product implementation is claimed by the activation
-checkpoint; push and deployment remain outside this authorization.
-Slice53 and earlier acceptance/deferrals remain fixed.
+[Slice54](../SLICE.md) — **Organizing Rules Dialogs and Readability** — **PASS / CLOSED**.
+Original Base `e43a40674eb14aa12615a440a348fe675cd50c4e`, accepted Implementation Head
+`aef044e51dc91655372bf5fe39c6116da976c3b4`; A independently accepted the complete range
+and evidence on 2026-11-11. Seven families' Add/Copy/Edit cards, readable settings/local tests
+and Overview-only complete-flow checking are CURRENT. Exact publication and earlier safety/
+consumer boundaries remain. The A-for-B exception covered first-Task planning only; B review
+and A Final Review remained independent.
+
+[TASK.md](../TASK.md) has no active implementation Task. Next action: **A SELECTS THE NEXT LARGE SLICE**,
+as a separate action after this closure. Earlier acceptance, original failures, validation limits
+and all explicit deferrals remain; push/release/deployment are not part of this acceptance.
 
 ## Accepted boundary references
 
-Latest acceptance: [Slice53 Contract/A review](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review).
+Latest acceptance: [Slice54 Contract/A review](../SLICE.md#a-final-review--pass--closed).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

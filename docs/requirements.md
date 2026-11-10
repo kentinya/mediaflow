@@ -29,6 +29,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 
 | Authorized amendment | Superseded V1 meaning / retained boundary |
 |---|---|
+| 2026-11-10 authorization / 2026-11-11 acceptance, `V2-RULES-010–012` — CURRENT / Slice54 PASS / CLOSED | Seven Rules families use centered Add/Copy/Edit cards, readable settings and object-local tests; Overview is the sole Rules Web complete-flow check. This supersedes the earlier drawer/full-page/editor-preview presentation in V2-RULES-001/006/009, preserving domain fields, exact checked publication, RBAC, references, C→A identity, immutable pins and unknown-effect non-replay. A independently accepted original Base e43a40674eb14aa12615a440a348fe675cd50c4e through implementation aef044e51dc91655372bf5fe39c6116da976c3b4. The A-for-B exception covered first-Task planning only; B review and A Final Review are independent. Existing APIs, shared pipeline, frozen V1 and prior acceptance/deferrals remain. |
 | 2026-11-09 activation / 2026-11-10 acceptance, `V2-OPS-018/019` — CURRENT / Slice53 PASS / CLOSED | Files single/batch/bounded-folder preparation and exact review use a centered per-file modal with item-local Save/reanalysis and one final selected confirmation; proven admission opens the exact Task's unchanged detail. Lost Execute responses retain their original complete request identity across sibling reanalysis. Early durable admission, backend authority, pins, effect permissions and independent/non-replayed results remain; frozen V1 and prior acceptance retain their meaning. Accepted original Base 95c24cd0a3cc51acd6143e37e72371445cb15a72 through implementation 8c1b2b1e262d483b594e99a06ad67e747b13bfa4, reviewed through 8482d77d3d7db5b89edbaca4022c1bf6f154ca5e. The user explicitly authorized the B reviewer to perform final A review; role exception and validation limits live in the Contract. |
 | 2026-11-07, `V2-EXPLORE-012–015`, `V2-UX-014/015`, `V2-AUTO-016` — CURRENT / Slice52 PASS / CLOSED | User-authorized seven UX corrections: coordinated whole Explore page, scrollable complete details and bounded ordinary page replacement; smooth transitions/read feedback/content handoff across all nine main pages, including both library refresh cases; old Automation Open/definition/editor Web journey and exclusive dependencies retired. Current cards, commands, records, shared API/CLI and safety remain. A independently accepted Base 9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8 through implementation f5409da41191c6e4bbf238bb7def601229fc59dc on 2026-11-08. The A-for-B exception covered only first-Task planning; implementation was separately authorized and B review independent. Original acceptance, frozen V1, deferrals and evidence limits remain; stable acceptance lives in V2 Requirements. |
 | 2026-11-07, `V2-EXPLORE-001–011` — CURRENT / Slice51 PASS / CLOSED | Explore replaces the V2 homepage with bounded movie/TV browse, filter/search and exact detail/return. Explicit Explore reads may contact the Provider for metadata/artwork. Dashboard Web/API/CLI, dedicated implementation and consumers retire without compatibility; shared reads/history and all media-execution safety remain. Frozen V1 and earlier acceptance identities retain their historical meaning. |
@@ -704,8 +705,9 @@ V2 设置必须可独立完成上述旅程，失败可保留输入并核实未�
 
 `整理规则` 入口位于共享 V2 Shell，使用 `/ui-v2/rules`。概览、类型绑定、识别类型、识别规则、
 元数据策略、命名策略、分类策略与整理策略均提供真实 Active 清单。各规则族默认全宽清单且不
-打开表单；明确添加/复制操作打开候选抽屉，现有对象通过明确编辑操作进入可刷新、可深链的完整
-编辑页。六张参考图仅定义结构与风格，其示例数据不是生产配置或验收 fixture。
+打开表单；明确添加／复制／编辑在原清单背景上打开居中卡片，旧编辑链接仍可刷新、深链和
+重认证恢复同一对象。现行呈现以 `V2-RULES-010–012` 为准；原参考图仅定义适用结构与风格，
+其示例数据不是生产配置或验收 fixture。
 
 普通编辑使用当前领域的 typed forms，包括嵌套识别条件、真实四策略绑定、Movie/TV 命名模板、
 MediaLibrary 加安全相对路径的分类输出，以及整理操作、冲突、附件、重复检测、rollback 和源
@@ -831,13 +833,14 @@ CURRENT；未明确列出的后续目标不得描述为已实现。
 
 #### **V2 已交付增量 — 现有页面改进（Slice 44）**
 
-后续 [Slice54 的统一规则弹窗与可读性 TARGET](v2-requirements.md#target--organizing-rules-dialogs-and-readability-slice54-active)
-已激活，Task54.1 实施已获授权，尚未交付；下述已接受的抽屉／整页基线继续为 CURRENT，交付后再协调。
+后续 [Slice54 的统一规则弹窗与可读性](v2-requirements.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)
+已于 2026-11-11 经独立 A 终验 PASS / CLOSED，替换早期抽屉／整页及编辑器内完整链路预览的
+呈现；下列领域、安全与历史接受事实保持。
 
 - ResourceLibrary / MediaLibrary 普通维护采用同一行为与各自库类型权限；指纹可选，但服务端已观察
   的指纹仍绑定。Rename / Delete 元数据校验不读取选中文件内容；批量/长 Delete 持久化独立结果，
   未知变更不自动重放。文本编辑保留有界内容摘要；跨 Storage Move 仍为 Copy→摘要验证→Delete。
-- Rules 八区导航、当前区搜索、完整列表、显式 Add/copy 抽屉和专用 Edit 表单保留一次 checked Save。
+- Rules 八区导航、当前区搜索、完整列表及显式 Add/Copy/Edit 卡片保留一次 checked Save。
   默认测试仅分析当前候选及必要依赖；Overview 单独完整流程检查。离线局部测试零 Provider / Storage
   I/O，结果不替代全图发布、完整规划或执行授权。
 - 新分类使用 MediaLibrary + 安全 `path`，不追加库显示名/ID；旧 `library/path` 显式转换并保留原路径，

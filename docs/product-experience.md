@@ -639,7 +639,8 @@ never automatically Add again, reset the database or move media. Existing saved 
   or inspect recognition/metadata decisions from an explicit test, Preview or Task recovery.
 - **State:** actual Active, object identity/enabled state/references/readiness and separate unsaved
   candidate. Overview, bindings, types, rules and Metadata/Naming/Classification/Organize inventories
-  open full-width without a selected editor. Add/Copy opens a drawer; Edit is a full-page route.
+  open full-width without a selected form. Add/Copy/Edit opens a centered card over its inventory;
+  the existing Edit address retains exact object identity and refresh/authentication recovery.
 - **Presentation:** the workspace content header contains one `整理规则` title, a short description
   and `刷新`, following the Task Center header hierarchy. The shared topbar keeps account/notification
   controls. The eight category cards and seven inventory layouts retain their design. Overview
@@ -706,11 +707,12 @@ checked conversion with destination-impact acknowledgement. Preserve path; do no
 legacy label. Old snapshots/Previews/Tasks/grants retain their original meaning; failed conversion
 keeps prior Active and correctable input.
 
-## TARGET — Organizing rules dialogs and readability (Slice54 ACTIVE)
+## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
-[Slice54](../SLICE.md) and V2-RULES-010–012 are ACTIVE TARGET with Task54.1 implementation authorized, not delivered CURRENT.
-This replaces Add/Copy drawers, full-page Edit and legacy editor chain-preview presentation only
-after acceptance; existing publication, local analysis and safety semantics remain.
+[Slice54](../SLICE.md) passed independent A Final Review on 2026-11-11; V2-RULES-010–012
+and the following complete journey are CURRENT. Centered Add/Copy/Edit cards replace the
+former drawers and standalone Edit page; only Overview retains complete-flow testing. Existing
+publication, local analysis and safety semantics remain.
 
 - **Goal/entry:** from any of the seven Rules inventories, explicitly Add (including empty state),
   Copy or Edit. Entering a category never opens a form or submits work. A saved edit URL, refresh,

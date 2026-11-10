@@ -143,13 +143,20 @@ Version/digest diagnostics remain in Settings. When the inventory reports no Act
 configuration, its contextual Settings link preserves the originating family; normal sidebar
 Settings remains available. Authentication/read errors retain the shared read-only recovery boundary.
 
-Add/Copy explicitly opens a candidate; Edit is a full-page route with immutable ID. One checked Save
-publishes the focused successor, preserving unrelated Drafts/hidden configuration, prior Active on
-known failure and correctable input. Unknown publication is read back before another submission.
+Add/Copy/Edit opens a centered card above the originating inventory; existing edit links, refresh
+and reconnection reopen the exact object with immutable edit ID. Settings and object-local tests
+have separate areas, preserving their inputs and evidence. Unsaved close offers Continue editing
+or explicit Discard; in-flight Save blocks unsafe exits and duplicate submission. One checked Save
+publishes the focused successor and returns to the list with the known publication fact, preserving
+unrelated Drafts/hidden configuration and prior Active/input on known failure. A failed list read
+does not undo publication. Unknown publication retains the exact submitted request through close,
+reopen and refresh; explicitly verify current state before another submission. Adopt current values
+or retain input after recheck pairs that choice with its verified Active context; no automatic replay.
 Failed reference-impact evidence blocks removal; navigation/tests do not publish.
 
 Family-local tests validate only the exact non-Active object and necessary inputs/references using
-production engines. Overview separately checks the full flow. Offline tests call no Provider/media
+production engines. Only Overview offers the complete-flow check of published Active; unsaved
+card candidates are never silently substituted into it. Offline tests call no Provider/media
 Storage, explicit live Metadata uses the configured Provider, and neither grants execution or
 publication. [Product Experience](product-experience.md#object-scoped-tests-and-complete-flow-checks)
 defines each test's input/result/recovery; C remains C under A policy reuse. Save still checks the
