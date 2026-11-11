@@ -899,6 +899,11 @@ plan, failure stage and known effects without selection, correction, re-analysis
 If no plan was generated, say so; if its history cannot be read, show the read failure and let the
 operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
 
+The detail's 文件整理准备 section gives one short next-step sentence for its current state;
+the existing buttons open the exact summary or the source library's Files page. Failure stages,
+per-file results and known effects remain in their existing detail/history views. See the
+[current Task Center presentation](task-center-page-spec.md#手动受理与确认) for the displayed copy.
+
 A failed file can be selected again in Files without cancelling a failed Task or clearing records.
 For A failed and B/C still waiting in a legitimate flow, A is read-only and unselectable in the old
 summary; B/C keep their original selected confirmation. A's new work uses current configuration,
