@@ -1,20 +1,14 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-以下为用户于 2026-11-11 授权的独立修复**规划草案**，尚未授权实施；不启动 Developer
-或其他角色／代理，不修改产品代码。实施授权后再移除此通知，保留同一 Task ID／Base／目标。
-
-上一独立修正 PATCH-20261111-1 已 B PASS，Reviewed Head 为
-`09f55d4be864410a28d22bea125ef4432aceb88c`；范围、原失败与实际验收保留在
-[固定 B 验收](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md)。
-Slice54 的 Base、接受 Head、PASS / CLOSED 及 Roadmap／Progress 保持不变。
-
-# Task PATCH-20261111-2 — 四类恢复可确认计划下移除重复分析按钮（规划草案）
+# Task PATCH-20261111-2 — 四类恢复可确认计划下移除重复分析按钮
 
 Authority: 用户明确指出元数据恢复保存选择后，“确认整理”下方仍有
 “继续此条目的安全分析”，并要求规划四类恢复的独立修复。按
 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)
 纠正现有动作呈现，不重开已接受 Slice。B 经验见
 [Task Planner / Reviewer](docs/agent-experience/task-planner-reviewer.md)。
+
+用户于 2026-11-11 明确“激活Task吧”，正式授权本 Task 实施。原规划检查点为
+`675f3380bf6cc9e225d32419a28e071dcf2af1d8`；本次仅激活，原 Task ID／Base／目标／范围
+和测试分工保持。代码实施尚未开始，不启动其他角色或代理。
 
 ```text
 Task ID: PATCH-20261111-2
@@ -25,13 +19,19 @@ Task Base: df44b82f9c184e1598a3a97a680d7e565310370a
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: NOT AUTHORIZED — PLANNING ONLY
+Development Authorization: IMPLEMENTATION USER AUTHORIZED ON 2026-11-11
 ```
 
+上一独立修正 PATCH-20261111-1 已 B PASS，Reviewed Head 为
+`09f55d4be864410a28d22bea125ef4432aceb88c`；范围、原失败与实际验收保留在
+[固定 B 验收](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md)。
+Slice54 的 Base、接受 Head、PASS / CLOSED 及 Roadmap／Progress 保持不变。
+
 规划前 `python3 scripts/check_governance.py` PASS。工作区 `/Users/songzhidong/mediaflow`，
-分支 `main`，HEAD 为 Task Base，暂存区为空，工作区／Git 可写。预存
+分支 `main`，规划时 HEAD 为 Task Base；激活前 HEAD 为上述规划检查点。两次检查均为
+暂存区为空、工作区／Git 可写，激活前治理检查 PASS。预存
 `mediaflow/.DS_Store` 修改及未跟踪 `.DS_Store`、调查脚本、日志、`15`、`output/`
-材料保持原样，不进入本 Task 检查点。本轮仅修改根 Task 规划，不读取私有配置或用户媒体。
+材料保持原样，不进入本 Task 检查点。规划和本次激活均只修改根 Task，不读取私有配置或用户媒体。
 
 ## Goal
 
