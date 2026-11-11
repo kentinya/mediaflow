@@ -17,7 +17,14 @@
  * durable link.
  */
 
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AttachmentResults } from "./AttachmentResults";
 import { formatRunDateTime } from "./run-time";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -814,17 +821,57 @@ export function RunDetailTabs({
   const changeTab = (tab: RunDetailTab) => {
     onStateChange({ tab });
   };
+  const detailTabRef = useRef<HTMLButtonElement | null>(null);
+  const evidenceTriggerRef = useRef<HTMLElement | null>(null);
+  const pendingEvidenceFocusRef = useRef<{
+    readonly trigger: HTMLElement | null;
+    readonly itemId: string;
+  } | null>(null);
   const inspectItem = (itemId: string | null) => {
+    if (itemId !== null) {
+      const activeElement = document.activeElement;
+      evidenceTriggerRef.current =
+        activeElement instanceof HTMLElement ? activeElement : null;
+    } else if (state.evidenceItem !== null) {
+      pendingEvidenceFocusRef.current = {
+        trigger: evidenceTriggerRef.current,
+        itemId: state.evidenceItem,
+      };
+      evidenceTriggerRef.current = null;
+    }
     onStateChange({
       evidenceItem: itemId,
       ...(itemId !== null ? { tab: "detail" as const } : {}),
     });
   };
+  // Closing returns focus to the exact control that opened the evidence, or
+  // to the same item's row when the original entry (操作记录/问题文件/批量)
+  // left the tab.  Background refreshes never move focus on their own.
+  useEffect(() => {
+    if (state.evidenceItem !== null) {
+      return;
+    }
+    const pending = pendingEvidenceFocusRef.current;
+    if (pending === null) {
+      return;
+    }
+    pendingEvidenceFocusRef.current = null;
+    const trigger =
+      pending.trigger !== null && pending.trigger.isConnected
+        ? pending.trigger
+        : Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+              "button[data-evidence-item]",
+            ),
+          ).find((button) => button.dataset["evidenceItem"] === pending.itemId);
+    (trigger ?? detailTabRef.current)?.focus({ preventScroll: true });
+  }, [state.evidenceItem]);
 
   return (
     <section className="mf-run-detail-tabs" aria-label="任务详情与操作记录">
       <nav className="mf-run-tabs" aria-label="运行详情与操作记录">
         <button
+          ref={detailTabRef}
           type="button"
           aria-current={state.tab === "detail" ? "page" : undefined}
           onClick={() => changeTab("detail")}
@@ -858,20 +905,11 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
+            onOpenLinkedAnalysis={onOpenLinkedAnalysis}
             onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
             owesRecoveryAction={owesRecoveryAction}
           />
-          {state.evidenceItem !== null && (
-            <RunEvidenceSection
-              runId={runId}
-              itemId={state.evidenceItem}
-              active={active}
-              onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-              onOpenRecoveryExecution={onOpenRecoveryExecution}
-              onClose={() => inspectItem(null)}
-            />
-          )}
         </div>
       ) : (
         <div className="mf-run-tab-panel">
@@ -1130,6 +1168,7 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
+  onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   active,
   owesRecoveryAction,
@@ -1138,7 +1177,8 @@ function RunItemsSection({
   readonly state: RunDetailState;
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
-  readonly onInspectItem: (itemId: string) => void;
+  readonly onInspectItem: (itemId: string | null) => void;
+  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
   readonly owesRecoveryAction: boolean;
@@ -1155,6 +1195,62 @@ function RunItemsSection({
   const [selectedRecoveryItems, setSelectedRecoveryItems] = useState<
     Record<string, string>
   >({});
+  const evidenceItem = state.evidenceItem;
+  const evidencePanelId = useId();
+  const itemsPage =
+    query.data !== undefined && query.data.ok ? query.data.model : null;
+  // The evidence belongs under its own row only when this exact server page
+  // really contains that item.  A filtered-out, off-page or not-yet-readable
+  // item keeps the same independent run+item read before the table instead of
+  // being invented into the page or searched for across pages.
+  const evidenceOnCurrentPage =
+    evidenceItem !== null &&
+    !query.isError &&
+    itemsPage !== null &&
+    itemsPage.unavailable === null &&
+    itemsPage.items.some((item) => item.itemId === evidenceItem);
+  const showStandaloneEvidence =
+    evidenceItem !== null && !evidenceOnCurrentPage;
+  const standaloneEvidenceNotice: {
+    readonly variant: "info" | "warning";
+    readonly title: string;
+    readonly body: string;
+  } =
+    query.isPending || query.data === undefined
+      ? {
+          variant: "info",
+          title: "条目列表正在加载",
+          body: "下方仍按该运行的精确文件身份读取所选条目的证据；列表加载不会改变这次读取。",
+        }
+      : query.isError || query.data.ok === false
+        ? {
+            variant: "warning",
+            title: "条目列表暂不可用",
+            body: "下方仍按该运行的精确文件身份读取所选条目的证据；列表读取失败不会阻止这一独立读取。",
+          }
+        : itemsPage !== null && itemsPage.unavailable !== null
+          ? {
+              variant: "info",
+              title: "此运行暂无条目列表",
+              body: "主条目列表没有可发布的证据；下方文件证据仍按该运行的精确文件身份独立读取。",
+            }
+          : {
+              variant: "info",
+              title: "所选条目不在当前列表页",
+              body: "该文件可能被状态筛选隐藏或位于其他服务器页。列表计数、筛选和分页保持不变；下方证据仍按该运行的精确文件身份读取。",
+            };
+  const evidence =
+    evidenceItem !== null ? (
+      <RunEvidenceSection
+        id={evidencePanelId}
+        runId={runId}
+        itemId={evidenceItem}
+        active={active}
+        onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+        onOpenRecoveryExecution={onOpenRecoveryExecution}
+        onClose={() => onInspectItem(null)}
+      />
+    ) : null;
   return (
     <section className="mf-count-section" aria-label="主条目">
       <div className="mf-run-items-head">
@@ -1179,6 +1275,18 @@ function RunItemsSection({
           onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
+      {showStandaloneEvidence && (
+        <div className="mf-run-evidence-standalone">
+          <p
+            className={`mf-run-evidence-context mf-run-evidence-context-${standaloneEvidenceNotice.variant}`}
+            role="status"
+          >
+            <strong>{standaloneEvidenceNotice.title}。</strong>
+            {standaloneEvidenceNotice.body}
+          </p>
+          {evidence}
+        </div>
+      )}
       <AuthorizedReadBoundary query={query} unavailableTitle="条目列表暂不可用">
         {({ data }) => {
           if (data === undefined) {
@@ -1232,84 +1340,108 @@ function RunItemsSection({
                     </tr>
                   </thead>
                   <tbody>
-                    {page.items.map((item) => (
-                      <tr key={item.itemId}>
-                        <td>
-                          {/* B50.2-03: break after the storage prefix so the
-                            full source path wraps inside its own column. */}
-                          {item.storageId}:<wbr />
-                          {item.sourcePath}
-                          <span className="mf-run-identity">{item.itemId}</span>
-                        </td>
-                        <td>
-                          <span className="mf-status-badge">
-                            {RUN_ITEM_STATUS_LABELS[item.status] ?? item.status}
-                          </span>
-                          {item.checkpoint?.blockerKind && (
-                            <span className="mf-run-kind">
-                              (阻塞:
-                              <wbr />
-                              {BLOCKER_LABELS[item.checkpoint.blockerKind] ??
-                                "等待处理决定"}
-                              )
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <TechnicalToken value={item.stage} />
-                        </td>
-                        <td>{item.attempts}</td>
-                        <td>{item.destinationPath ?? "—"}</td>
-                        <td>
-                          {item.failure
-                            ? `${item.failure.category}: ${item.failure.message}`
-                            : "—"}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={() => onInspectItem(item.itemId)}
-                          >
-                            查看证据
-                          </button>
-                        </td>
-                        <td>
-                          {page.taskId !== null &&
-                            item.status === "failed" &&
-                            isRecoveryActionKind(item.recoveryKind) &&
-                            item.checkpoint?.retrySafety === "safe" &&
-                            item.checkpoint.checkpointVersion !== null &&
-                            item.checkpoint.permittedActionIds.includes(
-                              "retry",
-                            ) && (
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  aria-label={`选择 ${item.itemId} 进行单项分析恢复`}
-                                  checked={
-                                    selectedRecoveryItems[item.itemId] ===
-                                    item.checkpoint.checkpointVersion
-                                  }
-                                  onChange={(event) => {
-                                    setSelectedRecoveryItems((current) => {
-                                      const next = { ...current };
-                                      if (event.target.checked) {
-                                        next[item.itemId] =
-                                          item.checkpoint!.checkpointVersion!;
-                                      } else {
-                                        delete next[item.itemId];
+                    {page.items.map((item) => {
+                      const expanded = evidenceItem === item.itemId;
+                      return (
+                        <Fragment key={item.itemId}>
+                          <tr>
+                            <td>
+                              {/* B50.2-03: break after the storage prefix so
+                                the full source path wraps inside its own
+                                column. */}
+                              {item.storageId}:<wbr />
+                              {item.sourcePath}
+                              <span className="mf-run-identity">
+                                {item.itemId}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="mf-status-badge">
+                                {RUN_ITEM_STATUS_LABELS[item.status] ??
+                                  item.status}
+                              </span>
+                              {item.checkpoint?.blockerKind && (
+                                <span className="mf-run-kind">
+                                  (阻塞:
+                                  <wbr />
+                                  {BLOCKER_LABELS[
+                                    item.checkpoint.blockerKind
+                                  ] ?? "等待处理决定"}
+                                  )
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <TechnicalToken value={item.stage} />
+                            </td>
+                            <td>{item.attempts}</td>
+                            <td>{item.destinationPath ?? "—"}</td>
+                            <td>
+                              {item.failure
+                                ? `${item.failure.category}: ${item.failure.message}`
+                                : "—"}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="mf-button mf-button-secondary"
+                                data-evidence-item={item.itemId}
+                                aria-expanded={expanded}
+                                aria-controls={
+                                  expanded ? evidencePanelId : undefined
+                                }
+                                onClick={() => onInspectItem(item.itemId)}
+                              >
+                                查看证据
+                              </button>
+                            </td>
+                            <td>
+                              {page.taskId !== null &&
+                                item.status === "failed" &&
+                                isRecoveryActionKind(item.recoveryKind) &&
+                                item.checkpoint?.retrySafety === "safe" &&
+                                item.checkpoint.checkpointVersion !== null &&
+                                item.checkpoint.permittedActionIds.includes(
+                                  "retry",
+                                ) && (
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`选择 ${item.itemId} 进行单项分析恢复`}
+                                      checked={
+                                        selectedRecoveryItems[item.itemId] ===
+                                        item.checkpoint.checkpointVersion
                                       }
-                                      return next;
-                                    });
-                                  }}
-                                />
-                                选择
-                              </label>
-                            )}
-                        </td>
-                      </tr>
-                    ))}
+                                      onChange={(event) => {
+                                        setSelectedRecoveryItems((current) => {
+                                          const next = { ...current };
+                                          if (event.target.checked) {
+                                            next[item.itemId] =
+                                              item.checkpoint!.checkpointVersion!;
+                                          } else {
+                                            delete next[item.itemId];
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                    选择
+                                  </label>
+                                )}
+                            </td>
+                          </tr>
+                          {expanded && evidence !== null && (
+                            <tr className="mf-run-evidence-row">
+                              <td colSpan={8}>
+                                <div className="mf-run-evidence-embed">
+                                  {evidence}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2572,6 +2704,7 @@ function itemOutcome(evidence: RunItemEvidence): {
 }
 
 function RunEvidenceSection({
+  id,
   runId,
   itemId,
   active,
@@ -2579,6 +2712,7 @@ function RunEvidenceSection({
   onOpenRecoveryExecution,
   onClose,
 }: {
+  readonly id: string;
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
@@ -2592,7 +2726,7 @@ function RunEvidenceSection({
   );
   const loaded = query.data?.ok === true ? query.data.model : null;
   return (
-    <section className="mf-count-section" aria-label="条目证据">
+    <section id={id} className="mf-count-section" aria-label="条目证据">
       <div className="mf-run-items-head">
         <h4>
           {loaded === null

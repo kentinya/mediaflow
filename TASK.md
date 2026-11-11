@@ -2,9 +2,9 @@
 
 用户先授权调查，再授权规划；规划提交于 `4ec6cbf55fd936824790585d2280325b2cca36a6`。
 2026-11-11 用户明确“激活Task”，现移除草案／无活动实施通知，正式授权本 Task 实施。
-原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。当前为 PLANNED，
-下一步由 Developer 开始实施并进入 IN PROGRESS；本激活检查点只更新 TASK.md，
-不包含产品实现、自审验收、启动其他代理、推送或部署。
+原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。已由 Developer
+实施完成并转入 READY FOR B REVIEW；本轮只提交实现、受影响测试与验证记录，不包含
+自审验收、启动其他代理、推送或部署。
 
 上一独立修复 PATCH-20261111-3 的
 [固定 B PASS](https://github.com/kentinya/mediaflow/blob/7bf958fb1b61b358c5f3f0305fa5137b2caa38f2/TASK.md#b-decision--patch-20261111-3-pass)
@@ -18,7 +18,7 @@ Authority: 用户授权的独立呈现修复；生命周期遵循
 Task ID: PATCH-20261111-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
 Difficulty: Medium
 Test Level: T3
@@ -139,9 +139,64 @@ TASK.md／Git 可写，暂存区原为空。预存 `mediaflow/.DS_Store` 修改�
 Base..HEAD 仅含本 Task 规划文档，未出现中间产品变更，原 Task Base 保持。
 激活前治理检查 PASS，暂存区为空，预存工作区文件同上保留。
 
-### Developer completion / B review
+### Developer Completion Report
 
-尚未实施，产品验收未运行。实施后由 Developer 记录完整 checkpoint、实际行为／测试结果
-及风险，交 READY FOR B REVIEW；B 对精确 Base..Head 独立给 PASS／FIX REQUIRED。
-修正仍在同一 Task；独立 bug PASS 后恢复简短 NO ACTIVE IMPLEMENTATION TASK 与固定审查
-指针，不声明 Slice CLOSED，不规划授权外工作。
+**候选检查点：** 本提交，任务 Base `42e666ca..` 之上的实现提交；分支 `main`。
+状态 READY FOR B REVIEW。
+
+**变化：**
+
+- `web/src/features/operations/RunDetailTabs.tsx`：当前服务器页确实包含所选文件时，
+  证据改为紧跟在对应主条目后的合法表格展开行（单一 `td`，`colSpan=8`），列表下方
+  不再保留第二个面板；同页切换到另一文件时证据位置与内容一起跟随。页外、筛选隐藏、
+  空页、列表加载中或列表读取失败时，证据仍在“主条目”区域、表格之前按原 `run + item`
+  精确读取并显示独立卡，说明不在当前列表或列表暂不可用；不插入伪条目、不改计数／筛选／
+  游标、不遍历其他页。打开按钮暴露 `aria-expanded` 与 `aria-controls`，关闭后焦点回到
+  原触发控件，原触发入口已离开时回到同文件行按钮或“任务详情”页签；背景刷新不移动焦点。
+- `web/src/shared/ui/styles.css`：仅补充证据展开行、独立卡和上下文说明的样式。展开证据
+  跨全部八列，内部卡片在表格自身横向滚动时贴住左侧并限制为可视宽度，长路径、诊断、
+  附件与恢复动作可换行；任务卡和整页不被撑宽。桌面、矮窗口与 390px 实际截图中证据
+  标题、正文和关闭动作均可读。
+- 单元测试补充：多条目首／次行打开后唯一证据紧邻所选行、跨八列、切换后位置与内容跟随、
+  关闭后焦点回到原按钮；页外有效深链接、列表加载中、列表失败仍独立读取准确文件；
+  A→B 快速切换后 A 的迟到证据不会出现在 B 下。原深链接证据用例改为等待列表与行内位置
+  稳定后重新定位证据，保留原内容与恢复断言。
+- 浏览器测试补充：1536px 下证据紧邻所选行且唯一、跨八列；1536×600 矮窗口标题与关闭
+  可操作；390px 键盘打开、关闭动作横向在视口内、表格内部滚动不撑宽页面、关闭后焦点
+  回到原按钮。未改后端、权限、schema、Storage、URL 契约或恢复协议。
+
+**受影响检查（cwd `web/`；未新增依赖）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/run-detail-state.test.ts src/features/operations/run-detail-query.test.ts src/features/operations/OperationsInventory.test.tsx` | 5 文件通过，90/90 测试通过（无 skip） |
+| `npm run typecheck` | 通过 |
+| `npx eslint src/features/operations/RunDetailTabs.tsx src/features/operations/RunDetailTabs.test.tsx tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 通过，无输出 |
+| `npx prettier --check` 同组件／测试／样式／两个 E2E 文件 | 通过 |
+| `npm run build` | Vite 构建成功；仅保留既有 chunk >500 kB 提示 |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40 通过，21.7s |
+| 仓库根 `python3 scripts/check_governance.py` | PASS |
+| 仓库根 `git diff --check` | 无输出 |
+
+实际检查了桌面 `inline-evidence-1536.png`、矮窗口 `inline-evidence-1536x600.png`、窄屏
+`patch-file-evidence-390.png`：证据位于所选行之后，正文和关闭动作可读，390px 无整页
+横向溢出。截图位于本次本地 `test-results/`（忽略目录），B 需在稳定证据目录保留自己的
+最终截图。
+
+**剩余风险：**
+
+- 初始列表尚未返回时证据先在表格前显示，列表返回后再迁入行内，React 会重挂载证据组件；
+  在途／未知恢复请求与核对记录由 landing 级会话存储保留，但尚未提交的本地决策草稿或
+  临时准备缓存可能在这次位置迁移中重置。列表稳定后的同页切换不触发该迁移。
+- 浏览器验证使用既有 Node 假服务与 Chromium；未运行 B 负责的真实 Python／临时 SQLite
+  `task-flow.python.spec.ts`、全量 Web／Python／E2E、wheel 或 Docker 门禁。本 Task 未改
+  后端、权限或执行引擎，新增影响范围内无这些门禁的具体触发点，仍由 B 判定。
+- 横向贴边样式只在 Chromium 的 1536、1536×600、390px 实际视口验证，未做其他浏览器矩阵。
+
+**工作区：** 预存 `mediaflow/.DS_Store` 修改及未跟踪的 `.DS_Store`、`.explore_adapter_block.py`、
+`.mgmt.log`、`.t*.log`、`15`、`output/` 调查材料保持原样，未进入本检查点；未推送、未发布。
+
+### B Review Result
+
+待独立验收。PASS 后记录准确 Base..Head 与实际结果，恢复紧凑的无活动实施通知；
+不关闭或修改任何 Slice，不规划授权范围之外的后续工作。

@@ -1041,6 +1041,14 @@ function stubDetailJourney(
   });
 }
 
+async function findInlineEvidence(detail: HTMLElement) {
+  await waitFor(() => {
+    const region = within(detail).getByRole("region", { name: "条目证据" });
+    expect(region.closest("table")).not.toBeNull();
+  });
+  return within(detail).getByRole("region", { name: "条目证据" });
+}
+
 describe("selected-run detail tabs", () => {
   it("renders the item table with its reading-area column hooks (B50.2-03)", async () => {
     stubDetailJourney();
@@ -1198,9 +1206,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/ui-v2/operations?run=task-001&item=item-1");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const evidence = await within(detail).findByRole("region", {
-      name: "条目证据",
-    });
+    const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
     // The file's own result is readable first…
     expect(within(evidence).getByText("文件已整理")).toBeVisible();
@@ -1240,9 +1246,7 @@ describe("selected-run detail tabs", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations?run=task-001&item=item-1");
     let detail = await screen.findByRole("dialog", { name: "运行详情" });
-    let evidence = await within(detail).findByRole("region", {
-      name: "条目证据",
-    });
+    let evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
     expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
 
@@ -1266,9 +1270,7 @@ describe("selected-run detail tabs", () => {
     });
     renderApp("/ui-v2/operations?run=task-001&item=item-1");
     detail = await screen.findByRole("dialog", { name: "运行详情" });
-    evidence = await within(detail).findByRole("region", {
-      name: "条目证据",
-    });
+    evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
     // A settled attempt with no Result row is not backfilled into a success.
     expect(
@@ -1311,9 +1313,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/ui-v2/operations?run=task-001&item=item-1");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const evidence = await within(detail).findByRole("region", {
-      name: "条目证据",
-    });
+    const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
     expect(within(evidence).getByText("文件已整理")).toBeVisible();
     // The real API returns an uppercase SUCCESS status; it reads as the same
@@ -1468,6 +1468,258 @@ describe("selected-run detail tabs", () => {
     await waitFor(() =>
       expect(screen.queryByText("条目证据:item-2")).toBeNull(),
     );
+  });
+
+  it("PATCH-20261111-4 places one evidence region under its own item and follows the selection", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const table = await within(items).findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    const firstRow = rows[1]!;
+    const secondRow = rows[2]!;
+    const firstTrigger = within(firstRow).getByRole("button", {
+      name: "查看证据",
+    });
+    await user.click(firstTrigger);
+    const firstEvidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(firstEvidence).findByText("文件证据：a.mkv");
+    const firstEvidenceRow = firstEvidence.closest("tr");
+    expect(firstEvidenceRow).not.toBeNull();
+    expect(firstEvidenceRow!.previousElementSibling).toBe(firstRow);
+    expect(firstEvidenceRow!.children).toHaveLength(1);
+    expect(firstEvidenceRow!.children[0]).toHaveAttribute("colspan", "8");
+    expect(firstTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(firstTrigger).toHaveAttribute("aria-controls", firstEvidence.id);
+    expect(
+      within(items).getAllByRole("region", { name: "条目证据" }),
+    ).toHaveLength(1);
+
+    const secondTrigger = within(secondRow).getByRole("button", {
+      name: "查看证据",
+    });
+    await user.click(secondTrigger);
+    const secondEvidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(secondEvidence).findByText("文件证据：b.mkv");
+    const secondEvidenceRow = secondEvidence.closest("tr");
+    expect(secondEvidenceRow).not.toBeNull();
+    expect(secondEvidenceRow!.previousElementSibling).toBe(secondRow);
+    expect(secondTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(firstTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(within(items).queryByText("文件证据：a.mkv")).toBeNull();
+    expect(
+      within(items).getAllByRole("region", { name: "条目证据" }),
+    ).toHaveLength(1);
+
+    await user.click(
+      within(secondEvidence).getByRole("button", { name: "关闭证据" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(items).queryByRole("region", { name: "条目证据" }),
+      ).toBeNull(),
+    );
+    expect(secondTrigger).toHaveFocus();
+    const writes = fetchMock.mock.calls.filter(
+      ([, init]) =>
+        ((init as RequestInit | undefined)?.method ?? "GET") !== "GET",
+    );
+    expect(writes).toHaveLength(0);
+  });
+
+  it("PATCH-20261111-4 keeps an exact off-page item evidence before the current page", async () => {
+    const requested: string[] = [];
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-9")) {
+        return jsonResponse(standaloneExecutionEvidenceDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-9");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const table = await within(items).findByRole("table");
+    const notice = await within(items).findByText(/所选条目不在当前列表页/);
+    const evidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：standalone.mkv");
+    expect(evidence.closest("table")).toBeNull();
+    expect(
+      evidence.compareDocumentPosition(table) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      notice.compareDocumentPosition(evidence) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(items).getAllByRole("row")).toHaveLength(2);
+    expect(requested).toContain(
+      "/api/v1/operations/runs/task-001/items/item-9",
+    );
+  });
+
+  it("PATCH-20261111-4 keeps exact item evidence readable while the item page is loading", async () => {
+    const requested: string[] = [];
+    let releaseItems: ((response: Response) => void) | undefined;
+    const itemsGate = new Promise<Response>((resolve) => {
+      releaseItems = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+        return jsonResponse(evidenceDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return itemsGate;
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-2");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const evidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：b.mkv");
+    expect(within(items).getByText(/条目列表正在加载/)).toBeVisible();
+    expect(evidence.closest("table")).toBeNull();
+
+    await act(async () => {
+      releaseItems?.(jsonResponse(itemsPageDocument()));
+    });
+    const table = await within(items).findByRole("table");
+    await waitFor(() => {
+      const moved = within(items).getByRole("region", { name: "条目证据" });
+      expect(moved.closest("table")).toBe(table);
+      expect(within(moved).getByText("文件证据：b.mkv")).toBeVisible();
+    });
+    expect(
+      within(items).getAllByRole("region", { name: "条目证据" }),
+    ).toHaveLength(1);
+  });
+
+  it("PATCH-20261111-4 keeps exact item evidence when the item-list read fails", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+        return jsonResponse(evidenceDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-2");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const notice = await within(items).findByText(/条目列表暂不可用/);
+    expect(notice).toBeVisible();
+    const evidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("文件证据：b.mkv");
+    expect(evidence.closest("table")).toBeNull();
+    expect(within(items).queryByRole("table")).toBeNull();
+  });
+
+  it("PATCH-20261111-4 ignores a late former item's evidence after the selection moved", async () => {
+    const user = userEvent.setup();
+    let releaseFormer: ((response: Response) => void) | undefined;
+    const formerGate = new Promise<Response>((resolve) => {
+      releaseFormer = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        return formerGate;
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+        return jsonResponse(evidenceDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const table = await within(items).findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    await user.click(
+      within(rows[1]!).getByRole("button", { name: "查看证据" }),
+    );
+    const loading = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    expect(within(loading).getByText(/正在加载条目证据/)).toBeVisible();
+
+    await user.click(
+      within(rows[2]!).getByRole("button", { name: "查看证据" }),
+    );
+    const current = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(current).findByText("文件证据：b.mkv");
+    await act(async () => {
+      releaseFormer?.(jsonResponse(manualExecutionEvidenceDocument()));
+    });
+    await waitFor(() =>
+      expect(within(current).queryByText("文件证据：a.mkv")).toBeNull(),
+    );
+    expect(within(current).getByText("文件证据：b.mkv")).toBeVisible();
+    expect(current.closest("tr")!.previousElementSibling).toBe(rows[2]);
+    expect(
+      within(items).getAllByRole("region", { name: "条目证据" }),
+    ).toHaveLength(1);
   });
 
   it("keeps an in-flight native decision waiting across card close and reopen", async () => {

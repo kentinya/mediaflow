@@ -5263,6 +5263,62 @@ tr[aria-selected="true"] {
   margin: 2px 0 0;
 }
 
+/* PATCH-20261111-4: evidence opens directly under its own item.  The expanded
+   table cell spans all eight columns, while the inner card sticks to the
+   wrapper's left edge so the readable body and its close action never move
+   behind the table's minimum-width horizontal scroll.  The table keeps that
+   bounded scroll; the page/card itself is not widened. */
+.mf-run-detail-card .mf-run-evidence-row > td {
+  padding: 0;
+  background: #f8fafd;
+}
+
+.mf-run-detail-card .mf-run-evidence-row:hover {
+  background: #f8fafd;
+}
+
+.mf-run-detail-card .mf-run-evidence-embed {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  width: min(100%, calc(100vw - 48px));
+  max-width: 100%;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--line, #e2e7ef);
+  background: #f8fafd;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-detail-card .mf-run-evidence-embed > .mf-count-section,
+.mf-run-detail-card .mf-run-evidence-standalone > .mf-count-section {
+  margin: 0;
+}
+
+.mf-run-evidence-standalone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  background: #f8fafd;
+}
+
+.mf-run-evidence-context {
+  margin: 0;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-evidence-context strong {
+  color: #0e1728;
+}
+
+.mf-run-evidence-context-warning strong {
+  color: #8a4b0f;
+}
+
 .mf-progress-track {
   height: 8px;
   background: #e5e7eb;

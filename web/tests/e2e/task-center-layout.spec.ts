@@ -695,6 +695,9 @@ test("the detail card item table keeps every column in its own reading area", as
   await evidenceButton.scrollIntoViewIfNeeded();
   await evidenceButton.click();
   await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("item-evidence-1536.png"),
+  });
   await page.keyboard.press("Escape");
   await expect(detail).toHaveCount(0);
 });
@@ -711,9 +714,43 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
-  await items.getByRole("button", { name: "查看证据" }).first().click();
+  const evidenceTrigger = items
+    .getByRole("button", { name: "查看证据" })
+    .first();
+  await evidenceTrigger.scrollIntoViewIfNeeded();
+  await evidenceTrigger.focus();
+  await page.keyboard.press("Enter");
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
+  await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
+  // The table itself may still scroll horizontally, but the evidence card and
+  // its close action stick to the wrapper's left edge and stay inside the
+  // viewport horizontally.
+  const closeHorizontal = await evidence
+    .getByRole("button", { name: "关闭证据" })
+    .evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        viewport: window.innerWidth,
+      };
+    });
+  expect(closeHorizontal.left).toBeGreaterThanOrEqual(0);
+  expect(closeHorizontal.right).toBeLessThanOrEqual(
+    closeHorizontal.viewport + 1,
+  );
+  const evidenceBounds = await evidence.evaluate((region) => {
+    const wrap = region.closest(".mf-run-table-wrap");
+    return {
+      regionWidth: region.getBoundingClientRect().width,
+      wrapWidth: wrap?.clientWidth ?? null,
+    };
+  });
+  expect(evidenceBounds.wrapWidth).not.toBeNull();
+  expect(evidenceBounds.regionWidth).toBeLessThanOrEqual(
+    (evidenceBounds.wrapWidth ?? 0) + 1,
+  );
   // The readable body is present and bounded on the narrow card.
   await expect(
     evidence.getByRole("heading", {
@@ -730,7 +767,9 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
     evidence.getByRole("region", { name: "处理经过" }),
   ).toBeVisible();
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
-  await evidence.scrollIntoViewIfNeeded();
+  await evidence
+    .getByRole("heading", { name: /文件证据/ })
+    .scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("patch-file-evidence-390.png"),
   });
@@ -739,4 +778,9 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   await evidence.getByText(/技术诊断/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+  const closeEvidence = evidence.getByRole("button", { name: "关闭证据" });
+  await closeEvidence.focus();
+  await page.keyboard.press("Enter");
+  await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
+  await expect(evidenceTrigger).toBeFocused();
 });

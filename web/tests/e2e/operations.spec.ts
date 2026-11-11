@@ -834,7 +834,8 @@ test("item and record filters page on the server and survive a reload", async ({
 
 test("one item's evidence opens through exact links and closes again", async ({
   page,
-}) => {
+}, testInfo) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await connect(page);
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
@@ -847,10 +848,55 @@ test("one item's evidence opens through exact links and closes again", async ({
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("item-001")).toBeVisible();
 
-  await items.getByRole("button", { name: "查看证据" }).first().click();
+  const evidenceTrigger = items
+    .getByRole("button", { name: "查看证据" })
+    .first();
+  await evidenceTrigger.click();
   await expect(page).toHaveURL(/item=item-001/);
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
+  await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(evidenceTrigger).toHaveAttribute(
+    "aria-controls",
+    (await evidence.getAttribute("id")) ?? "",
+  );
+  const placement = await evidenceTrigger.evaluate((button) => {
+    const row = button.closest("tr");
+    const region = document.querySelector('section[aria-label="条目证据"]');
+    const evidenceRow = region?.closest("tr");
+    return {
+      previousIsSelected: evidenceRow?.previousElementSibling === row,
+      evidenceCellCount: evidenceRow?.children.length ?? 0,
+      evidenceColSpan:
+        evidenceRow?.firstElementChild?.getAttribute("colspan") ?? null,
+      evidenceRegions: document.querySelectorAll(
+        'section[aria-label="条目证据"]',
+      ).length,
+      insideTable: region?.closest("table") !== null,
+    };
+  });
+  expect(placement).toEqual({
+    previousIsSelected: true,
+    evidenceCellCount: 1,
+    evidenceColSpan: "8",
+    evidenceRegions: 1,
+    insideTable: true,
+  });
+  await page.screenshot({
+    path: testInfo.outputPath("inline-evidence-1536.png"),
+  });
+  // A short desktop window keeps the evidence header and close action
+  // reachable once the evidence is scrolled into view.
+  await page.setViewportSize({ width: 1536, height: 600 });
+  await evidence
+    .getByRole("heading", { name: "文件证据：The Matrix (1999).mkv" })
+    .scrollIntoViewIfNeeded();
+  await expect(
+    evidence.getByRole("button", { name: "关闭证据" }),
+  ).toBeInViewport();
+  await page.screenshot({
+    path: testInfo.outputPath("inline-evidence-1536x600.png"),
+  });
   // The readable body answers which file, what happened, where it went and
   // what is still open before any technical record.
   await expect(
@@ -888,6 +934,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   await evidence.getByRole("button", { name: "关闭证据" }).click();
   await expect(page).not.toHaveURL(/item=item-001/);
   await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
+  await expect(evidenceTrigger).toBeFocused();
 });
 
 test("PATCH-20261107-1 keeps the mixed completed run and its independent file outcomes readable", async ({
