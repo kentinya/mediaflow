@@ -1054,9 +1054,14 @@ permission is not reissued and withdrawn scheduled intent is not bypassed. Recog
 ignore, persisted Metadata candidate/correction/ignore,
 classification and conflict use backend-offered legal inputs. Saving is non-executing. Bounded single/
 batch failed-analysis recovery keeps independent admitted/refused items and linked original history.
-Repair dependencies or save a legal decision, explicitly re-analyze, handle any new blocker, inspect
-new summary/remaining steps and confirm the eligible subset. Admission/running is not resolution;
-repeated failure supplies its new cause. Original pin unavailable means refusal/recovery guidance,
+Saving a legal decision starts its permitted zero-mutation analysis as part of that action. When
+a current plan is ready, inspect its summary/remaining steps and confirm the eligible subset.
+The page offers that summary or its preparation step without a second analysis button; queued or
+running analysis likewise needs no additional submission. If capacity refuses analysis after the
+decision was saved, the page keeps the decision and offers an explicit analysis-only retry. A lost
+response leads to rereading the original item before continuing. A plan that needs fresh analysis
+retains the backend-permitted update action. Admission/running is not resolution; repeated failure
+supplies its new cause. Original pin unavailable means refusal/recovery guidance,
 not silent repinning or arbitrary historical Reprocess. Unknown effects offer evidence/source-target
 inspection/log-export only, never retry/force-replay/automatic rollback.
 
