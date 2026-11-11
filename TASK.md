@@ -10,7 +10,7 @@ Authority: 用户反馈“整理时元数据修正作品搜索无结果，直接
 Task ID: PATCH-20261111-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: e9241d484e33ccb0b1a8def2ab81c17cb1a3d577
 Difficulty: Medium
 Test Level: T3
@@ -356,3 +356,64 @@ Developer 的 PASS 标签。
 不能证明旧候选覆盖新 checkpoint，未列为产品阻塞，也不要求 Developer 为此扩建工具。
 不将已通过的正常旅程视为该并发场景已经通过。未连接真实 Provider／用户媒体，未跑
 T3 之外的全量、wheel 或 Docker 门禁。全部预存文件保持未暂存。
+
+### Developer fix-loop report — B-PATCH-01
+
+**Checkpoint:** `66cd4615`（Task Base `e9241d48` → 候选 `66cd4615`，分支 `main`；
+接在 B 复核交接 `5d20958f` 之后的单一实现检查点，未改写已审查历史。预存
+`mediaflow/.DS_Store` 修改及全部未跟踪私有文件原样保留，未纳入提交）。状态流转
+FIX REQUIRED → READY FOR B REVIEW；本报告为事实交接，不构成验收。
+
+**实际变更（全部留在本 Task 范围内）**
+
+- `web/src/features/operations/TaskItemRecoveryPanel.tsx`：`searchMetadata` 失败
+  分支新增 `invalid_year` 识别——显示“本次搜索没有完成，也没有保存任何决定：
+  搜索年份需为 1870–2100 的整数，或清空年份不限制。请修改或清空年份后重新搜索。”，
+  `repeatLocked: false`，输入保留供直接重搜；其余错误仍走既有 `reportUnknown`。
+  两种呈现共用同一处理，未扩展通用恢复状态机或 API 错误框架。
+- `web/src/features/operations/TaskItemRecoveryPanel.test.tsx`：新增用例——越界
+  1869 → 可见具体年份要求与“重新搜索”动作、不发送 decision／continue、输入保留；
+  改为 2024 后同卡搜索成功、拒绝横幅被结果替换。
+- `web/src/features/operations/ManualOrganizeDialog.test.tsx`：新增
+  `rejectMetadataSearchYear` 夹具状态（返回真实 400 `invalid_year` 信封）与整理弹窗
+  呈现的同一旅程用例，同样断言零 decision／continue／execute 请求。
+- `web/tests/e2e/metadata-search-year.python.spec.ts`：任务中心用例在初始状态后补
+  越界 1869 搜索——真实 Python API 返回 400、可见年份说明、Provider 零调用、
+  decision 零请求，随后按原流程改 2024；最终 `searchBodies` 断言更新为
+  1869／2024／null 三次提交。
+- Formatter 修正（B-PATCH-01 第 3 条）：`.venv/bin/ruff format
+  scripts/operations_inventory_harness.py`（纯格式，3 处换行）；`npm exec prettier
+  --write` 修正 `TaskItemRecoveryPanel.tsx`、`metadata-search-year.python.spec.ts`。
+  上轮交接报告中的格式检查结果已更正为实际失败，本次失败事实保留于 B review。
+
+**实现过程事实**
+
+首次年份 E2E 运行失败：harness 提供的是 `dist/` 生产构建，源码修改未重建，浏览器
+仍执行旧通用分支（400 已到达但显示“操作未完成”）。`npm run build` 重建后同规格
+通过。该失败是验证环境陈旧产物，不是产品缺陷；原失败与修正均如实记录。
+
+**受影响测试实际结果（候选 `66cd4615`）**
+
+仓库根：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
+`.venv/bin/ruff check`／`format --check scripts/operations_inventory_harness.py`
+通过；`.venv/bin/python -m unittest tests.test_task_item_metadata_search
+tests.test_metadata_correction tests.test_metadata
+tests.test_automation_entrance_recovery` → 63 tests OK。
+
+`web/`：三个指定单测文件 41 tests 通过（原 39＋新增 2）；`npm run typecheck` 通过；
+`npm exec eslint`／`npm exec prettier --check`（四个变更 Web 文件）通过；
+`npm run build` 成功；`npm run test:e2e -- --config=playwright.python.config.ts
+tests/e2e/metadata-search-year.python.spec.ts` → 2 passed（真实 API 400、Provider
+零调用、浏览器可见年份说明与纠正后成功搜索均有断言）；直接受影响
+`manual-organize-dialog.python.spec.ts`＋`operations-inventory.python.spec.ts`
+→ 53 passed（harness 格式化回归）。
+
+本轮修正开发＋交接约 45 分钟，其中测试执行合计约 5 分钟（＜30%）。
+
+**剩余风险与移交说明**
+
+- Files 弹窗入口的浏览器层拒绝说明由共用 `searchMetadata` 与组件测试覆盖；浏览器
+  E2E 仍仅在任务中心入口复现 B 的原始旅程（未重复第二个浏览器入口）。
+- 真实 TMDB、缓存键／TTL、Movie 去年份回退等边界未变，未连接真实 Provider。
+- 全量 Python／Web 回归、`npm run lint`／`format:check` 全仓与 B 列名的其余验收门
+  按分工由 B 重新执行。
