@@ -170,6 +170,7 @@ async function chooseNativeRecoveryDecision(
   recovery: Locator,
   seeded: NativeRecoverySeed,
   kind: NativeRecoveryKind,
+  outcome: "capacity_full" | "lost_response" | null = null,
 ): Promise<void> {
   if (kind === "metadata_correction") {
     const searchResponse = page.waitForResponse(
@@ -214,17 +215,32 @@ async function chooseNativeRecoveryDecision(
       new URL(response.url()).pathname ===
         `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
   );
-  const continuationResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
-  );
+  const continuationResponse =
+    outcome === "lost_response"
+      ? null
+      : page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            new URL(response.url()).pathname ===
+              `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+        );
   await recovery
     .getByRole("button", { name: "保存决策并继续安全分析" })
     .click();
   expect((await decisionResponse).status()).toBe(200);
-  expect((await continuationResponse).status()).toBe(202);
+  if (continuationResponse !== null) {
+    expect((await continuationResponse).status()).toBe(
+      outcome === "capacity_full" ? 409 : 202,
+    );
+  } else {
+    await expect(recovery.getByText(/请求响应未送达/).first()).toBeVisible();
+    await recovery
+      .getByRole("button", { name: "重新读取条目后再继续" })
+      .click();
+    await expect(
+      recovery.getByRole("button", { name: "重新读取条目后再继续" }),
+    ).toHaveCount(0);
+  }
 }
 
 async function finishNativeRecovery(
@@ -272,7 +288,26 @@ async function finishNativeRecovery(
     expect(state.conflictTargetPreserved).toBe(true);
   }
 
+  await expect(
+    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+  ).toHaveCount(0);
+  if (kind === "metadata") {
+    await page.reload();
+    await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+    await expect(summary).toBeVisible();
+    await expect(
+      recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+    ).toHaveCount(0);
+  }
   const confirm = summary.getByRole("button", { name: /确认继续整理 1 项/ });
+  await confirm.scrollIntoViewIfNeeded();
+  await expect(confirm).toBeVisible();
+  mkdirSync("test-results/PATCH-20261111-2", { recursive: true });
+  await page.screenshot({
+    path: `test-results/PATCH-20261111-2/${kind}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
   if (kind === "conflict_overwrite") {
     await expect(confirm).toBeDisabled();
     await summary
@@ -340,8 +375,70 @@ async function runNativeRecoveryJourney(
       metadataSearches.push(url.pathname);
     }
   });
-  await chooseNativeRecoveryDecision(page, recovery, seeded, kind);
+  const calls = recordApiCalls(page);
+  if (kind === "classification")
+    await page.setViewportSize({ width: 390, height: 844 });
+  const outcome =
+    kind === "recognition"
+      ? "capacity_full"
+      : kind === "metadata_correction"
+        ? "lost_response"
+        : null;
+  const continuationPath = `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`;
+  if (outcome !== null) {
+    await page.route(
+      `**${continuationPath}`,
+      async (route) => {
+        if (outcome === "capacity_full") {
+          // Python integration separately proves real full-capacity persistence.
+          await route.fulfill({
+            status: 409,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "capacity_full" } }),
+          });
+        } else {
+          const response = await route.fetch();
+          expect(response.status()).toBe(202);
+          await route.abort("failed");
+        }
+      },
+      { times: 1 },
+    );
+  }
+  await chooseNativeRecoveryDecision(page, recovery, seeded, kind, outcome);
+  if (outcome === "capacity_full") {
+    await expect(recovery.getByText(/共享队列已满/)).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const retry = recovery.getByRole("button", {
+      name: "继续此条目的安全分析",
+    });
+    await expect(retry).toBeEnabled();
+    await retry.scrollIntoViewIfNeeded();
+    mkdirSync("test-results/PATCH-20261111-2", { recursive: true });
+    await page.screenshot({
+      path: "test-results/PATCH-20261111-2/capacity-full.png",
+      animations: "disabled",
+    });
+    const admitted = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === continuationPath,
+    );
+    await retry.click();
+    expect((await admitted).status()).toBe(202);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
   await finishNativeRecovery(page, request, recovery, seeded, kind);
+  expect(
+    calls.filter(
+      (call) =>
+        call.method === "POST" && call.path.endsWith("/recovery/continue"),
+    ),
+  ).toHaveLength(outcome === "capacity_full" ? 2 : 1);
+  expect(
+    calls.filter(
+      (call) =>
+        call.method === "POST" && call.path.endsWith("/recovery/decision"),
+    ),
+  ).toHaveLength(1);
   if (kind === "metadata_correction") {
     expect(metadataSearches).toHaveLength(1);
   }
@@ -3486,7 +3583,7 @@ test("a real Worker claim advances a queued Task without changing the total", as
   await expect(page.getByText(/常驻服务状态/)).toHaveCount(0);
 });
 
-test("native recognition recovery keeps the same Task through summary and effect", async ({
+test("PATCH-20261111-2 native recognition recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {
@@ -3498,7 +3595,7 @@ test("native recognition recovery keeps the same Task through summary and effect
   );
 });
 
-test("native Metadata candidate recovery keeps the same Task through summary and effect", async ({
+test("PATCH-20261111-2 native Metadata candidate recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {
@@ -3510,7 +3607,7 @@ test("native Metadata candidate recovery keeps the same Task through summary and
   );
 });
 
-test("native Metadata correction searches explicitly before the same-Task summary", async ({
+test("PATCH-20261111-2 native Metadata correction searches explicitly before the same-Task summary", async ({
   page,
   request,
 }) => {
@@ -3522,7 +3619,7 @@ test("native Metadata correction searches explicitly before the same-Task summar
   );
 });
 
-test("native Classification recovery keeps the same Task through summary and effect", async ({
+test("PATCH-20261111-2 native Classification recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {
@@ -3534,7 +3631,7 @@ test("native Classification recovery keeps the same Task through summary and eff
   );
 });
 
-test("native conflict recovery renames while preserving the existing target", async ({
+test("PATCH-20261111-2 native conflict recovery renames while preserving the existing target", async ({
   page,
   request,
 }) => {
@@ -3546,7 +3643,7 @@ test("native conflict recovery renames while preserving the existing target", as
   );
 });
 
-test("policy-permitted overwrite still needs exact same-page destructive consent", async ({
+test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page destructive consent", async ({
   page,
   request,
 }) => {
