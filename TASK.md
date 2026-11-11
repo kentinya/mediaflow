@@ -17,7 +17,7 @@ Developer 或其他代理；本轮实施依据用户随后明确授权，不推�
 Task ID: PATCH-20261112-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 32bb37262777ae945deb8af4a51d9109876ca804
 Difficulty: Medium
 Test Level: T3
@@ -320,4 +320,91 @@ READY FOR B REVIEW
 
 ## B Review Result
 
-PENDING — Developer 已提交 READY FOR B REVIEW 候选；B 尚未独立验收，未声明 PASS。
+**FIX REQUIRED — 2026-11-12。** 独立审查完整范围
+`32bb37262777ae945deb8af4a51d9109876ca804..91fbffb381cc21a72ad730fd942f88623852498e`。
+候选实现为 `20944c5452917ed5bbcda781e7abd2cc9b01872c`；审查开始时 main 工作区干净，
+治理 PASS。以下修正留在本 Task，Base／Goal 不变；Slice54、Roadmap、Progress 不变。
+
+已核实：full／decision 的旧独立按钮及专属说明已删除；真实 Files 双候选在
+1440×1000 首屏可见候选与保存动作。保存一次产生一次 decision 和一次 continue；
+暂停 Worker 时显示等待，没有再次显示旧按钮，推进真实 Worker 后生成可纳入的新方案。
+这些结果保留，但尚不能通过本 Task。
+
+### 必须修复：分析未入队，刷新后却一直等待
+
+真实旅程：自动化列表新建停用任务（来源 `source/电影`）→运行一次→真实 Worker
+完成一个文件、另一个文件遇到目标冲突→任务中心打开该冲突→选择重命名并保存。
+队列拒绝分析后，当前会话可显示原保存分析按钮；刷新／重新认证后，按钮消失，显示
+“零变更分析正在等待”。释放队列名额再刷新仍无恢复动作，用户无法继续这一个文件。
+
+B 用现有 `seed-run-once-mixed-scope`、自动化创建／运行一次 UI 和真实 Worker 得到
+该任务；初次用拦截拒绝定位，然后通过既有 `seed-queued-task` 的真实远程整理准入
+占满容量，对同一保存决定的原 continue 请求取得真实 HTTP 409 `queue_full`，详情为
+`decision_saved_analysis_not_queued`。其 recovery 仍允许 `retry`、decision 为空、
+没有已受理 continuation／新摘要，而 run.status 为 `running`、filesPreparation 为 null。
+取消一个占位 Task 后再次刷新，界面仍没有保存分析按钮。未伪造持久读模型。
+
+根因位于 `TaskItemRecoveryPanel.tsx:841`、`:1097`：无 Files discovery 时，把整个
+Task 的 pending／running 当成分析已受理证据。当前五态流程中的人工等待也为 running，
+所以该判断不能区别“已保存、未入队”和“分析已经入队”。新重开单测使用了 `waiting`
+夹具，未覆盖这个真实投影；未知请求核对也复用了同一错误判断。
+
+开发指导：
+
+1. 先补上述真实 Automatic Task 投影的回归：run 为 running、无 discovery、决定已保存、
+   分析明确拒绝。覆盖刷新／重开，以及释放容量后同一按钮只 POST continue 的完整过程。
+   断言 decision 总数为 1，原成功兄弟及其 Result 不重放。
+2. 展示与未知请求核对统一使用实际分析准入／机器阶段，不能用整体 Task.status 代替。
+   Files discovery、旧 continuation 与无 discovery 的 kernel Task 都保留真实语义；
+   当前方案就绪时直接交给方案，正在分析时等待，人工等待且未入队时恢复原按钮。
+3. **B 范围评估：**本次真实 GET 已证明整体流程投影不足以作此区分。允许在现有 recovery
+   GET 增加一个有界、只读的 native analysis 状态投影，复用 repository 已有
+   `get_task_scheduling()` 的 queue_state／machine_stage 与当前 Task／item 关联，
+   并同步类型、归一化和 CURRENT 说明。不新增 endpoint，不改持久 schema、准入、队列、
+   Worker、权限或执行算法；仍为 T3。用户界面显示业务阶段，不展示内部调度字段。
+4. 同时验证真正已受理但响应丢失与未受理的核对；读取失败保持未知，读取到已受理不重发。
+   删除依赖整体 running/pending 作准入证明的两处逻辑及相应错误注释。
+
+### 必须修复：窗口仍未完成已约定的内容层级与交接
+
+真实 Files → `Dialog/Dialog01.2011.mkv` →批量整理→选候选 2→保存并重新分析：
+等待中，一个区域说“选择已保存”，外层仍说“先完成这个文件的选择”“请在下方完成合法决定”，
+下方再次要求完成当前问题；同一次状态出现多段重复说明。新方案就绪后，修正识别／作品
+表单始终展开，旧“已保存、已请求分析”提示继续占据主区域。1440×1000 的实际截图中，
+目标路径位于首屏以下，用户先看到空的身份选择和不可用保存按钮，再去找已生成的方案。
+这未达到 Scope 7 规定的“已采用作品与另行编辑意图区分、普通修正按需展开”和稳定交接。
+
+开发指导：
+
+1. 同一文件的需要选择／选择已保存等待／新方案就绪使用一个主要状态位置；保存后移除
+   已过时的“请完成选择”指引，新方案就绪后结束等待提示。不要把旧 Preview 的问题文案
+   直接当作仍待用户操作的当前状态。
+2. 就绪页优先呈现已采用作品、来源→目标、操作／来源保留及附件警告。普通修正默认按需
+   展开，有未保存输入时保留表单与草稿；不要以隐藏错误、危险影响或清空输入换取紧凑布局。
+   删除同一页面重复的来源／操作／未执行说明及无助于当前决定的空候选提示。
+3. 沿同一个真实文件连续检查选择→保存→慢分析→新方案，不只截最终画面；记录
+   1440×1000、390×844、1280×650 的截图与实际滚动／键盘结果。保留已经改善的双候选首屏、
+   固定底栏及一次最终确认，不扩成其他页面重设计。
+
+### 本轮独立检查与后续验收
+
+- `npm run build` 通过（既有 bundle 大小提示）。受影响 6 个 Web 单元文件 **85/85 通过**，
+  测试框架另输出已有 JSDOM scrollTo／navigation 未实现提示。
+- 新构建＋真实 Python API／临时 SQLite／本地合成文件／模拟 Provider：完成 Files 候选→
+  保存→慢分析→新方案；实际查看桌面、390px、矮窗口截图；完成上述 Automatic 冲突、
+  真实容量拒绝、刷新／重新认证与释放名额后仍阻塞的复现。
+- 容量占位成功准入 98 个 Task；达到满额后，既有 harness seed 包装器把底层 queue_full
+  转为 HTTP 500。这是本次占位工具的停止结果，不是本 Task 的产品返工项；随后原业务
+  continue endpoint 的真实 409 为本结论依据。
+- 治理 PASS；`git diff --check` 通过。按 Workflow §6 的已证明阻塞提前返回规则，
+  未继续跑 typecheck／全 lint／format、原生 E2E 矩阵及其余视觉／交互验收，均保持待验收。
+  本轮测试与原生探测执行时间小于复核总时间的一半；其余时间用于完整差异、契约、
+  实际状态及根因审查。未改产品代码，未推送或部署。
+- 原始真实响应、请求计数及截图保存在本机忽略目录
+  `.git/validation-evidence/91fbffb381cc21a72ad730fd942f88623852498e/patch-20261112-1/`。
+  其中 `automatic-real-refusal.json` 与 `automatic-after-release.json` 记录真实拒绝／名额释放；
+  `automatic-mocked-refusal.json` 明确为最初定位用拦截，不作真实容量证明。
+
+Developer 修复上述两项后，运行新增／修改及直接受影响的测试，补充只读投影的 Python API
+测试和相应 lint／format；提交新的实现检查点与 READY FOR B REVIEW。B 对原 Base..新 Head
+重审并完成本 Task 原定的适用验收，不把本轮通过的局部结果当作整体 PASS。
