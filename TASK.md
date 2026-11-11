@@ -1,35 +1,3 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-独立修复 **PATCH-20261111-5 — 任务详情整理入口收敛与提示留白** 已由 B 于
-2026-11-11 独立验收 **PASS**，授权结果全部满足，无剩余 Task 阻塞。
-
-- Task Type: STANDALONE MINOR BUG；Parent Slice: NONE；Medium / T3。
-- 完整审查范围：`436117e0588d30794dc3ee17d4fc1d0988a79442..408b5303cdabad202188ed252ceaa741159cdeaa`。
-- [固定 B 最终审查、完整 Task 与开发指导／交付记录](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)。
-- 原规划／激活／边界澄清分别为 `21132098`／`df8b3833`／`6d3ff306`；原 Base 保持。
-
-已结束任务详情不显示重复准备区、“查看只读摘要”或“从文件页重新发起”；必要的
-继续整理、准确历史地址和真实文件证据保留。共用整理弹窗提示有清楚水平留白。
-现行旅程见[任务中心页面约定](docs/task-center-page-spec.md#手动受理与确认)及
-[Manual organize](docs/product-experience.md#manual-organize)。
-
-B 实际执行：受影响单元 120/120、Node E2E 40/40、真实 Python 浏览器 18/18，
-类型／lint／格式／构建通过；截图、trace、原始日志、非失败提示和适用测试边界见
-固定审查。本机证据根 `.git/validation-evidence/408b5303/patch-20261111-5/`。
-
-上一独立修复 PATCH-20261111-4 的接受结果及 Slice54 PASS / CLOSED 保持。
-本收尾仅协调 CURRENT 文档与 Task 指针；产品源码／测试／构建输入未变，
-SLICE／Roadmap／Progress 不变，预存脏文件保留；未推送或部署。当前无活动实施 Task。
-
----
-
-## Planning-only draft — PATCH-20261112-1
-
-以下为用户于 2026-11-12 要求“规划单独修复 Task”，并补充“整理窗口的整体美化也加进去”
-的 B 规划草案。**仅授权规划，不授权实施、启动其他角色／代理、推送或部署。**
-顶部无活动实施 Task 通知保持；
-只有用户授权实施后才替换通知、激活下列 Task，原 ID／Base／Goal／Scope 保持。
-
 # Task PATCH-20261112-1 — 整理窗口整体美化与保存分析入口统一
 
 Authority: 用户明确要求删除“继续此条目的安全分析”，不是按状态隐藏，也不新增
@@ -40,6 +8,11 @@ Authority: 用户明确要求删除“继续此条目的安全分析”，不是
 角色经验见 [B](docs/agent-experience/task-planner-reviewer.md) 与
 [Developer](docs/agent-experience/developer-implementation-role.md)。
 
+用户于 2026-11-12 明确“激活Task”，正式授权本 Task 实施。原规划检查点为
+`3a4b70a78aa8b967503d5a1ad89bce2cd4ccc164`；本次仅激活，移除无活动实施及规划草案通知，
+原 Task ID／Base／Goal／Scope、Medium / T3 和测试分工保持。代码实施尚未开始，
+本轮不自动启动 Developer 或其他代理，不推送或部署。
+
 ```text
 Task ID: PATCH-20261112-1
 Task Type: STANDALONE MINOR BUG
@@ -49,13 +22,16 @@ Task Base: 32bb37262777ae945deb8af4a51d9109876ca804
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY — NOT AUTHORIZED FOR IMPLEMENTATION
+Development Authorization: IMPLEMENTATION USER AUTHORIZED ON 2026-11-12
 ```
 
-规划前治理检查 PASS。工作区 `/Users/songzhidong/mediaflow`，分支 `main`，HEAD 为
-上述 Base；暂存区／工作区干净，Task 文件及 Git 可写。只修改根 `TASK.md` 形成规划
-检查点；Slice54 的原 Base／接受 Head／PASS / CLOSED、Roadmap／Progress 保持。
-PATCH-20261111-2 的历史接受与 PATCH-20261111-5 的结束指针不改写；本 Task 依据
+规划前与激活前治理检查均 PASS。工作区 `/Users/songzhidong/mediaflow`，分支 `main`，
+规划时 HEAD 为上述 Base，激活前 HEAD 为上述规划检查点；暂存区／工作区干净，
+Task 文件及 Git 可写。本次只修改根 `TASK.md`；Slice54 的原 Base／接受 Head／
+PASS / CLOSED、Roadmap／Progress 保持。PATCH-20261111-2 的历史接受保持；
+PATCH-20261111-5 已独立 B PASS，完整审查范围为
+`436117e0588d30794dc3ee17d4fc1d0988a79442..408b5303cdabad202188ed252ceaa741159cdeaa`，
+原结果／失败与证据保留于[固定 B 验收](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)。本 Task 依据
 用户本轮明确收敛后的入口及窗口可读性要求修正，不把先前“异常时保留独立按钮”继续
 当作验收标准。整体美化覆盖现有整理窗口，不新增产品能力、执行步骤或新的恢复模型。
 
@@ -150,7 +126,7 @@ recovery 读取及已有响应字段，不创建第二个工作流或本地执�
    实施交付时仅同步 Product Experience／Task Center §4 中本窗口呈现与入口操作表述：
    说明主动作／方案／证据的层级、分析失败仍用同一动作恢复，不再暗示独立重试按钮；
    必要的 CURRENT 架构说明只协调前端读取／动作及窗口呈现关系，不改已接受引擎契约。
-   本次规划检查点只写 Task，这些同步随授权后的产品修复交付。
+   规划与激活检查点只写 Task，这些同步随产品修复交付。
 7. **整体重组整理窗口内容。** 参考现有 Files 新建／编辑库、Automation 新建／编辑卡片
    的字号、控件、间距、圆角、提示与按钮层级，复用 `modal-card.tsx`。具体结果如下：
 
@@ -308,13 +284,15 @@ B 如发现具体共享影响再追加所需检查并说明，不把全量门禁
 - Files 尚无逐文件决定时的准备级“运行分析并生成计划摘要”、独立旧 intent 页面、
   元数据显式搜索及合法只读核对入口退役；动作退役仅针对上述共用逐文件决定入口，
   准备级状态／动作的必要美化仍在窗口范围内。
-- 重开或关闭 Slice，修改 SLICE／Roadmap／Progress；实施、推送或部署的本次授权。
+- 重开或关闭 Slice，修改 SLICE／Roadmap／Progress；推送或部署。本次只激活，
+  不自动开始 Developer 实施或启动其他代理。
 
 ## Developer Completion Report
 
-待用户授权实施并由 Developer 完成交付后填写：精确 checkpoint、READY FOR B REVIEW、
+待 Developer 完成交付后填写：精确 checkpoint、READY FOR B REVIEW、
 变更与主要决定、实际受影响检查／失败、剩余风险；完整验收由 B 执行。
 
 ## B Review Result
 
-NOT STARTED — 本文仅为规划草案；没有实施候选，也没有本 Task 的 PASS 或验收结果。
+NOT STARTED — Task 已获实施授权，代码实施与 B 验收尚未开始；没有实施候选，
+也没有本 Task 的 PASS 或验收结果。
