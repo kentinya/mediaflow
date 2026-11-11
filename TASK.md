@@ -1,11 +1,15 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+PATCH-20261111-4 已通过 B 最终复核；下文保留完整固定审查记录，随后根 Task 压缩为检查点指针。
+
 # Task PATCH-20261111-4 — 任务详情文件证据就地展开
 
 用户先授权调查，再授权规划；规划提交于 `4ec6cbf55fd936824790585d2280325b2cca36a6`。
-2026-11-11 用户明确“激活Task”，现移除草案／无活动实施通知，正式授权本 Task 实施。
-原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。Developer 已提交
-候选 `b407dbdba80cb1e9cfd4fb22b37edd3b95a7b2bb`；B 独立审查后于 2026-11-11
-给出 FIX REQUIRED：正常切换条目状态筛选会清空同文件尚未提交的元数据标题。
-按文末指导在本 Task 修正后重交，不新增 Task。
+2026-11-11 用户明确“激活Task”，正式授权本 Task 实施。
+原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。初次候选
+`b407dbdba80cb1e9cfd4fb22b37edd3b95a7b2bb` 曾因筛选清空未提交标题被 B 退回；
+修正候选 `ff8f3a699d2d6a1a27a2a221299cec9c616207ed` 已经 B 独立完整复核 PASS。
+历史返工与最终结果分别保留于下文，本独立 Task 完成。
 
 上一独立修复 PATCH-20261111-3 的
 [固定 B PASS](https://github.com/kentinya/mediaflow/blob/7bf958fb1b61b358c5f3f0305fa5137b2caa38f2/TASK.md#b-decision--patch-20261111-3-pass)
@@ -19,7 +23,7 @@ Authority: 用户授权的独立呈现修复；生命周期遵循
 Task ID: PATCH-20261111-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
 Difficulty: Medium
 Test Level: T3
@@ -74,17 +78,17 @@ fixture；确需调整 URL／query 的传参时限于保持现有契约。不得
 
 ### Acceptance criteria
 
-- [ ] 多条目列表中，首／中／末任意行打开后，唯一证据紧跟所选条目、位于下一业务
+- [x] 多条目列表中，首／中／末任意行打开后，唯一证据紧跟所选条目、位于下一业务
   条目和分页／批量区之前；切换到另一个文件后位置和内容都跟随新文件，关闭可回看原行。
-- [ ] 保留处理结果→来源／目标→处理经过→实际原因及可展开诊断、附件、日志／审计、
+- [x] 保留处理结果→来源／目标→处理经过→实际原因及可展开诊断、附件、日志／审计、
   既有四类恢复动作；流程完成不变为文件成功，未知效果／缺失 Result 不被改写。
-- [ ] 有效页外深链接、筛选后隐藏、空页、列表错误仍可独立查看准确文件；权限拒绝、
+- [x] 有效页外深链接、筛选后隐藏、空页、列表错误仍可独立查看准确文件；权限拒绝、
   不存在、证据读取失败在同一位置显示真实原因及既有安全下一步，不串到邻项。
-- [ ] 筛选／翻页／刷新／前后退／重认证及操作记录、问题文件、批量子项入口保持原
+- [x] 筛选／翻页／刷新／前后退／重认证及操作记录、问题文件、批量子项入口保持原
   准确任务／文件上下文；列表更新不吞掉证据或制造两个面板，不伪造条目数或自动遍历。
-- [ ] A→B 快速切换且 A 迟到、同文件轮询、页内／页外迁移均无错配；既有在途命令、
+- [x] A→B 快速切换且 A 迟到、同文件轮询、页内／页外迁移均无错配；既有在途命令、
   未知提交核对和账号隔离保持，打开／关闭／重排证据零写命令、零媒体变更、零自动重放。
-- [ ] 1536px 桌面、390px 窄屏及矮窗口可读可操作；展开不使相邻列重叠或整页横向
+- [x] 1536px 桌面、390px 窄屏及矮窗口可读可操作；展开不使相邻列重叠或整页横向
   溢出。键盘可展开／关闭、状态可感知、焦点合理，现有任务卡关闭／返回行为保持。
 
 ### Required tests
@@ -321,3 +325,60 @@ B 已检查本轮桌面与窄屏截图；1536×600 截图也保存在同一稳�
 **工作区：** 预存 `mediaflow/.DS_Store` 修改及未跟踪的 `.DS_Store`、
 `.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、`output/` 调查材料保持原样，
 未进入本检查点；未推送、未发布。
+
+### B Final Review — PATCH-20261111-4 PASS
+
+```text
+Reviewer: B
+Date: 2026-11-11
+Reviewed Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
+Reviewed Head: ff8f3a699d2d6a1a27a2a221299cec9c616207ed
+Decision: PASS
+Task blockers: NONE
+B-PATCH4-01: RESOLVED
+Authorized bug acceptance complete: YES
+Next: NO ACTIVE IMPLEMENTATION TASK
+```
+
+**完整交付复核：** B 独立审查原始 Base..修正候选的全部 6 文件差异，包含原实现、
+修正及测试；没有仅看最后一次补丁。任务中心 → 打开任务详情 → 点击文件“查看证据”，
+唯一证据紧跟对应文件，切换文件后内容与位置一致，关闭后回到触发按钮。页外／筛选隐藏／
+列表尚未返回或失败时保留精确文件独立卡，回到当前页后仅有行内一份；计数与分页保持。
+原有结果、附件、日志／审计和恢复链路继续使用既有组件与服务，未改后端执行语义。
+桌面、390px 和 1536×600 实际截图中正文及关闭动作可读，键盘开关与焦点检查通过。
+
+**原阻塞的真实旅程：** 任务中心 → 元数据恢复 → 查看问题文件 → 查看该文件证据与
+恢复记录 → “搜索标题”输入 `Operator edited metadata title` → 状态筛选改为等待处理，
+同一文件的标题保持。再筛选到不包含该文件的成功列表、返回全部，独立卡与行内迁移后
+标题仍保持且证据始终只有一份，全程未发送产品写请求。使用既有
+`operations_inventory_harness.py` 的 `metadata_correction` fixture、真实 Python API／
+临时 SQLite、新构建和 Chromium；没有新增产品入口。草稿复用已有传参及检查点归属，
+稳定 owner 在列表 key 之外，任务／账号的挂载边界继续隔离草稿。B-PATCH4-01 已解决。
+
+**B 实际验收（产品命令 cwd 为 `web/`）：**
+
+| 命令／检查 | 实际结果及本地证据 |
+|---|---|
+| Required tests 中的 5 文件受影响 Vitest 命令 | 91/91，5 文件通过，无 skip；9.32s；`affected-unit.log` |
+| `npm run typecheck`、`npm run lint`、`npm run format:check` | 全部退出 0；`typecheck.log`、`lint.log`、`format.log` |
+| `npm run build` | 成功；`build.log`；保留既有 chunk >500 kB 提示 |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40，无 skip；22.8s；`browser.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --output=../.git/validation-evidence/ff8f3a69/patch-20261111-4-b/python-results` | 3/3，无 skip；7.4s；`task-flow-python.log`；真实混合文件结果、流程失败与文件成功并存、精确恢复确认及协作取消通过 |
+| 既有原生元数据入口编辑→筛选→独立卡→行内 | PASS，零产品写请求；`native-draft-filter.log` 与两张原生截图 |
+| 根目录 `python3 scripts/check_governance.py`、完整 Base..Head `git diff --check` | PASS／无输出 |
+
+稳定本地证据：`.git/validation-evidence/ff8f3a69/patch-20261111-4-b/`（忽略目录，
+不声明远程可访问）。已实际查看 `inline-evidence-1536.png`、
+`inline-evidence-1536x600.png`、`patch-file-evidence-390.png` 和
+`native-draft-restored-inline.png`；前轮失败证据原样保留。本轮测试及静态检查执行时间
+低于总复核时间的 50%，上述三个测试套件运行合计 39.52s。
+
+**范围与限制：** 本次是 T3 前端呈现／恢复消费者集成修复，全部计划门禁已完成。
+浏览器实测为 Chromium；未运行全 Python／全 Web／全 E2E、wheel 或 Docker 矩阵，
+本次无后端、权限、schema、Storage 或执行引擎变更需要扩大门禁。原生流程失败用例中
+预期的 OperationalError 状态保留提示与该用例断言一致，不构成额外阻塞。
+草稿在当前任务详情存活期间保留；任务关闭／账号切换按现有挂载边界清理。
+
+复核分支 `main`，候选未移动。B 本轮仅维护 TASK.md；预存脏文件全部保留且不纳入提交。
+Slice54 及其全部接受结果／关闭事实、SLICE／Roadmap／Progress 均保持。
+本独立修复授权结果已全部满足，停止规划；未推送或部署。
