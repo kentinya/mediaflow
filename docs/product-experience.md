@@ -898,14 +898,21 @@ results and audit; no existing runtime data or media is cleared.
 
 Task Center offers `继续整理` only while the linked Files work remains continuable. A healthy
 unconfirmed summary stays reachable from Running/All after leaving, reload or re-authentication.
-Ended work instead offers `查看只读摘要` and `从文件页重新发起`: its old link retains the original
-plan, failure stage and known effects without selection, correction, re-analysis or confirmation.
+Ended work has no 文件整理准备 section, ending notice, `查看只读摘要` or `从文件页重新发起`
+entry. The operator reads actual flow, independent file results and inline evidence in the same
+Task detail above its preserved list; new organizing still starts from ResourceLibrary Files.
+An existing exact preparation deep link retains the original plan, failure stage and known effects
+without selection, correction, re-analysis or confirmation.
 If no plan was generated, say so; if its history cannot be read, show the read failure and let the
 operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
 
-The detail's 文件整理准备 section gives one short next-step sentence for its current state;
-the existing buttons open the exact summary or the source library's Files page. Failure stages,
-per-file results and known effects remain in their existing detail/history views. See the
+Only an exact preparation association with backend continuation eligibility shows 文件整理准备,
+the sentence 查看整理摘要，确认后执行。 and 继续整理. Missing associations or ineligible work
+show no empty section. Failure stages, per-file results and known effects remain independently
+readable. The shared Files/continue/historical organizer keeps horizontal space between status
+text and its colored border; removing the ended entry does not remove that shared dialog.
+The [independent B acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
+records this presentation correction. See the
 [current Task Center presentation](task-center-page-spec.md#手动受理与确认) for the displayed copy.
 
 A failed file can be selected again in Files without cancelling a failed Task or clearing records.
@@ -1009,14 +1016,17 @@ and the Tasks/recovery journey below remain.
    same handoff. Preserve exact known Task/request context if association/detail reading fails,
    and allow reread rather than selecting a guessed Task.
    Other failures explain stage, saved state, known effects and the legal next action.
-7. **Exit/reopen:** closing cancels no admitted work. Existing Task Center 继续整理 / 查看只读摘要
-   links and valid deep links reopen the exact preparation with its existing continue/readonly
-   boundary. Refresh/re-authentication preserves legal context; ended work cannot re-execute.
+7. **Exit/reopen:** closing cancels no admitted work. Task Center's eligible 继续整理 link and
+   valid preparation deep links reopen the exact preparation with its existing continue/readonly
+   boundary. Ended Task details have no preparation section or duplicate history/restart entries;
+   existing historical addresses remain read-only. Refresh/re-authentication preserves legal
+   context; ended work cannot re-execute.
 
 Visual/interaction reference: existing Files new-library and Automation new-task cards. Stable
 header/close/footer, internal body scroll, accessible focus/background locking and narrow/short
-viewport behavior are required. **Task Center task-detail layout, content, progress, results and
-recovery UI are frozen.** The progress explanation is not a detail redesign requirement.
+viewport behavior are required. **Slice53 preserved Task Center task-detail layout, content,
+progress, results and recovery UI.** The later independent preparation-entry correction follows
+the Manual organize journey above; it does not redesign progress/results/recovery.
 
 ## Tasks, results and per-item recovery
 

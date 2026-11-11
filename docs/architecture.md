@@ -1467,8 +1467,10 @@ pin/context, summary, explicit confirmation and execution readback after reload/
 
 The backend projects the linked Task's existing flow as `organizeFlow {taskId, status, continuable}`
 for the preparation/intent/summary. These response fields add no stored state or schema.
-Ended work's center link is `查看只读摘要`; its original plan remains readable through the existing
-intent `latestPlan.previewId` association even when re-analysis cleared the current preview link.
+The center renders its preparation section only when this exact association is continuable.
+Ended work has no preparation section or history/restart links; its flow, item effects and evidence
+remain in Task detail. Existing exact preparation addresses keep the original plan readable through
+the intent `latestPlan.previewId` association even when re-analysis cleared the current preview link.
 The page distinguishes pending history reads, failed reads with page-local reread/Refresh, and a
 successful read with no saved plan. Historical reads do not analyze, issue authority or execute.
 The Files entry starts deliberate new work under the existing source-history contract.
@@ -1507,10 +1509,12 @@ with the existing Task Center selected-run/detail route, closing the organizer. 
 or failed detail reads retain known exact identities for reread, never fall back to a guessed Task
 or another execution submission. Existing historical execution addresses stay readable.
 
-Task Center task-detail layout/content/progress/results/recovery UI is frozen. Shared recovery
-logic may be extracted only as necessary while preserving that consumer's presentation/actions;
-existing continue/readonly links need no new Task Center UI. The organizer has no second progress/
-result center. Early task admission, legitimate pins, source ownership, five-state flow versus
+Slice53 preserved Task Center task-detail layout/content/progress/results/recovery UI. The later
+independent entry correction follows the current preparation-section contract above; shared recovery
+logic and authority are unchanged. Eligible continue links and exact historical addresses reuse the
+same organizer. Its business-section CSS excludes `.mf-status`, preserving the status component's
+padding and borders across Files, continue and historical consumers. The organizer has no second
+progress/result center. Early task admission, legitimate pins, source ownership, five-state flow versus
 file effects, Executor-only mutation, RBAC/fences and completed/uncertain non-replay remain CURRENT.
 
 ## Automation and unattended execution
