@@ -10,14 +10,14 @@ Authority: 用户明确要求删除“继续此条目的安全分析”，不是
 
 用户于 2026-11-12 明确“激活Task”，正式授权本 Task 实施。原规划检查点为
 `3a4b70a78aa8b967503d5a1ad89bce2cd4ccc164`；本次仅激活，移除无活动实施及规划草案通知，
-原 Task ID／Base／Goal／Scope、Medium / T3 和测试分工保持。代码实施尚未开始，
-本轮不自动启动 Developer 或其他代理，不推送或部署。
+原 Task ID／Base／Goal／Scope、Medium / T3 和测试分工保持。该激活检查点未启动
+Developer 或其他代理；本轮实施依据用户随后明确授权，不推送或部署。
 
 ```text
 Task ID: PATCH-20261112-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 32bb37262777ae945deb8af4a51d9109876ca804
 Difficulty: Medium
 Test Level: T3
@@ -284,15 +284,40 @@ B 如发现具体共享影响再追加所需检查并说明，不把全量门禁
 - Files 尚无逐文件决定时的准备级“运行分析并生成计划摘要”、独立旧 intent 页面、
   元数据显式搜索及合法只读核对入口退役；动作退役仅针对上述共用逐文件决定入口，
   准备级状态／动作的必要美化仍在窗口范围内。
-- 重开或关闭 Slice，修改 SLICE／Roadmap／Progress；推送或部署。本次只激活，
-  不自动开始 Developer 实施或启动其他代理。
+- 重开或关闭 Slice，修改 SLICE／Roadmap／Progress；推送或部署。激活检查点不自动
+  开始 Developer 实施或启动其他代理；实施由用户后续授权。
 
 ## Developer Completion Report
 
-待 Developer 完成交付后填写：精确 checkpoint、READY FOR B REVIEW、
-变更与主要决定、实际受影响检查／失败、剩余风险；完整验收由 B 执行。
+READY FOR B REVIEW
+
+- Implementation checkpoint: `20944c5452917ed5bbcda781e7abd2cc9b01872c`（Base
+  `32bb37262777ae945deb8af4a51d9109876ca804`）。本报告另随一个 Task 文档检查点提交，
+  精确候选 Head 以 Git 当前提交为准。
+- 主要变更：删除 full／decision 两套独立“继续此条目的安全分析”按钮、专属说明及判断；
+  full 表单文案统一为“保存并重新分析”。保存决定后同一位置保留保存事实与按钮，队列拒绝时
+  仅补做 continue；接受态显示等待；未知响应先用同一 Task 的持久状态核对。native Files
+  分析以关联 discovery 状态为准，无 discovery 的 Automatic Task 回退 Task 流程状态；
+  会话仍按主体／Task／item 隔离。手动整理窗口先显示当前问题与决定，再显示作品／来源目标、
+  附件与诊断，收敛空块／重复字段，改为局部 section 样式并适配窄屏。
+- 实际检查（cwd `web/`）：
+  - `npm run test -- run ...TaskItemRecoveryPanel.test.tsx ...ManualOrganizeDialog.test.tsx ...RunDetailTabs.test.tsx ...OrganizePlanConfirmation.test.tsx ...task-item-recovery.test.ts ...modal-card.test.tsx`
+    → 6 files / 85 tests passed。
+  - `npm run typecheck`、`npx eslint`（直接改动前端文件）、Prettier check、`npm run build`
+    → 全部通过。
+  - 原生 E2E（新构建＋真实 Python API／SQLite／Worker）：
+    - operations-inventory B 验收 grep（含 `PATCH-20261112-1` 与新改选择器）→ 9 passed；
+    - manual-organize `ten per-file candidate decisions` → 1 passed；
+    - automation-run-once／automation-workspace／metadata-search-year／task-flow 改动用例
+      → 5 passed。
+  - 根目录 `python3 scripts/check_governance.py` PASS；`git diff --check` 无输出。
+  - 初版验收曾发现：容量拒绝后再次分析已受理，但运行投影仍显示 active，旧按钮消失过久；
+    已改为以关联 discovery 的耐久分析阶段判断并重跑上述 9 条 operations-inventory 用例通过。
+- 剩余风险：Developer 未执行 B 的完整视觉矩阵（1440×1000、390×844、1280×650 截图与
+  中间态尺寸／滚动核对），由 B 原生验收；Automatic Task（无关联 discovery）的刷新后
+  queue_full 恢复依赖 Task 流程状态，未单独复现真实 Worker 场景；Docker 恢复证明脚本仅
+  同步按钮文案，未在本轮 Docker 矩阵运行。未推送或部署。
 
 ## B Review Result
 
-NOT STARTED — Task 已获实施授权，代码实施与 B 验收尚未开始；没有实施候选，
-也没有本 Task 的 PASS 或验收结果。
+PENDING — Developer 已提交 READY FOR B REVIEW 候选；B 尚未独立验收，未声明 PASS。
