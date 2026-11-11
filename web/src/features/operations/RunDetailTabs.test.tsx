@@ -654,6 +654,41 @@ function pendingRecognitionRecoveryDocument(): Record<string, unknown> {
   });
 }
 
+/** The exact same waiting item with a metadata-correction decision form. */
+function metadataCorrectionRecoveryDocument(): Record<string, unknown> {
+  return {
+    task_id: "task-001",
+    item_id: "item-2",
+    checkpoint: {
+      status: "waiting_metadata_correction",
+      stage: "waiting_metadata_correction",
+      raw_stage: "waiting_metadata_correction",
+      effects: { certainty: "none" },
+      retry_safety: "unsafe",
+      checkpoint_version: "c".repeat(64),
+      blocker: { kind: "metadata_correction", blocker_id: "correction-1" },
+      permitted_action_ids: ["resolve_metadata_correction", "ignore"],
+      refusal_reason: null,
+      next_action: "correct the metadata search",
+    },
+    decision: {
+      kind: "metadata_correction",
+      review_id: "correction-1",
+      status: "pending",
+      query: "Movie.01",
+      year: 2001,
+      media_type: "movie",
+      can_search: true,
+      choices: [],
+      allowed_strategies: [],
+      conflict_types: [],
+    },
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: "correct the metadata search",
+  };
+}
+
 /** The evidence document of the successfully executed 手动整理 item-1. */
 function manualExecutionEvidenceDocument(
   overrides: Record<string, unknown> = {},
@@ -1393,6 +1428,52 @@ describe("selected-run detail tabs", () => {
       url.includes("status=waiting"),
     );
     expect(detailRequest).toContain("/api/v1/operations/runs/task-001/items");
+  });
+
+  it("PATCH-20261111-4 keeps the same file's unsaved title across an item filter change", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubDetailJourney(requested, {
+      recovery: async (_input, init) =>
+        (init?.method ?? "GET") === "GET"
+          ? jsonResponse(metadataCorrectionRecoveryDocument())
+          : jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+    );
+    const recovery = await within(detail).findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    const title = await within(recovery).findByLabelText("搜索标题");
+    expect(title).toHaveValue("Movie.01");
+    await user.clear(title);
+    await user.type(title, "Operator edited metadata title");
+    expect(title).toHaveValue("Operator edited metadata title");
+
+    await user.selectOptions(screen.getByLabelText("状态筛选"), "waiting");
+    await waitFor(() =>
+      expect(requested.some((url) => url.includes("status=waiting"))).toBe(
+        true,
+      ),
+    );
+    // The filtered server page still contains this exact file, so the panel
+    // moves back under its own row without dropping the unsaved title.
+    const inline = await findInlineEvidence(detail);
+    expect(inline.closest("tr")!.previousElementSibling).toHaveTextContent(
+      "movies/b.mkv",
+    );
+    expect(within(inline).getByLabelText("搜索标题")).toHaveValue(
+      "Operator edited metadata title",
+    );
+    expect(
+      within(detail).getAllByRole("region", { name: "条目证据" }),
+    ).toHaveLength(1);
   });
 
   it("switches to 操作记录 with its server page and kind filter", async () => {

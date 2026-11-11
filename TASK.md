@@ -19,7 +19,7 @@ Authority: 用户授权的独立呈现修复；生命周期遵循
 Task ID: PATCH-20261111-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
 Difficulty: Medium
 Test Level: T3
@@ -265,3 +265,59 @@ B 已检查本轮桌面与窄屏截图；1536×600 截图也保存在同一稳�
 合计 35.12s，原生复现约 1s。确认阻塞后依流程提前 FIX REQUIRED，未运行原计划
 `task-flow.python.spec.ts`；该项保留给修正候选的 B 验收，未标记通过。
 本轮仅维护 TASK.md 审查结果，未改产品代码；预存脏文件保持，未推送／部署。
+
+### Developer Fix Report — B-PATCH4-01
+
+**候选检查点：** 本提交（`READY FOR B REVIEW`），任务 Base `42e666ca..` 之上的修正提交；
+分支 `main`。前次候选 `b407dbdb` 的完整实现、既有行内位置与页外卡保持不变。
+
+**根因与修正：** `b407dbdb` 把证据及其恢复表单从列表兄弟位置移入由
+`runId + itemStatus + itemCursor + token` 键控的 `RunItemsSection`；筛选变化重挂载整个
+列表，`TaskItemRecoveryPanel` 的本地 `internalDecisionDraft` 随之回到初始输入。
+本次将未提交决定草稿的所有权上移到列表 key 之外的 `RunDetailTabs`，按文件条目保存，
+并通过组件既有的 `decisionDraft` / `onDecisionDraftChange` 契约经 `RunItemsSection`、
+`RunEvidenceSection` 传入恢复面板；没有新增存储协议、恢复命令或第二套表单状态。
+同一文件在“页外卡 → 行内展开”及筛选切换中继续使用同一草稿；草稿仍由既有
+`decisionKey`（检查点版本 + 决定类型）约束，过时检查点按原逻辑清除，不同条目按
+`itemId` 隔离。选择另一运行会重挂载 `RunDetailPanel`，认证切换会重挂载 landing 的
+恢复会话提供者，均不会继承前一运行／账号的草稿。关闭、保存、分析、确认、未知核对
+及零写命令语义未改。
+
+**新增回归：** `RunDetailTabs.test.tsx` 使用真实“状态筛选”控件，对当前页的
+`metadata_correction` 文件在“搜索标题”输入 `Operator edited metadata title`，切换到
+`waiting` 筛选；等待筛选请求、列表重挂载及证据迁回该文件行内后，断言同一输入仍在、
+证据仅一份且紧邻该文件。该用例在 `b407dbdb` 源码上失败（元素值为空串），在本次候选
+通过，证明覆盖 B 指出的实际路径而非仅调用组件。
+
+**受影响检查（cwd `web/`，未新增依赖）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| 新回归单测（`-t "keeps the same file's unsaved title"`） | 修正前源码失败：期望 `Operator edited metadata title`，实际为空串；修正后 1/1 通过 |
+| `npm run test -- run src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/run-detail-state.test.ts src/features/operations/run-detail-query.test.ts src/features/operations/OperationsInventory.test.tsx` | 5 文件通过，91/91 测试通过（无 skip），9.47s |
+| `npm run typecheck` | 通过 |
+| `npx eslint src/features/operations/RunDetailTabs.tsx src/features/operations/RunDetailTabs.test.tsx` | 通过，无输出 |
+| `npx prettier --check src/features/operations/RunDetailTabs.tsx src/features/operations/RunDetailTabs.test.tsx` | 通过 |
+| `npm run build` | Vite 构建成功；仅保留既有 chunk >500 kB 提示 |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40 通过，23.2s |
+| 仓库根 `python3 scripts/check_governance.py` | PASS |
+| 仓库根 `git diff --check` | 无输出 |
+
+本轮未改 `styles.css`、后端、权限、schema、Storage、URL 契约或恢复协议；当前代码
+差异仅 `RunDetailTabs.tsx`、其单元测试与本报告。既有浏览器位置／可读性断言在本次
+复跑中保持通过，未以删除断言换取通过。
+
+**剩余风险：**
+
+- 草稿在 `RunDetailTabs` 存活期间按文件保留，包括关闭证据后再次打开、切换条目或
+  切换操作记录再返回；这与 B 要求的位置迁移保留一致，但比修正前“关闭即丢弃”保留
+  更久。过时检查点仍由既有 `decisionKey` 清除，运行关闭或账号变化会重挂载清理。
+- 初始列表尚未返回时证据仍先在表格前显示、随后迁入行内；两次挂载现在共享同一
+  草稿，B 指出的筛选清空路径已消除，但该迁移仍会重置仅存在于面板实例的展开状态。
+- 本 Task 未运行 B 负责的真实 Python／临时 SQLite `task-flow.python.spec.ts`、全量
+  Web／Python／E2E、wheel 或 Docker 门禁；真实原生元数据入口的编辑→筛选旅程由 B
+  在本次候选上复核。浏览器假服务套件不包含该原生 fixture，不能替代该验收。
+
+**工作区：** 预存 `mediaflow/.DS_Store` 修改及未跟踪的 `.DS_Store`、
+`.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、`output/` 调查材料保持原样，
+未进入本检查点；未推送、未发布。

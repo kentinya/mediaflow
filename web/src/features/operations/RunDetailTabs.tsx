@@ -65,7 +65,10 @@ import {
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { taskFailureReason } from "./ProblemFilePanel";
-import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
+import {
+  TaskItemRecoveryPanel,
+  type TaskItemDecisionDraft,
+} from "./TaskItemRecoveryPanel";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import {
   confirmTaskItemRecoveryPreparation,
@@ -822,6 +825,21 @@ export function RunDetailTabs({
     onStateChange({ tab });
   };
   const detailTabRef = useRef<HTMLButtonElement | null>(null);
+  // Unsaved decision inputs belong to this exact run + item, not to the
+  // filtered/paged list that happens to render the evidence right now.  The
+  // list remounts on every filter/cursor change, so keeping the draft here is
+  // what lets a title typed for the same file survive that move.
+  const [evidenceDecisionDrafts, setEvidenceDecisionDrafts] = useState<
+    Readonly<Record<string, TaskItemDecisionDraft>>
+  >({});
+  const updateEvidenceDecisionDraft = (
+    itemId: string,
+    draft: TaskItemDecisionDraft,
+  ) => {
+    setEvidenceDecisionDrafts((current) =>
+      current[itemId] === draft ? current : { ...current, [itemId]: draft },
+    );
+  };
   const evidenceTriggerRef = useRef<HTMLElement | null>(null);
   const pendingEvidenceFocusRef = useRef<{
     readonly trigger: HTMLElement | null;
@@ -909,6 +927,8 @@ export function RunDetailTabs({
             onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
             owesRecoveryAction={owesRecoveryAction}
+            evidenceDecisionDrafts={evidenceDecisionDrafts}
+            onEvidenceDecisionDraftChange={updateEvidenceDecisionDraft}
           />
         </div>
       ) : (
@@ -1172,6 +1192,8 @@ function RunItemsSection({
   onOpenRecoveryExecution,
   active,
   owesRecoveryAction,
+  evidenceDecisionDrafts,
+  onEvidenceDecisionDraftChange,
 }: {
   readonly runId: string;
   readonly state: RunDetailState;
@@ -1182,6 +1204,13 @@ function RunItemsSection({
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
   readonly owesRecoveryAction: boolean;
+  readonly evidenceDecisionDrafts: Readonly<
+    Record<string, TaskItemDecisionDraft>
+  >;
+  readonly onEvidenceDecisionDraftChange: (
+    itemId: string,
+    draft: TaskItemDecisionDraft,
+  ) => void;
 }) {
   const token = useAuthToken();
   const query = useQuery(
@@ -1249,6 +1278,10 @@ function RunItemsSection({
         onOpenLinkedAnalysis={onOpenLinkedAnalysis}
         onOpenRecoveryExecution={onOpenRecoveryExecution}
         onClose={() => onInspectItem(null)}
+        decisionDraft={evidenceDecisionDrafts[evidenceItem]}
+        onDecisionDraftChange={(draft) =>
+          onEvidenceDecisionDraftChange(evidenceItem, draft)
+        }
       />
     ) : null;
   return (
@@ -2711,6 +2744,8 @@ function RunEvidenceSection({
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onClose,
+  decisionDraft,
+  onDecisionDraftChange,
 }: {
   readonly id: string;
   readonly runId: string;
@@ -2719,6 +2754,9 @@ function RunEvidenceSection({
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onClose: () => void;
+  /** The same file's unsaved decision inputs, owned outside the paged list. */
+  readonly decisionDraft?: TaskItemDecisionDraft;
+  readonly onDecisionDraftChange?: (draft: TaskItemDecisionDraft) => void;
 }) {
   const token = useAuthToken();
   const query = useQuery(
@@ -2947,6 +2985,8 @@ function RunEvidenceSection({
                 active={active}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
+                decisionDraft={decisionDraft}
+                onDecisionDraftChange={onDecisionDraftChange}
               />
               <details className="mf-run-fact-diagnostics">
                 <summary>
