@@ -930,14 +930,22 @@ requires a choice for that request.
 
 In the per-file organizer, select an existing source-grounded candidate (title/year, movie or TV,
 Provider/ID), then use 保存并重新分析 to save that file's legal choice and request its new exact
-summary. With no candidate selected, analysis follows normal identification. Refresh reads back the saved choice; saving invalidates an
-earlier summary and performs no media mutation. The current Task's Metadata confirmation/correction
-continues using its saved candidate and type on the same legitimate pin: re-analysis reads the correct
-detail interface, then the summary uses the persisted identity without another Provider lookup or
-repeating the same confirmation. Invalid/stale choices or Provider failure retain the saved state and
-show the reason and existing correction/read action; execution still requires its own exact-summary
-confirmation. [Configuration](configuration.md#metadata-query-type-and-saved-identity) distinguishes
-query policy, result type and the saved choice.
+summary. This is the only save/analyse action for a per-file decision. With no candidate selected,
+analysis follows normal identification. Refresh reads back the saved choice; saving invalidates an
+earlier summary and performs no media mutation. If the decision is already saved but the analysis was
+explicitly refused (for example a full shared queue), the same action remains beside the saved fact and
+requests only that zero-mutation analysis; it does not save the decision again or ask for the candidate
+again. An accepted analysis keeps the same place in a waiting state, including the native same-Task
+path whose checkpoint may still expose the old retry permission; no second analysis button or
+duplicate request appears. An unknown response stays protected until the same Task's durable state is
+read; a read that proves admission keeps waiting, and only a proved non-admission re-enables the same
+action. The current Task's Metadata confirmation/correction continues using its saved candidate and type
+on the same legitimate pin: re-analysis reads the correct detail interface, then the summary uses the
+persisted identity without another Provider lookup or repeating the same confirmation. Invalid/stale
+choices or Provider failure retain the saved state and show the reason and existing correction/read
+action; execution still requires its own exact-summary confirmation.
+[Configuration](configuration.md#metadata-query-type-and-saved-identity) distinguishes query policy,
+result type and the saved choice.
 
 For a Metadata correction in either the Files dialog or Task Center recovery, edit the title,
 movie/TV type and year, then explicitly search with those current inputs. Clearing the year removes
@@ -994,15 +1002,21 @@ and the Tasks/recovery journey below remain.
 1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
    discovery/stability/analysis status and bounded exclusions, rather than waiting to open it.
-2. **Review/action:** one primary and attachments per page; show filename/path, 第 i / N 个,
-   status, readable work match, source → target, operation/attachments and current problem.
-   Exact diagnostics are expandable. Legal corrections stay near that file. Previous/Next only
-   browse and preserve per-item drafts and inclusion; they never save, analyze or execute.
+2. **Review/action:** one primary file per page; show filename/path, 第 i / N 个, status,
+   the current problem or decision first, then a compact work identity/source → target and
+   operation, with attachments and expandable evidence after that. Do not lead with empty target,
+   operation or attachment blocks before a plan exists; state once that the zero-mutation plan is
+   not generated yet. Typical two-candidate decisions and their save action remain visible without
+   scrolling past placeholder facts. Exact diagnostics stay expandable under distinct item/decision
+   labels. Legal corrections stay near that file. Previous/Next only browse and preserve per-item
+   drafts and inclusion; they never save, analyze or execute.
 3. **Ten ambiguous files:** on 第 1 / 10 个 select the matching candidate and click
    保存并重新分析; after its saved choice is analyzed, inspect the new exact plan and go to the
    next file. Repeat for all 10: ten candidate selections, ten save/reanalysis actions, no per-file
    execution confirmations. Returning to a file retains its choice and latest result. If save or
    analysis fails, distinguish persisted state and give the legal next action without losing siblings.
+   A saved decision whose analysis was refused keeps the same 保存并重新分析 action for analysis only;
+   an accepted analysis shows a waiting state instead of a retry button.
 4. **Final confirmation:** review a compact batch summary with the exact selected files,
    destinations/operations and actual dangerous effects. When all 10 are ready and selected,
    click 确认整理 10 项 once. A smaller eligible subset may be selected; unready items are explained,
@@ -1016,18 +1030,26 @@ and the Tasks/recovery journey below remain.
    that newer review cannot change the original request being checked. Proven admission uses the
    same handoff. Preserve exact known Task/request context if association/detail reading fails,
    and allow reread rather than selecting a guessed Task.
-   Other failures explain stage, saved state, known effects and the legal next action.
+   A save failure keeps the current inputs and requests no analysis; an analysis-only refusal keeps
+   the saved decision and only the same save/analyse action. An unknown analysis response is
+   reconciled against the same Task before any retry. Other failures explain stage, saved state,
+   known effects and the legal next action.
 7. **Exit/reopen:** closing cancels no admitted work. Task Center's eligible 继续整理 link and
    valid preparation deep links reopen the exact preparation with its existing continue/readonly
    boundary. Ended Task details have no preparation section or duplicate history/restart entries;
    existing historical addresses remain read-only. Refresh/re-authentication preserves legal
    context; ended work cannot re-execute.
 
-Visual/interaction reference: existing Files new-library and Automation new-task cards. Stable
-header/close/footer, internal body scroll, accessible focus/background locking and narrow/short
-viewport behavior are required. **Slice53 preserved Task Center task-detail layout, content,
-progress, results and recovery UI.** The later independent preparation-entry correction follows
-the Manual organize journey above; it does not redesign progress/results/recovery.
+Visual/interaction reference: existing Files new-library and Automation new-task cards. The
+organizer uses one explicit local section hierarchy: the current problem/decision is primary, the
+work identity and generated source/target are the plan, and attachments/diagnostics are secondary
+evidence. Duplicate operation/source statements and same-named diagnostic entries collapse into
+those sections; long paths wrap instead of truncating. Stable header/close/footer, internal body
+scroll, accessible focus/background locking and narrow/short viewport behavior are required, with
+state changes keeping the current file/action in place rather than jumping to the top.
+**Slice53 preserved Task Center task-detail layout, content, progress, results and recovery UI.**
+The later independent preparation-entry correction follows the Manual organize journey above; it
+does not redesign progress/results/recovery.
 
 ## Tasks, results and per-item recovery
 

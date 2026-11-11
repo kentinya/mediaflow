@@ -281,9 +281,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
       response.request().method() === "POST" &&
       response.url().endsWith("/recovery/continue"),
   );
-  await recovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
+  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await continued).status()).toBe(202);
   const analyzed = await page.request.post(
     `/__harness__/run-task-item-recovery-worker?itemId=${conflict!.itemId}`,

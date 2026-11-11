@@ -224,9 +224,7 @@ async function chooseNativeRecoveryDecision(
             new URL(response.url()).pathname ===
               `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
         );
-  await recovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
+  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decisionResponse).status()).toBe(200);
   if (continuationResponse !== null) {
     expect((await continuationResponse).status()).toBe(
@@ -289,14 +287,14 @@ async function finishNativeRecovery(
   }
 
   await expect(
-    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+    recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);
   if (kind === "metadata") {
     await page.reload();
     await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
     await expect(summary).toBeVisible();
     await expect(
-      recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+      recovery.getByRole("button", { name: "保存并重新分析" }),
     ).toHaveCount(0);
   }
   const confirm = summary.getByRole("button", { name: /确认继续整理 1 项/ });
@@ -410,7 +408,7 @@ async function runNativeRecoveryJourney(
     await expect(recovery.getByText(/共享队列已满/)).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     const retry = recovery.getByRole("button", {
-      name: "继续此条目的安全分析",
+      name: "保存并重新分析",
     });
     await expect(retry).toBeEnabled();
     await retry.scrollIntoViewIfNeeded();
@@ -424,6 +422,13 @@ async function runNativeRecoveryJourney(
     );
     await retry.click();
     expect((await admitted).status()).toBe(202);
+    // The accepted same-Task analysis now owns the saved action position; the
+    // old retry-shaped checkpoint must not expose a second analysis button.
+    await expect(recovery.getByText("零变更分析正在等待")).toBeVisible();
+    await expect(
+      recovery.getByRole("button", { name: "保存并重新分析" }),
+    ).toHaveCount(0);
+    await expect(recovery.getByText("继续此条目的安全分析")).toHaveCount(0);
     await page.setViewportSize({ width: 1280, height: 720 });
   }
   await finishNativeRecovery(page, request, recovery, seeded, kind);
@@ -2387,7 +2392,7 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
     ),
   ).toBeHidden();
   await expect(
-    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+    recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);
   await expect(
     recovery.getByRole("button", { name: "生成计划摘要并在此确认" }),
@@ -2518,7 +2523,7 @@ test("the exact undecided batch item is reachable read-only without a generic re
     recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
   ).toBeVisible();
   await expect(
-    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+    recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);
   // The same durable batch still exists for the administrative boundary.
   const state = await (
@@ -3583,7 +3588,7 @@ test("a real Worker claim advances a queued Task without changing the total", as
   await expect(page.getByText(/常驻服务状态/)).toHaveCount(0);
 });
 
-test("PATCH-20261111-2 native recognition recovery keeps the same Task through summary and effect", async ({
+test("PATCH-20261111-2 / PATCH-20261112-1 native recognition recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {

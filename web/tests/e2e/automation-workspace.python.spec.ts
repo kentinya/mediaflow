@@ -536,7 +536,7 @@ test("a technical record preserves original results without a generic retry entr
   ).toBeVisible();
   await expect(
     recovery.getByRole("button", {
-      name: /继续此条目的安全分析|生成计划摘要|重试/,
+      name: /保存并重新分析|生成计划摘要|重试/,
     }),
   ).toHaveCount(0);
   expect(await evidence()).toEqual(initial);
@@ -695,7 +695,7 @@ test("two technical failures retain independent evidence without false resolutio
   ).toBeVisible();
   await expect(
     recovery.getByRole("button", {
-      name: /继续此条目的安全分析|生成计划摘要|重试/,
+      name: /保存并重新分析|生成计划摘要|重试/,
     }),
   ).toHaveCount(0);
   expect(await evidence()).toEqual(initial);

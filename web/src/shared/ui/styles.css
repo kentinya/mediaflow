@@ -9268,16 +9268,26 @@ tr[aria-selected="true"] {
   outline-color: #ffffff;
 }
 
-/* Slice53 manual organize dialog: one centered card with an independently
-   scrolling per-file body, a wrapping fixed footer and bounded diagnostics.
-   Long exact paths must stay readable without widening the card, so identity
-   text relies on `mf-exact-identity` word breaking rather than truncation. */
+/* Manual organize dialog: one centered card with an independently scrolling
+   per-file body and a wrapping fixed footer.  The sections are explicit local
+   surfaces, so nested task/recovery panels and status banners never inherit a
+   blanket section border.  Long exact paths stay readable without widening the
+   card: identity text word-breaks instead of truncating. */
 .mf-modal-card.mf-organize-dialog {
-  width: min(860px, 100%);
+  width: min(900px, 100%);
+  height: min(90dvh, 900px);
+  max-height: min(90dvh, 900px);
+}
+
+.mf-modal-card.mf-organize-dialog .mf-modal-header {
+  padding: 18px 24px 14px;
 }
 
 .mf-modal-card.mf-organize-dialog .mf-modal-footer {
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
 }
 
 .mf-modal-footer-spacer {
@@ -9285,22 +9295,38 @@ tr[aria-selected="true"] {
   min-width: 8px;
 }
 
-.mf-organize-dialog-body section:not(.mf-status),
-.mf-organize-dialog-body header.mf-organize-file-head {
-  padding: 10px 0;
-  border-bottom: 1px solid #eef2f7;
+.mf-organize-dialog-body {
+  padding: 14px 24px 22px;
 }
 
-.mf-organize-dialog-body section:not(.mf-status):last-of-type {
-  border-bottom: 0;
+.mf-organize-file-head {
+  margin: 0 0 12px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mf-organize-file-title {
+  display: grid;
+  gap: 3px;
+}
+
+.mf-organize-file-eyebrow {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .mf-organize-file-head h3 {
-  margin: 0 0 4px;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  color: #0e1728;
+  font-size: 18px;
+  line-height: 25px;
 }
 
 .mf-organize-file-head h3 .mf-status-badge {
@@ -9308,38 +9334,176 @@ tr[aria-selected="true"] {
   font-weight: 600;
 }
 
-.mf-organize-dialog-body h4 {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.mf-organize-dialog-body dt {
-  font-weight: 600;
-  margin-top: 8px;
-}
-
-.mf-organize-dialog-body dd {
+.mf-organize-file-name {
   margin: 2px 0 0;
+  color: #14223c;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-file-path {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.mf-organize-section {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #e2e9f2;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.mf-organize-section-primary {
+  border-color: #cfdcf5;
+  background: #f7faff;
+  box-shadow: inset 3px 0 0 #1268f5;
+}
+
+.mf-organize-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.mf-organize-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mf-organize-section-head h4,
+.mf-organize-dialog-body h4 {
+  margin: 0;
+  color: #14223c;
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.mf-organize-section-head h5,
+.mf-organize-dialog-body h5 {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.mf-organize-section-note {
+  margin: 6px 0 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.mf-organize-section-head .mf-organize-section-note {
+  margin: 0;
+}
+
+.mf-organize-problem-line {
+  margin: 0 0 6px;
+  color: #263b61;
+  font-size: 14px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.mf-organize-facts > div {
+  display: grid;
+  grid-template-columns: minmax(82px, 120px) minmax(0, 1fr);
+  gap: 10px 16px;
+  align-items: start;
+}
+
+.mf-organize-facts dt {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.mf-organize-facts dd {
+  margin: 0;
+  color: #17233b;
+  font-size: 13.5px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-subdetails {
+  margin-top: 9px;
+}
+
+.mf-organize-subdetails > summary,
+.mf-organize-attachments > details > summary,
+.mf-organize-diagnostics > summary {
+  cursor: pointer;
+  color: #52627a;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mf-organize-attachments > details {
+  margin-top: 6px;
+}
+
+.mf-organize-attachments .mf-preview-attachments {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.mf-organize-selection {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #dfe6ef;
+  font-size: 13.5px;
+}
+
+.mf-organize-selection > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #263b61;
+  font-weight: 600;
+}
+
+.mf-organize-selection input {
+  width: 17px;
+  height: 17px;
+  accent-color: #1268f5;
 }
 
 /*
- * Slice53 unified current-file correction: the dialog mounts one decision card
- * per file with the same field/label grammar as the Automation and Storage
- * cards. Task Center's default `full` panel keeps its existing markup, which
- * never receives these scoped classes.
+ * Unified current-file decision card. Task Center's default `full` panel
+ * keeps its own markup; these scoped classes apply where the manual organize
+ * card mounts the same decision session.
  */
 .mf-organize-correction.mf-organize-decision {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .mf-organize-decision {
-  margin-top: 10px;
-  padding: 12px 14px;
+  margin-top: 12px;
+  padding: 13px 14px;
   border: 1px solid #dbe4f3;
   border-radius: 10px;
   background: #f8faff;
 }
 
+.mf-organize-dialog-body .mf-organize-decision h5,
 .mf-organize-dialog-body .mf-organize-decision h6 {
   margin: 0 0 4px;
   color: #14223c;
@@ -9396,6 +9560,7 @@ tr[aria-selected="true"] {
 
 .mf-organize-decision-options {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 8px;
   margin: 10px 0 0;
   padding: 0;
@@ -9530,19 +9695,30 @@ tr[aria-selected="true"] {
   margin-top: 10px;
 }
 
-@media (max-width: 640px) {
-  .mf-organize-decision {
-    padding: 10px 12px;
-  }
+.mf-saved-analysis {
+  background: #ffffff;
+  border-color: #cfdcf5;
+}
 
-  .mf-organize-decision-fields {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
+.mf-saved-analysis h6 {
+  margin: 0 0 4px;
+  color: #14223c;
+  font-size: 15px;
+  line-height: 21px;
+}
 
-  .mf-organize-decision-option {
-    padding: 10px;
-  }
+.mf-saved-analysis > p[role="status"] {
+  margin: 4px 0 0;
+  color: #263b61;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.mf-saved-analysis .mf-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .mf-organize-review-list {
@@ -9552,6 +9728,8 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 300px;
+  overflow: auto;
 }
 
 .mf-organize-review-list li {
@@ -9568,11 +9746,11 @@ tr[aria-selected="true"] {
 }
 
 .mf-organize-diagnostics {
-  margin-top: 10px;
+  margin-top: 12px;
+  padding: 0 2px;
 }
 
 .mf-organize-diagnostics > summary {
-  cursor: pointer;
   font-weight: 600;
 }
 
@@ -9586,4 +9764,56 @@ tr[aria-selected="true"] {
 
 .mf-organize-discard p {
   margin: 0 0 6px;
+}
+
+.mf-organize-dialog-body .mf-count-section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mf-organize-dialog-body .mf-organize-decision.mf-count-section {
+  padding: 13px 14px;
+  border: 1px solid #dbe4f3;
+  background: #f8faff;
+}
+
+.mf-organize-dialog-body .mf-run-items-head {
+  margin-bottom: 8px;
+}
+
+.mf-organize-dialog-body .mf-run-items-head h5 {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+@media (max-width: 640px) {
+  .mf-organize-dialog-body {
+    padding: 10px 14px 16px;
+  }
+
+  .mf-organize-section {
+    padding: 12px;
+  }
+
+  .mf-organize-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+
+  .mf-organize-decision {
+    padding: 10px 12px;
+  }
+
+  .mf-organize-decision-fields,
+  .mf-organize-decision-options {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .mf-organize-decision-option {
+    padding: 10px;
+  }
 }

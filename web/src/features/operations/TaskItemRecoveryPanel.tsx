@@ -21,7 +21,12 @@ import {
   taskItemRecoveryQueryKey,
   taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
+import { runOverviewQueryKey, runOverviewQueryOptions } from "./run-query";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
+import {
+  organizeDiscoveryQueryKey,
+  organizeDiscoveryQueryOptions,
+} from "./discovery-query";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { useTaskItemRecoverySession } from "./task-item-recovery-session";
@@ -37,8 +42,8 @@ const DECISION_LABELS: Readonly<Record<TaskItemDecisionKind, string>> = {
 
 /** Operator-facing names for the exact request still awaiting its result. */
 const PENDING_ACTION_LABELS: Readonly<Record<string, string>> = {
-  decision: "保存决策",
-  continue: "继续安全分析",
+  decision: "保存并重新分析",
+  continue: "保存并重新分析",
   ignore: "忽略条目",
   search: "搜索元数据",
   prepare: "生成计划摘要",
@@ -85,8 +90,8 @@ const RECOVERY_RETRY_SAFETY_LABELS: Readonly<Record<string, string>> = {
 };
 
 const RECOVERY_ACTION_LABELS: Readonly<Record<string, string>> = {
-  retry: "显式重新检查",
-  continue: "继续安全分析",
+  retry: "请求零变更分析",
+  continue: "请求零变更分析",
   ignore: "按策略忽略",
   resolve_recognition: "确认识别类型",
   resolve_metadata: "确认元数据选择",
@@ -132,7 +137,7 @@ function outcomeMessage(code: string, status: number): string {
     return "条目已变化。先重新读取当前证据，再决定下一步。";
   }
   if (code === "capacity_full" || code === "queue_full") {
-    return "共享队列已满：已保存的决定、当前摘要和结果都保留，未登记自动继续。等待其他整理结束或进入人工等待后，在此显式重试。 ";
+    return "共享队列已满：已保存的决定、当前摘要和结果都保留，未登记自动继续。等待其他整理结束或进入人工等待后，再次点击“保存并重新分析”只补做分析。 ";
   }
   if (code === "continuation_exists") {
     return "此条目已有持久化续作。先读取该续作的状态，不要提交第二份。";
@@ -346,9 +351,39 @@ export function TaskItemRecoveryPanel({
     taskId,
     itemId,
   });
-  const { busy, pendingAction, message, repeatLocked, submittedPreparationId } =
-    recoverySession.state;
+  const {
+    busy,
+    pendingAction,
+    message,
+    repeatLocked,
+    submittedPreparationId,
+    analysis: analysisObservation,
+  } = recoverySession.state;
   const updateRecoverySession = recoverySession.update;
+  // The same Task's durable flow status is the only proof that an accepted
+  // native analysis is really queued/running after a reload.  This read does
+  // not contact a Provider, save a decision or replay the request.
+  const runOverviewQuery = useQuery(runOverviewQueryOptions(token, runId));
+  const linkedDiscoveryId =
+    runOverviewQuery.data?.ok === true
+      ? (runOverviewQuery.data.model.filesPreparation?.discoveryId ?? null)
+      : null;
+  const linkedDiscoveryQuery = useQuery(
+    organizeDiscoveryQueryOptions(
+      token,
+      linkedDiscoveryId ?? "",
+      linkedDiscoveryId !== null,
+    ),
+  );
+  const refreshReads = async () => {
+    await Promise.all([
+      query.refetch({ cancelRefetch: false }),
+      runOverviewQuery.refetch(),
+      linkedDiscoveryId !== null
+        ? linkedDiscoveryQuery.refetch()
+        : Promise.resolve(),
+    ]);
+  };
   // This mounted panel instance is the exact processing context a recovery
   // request was submitted from.  An allowed card close, a Task/item switch or
   // a principal change unmounts it; the durable session still records the
@@ -502,6 +537,14 @@ export function TaskItemRecoveryPanel({
     void queryClient.invalidateQueries({
       queryKey: [recoveryBatchQueryKey, taskId],
     });
+    void queryClient.invalidateQueries({
+      queryKey: [runOverviewQueryKey, runId],
+    });
+    if (linkedDiscoveryId !== null) {
+      void queryClient.invalidateQueries({
+        queryKey: [organizeDiscoveryQueryKey, linkedDiscoveryId],
+      });
+    }
   };
 
   const reportUnknown = async (code: string, status: number) => {
@@ -523,6 +566,13 @@ export function TaskItemRecoveryPanel({
       // follow-up is part of the same operator action, not a second command.
       updateRecoverySession({ pendingAction: "continue" });
     }
+    updateRecoverySession({
+      analysis: {
+        phase: "requesting",
+        checkpointVersion: expectedCheckpointVersion,
+        code: null,
+      },
+    });
     try {
       const result = await continueTaskItemAnalysis(
         token,
@@ -532,16 +582,34 @@ export function TaskItemRecoveryPanel({
       );
       if (result.ok) {
         updateRecoverySession({
+          analysis: {
+            phase: "accepted",
+            checkpointVersion: expectedCheckpointVersion,
+            code: null,
+          },
           message: result.model.nativeAnalysis
-            ? "审核已保存；原 Task 已重新排入零变更分析，Storage 尚未修改。等待 Worker 后在此检查新的条目状态，并在同一 Task 的计划摘要中显式确认就绪子集。 "
-            : "审核已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 后检查新结果。 ",
+            ? "选择已保存；原 Task 已重新排入零变更分析，Storage 尚未修改。等待 Worker 生成新的精确方案后，再在此显式确认就绪子集。 "
+            : "选择已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 生成新的精确方案后再继续。 ",
           repeatLocked: false,
         });
         refreshLinkedReads();
         onAnalysisRequested?.();
         return true;
       }
-      await reportUnknown(result.code, result.status);
+      const unknown = isUnknown(result.status, result.code);
+      updateRecoverySession({
+        analysis: {
+          phase: unknown
+            ? "unknown"
+            : result.code === "queue_full" || result.code === "capacity_full"
+              ? "refused"
+              : "failed",
+          checkpointVersion: expectedCheckpointVersion,
+          code: result.code,
+        },
+        repeatLocked: unknown,
+        message: outcomeMessage(result.code, result.status),
+      });
       refreshLinkedReads();
       return false;
     } finally {
@@ -554,6 +622,9 @@ export function TaskItemRecoveryPanel({
     fields: Record<string, unknown>,
   ) => {
     if (checkpoint === null || busy || repeatLocked) return;
+    // This explicit save starts a new decision/analysis attempt for the exact
+    // current checkpoint; an older analysis observation cannot describe it.
+    updateRecoverySession({ analysis: null });
     beginAction("decision");
     try {
       const result = await submitTaskItemRecoveryDecision(
@@ -767,11 +838,139 @@ export function TaskItemRecoveryPanel({
     }
   };
 
+  const readDurableAnalysisState = async (): Promise<{
+    readonly known: boolean;
+    readonly active: boolean;
+    readonly status: string | null;
+  }> => {
+    const runRead = await runOverviewQuery.refetch();
+    const status = runRead.data?.ok === true ? runRead.data.model.status : null;
+    const discoveryId =
+      runRead.data?.ok === true
+        ? (runRead.data.model.filesPreparation?.discoveryId ?? null)
+        : null;
+    if (discoveryId !== null) {
+      const discoveryRead = await queryClient.fetchQuery(
+        organizeDiscoveryQueryOptions(token, discoveryId),
+      );
+      if (!discoveryRead.ok) {
+        return { known: false, active: false, status: null };
+      }
+      const discoveryStatus = discoveryRead.model.status;
+      return {
+        known: true,
+        active: [
+          "queued",
+          "running",
+          "waiting_stability",
+          "analyzing",
+        ].includes(discoveryStatus),
+        status: discoveryStatus,
+      };
+    }
+    return {
+      known: status !== null && status !== "unknown",
+      active: status === "pending" || status === "running",
+      status,
+    };
+  };
+
   const reconcile = async () => {
     const result = await query.refetch();
     if (result.data?.ok !== true) {
       updateRecoverySession({
         message: "条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ",
+      });
+      return;
+    }
+    const refreshedCheckpointVersion =
+      result.data.model.checkpoint?.checkpointVersion ?? null;
+    if (
+      analysisObservation?.phase === "unknown" &&
+      refreshedCheckpointVersion !== analysisObservation.checkpointVersion
+    ) {
+      // The exact item moved while its analysis admission was unresolved. A
+      // published summary proves the request reached its plan; otherwise this
+      // read cannot attribute the change to the original submission.
+      const refreshedModel = result.data.model;
+      const durablePreparation = refreshedModel.manualRecoveryPreparation;
+      if (
+        durablePreparation?.status === "prepared" ||
+        durablePreparation?.status === "confirmed" ||
+        refreshedModel.manualRecoveryAnalysisReady
+      ) {
+        updateRecoverySession({
+          repeatLocked: false,
+          analysis: {
+            phase: "accepted",
+            checkpointVersion: analysisObservation.checkpointVersion,
+            code: analysisObservation.code,
+          },
+          message:
+            "已读取到本次分析产生的当前计划摘要；本次请求已受理，请检查摘要后再确认。 ",
+        });
+        return;
+      }
+      const durableState = await readDurableAnalysisState();
+      if (durableState.active) {
+        updateRecoverySession({
+          repeatLocked: false,
+          analysis: {
+            phase: "accepted",
+            checkpointVersion: analysisObservation.checkpointVersion,
+            code: analysisObservation.code,
+          },
+          message:
+            "已读取同一 Task 的持久状态：本次零变更分析已经受理；没有重发请求，文件未被修改。 ",
+        });
+        return;
+      }
+      updateRecoverySession({
+        repeatLocked: true,
+        message:
+          "条目已变化且尚未读回本次分析对应的摘要或运行状态；保持请求锁定，请刷新页面后按当前持久状态处理。 ",
+      });
+      return;
+    }
+    if (
+      analysisObservation?.phase === "unknown" &&
+      refreshedCheckpointVersion === analysisObservation.checkpointVersion
+    ) {
+      // An unresolved analysis POST is reconciled against the same Task's
+      // durable flow: a queued/running Task proves admission, while a still
+      // human-waiting (or ended) Task proves this request did not take the
+      // analysis.  A failed read never unlocks the original submission.
+      const durableState = await readDurableAnalysisState();
+      if (!durableState.known) {
+        updateRecoverySession({
+          repeatLocked: true,
+          message:
+            "尚未读回同一 Task 可证明已受理或未受理的分析状态；保持请求锁定，请刷新页面后按当前持久状态处理。 ",
+        });
+        return;
+      }
+      if (durableState.active) {
+        updateRecoverySession({
+          repeatLocked: false,
+          analysis: {
+            phase: "accepted",
+            checkpointVersion: analysisObservation.checkpointVersion,
+            code: analysisObservation.code,
+          },
+          message:
+            "已读取同一 Task 的持久状态：本次零变更分析已经受理并仍在等待新方案；没有重发请求，文件未被修改。 ",
+        });
+        return;
+      }
+      updateRecoverySession({
+        repeatLocked: false,
+        analysis: {
+          phase: "refused",
+          checkpointVersion: analysisObservation.checkpointVersion,
+          code: analysisObservation.code,
+        },
+        message:
+          "已读取同一 Task 的持久状态：本次分析请求未获受理，决定仍然保存。再次使用“保存并重新分析”只补做零变更分析，不会重复保存，也不会执行整理。 ",
       });
       return;
     }
@@ -845,9 +1044,7 @@ export function TaskItemRecoveryPanel({
         <h5>审核与恢复</h5>
         <StatusBanner variant="warning" title={query.data.failure.title}>
           <p>{query.data.failure.nextAction}</p>
-          <RefreshControl
-            onRefresh={() => query.refetch({ cancelRefetch: false })}
-          />
+          <RefreshControl onRefresh={refreshReads} />
         </StatusBanner>
       </section>
     );
@@ -855,9 +1052,9 @@ export function TaskItemRecoveryPanel({
 
   const linked = model?.manualRecoveryLink ?? null;
   // Task Center RO-4 publishes a purely technical failure read-only.  Every
-  // mutating affordance of this panel (a four-type decision form, the generic
-  // "continue this item's safe analysis" step, the batch/checkpoint next-step
-  // guidance and the follow-up summary) is therefore offered only where a
+  // mutating affordance of this panel (a four-type decision form, the shared
+  // save/analyse action, the batch/checkpoint next-step guidance and the
+  // follow-up summary) is therefore offered only where a
   // durable fact asks for it: a live four-type problem, or an already admitted
   // recovery step of this exact item.  The factual stage, effect certainty,
   // retry safety, reason, results, logs and export stay readable either way.
@@ -871,14 +1068,12 @@ export function TaskItemRecoveryPanel({
     model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
-  // The independent "continue this item's safe analysis" action is the
-  // fallback for a saved decision whose analysis was not admitted (a full
-  // shared queue), a failed or cancelled analysis, or a summary the backend
-  // requires re-analyzing.  When this exact item already offers its durable
-  // plan summary (prepared or confirmed), the ready same-page prepare entry,
-  // or an analysis continuation that is queued or running, another analysis
-  // request would only supersede the current plan instead of making new
-  // progress; the durable summary always wins over an older local cache.
+  // The saved-decision fallback keeps the same save/analyse action for a
+  // decision whose analysis was not admitted (a full shared queue), a failed
+  // analysis, or a summary the backend requires re-analyzing.  When this exact
+  // item already offers its durable plan summary (prepared or confirmed), the
+  // ready same-page prepare entry, or an analysis continuation that is
+  // queued/running, the durable summary or wait state wins over an older cache.
   const analysisContinuationActive =
     checkpoint?.continuationStatus === "queued" ||
     checkpoint?.continuationStatus === "running";
@@ -886,21 +1081,177 @@ export function TaskItemRecoveryPanel({
     (activePreparation !== null && activePreparation.status === "prepared") ||
     confirmedPreparation !== null ||
     canPreparePreview;
-  const needsExplicitAnalysisAction =
-    owesRecoveryAction &&
+  // The same explicit save/analyse action owns a saved decision that still
+  // needs its zero-mutation analysis.  The durable Task flow is the only
+  // proof of an accepted native analysis after a reopen: a queued/running
+  // Task means the request already landed even when the old checkpoint still
+  // exposes ``retry`` and no legacy ``recovery_continuation`` exists.
+  const runStatus =
+    runOverviewQuery.data?.ok === true
+      ? runOverviewQuery.data.model.status
+      : null;
+  const linkedDiscoveryStatus =
+    linkedDiscoveryQuery.data?.ok === true
+      ? linkedDiscoveryQuery.data.model.status
+      : null;
+  const analysisRunActive = runStatus === "pending" || runStatus === "running";
+  const analysisRunKnown = runStatus !== null && runStatus !== "unknown";
+  // A Files-admitted Task's own discovery is the exact durable analysis stage;
+  // a decision save can leave the run projection looking active even when the
+  // analysis request was refused.  Only fall back to the Task flow status for
+  // a kernel Task without a linked discovery.
+  const analysisDurableActive =
+    linkedDiscoveryId !== null
+      ? linkedDiscoveryStatus !== null &&
+        ["queued", "running", "waiting_stability", "analyzing"].includes(
+          linkedDiscoveryStatus,
+        )
+      : analysisRunActive;
+  const analysisDurableKnown =
+    linkedDiscoveryId !== null
+      ? linkedDiscoveryStatus !== null
+      : analysisRunKnown;
+  const currentAnalysisObservation =
+    analysisObservation !== null &&
+    analysisObservation.checkpointVersion === checkpoint?.checkpointVersion
+      ? analysisObservation
+      : null;
+  const analysisAcceptedBySession =
+    currentAnalysisObservation?.phase === "requesting" ||
+    currentAnalysisObservation?.phase === "accepted";
+  const analysisRefusedBySession =
+    currentAnalysisObservation?.phase === "refused" ||
+    currentAnalysisObservation?.phase === "failed";
+  const analysisUnknownBySession =
+    currentAnalysisObservation?.phase === "unknown";
+  const savedDecisionAwaitingAnalysis = decision === null && owesRecoveryAction;
+  const savedDecisionAnalysisVisible =
+    savedDecisionAwaitingAnalysis && !offersExplicitSummaryStep;
+  const analysisWaiting =
+    savedDecisionAnalysisVisible &&
+    !analysisRefusedBySession &&
+    (analysisAcceptedBySession ||
+      analysisContinuationActive ||
+      analysisDurableActive);
+  const analysisUnknown =
+    savedDecisionAnalysisVisible &&
+    (analysisUnknownBySession || (repeatLocked && decision === null));
+  const analysisActionVisible =
+    savedDecisionAnalysisVisible &&
+    !analysisWaiting &&
+    !analysisUnknown &&
+    !repeatLocked &&
     permitted.has("retry") &&
-    !offersExplicitSummaryStep &&
-    !analysisContinuationActive &&
-    !(busy && pendingAction === "continue");
+    (analysisRefusedBySession || analysisDurableKnown);
+  const analysisReadPending =
+    savedDecisionAnalysisVisible &&
+    !analysisWaiting &&
+    !analysisUnknown &&
+    !repeatLocked &&
+    !analysisRefusedBySession &&
+    !analysisDurableKnown;
+  const requestAnalysisOnly = () => {
+    if (checkpoint === null || busy || repeatLocked) return;
+    void continueAt(checkpoint.checkpointVersion);
+  };
+  const savedDecisionPanel = (() => {
+    if (!savedDecisionAnalysisVisible) return null;
+    if (analysisWaiting && !analysisUnknown) {
+      return (
+        <div
+          className="mf-organize-decision mf-saved-analysis"
+          aria-label="已保存决定的分析状态"
+        >
+          <h6>零变更分析正在等待</h6>
+          <p role="status">
+            {message ??
+              "选择已保存；同一 Task 的分析仍在排队或运行。等待 Worker 生成新的精确方案后再继续，文件未被修改。"}
+          </p>
+          <p className="mf-organize-decision-hint">
+            分析完成前不会执行整理，也不会重复提交分析。
+          </p>
+        </div>
+      );
+    }
+    if (analysisUnknown) {
+      return (
+        <div
+          className="mf-organize-decision mf-saved-analysis"
+          aria-label="已保存决定的分析状态"
+        >
+          <h6>分析请求结果未知</h6>
+          <p role="status">
+            {message ??
+              "选择已保存；分析请求的结果尚未确认。不会自动重发，请先核对同一 Task 的持久状态。"}
+          </p>
+          <p className="mf-organize-decision-hint">
+            核对读取不会保存决定、调用 Provider 或执行任何文件操作。
+          </p>
+        </div>
+      );
+    }
+    if (analysisActionVisible) {
+      return (
+        <div
+          className="mf-organize-decision mf-saved-analysis"
+          aria-label="已保存决定的分析状态"
+        >
+          <h6>选择已保存</h6>
+          <p role="status">
+            {message ??
+              "决定已保存；零变更分析尚未受理。文件未被修改，也还没有可确认的新方案。"}
+          </p>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button"
+              disabled={busy}
+              onClick={requestAnalysisOnly}
+            >
+              {busy ? "正在保存并重新分析…" : "保存并重新分析"}
+            </button>
+          </div>
+          <p className="mf-organize-decision-hint">
+            再次点击只补做零变更分析，不会重复保存决定，也不会执行整理或修改文件。
+          </p>
+        </div>
+      );
+    }
+    if (analysisReadPending) {
+      return (
+        <div
+          className="mf-organize-decision mf-saved-analysis"
+          aria-label="已保存决定的分析状态"
+        >
+          <h6>选择已保存</h6>
+          <p role="status">
+            正在读取同一 Task
+            的分析状态；读取完成前不会补做分析，也不会执行整理。
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div
+        className="mf-organize-decision mf-saved-analysis"
+        aria-label="已保存决定的分析状态"
+      >
+        <h6>选择已保存</h6>
+        <p role="status">
+          {permitted.has("retry")
+            ? "暂时无法读取同一 Task 的分析状态。请刷新核对后再决定，不会自动提交分析。"
+            : "当前检查点没有可用的分析动作，请按上方当前阶段与下一步处理。"}
+        </p>
+      </div>
+    );
+  })();
 
   if (decisionMode) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
         <div className="mf-run-items-head">
           <h5>当前文件的合法决定</h5>
-          <RefreshControl
-            onRefresh={() => query.refetch({ cancelRefetch: false })}
-          />
+          <RefreshControl onRefresh={refreshReads} />
         </div>
         {query.isLoading && (
           <p className="mf-dashboard-meta" role="status">
@@ -930,7 +1281,7 @@ export function TaskItemRecoveryPanel({
             </p>
           </StatusBanner>
         )}
-        {message && (
+        {message && !savedDecisionAnalysisVisible && (
           <StatusBanner
             variant={repeatLocked ? "warning" : "info"}
             title="决定与重新分析状态"
@@ -1016,12 +1367,14 @@ export function TaskItemRecoveryPanel({
             presentation="dialog"
           />
         )}
-        {owesRecoveryAction && decision === null && (
-          <p className="mf-dashboard-meta">
-            此文件当前没有可保存的审核决定；请按上方当前问题与下一步处理。
-            这里不会重新提交整理，也不会执行任何文件操作。
-          </p>
-        )}
+        {owesRecoveryAction &&
+          decision === null &&
+          (savedDecisionPanel ?? (
+            <p className="mf-dashboard-meta">
+              此文件当前没有可保存的审核决定；请按上方当前问题与下一步处理。
+              这里不会重新提交整理，也不会执行任何文件操作。
+            </p>
+          ))}
         {repeatLocked && (
           <div className="mf-actions">
             <button
@@ -1032,23 +1385,6 @@ export function TaskItemRecoveryPanel({
             >
               {query.isFetching ? "正在重新读取…" : "重新读取条目后再继续"}
             </button>
-          </div>
-        )}
-        {needsExplicitAnalysisAction && (
-          <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button"
-              disabled={busy || repeatLocked}
-              onClick={() =>
-                checkpoint && void continueAt(checkpoint.checkpointVersion)
-              }
-            >
-              {busy ? "正在提交…" : "继续此条目的安全分析"}
-            </button>
-            <p className="mf-dashboard-meta">
-              仅重新运行此 Task 的零变更分析；不执行文件操作，也不修改 Storage。
-            </p>
           </div>
         )}
       </section>
@@ -1147,7 +1483,7 @@ export function TaskItemRecoveryPanel({
           </p>
         </StatusBanner>
       )}
-      {message && (
+      {message && !savedDecisionAnalysisVisible && (
         <StatusBanner
           variant={repeatLocked ? "warning" : "info"}
           title="恢复操作状态"
@@ -1276,24 +1612,7 @@ export function TaskItemRecoveryPanel({
           busy={busy}
         />
       )}
-      {needsExplicitAnalysisAction && (
-        <div className="mf-actions">
-          <button
-            type="button"
-            className="mf-button"
-            disabled={busy || repeatLocked}
-            onClick={() =>
-              checkpoint && void continueAt(checkpoint.checkpointVersion)
-            }
-          >
-            {busy ? "正在提交…" : "继续此条目的安全分析"}
-          </button>
-          <p className="mf-dashboard-meta">
-            仅创建一个有界 DryRun 分析任务；不执行 OrganizerExecutor，也不修改
-            Storage。
-          </p>
-        </div>
-      )}
+      {savedDecisionPanel}
       {checkpoint?.continuationStatus === "completed" && (
         <StatusBanner variant="info" title="单项分析已完成">
           <p>
@@ -1936,13 +2255,7 @@ function DecisionForm(props: {
           }
           onClick={props.onSave}
         >
-          {dialog
-            ? props.busy
-              ? "正在保存并重新分析…"
-              : "保存并重新分析"
-            : props.busy
-              ? "正在保存…"
-              : "保存决策并继续安全分析"}
+          {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
         </button>
         {props.canIgnore && (
           <button
@@ -1955,16 +2268,10 @@ function DecisionForm(props: {
           </button>
         )}
       </div>
-      {dialog ? (
-        <p className="mf-organize-decision-hint">
-          保存只记录当前文件的选择并重新运行零变更分析，不会执行整理，也不会修改任何文件。
-        </p>
-      ) : (
-        <p className="mf-dashboard-meta">
-          保存仅记录人工决定，不执行 OrganizerExecutor；分析使用此 Task
-          的固定配置并由常驻 Worker 处理。
-        </p>
-      )}
+      <p className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}>
+        保存只记录当前文件的选择并请求零变更分析，不会执行整理，也不会修改任何文件。
+        分析使用此 Task 的固定配置并由常驻 Worker 处理。
+      </p>
     </div>
   );
 }

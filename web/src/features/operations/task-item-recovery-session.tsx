@@ -26,6 +26,21 @@ import {
 export type TaskItemRecoveryPendingAction =
   "decision" | "continue" | "ignore" | "search" | "prepare" | "confirm";
 
+/**
+ * The durable analysis stage this exact checkpoint last observed.
+ *
+ * The request lifecycle is not a permanent local lock: `requesting` covers the
+ * in-flight POST, `accepted` means the shared Task queue really took the
+ * analysis, `refused` is an explicit queue/capacity refusal, and `unknown`
+ * keeps reconciliation locked until the durable Task state is read again.
+ */
+export interface TaskItemRecoveryAnalysisState {
+  readonly phase: "requesting" | "accepted" | "refused" | "failed" | "unknown";
+  /** The exact checkpoint version this observation belongs to. */
+  readonly checkpointVersion: string;
+  readonly code: string | null;
+}
+
 export interface TaskItemRecoverySessionState {
   /** One recovery command of this exact item is still awaiting its response. */
   readonly busy: boolean;
@@ -37,6 +52,8 @@ export interface TaskItemRecoverySessionState {
   readonly repeatLocked: boolean;
   /** The exact prepared summary whose confirmation outcome is unresolved. */
   readonly submittedPreparationId: string | null;
+  /** The latest analysis admission observed for this exact item. */
+  readonly analysis: TaskItemRecoveryAnalysisState | null;
 }
 
 const EMPTY_SESSION: TaskItemRecoverySessionState = {
@@ -45,6 +62,7 @@ const EMPTY_SESSION: TaskItemRecoverySessionState = {
   message: null,
   repeatLocked: false,
   submittedPreparationId: null,
+  analysis: null,
 };
 
 interface TaskItemRecoverySessionContextValue {

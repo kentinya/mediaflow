@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -198,6 +198,74 @@ function queuedAnalysisRecovery(status: string): Record<string, unknown> {
   return value;
 }
 
+function runOverviewDocument(
+  status: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    run_kind: "task",
+    run_id: "task-1",
+    command: "organize",
+    command_label: "整理",
+    recognized_command: true,
+    status,
+    trigger: "manual",
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
+    task_id: "task-1",
+    schedule_id: null,
+    definition_id: null,
+    source_scope: "Movies",
+    target_scope: null,
+    library_kind: "resource",
+    total_items: 1,
+    completed_items: 0,
+    failed_items: 0,
+    processed_items: 0,
+    success_items: 0,
+    partial_items: 0,
+    uncertain_effect_items: 0,
+    missing_result_items: 0,
+    pause_requested: false,
+    attention: false,
+    configuration_snapshot_id: "active-1",
+    worker_id: null,
+    sideEffects: "none",
+    progress: {
+      available: true,
+      kind: "organize",
+      unit: "主条目",
+      unit_key: "task_items",
+      basis: "整理计数:成功表示已验证的存储操作结果。",
+      success_means: "已验证的存储操作成功",
+      known_total: 1,
+      indeterminate: false,
+      processed: 0,
+      dispositions: {
+        pending: 1,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      confirmed_success: 0,
+      uncertain_success: 0,
+      scan_errors: 0,
+      scan_discovery_complete: null,
+      scan_progress: {},
+      attachment_steps: 0,
+      effect_counts: { verified_complete: 0, attempted_unverified: 0 },
+      results_total: 0,
+      results_complete: true,
+      sideEffects: "none",
+    },
+    ...overrides,
+  };
+}
+
 function preparedPreparation(): Record<string, unknown> {
   return {
     preparation_id: "preparation-1",
@@ -375,7 +443,7 @@ describe("TaskItemRecoveryPanel", () => {
     });
     await user.click(
       within(panel).getByRole("button", {
-        name: "保存决策并继续安全分析",
+        name: "保存并重新分析",
       }),
     );
     await waitFor(() => expect(decisionBodies).toHaveLength(1));
@@ -605,7 +673,7 @@ describe("TaskItemRecoveryPanel", () => {
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
     await user.click(await within(panel).findByLabelText(/Special/));
     await user.click(
-      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
     );
 
     expect(await within(panel).findByText(/单项分析已进入队列/)).toBeVisible();
@@ -752,9 +820,10 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     expect(await within(panel).findByText(/共享队列已满/)).toBeVisible();
-    // The saved decision keeps its own explicit retry entry for the analysis.
+    // The same save/analyse action remains in the saved decision's own place;
+    // no second independent analysis button is introduced.
     expect(
-      within(panel).getByRole("button", { name: "继续此条目的安全分析" }),
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
     ).toBeEnabled();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
@@ -833,7 +902,7 @@ describe("TaskItemRecoveryPanel", () => {
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
     await user.click(await within(panel).findByLabelText(/Special/));
     await user.click(
-      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
     );
 
     expect(
@@ -948,7 +1017,7 @@ describe("TaskItemRecoveryPanel", () => {
     // The completed analysis already offers its own same-page prepare entry;
     // a second analysis request would only supersede that ready plan.
     expect(
-      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
     await user.click(
       await within(panel).findByRole("button", {
@@ -1470,7 +1539,7 @@ describe("TaskItemRecoveryPanel", () => {
     });
     // The admitted confirmation never regains a duplicate analysis action.
     expect(
-      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
   });
 
@@ -1529,7 +1598,7 @@ describe("TaskItemRecoveryPanel", () => {
       }),
     ).toBeEnabled();
     expect(
-      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
     expect(
       within(panel).queryByRole("button", {
@@ -1579,7 +1648,7 @@ describe("TaskItemRecoveryPanel", () => {
       await within(panel).findByText("当前阶段");
       expect(
         within(panel).queryByRole("button", {
-          name: "继续此条目的安全分析",
+          name: "保存并重新分析",
         }),
       ).toBeNull();
       cleanup();
@@ -1651,14 +1720,14 @@ describe("TaskItemRecoveryPanel", () => {
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
     await user.click(await within(panel).findByLabelText(/Special/));
     await user.click(
-      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
     );
 
     expect(await within(panel).findByText(/共享队列已满/)).toBeVisible();
-    // The saved decision keeps its own nearby explicit analysis retry while
-    // the queue is full; no second command was sent without it.
+    // The saved decision keeps the same nearby save/analyse action while the
+    // queue is full; no second command was sent without it.
     const retry = within(panel).getByRole("button", {
-      name: "继续此条目的安全分析",
+      name: "保存并重新分析",
     });
     expect(retry).toBeEnabled();
     await user.click(retry);
@@ -1672,6 +1741,288 @@ describe("TaskItemRecoveryPanel", () => {
       "/api/v1/tasks/task-1/items/item-1/recovery/continue",
     ]);
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
+  });
+  it("keeps one save/analyse action through an accepted native analysis without a second analysis button", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = recognitionRecovery();
+    let continuationAttempts = 0;
+    let releaseContinuation: ((response: Response) => void) | undefined;
+    const continuationGate = new Promise<Response>((resolve) => {
+      releaseContinuation = resolve;
+    });
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+          return new Response(JSON.stringify(runOverviewDocument("pending")), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          posts.push(url);
+          currentRecovery = recognitionRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          posts.push(url);
+          continuationAttempts += 1;
+          return continuationGate;
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(await within(panel).findByLabelText(/Special/));
+    await user.click(
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    await waitFor(() => expect(continuationAttempts).toBe(1));
+    // The decision response removed its form and the accepted analysis owns
+    // the same place. The old retry-shaped checkpoint (queue eligible, no
+    // recovery_continuation) must not expose a second analysis action.
+    expect(
+      await within(panel).findByText(
+        /选择已保存；同一 Task 的分析仍在排队或运行/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
+    expect(within(panel).queryByText("继续此条目的安全分析")).toBeNull();
+
+    await act(async () => {
+      releaseContinuation?.(
+        new Response(
+          JSON.stringify({
+            taskId: "task-1",
+            itemId: "item-1",
+            nativeAnalysis: {
+              taskId: "task-1",
+              itemId: "item-1",
+              discoveryId: "discovery-1",
+              version: 6,
+              status: "analyzing",
+              previewId: null,
+            },
+            sideEffects: "none",
+            executionMode: "dry_run",
+            nextAction: "review the fresh plan summary of this same Task",
+          }),
+          { status: 202 },
+        ),
+      );
+    });
+
+    expect(
+      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+    ).toBeVisible();
+    // The follow-up recovery read still reports the old retry permission and
+    // no legacy continuation; the durable accepted state keeps the action out.
+    await waitFor(() =>
+      expect(
+        within(panel).queryByRole("button", { name: "保存并重新分析" }),
+      ).toBeNull(),
+    );
+    expect(posts).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
+  });
+
+  it("offers the same saved-decision action after a reload when the Task is still waiting", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          // The decision is durably saved and its analysis was refused, so
+          // the checkpoint still offers retry and has no legacy continuation.
+          return new Response(JSON.stringify(recognitionRecovery(true)), {
+            status: 200,
+          });
+        }
+        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+          return new Response(JSON.stringify(runOverviewDocument("waiting")), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          posts.push(url);
+          return new Response(
+            JSON.stringify({
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: { taskId: "task-1", itemId: "item-1" },
+              sideEffects: "none",
+              executionMode: "dry_run",
+              nextAction: "wait for the new plan",
+            }),
+            { status: 202 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          posts.push(url);
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    expect(await within(panel).findByText("选择已保存")).toBeVisible();
+    const retry = within(panel).getByRole("button", {
+      name: "保存并重新分析",
+    });
+    expect(retry).toBeEnabled();
+    await user.click(retry);
+
+    expect(
+      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+    ).toBeVisible();
+    expect(posts).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
+  });
+
+  it("reconciles an unknown analysis against the same Task before unlocking the action", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = recognitionRecovery();
+    let runStatus = "waiting";
+    let continuationAttempts = 0;
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+          return new Response(JSON.stringify(runOverviewDocument(runStatus)), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          posts.push(url);
+          currentRecovery = recognitionRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          posts.push(url);
+          continuationAttempts += 1;
+          // The response is lost after the backend already queued this Task.
+          runStatus = "pending";
+          return new Response(
+            JSON.stringify({ error: { code: "unavailable" } }),
+            { status: 503 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(await within(panel).findByLabelText(/Special/));
+    await user.click(
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    expect(await within(panel).findByText(/服务响应无法确认/)).toBeVisible();
+    expect(continuationAttempts).toBe(1);
+    expect(
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "重新读取条目后再继续",
+      }),
+    );
+
+    expect(
+      await within(panel).findByText(/本次零变更分析已经受理/),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
+    expect(continuationAttempts).toBe(1);
+    expect(posts).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
   });
 });
 
@@ -1714,7 +2065,7 @@ it("publishes a purely technical failure as a factual read-only history", async 
   expect(within(panel).queryByText(/技术失败条目/)).toBeNull();
   expect(within(panel).queryByText("无（技术历史，仅只读）")).toBeNull();
   expect(
-    within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+    within(panel).queryByRole("button", { name: "保存并重新分析" }),
   ).not.toBeInTheDocument();
   // The raw checkpoint and server guidance remain available on demand.
   await userEvent

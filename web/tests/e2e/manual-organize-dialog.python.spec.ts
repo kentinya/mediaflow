@@ -145,6 +145,14 @@ async function saveNativeDecision(page: Page, card: Locator): Promise<void> {
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decision).ok()).toBe(true);
   expect((await continuation).ok()).toBe(true);
+  // The saved decision must hand directly to the one accepted-analysis wait
+  // state.  The old retry-shaped checkpoint may still advertise `retry`, but
+  // the same save/analyse button must not reappear as a second command.
+  await expect(card.getByText("零变更分析正在等待")).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  await expect(card.getByText("继续此条目的安全分析")).toHaveCount(0);
 }
 
 async function selectFiles(

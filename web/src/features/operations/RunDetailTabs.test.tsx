@@ -1840,12 +1840,12 @@ describe("selected-run detail tabs", () => {
     );
     await user.click(
       within(recovery).getByRole("button", {
-        name: "保存决策并继续安全分析",
+        name: "保存并重新分析",
       }),
     );
     expect(
       within(recovery).getByRole("button", {
-        name: /^正在保存…$/,
+        name: "正在保存并重新分析…",
       }),
     ).toBeDisabled();
     expect(decisionPosts).toBe(1);
@@ -1873,7 +1873,7 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
     expect(
       within(reopenedRecovery).getByRole("button", {
-        name: /^正在保存…$/,
+        name: "正在保存并重新分析…",
       }),
     ).toBeDisabled();
     expect(decisionPosts).toBe(1);
@@ -1884,7 +1884,7 @@ describe("selected-run detail tabs", () => {
       releaseDecision?.(jsonResponse(current));
     });
     expect(
-      await within(reopenedRecovery).findByText(/决策已保存/),
+      await within(reopenedRecovery).findByText(/选择已保存|决策已保存/),
     ).toBeVisible();
     expect(
       within(reopenedRecovery).queryByRole("button", {
@@ -1932,7 +1932,7 @@ describe("selected-run detail tabs", () => {
     );
     await user.click(
       within(recovery).getByRole("button", {
-        name: "保存决策并继续安全分析",
+        name: "保存并重新分析",
       }),
     );
     expect(await within(recovery).findByText(/请求响应未送达/)).toBeVisible();
@@ -1959,7 +1959,7 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
     expect(
       within(reopenedRecovery).getByRole("button", {
-        name: "保存决策并继续安全分析",
+        name: "保存并重新分析",
       }),
     ).toBeDisabled();
     expect(

@@ -1712,7 +1712,9 @@ describe("ManualOrganizeDialog", () => {
 
     // The split retry only re-runs the analysis: no second save of the same
     // durable decision and no execution.
-    const retry = await screen.findByRole("button", { name: "重新分析" });
+    const retry = await screen.findByRole("button", {
+      name: "保存并重新分析",
+    });
     await user.click(retry);
     await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
     expect(backend.calls.choicePosts).toHaveLength(1);

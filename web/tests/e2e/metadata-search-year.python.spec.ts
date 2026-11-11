@@ -262,9 +262,7 @@ test("the Task Center recovery search submits the current year to the Provider",
       new URL(response.url()).pathname ===
         `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
   );
-  await recovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
+  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decision).status()).toBe(200);
   expect((await continuation).status()).toBe(202);
 

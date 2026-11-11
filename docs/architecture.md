@@ -1496,9 +1496,14 @@ re-authentication; route adaptation must not guess current Active, a newer Task 
 Reuse feature-independent ModalCardShell presentation, not library/Automation fields or commands.
 
 The organizer owns itemId/preparation/summary-bound drafts, inclusion, active file, explicit
-save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. Navigation
-is read-only. Late responses cannot switch files or overwrite unrelated drafts. Summary/subset
-changes invalidate stale dangerous authorization; server gates remain authoritative.
+save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. One
+per-file `保存并重新分析` action covers both the unsaved decision and an already saved decision whose
+analysis was refused; a durable Task-flow read (not only the legacy recovery-continuation field)
+distinguishes an accepted native analysis from a non-admission after reopen. Its saved-decision
+facts and waiting state stay in the same form position; no second analysis action or replacement
+button exists. Navigation is read-only. Late responses cannot switch files or overwrite unrelated
+drafts. Summary/subset changes invalidate stale dangerous authorization; server gates remain
+authoritative.
 One immutable submission identity (previewId, copied itemIds, intentVersion, allowOverwrite and
 allowSourceCleanup) is captured at confirmation and used by Execute and every unknown-request
 read. It is independent of the editable current summary and survives its replacement during sibling

@@ -489,7 +489,7 @@ export function ManualOrganizeDialog({
           ...previous,
           [variables.itemId]: {
             kind: "warning",
-            text: `重新分析暂未完成${failure ? `(${failure.code})` : ""};尚未获得可确认的新摘要;没有重复保存,也没有执行任何整理。可再次重新分析。`,
+            text: `重新分析暂未完成${failure ? `(${failure.code})` : ""};尚未获得可确认的新摘要;没有重复保存,也没有执行任何整理。可再次点击“保存并重新分析”只补做分析（不会重复保存）。`,
             retryAnalysis: true,
           },
         }));
@@ -518,7 +518,7 @@ export function ManualOrganizeDialog({
           ...previous,
           [variables.itemId]: {
             kind: "warning",
-            text: "候选选择已保存,但重新分析暂未完成:尚未获得可确认的新摘要,没有执行任何整理。可重新分析(不会重复保存)。",
+            text: "候选选择已保存,但重新分析暂未完成:尚未获得可确认的新摘要,没有执行任何整理。可再次点击“保存并重新分析”只补做分析（不会重复保存）。",
             retryAnalysis: true,
           },
         }));
@@ -1357,6 +1357,20 @@ export function ManualOrganizeDialog({
           value.id ===
           (item.recognitionType ?? currentIntentItem?.choice.recognitionTypeId),
       )?.name ?? null;
+    const targetRelativePath =
+      item.targetPath ?? item.destination?.storageRelativePath ?? null;
+    const hasGeneratedTarget =
+      targetRelativePath !== null && targetRelativePath !== "";
+    const hasGeneratedScheme = hasGeneratedTarget || item.operation !== null;
+    const attachmentWarnings = item.attachments.filter(
+      (attachment) => attachment.nextAction !== null,
+    );
+    const hasCurrentProblem =
+      item.conflicts.length > 0 ||
+      item.failure !== null ||
+      item.history !== null ||
+      item.warnings.length > 0 ||
+      hasNativeProblem;
     const decisionAnalysisRequested = () => {
       setNotices((previous) => ({
         ...previous,
@@ -1373,50 +1387,181 @@ export function ManualOrganizeDialog({
     return (
       <>
         <header className="mf-organize-file-head">
-          <h3>
-            第 {pageInfo + 1} / {items.length} 个
-            <span className="mf-status-badge">
-              {admittedItemIds.has(item.itemId)
-                ? "已受理执行"
-                : organizeFlowEnded
-                  ? "只读历史"
-                  : !executableIds.includes(item.itemId)
-                    ? "未就绪"
-                    : isIncluded
-                      ? "纳入本次整理"
-                      : "暂不纳入"}
-            </span>
-          </h3>
-          <p className="mf-exact-identity">{filename}</p>
-          <p className="mf-dashboard-meta">
-            {item.resourceLibraryId !== null
-              ? `来源库:${item.resourceLibraryId} · `
-              : ""}
-            <span className="mf-exact-identity">{item.sourcePath ?? "—"}</span>
-          </p>
+          <div className="mf-organize-file-title">
+            <p className="mf-organize-file-eyebrow">当前文件</p>
+            <h3>
+              第 {pageInfo + 1} / {items.length} 个
+              <span className="mf-status-badge">
+                {admittedItemIds.has(item.itemId)
+                  ? "已受理执行"
+                  : organizeFlowEnded
+                    ? "只读历史"
+                    : !executableIds.includes(item.itemId)
+                      ? "未就绪"
+                      : isIncluded
+                        ? "纳入本次整理"
+                        : "暂不纳入"}
+              </span>
+            </h3>
+            <p className="mf-organize-file-name mf-exact-identity">
+              {filename}
+            </p>
+            <p className="mf-organize-file-path mf-dashboard-meta">
+              {item.resourceLibraryId !== null
+                ? `来源库：${item.resourceLibraryId} · `
+                : ""}
+              <span className="mf-exact-identity">
+                {item.sourcePath ?? "—"}
+              </span>
+            </p>
+          </div>
         </header>
 
-        <section aria-label="作品匹配">
-          <h4>作品匹配</h4>
-          <dl>
-            <dt>当前作品</dt>
-            <dd>
-              {item.title ?? "—"}
-              {item.mediaIdentity?.year != null
-                ? ` (${item.mediaIdentity.year})`
-                : ""}
-              {item.mediaIdentity?.mediaType != null
-                ? ` · ${mediaTypeLabel(item.mediaIdentity.mediaType)}`
-                : ""}
-            </dd>
-            <dt>识别类型</dt>
-            <dd>{recognitionTypeName ?? item.recognitionType ?? "—"}</dd>
+        {hasCurrentProblem ? (
+          <section
+            className="mf-organize-section mf-organize-section-primary"
+            aria-label="当前问题"
+          >
+            <div className="mf-organize-section-head">
+              <h4>当前问题</h4>
+              <span className="mf-organize-section-note">
+                {hasNativeProblem || item.conflicts.length > 0
+                  ? "先完成这个文件的选择"
+                  : "已记录的核对信息"}
+              </span>
+            </div>
+            {item.conflicts.length > 0 ? (
+              <>
+                <p role="status" className="mf-organize-problem-line">
+                  <strong>
+                    {item.conflicts
+                      .map((value) => conflictTypeLabel(value.type))
+                      .join("、")}
+                  </strong>
+                  ：来源{" "}
+                  <span className="mf-exact-identity">
+                    {item.sourceStorageId ?? "—"}:
+                    {firstConflict?.source ?? item.sourcePath ?? "—"}
+                  </span>{" "}
+                  的目标{" "}
+                  <span className="mf-exact-identity">
+                    {item.targetStorageId ?? "—"}:
+                    {firstConflict?.destination ??
+                      item.targetPath ??
+                      item.destination?.storageRelativePath ??
+                      "—"}
+                  </span>{" "}
+                  已存在。
+                </p>
+                <p className="mf-organize-section-note">
+                  当前文件在冲突决定被保存并由真实分析取代前不能纳入确认；
+                  这里不会自动覆盖、跳过或移动任何文件。
+                </p>
+              </>
+            ) : item.failure !== null ? (
+              hasNativeProblem ? (
+                <p role="status">
+                  {metadataNotFound
+                    ? "当前文件还没有匹配到作品，尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"
+                    : "当前文件尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"}
+                </p>
+              ) : (
+                <StatusBanner variant="error" title="条目未就绪">
+                  <p>{item.failure.message}</p>
+                  <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
+                </StatusBanner>
+              )
+            ) : null}
+            {hasNativeProblem && problemTaskItemId !== null ? (
+              <TaskItemRecoveryPanel
+                key={`${organizeTaskId}:${problemTaskItemId}:${token ?? "disconnected"}`}
+                taskId={organizeTaskId}
+                itemId={problemTaskItemId}
+                runId={organizeTaskId}
+                active={false}
+                mode="decision"
+                onAnalysisRequested={decisionAnalysisRequested}
+                decisionDraft={decisionDrafts[problemTaskItemId]}
+                onDecisionDraftChange={(draft) =>
+                  setDecisionDrafts((previous) => ({
+                    ...previous,
+                    [problemTaskItemId]: draft,
+                  }))
+                }
+              />
+            ) : item.conflicts.length > 0 ? (
+              <StatusBanner variant="error" title="无法打开当前文件的冲突决定">
+                <p role="status">
+                  尚未证明当前文件与本整理任务的审核条目关联；没有保存决定，
+                  也没有修改任何文件。请重新读取当前摘要，或关闭后从任务中心
+                  对应任务的冲突处理入口核对同一文件。
+                </p>
+              </StatusBanner>
+            ) : null}
+            {item.warnings.length > 0 ? (
+              <p className="mf-organize-section-note">
+                提示：{item.warnings.join("；")}
+              </p>
+            ) : null}
+            {item.history !== null ? (
+              <StatusBanner
+                variant="warning"
+                title="上次整理记录（同一文件版本）"
+              >
+                <p>
+                  {item.history.status === "partial"
+                    ? "上次整理部分成功"
+                    : "上次整理失败"}
+                  {item.history.uncertainEffects.length > 0
+                    ? ` · 未确认效果:${item.history.uncertainEffects
+                        .map(describeHistoryStep)
+                        .join("、")}(未知≠已核验)`
+                    : ""}
+                </p>
+                <p>{item.history.warning}</p>
+              </StatusBanner>
+            ) : null}
+          </section>
+        ) : (
+          <p className="mf-organize-section-note" role="status">
+            该文件当前没有记录的问题。
+          </p>
+        )}
+
+        <section className="mf-organize-section" aria-label="作品匹配">
+          <div className="mf-organize-section-head">
+            <h4>作品与识别</h4>
+            <span className="mf-organize-section-note">
+              {recognitionTypeName ??
+                item.recognitionType ??
+                "识别类型尚未生成"}
+            </span>
+          </div>
+          <dl className="mf-organize-facts">
+            <div>
+              <dt>当前作品</dt>
+              <dd>
+                {item.title ?? "尚未匹配作品"}
+                {item.mediaIdentity?.year != null
+                  ? ` (${item.mediaIdentity.year})`
+                  : ""}
+                {item.mediaIdentity?.mediaType != null
+                  ? ` · ${mediaTypeLabel(item.mediaIdentity.mediaType)}`
+                  : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>来源文件</dt>
+              <dd className="mf-exact-identity">
+                {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+              </dd>
+            </div>
           </dl>
           {item.analysis?.metadata?.match != null &&
           item.analysis.metadata.match.candidates.length > 0 ? (
-            <details>
+            <details className="mf-organize-subdetails">
               <summary>
-                可读候选({item.analysis.metadata.match.candidates.length} 个)
+                可读候选（{item.analysis.metadata.match.candidates.length} 个）
               </summary>
               <ul className="mf-preview-attachments">
                 {item.analysis.metadata.match.candidates.map(
@@ -1451,12 +1596,14 @@ export function ManualOrganizeDialog({
               ) : null}
             </details>
           ) : (
-            <p className="mf-dashboard-meta">当前没有可读的元数据候选。</p>
+            <p className="mf-organize-section-note">
+              当前没有可读的元数据候选。
+            </p>
           )}
 
           {!organizeFlowEnded && hasNativeProblem ? (
-            <p className="mf-dashboard-meta" role="status">
-              当前文件的修正决定统一在下方“当前问题”中完成；保存后只重新运行零变更分析，不会执行整理。
+            <p className="mf-organize-section-note" role="status">
+              当前文件的修正决定统一在上方“当前问题”中完成；保存后只重新运行零变更分析，不会执行整理。
             </p>
           ) : null}
           {!organizeFlowEnded &&
@@ -1464,6 +1611,7 @@ export function ManualOrganizeDialog({
           currentIntentItem !== undefined &&
           intent !== undefined ? (
             <div className="mf-organize-correction mf-organize-decision">
+              <h5>修正识别或作品</h5>
               <div className="mf-organize-decision-fields">
                 <label className="mf-organize-decision-field">
                   <span className="mf-organize-decision-label">识别类型</span>
@@ -1513,12 +1661,12 @@ export function ManualOrganizeDialog({
                 ) : null}
               </div>
               {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
-                <p className="mf-dashboard-meta">
+                <p className="mf-organize-section-note">
                   本文件当前没有可供选择的识别类型修正。
                 </p>
               ) : null}
               {draftRecognitionId !== "" && !mappingComplete ? (
-                <p className="mf-dashboard-meta" role="status">
+                <p className="mf-organize-section-note" role="status">
                   当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
                 </p>
               ) : null}
@@ -1548,9 +1696,7 @@ export function ManualOrganizeDialog({
                 >
                   {saveMutation.isPending
                     ? "正在保存并重新分析…"
-                    : notice?.retryAnalysis === true && !draftDirty
-                      ? "重新分析"
-                      : "保存并重新分析"}
+                    : "保存并重新分析"}
                 </Button>
               </div>
               {notice !== undefined ? (
@@ -1573,210 +1719,166 @@ export function ManualOrganizeDialog({
           ) : null}
         </section>
 
-        <section aria-label="来源到目标">
-          <h4>来源到目标</h4>
-          <dl>
-            <dt>操作</dt>
-            <dd className="mf-organize-operation">
-              {operationLabel(item.operation)}
-            </dd>
-            <dt>来源</dt>
-            <dd className="mf-exact-identity">
-              {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-            </dd>
-            <dt>预期目标</dt>
-            <dd className="mf-exact-identity">
-              {item.targetStorageId ?? "—"}:
-              {item.targetPath ?? item.destination?.storageRelativePath ?? "—"}
-            </dd>
-            <dt>目标媒体库</dt>
-            <dd>
-              {item.analysis?.classification?.mediaLibraryId ?? "—"}
-              {item.analysis?.classification?.matchedRuleName
-                ? ` · 规则:${item.analysis.classification.matchedRuleName}`
-                : ""}
-            </dd>
-          </dl>
-          <p className="mf-dashboard-meta">
-            {destructiveStatement(item.destructiveImplications, item.operation)}
-          </p>
-        </section>
-
-        <section aria-label="操作及附件">
-          <h4>操作及附件</h4>
-          <p>
-            主文件操作:{operationLabel(item.operation)}
-            {item.attachments.length === 0
-              ? " · 无关联附件"
-              : ` · 关联附件 ${item.attachments.length} 个`}
-          </p>
-          {item.attachments.length > 0 ? (
-            <ul className="mf-preview-attachments">
-              {item.attachments.map((attachment, position) => (
-                <li key={`attachment-${position}`}>
-                  {attachment.type ?? "附件"}
-                  {attachment.language != null
-                    ? `(${attachment.language})`
-                    : ""}{" "}
-                  · {operationLabel(attachment.operation)}
-                  {attachment.source !== null ||
-                  attachment.destination !== null ? (
-                    <span className="mf-exact-identity">
-                      {" "}
-                      {attachment.source?.storageId ?? "—"}:
-                      {attachment.source?.path ?? "—"} →{" "}
-                      {attachment.destination?.storageId ?? "—"}:
-                      {attachment.destination?.path ?? "—"}
-                    </span>
-                  ) : null}
-                  {attachment.nextAction ? (
-                    <span role="status"> {attachment.nextAction}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-
-        <section aria-label="当前问题">
-          <h4>当前问题</h4>
-          {item.conflicts.length > 0 ? (
+        <section className="mf-organize-section" aria-label="来源到目标">
+          <div className="mf-organize-section-head">
+            <h4>来源与目标</h4>
+            <span className="mf-organize-section-note">
+              {hasGeneratedScheme
+                ? operationLabel(item.operation)
+                : "等待零变更分析"}
+            </span>
+          </div>
+          {hasGeneratedScheme ? (
             <>
-              <p role="status">
-                <strong>
-                  {item.conflicts
-                    .map((value) => conflictTypeLabel(value.type))
-                    .join("、")}
-                </strong>
-                ：来源{" "}
-                <span className="mf-exact-identity">
-                  {item.sourceStorageId ?? "—"}:
-                  {firstConflict?.source ?? item.sourcePath ?? "—"}
-                </span>{" "}
-                的目标{" "}
-                <span className="mf-exact-identity">
-                  {item.targetStorageId ?? "—"}:
-                  {firstConflict?.destination ??
-                    item.targetPath ??
-                    item.destination?.storageRelativePath ??
-                    "—"}
-                </span>{" "}
-                已存在。
-              </p>
-              <p className="mf-dashboard-meta">
-                当前文件在冲突决定被保存并由真实分析取代前不能纳入确认；
-                这里不会自动覆盖、跳过或移动任何文件。
-              </p>
-            </>
-          ) : item.failure !== null ? (
-            hasNativeProblem ? (
-              <p role="status">
-                {metadataNotFound
-                  ? "当前文件还没有匹配到作品，尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"
-                  : "当前文件尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"}
-              </p>
-            ) : (
-              <StatusBanner variant="error" title="条目未就绪">
-                <p>{item.failure.message}</p>
-                <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
-              </StatusBanner>
-            )
-          ) : null}
-          {hasNativeProblem && problemTaskItemId !== null ? (
-            <TaskItemRecoveryPanel
-              key={`${organizeTaskId}:${problemTaskItemId}:${token ?? "disconnected"}`}
-              taskId={organizeTaskId}
-              itemId={problemTaskItemId}
-              runId={organizeTaskId}
-              active={false}
-              mode="decision"
-              onAnalysisRequested={decisionAnalysisRequested}
-              decisionDraft={decisionDrafts[problemTaskItemId]}
-              onDecisionDraftChange={(draft) =>
-                setDecisionDrafts((previous) => ({
-                  ...previous,
-                  [problemTaskItemId]: draft,
-                }))
-              }
-            />
-          ) : item.conflicts.length > 0 ? (
-            <StatusBanner variant="error" title="无法打开当前文件的冲突决定">
-              <p role="status">
-                尚未证明当前文件与本整理任务的审核条目关联；没有保存决定，
-                也没有修改任何文件。请重新读取当前摘要，或关闭后从任务中心
-                对应任务的冲突处理入口核对同一文件。
-              </p>
-            </StatusBanner>
-          ) : null}
-          {item.warnings.length > 0 ? (
-            <p className="mf-dashboard-meta">提示:{item.warnings.join(";")}</p>
-          ) : null}
-          {item.history !== null ? (
-            <StatusBanner
-              variant="warning"
-              title="上次整理记录（同一文件版本）"
-            >
-              <p>
-                {item.history.status === "partial"
-                  ? "上次整理部分成功"
-                  : "上次整理失败"}
-                {item.history.uncertainEffects.length > 0
-                  ? ` · 未确认效果:${item.history.uncertainEffects
-                      .map(describeHistoryStep)
-                      .join("、")}(未知≠已核验)`
-                  : ""}
-              </p>
-              <p>{item.history.warning}</p>
-            </StatusBanner>
-          ) : null}
-          {item.failure === null &&
-          item.conflicts.length === 0 &&
-          item.warnings.length === 0 &&
-          item.history === null ? (
-            <p className="mf-dashboard-meta">该文件当前没有记录的问题。</p>
-          ) : null}
-          <label>
-            <input
-              type="checkbox"
-              aria-label={`纳入 ${filename}`}
-              checked={isIncluded}
-              disabled={!isExecutable || saveMutation.isPending}
-              onChange={(event) => {
-                setExcluded((previous) => {
-                  const next = new Set(previous);
-                  if (event.target.checked) next.delete(item.itemId);
-                  else next.add(item.itemId);
-                  return next;
-                });
-                setConfirmationSelectionKey(null);
-              }}
-            />{" "}
-            纳入本次整理
-          </label>
-          {!isExecutable && !organizeFlowEnded ? (
-            <p className="mf-dashboard-meta" role="status">
-              {admittedItemIds.has(item.itemId)
-                ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                : "该文件当前未就绪,不能纳入本次确认;请先完成上方当前问题中的决定。"}
-            </p>
-          ) : null}
-          {!organizeFlowEnded &&
-          (currentItem.destructiveImplications?.overwriteRequired === true ||
-            currentItem.destructiveImplications?.sourceCleanupRequired ===
-              true) ? (
-            <p className="mf-dashboard-meta" role="status">
-              危险影响:
-              {destructiveStatement(
-                currentItem.destructiveImplications,
-                currentItem.operation,
+              <dl className="mf-organize-facts">
+                {item.operation !== null ? (
+                  <div>
+                    <dt>操作</dt>
+                    <dd>{operationLabel(item.operation)}</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>来源</dt>
+                  <dd className="mf-exact-identity">
+                    {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                  </dd>
+                </div>
+                {hasGeneratedTarget ? (
+                  <div>
+                    <dt>目标</dt>
+                    <dd className="mf-exact-identity">
+                      {item.targetStorageId ?? "—"}:{targetRelativePath}
+                    </dd>
+                  </div>
+                ) : null}
+                {item.analysis?.classification?.mediaLibraryId != null ? (
+                  <div>
+                    <dt>目标媒体库</dt>
+                    <dd>
+                      {item.analysis.classification.mediaLibraryId}
+                      {item.analysis.classification.matchedRuleName
+                        ? ` · 规则：${item.analysis.classification.matchedRuleName}`
+                        : ""}
+                    </dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>附件</dt>
+                  <dd>
+                    {item.attachments.length === 0
+                      ? "无关联附件"
+                      : `${item.attachments.length} 个关联附件`}
+                  </dd>
+                </div>
+              </dl>
+              {hasGeneratedTarget ? (
+                <p className="mf-organize-section-note">
+                  {destructiveStatement(
+                    item.destructiveImplications,
+                    item.operation,
+                  )}
+                </p>
+              ) : (
+                <p className="mf-organize-section-note" role="status">
+                  操作已经记录，但目标路径尚未生成；完成当前问题并重新分析后即可核对完整来源与目标。
+                </p>
               )}
-              仅在最后的整批复核中明确授权后才可能执行。
+            </>
+          ) : (
+            <p className="mf-organize-section-note" role="status">
+              零变更方案尚未生成：完成上方当前问题并重新分析后，这里会显示操作、来源、目标与附件。
             </p>
-          ) : null}
+          )}
+          <div className="mf-organize-selection">
+            <label>
+              <input
+                type="checkbox"
+                aria-label={`纳入 ${filename}`}
+                checked={isIncluded}
+                disabled={!isExecutable || saveMutation.isPending}
+                onChange={(event) => {
+                  setExcluded((previous) => {
+                    const next = new Set(previous);
+                    if (event.target.checked) next.delete(item.itemId);
+                    else next.add(item.itemId);
+                    return next;
+                  });
+                  setConfirmationSelectionKey(null);
+                }}
+              />{" "}
+              纳入本次整理
+            </label>
+            {!isExecutable && !organizeFlowEnded ? (
+              <p className="mf-organize-section-note" role="status">
+                {admittedItemIds.has(item.itemId)
+                  ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
+                  : "该文件当前未就绪,不能纳入本次确认;请先完成上方当前问题中的决定。"}
+              </p>
+            ) : null}
+            {!organizeFlowEnded &&
+            (item.destructiveImplications?.overwriteRequired === true ||
+              item.destructiveImplications?.sourceCleanupRequired === true) ? (
+              <p className="mf-organize-section-note" role="status">
+                危险影响：
+                {destructiveStatement(
+                  item.destructiveImplications,
+                  item.operation,
+                )}
+                仅在最后的整批复核中明确授权后才可能执行。
+              </p>
+            ) : null}
+          </div>
         </section>
+
+        {item.attachments.length > 0 ? (
+          <section
+            className="mf-organize-section mf-organize-attachments"
+            aria-label="附件"
+          >
+            <div className="mf-organize-section-head">
+              <h4>附件</h4>
+              <span className="mf-organize-section-note">
+                {item.attachments.length} 个
+              </span>
+            </div>
+            {attachmentWarnings.length > 0 ? (
+              <p className="mf-organize-section-note" role="status">
+                有 {attachmentWarnings.length}{" "}
+                个附件需要核对下一步；展开后逐项查看。
+              </p>
+            ) : null}
+            <details>
+              <summary>展开每项附件的来源、目标与操作</summary>
+              <ul className="mf-preview-attachments">
+                {item.attachments.map((attachment, position) => (
+                  <li key={`attachment-${position}`}>
+                    {attachment.type ?? "附件"}
+                    {attachment.language != null
+                      ? `(${attachment.language})`
+                      : ""}{" "}
+                    · {operationLabel(attachment.operation)}
+                    {attachment.source !== null ||
+                    attachment.destination !== null ? (
+                      <span className="mf-exact-identity">
+                        {" "}
+                        {attachment.source?.storageId ?? "—"}:
+                        {attachment.source?.path ?? "—"} →{" "}
+                        {attachment.destination?.storageId ?? "—"}:
+                        {attachment.destination?.path ?? "—"}
+                      </span>
+                    ) : null}
+                    {attachment.nextAction ? (
+                      <span role="status"> {attachment.nextAction}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </section>
+        ) : null}
 
         <details className="mf-organize-diagnostics">
-          <summary>展开技术诊断</summary>
+          <summary>查看匹配与方案依据</summary>
           <ItemFindings item={item} />
           <dl>
             <dt>元数据身份</dt>

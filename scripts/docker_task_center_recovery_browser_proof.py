@@ -143,7 +143,7 @@ try {
       new URL(response.url()).pathname ===
         `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
   );
-  await recovery.getByRole('button', { name: '保存决策并继续安全分析' }).click();
+  await recovery.getByRole('button', { name: '保存并重新分析' }).click();
   require_((await decisionResponse).status() === 200, 'the decision was not saved');
   require_((await continuationResponse).status() === 202, 'the analysis was not admitted');
   await recovery.getByText(/单项分析已进入队列/).waitFor();
