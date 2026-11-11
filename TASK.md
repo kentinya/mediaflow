@@ -1,26 +1,13 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261111-3 — 精简任务详情“文件整理准备”说明
 
-最近独立修复 **PATCH-20261111-2 — 四类恢复可确认计划下移除重复分析按钮** 已由 B
-于 2026-11-11 验收 **PASS**，无剩余 Task 阻塞。
-
-- Reviewed Base: `df44b82f9c184e1598a3a97a680d7e565310370a`
-- Reviewed Head: `c26557f4c1a2404a281f02e735c40032d9b5a21c`
-- [固定 B 验收记录](https://github.com/kentinya/mediaflow/blob/aff254ce0e3dc8b47714b197a7023509e6cc5f66/TASK.md#b-decision--patch-20261111-2-pass)：完整范围、实际结果、原始失败、证据位置及验证限制。
-- [原 Task 与开发指导](https://github.com/kentinya/mediaflow/blob/6293817180291c3208e997624878d2413a4799de/TASK.md)：授权、目标、验收和 Developer 交接。
-- 上一独立修复 PATCH-20261111-1 的 [固定 B 验收](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md) 保留原范围与结果。
-
-当前行为见 [恢复旅程](docs/product-experience.md#tasks-results-and-per-item-recovery) 和
-[任务中心四类恢复](docs/task-center-page-spec.md#4-四类恢复决定--分析--摘要确认--真实结果)。
-独立修复不重开 [Slice54](SLICE.md)，其 PASS / CLOSED、原始 Base／接受 Head、
-Roadmap／Progress 及延期保持。下一大 Slice 由 A 单独选择；当前没有授权中的实施 Task。
-
----
-
-## 规划草案 — PATCH-20261111-3：精简任务详情“文件整理准备”说明
-
-本草案仅落实用户“规划一个修复Task”的授权，不授权实施、启动其他角色或推送。
-获得实施授权后再移除顶部无活动实施通知，正式启用以下 Task；原 Base 保持不变。
+用户于 2026-11-11 明确“激活Task吧”，本 Task 已获得实施授权。
+原规划检查点为 `6dc0619b856f03ca5750e8592336d197f3788366`；Task ID、Base、目标、范围、
+验收及测试分工保持不变。当前为 PLANNED，Developer 开始实施时转为 IN PROGRESS。
+本次激活只更新任务授权，不启动其他角色、不实施产品代码，也不授权推送或部署。
 生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
+
+上一独立修复 PATCH-20261111-2 的 [固定 B PASS 记录](https://github.com/kentinya/mediaflow/blob/aff254ce0e3dc8b47714b197a7023509e6cc5f66/TASK.md#b-decision--patch-20261111-2-pass)
+保留原审查范围、实际结果及限制，不因本次激活改变。
 
 ```text
 Task ID: PATCH-20261111-3
@@ -31,7 +18,7 @@ Task Base: 7b6cadd050591c339589d042235013ca9ff1f26d
 Difficulty: Low
 Test Level: T2
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-11
 ```
 
 ### Goal / 调查依据
@@ -124,9 +111,12 @@ npm run typecheck
 `.mgmt.log`、`.t*.log`、`15`、各目录系统元数据和 `output/` 调查材料原样保留，
 不进入规划检查点。规划只修改本文件，未实施产品修复或运行产品验收。
 
+激活前 HEAD 为上述规划检查点，分支仍为 `main`，暂存区为空；预存脏文件与未跟踪材料
+保持原样。激活前治理检查 PASS；本次仍仅修改 TASK.md，不改变 SLICE／Roadmap／Progress。
+
 ### Developer Completion Report
 
-待实施授权及实际开发后填写：候选 SHA、READY FOR B REVIEW、变化、受影响检查实际结果和剩余风险。
+待实际开发后填写：候选 SHA、READY FOR B REVIEW、变化、受影响检查实际结果和剩余风险。
 
 ### B Review Result
 
