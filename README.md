@@ -65,14 +65,17 @@ TMDB policies use query type alone; candidate/result movie or TV types still dri
 naming and classification. Each new organize identifies the source again. Within the current Task,
 a saved candidate continues through re-analysis to the exact summary without repeated confirmation
 or another Provider lookup at summary generation. The per-file organizer supports selecting and
-saving its existing candidates. [PATCH-20261109-2 B acceptance](https://github.com/kentinya/mediaflow/blob/da47f9dd1af56cc281d6e42323ae4892caed5f83/TASK.md#b-final-review--pass) records the T4 results;
-[Configuration](docs/configuration.md#metadata-query-type-and-saved-identity) explains current behavior.
+saving its existing candidates. Metadata correction searches use the current title, movie/TV type
+and year; clearing the year searches without a year restriction. An invalid year shows the range
+and lets the operator correct it and search again. [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity)
+explains the current behavior; [accepted corrections](docs/README.md) link to their fixed reviews.
 
 [Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) is the latest accepted development Slice,
 PASS / CLOSED on 2026-11-11.
 [TASK.md](TASK.md) has no active implementation; the next large Slice is selected separately.
-[Progress](docs/progress.md) keeps immutable acceptance references, original Base/Head, role
-exceptions, deferrals and validation limits for all accepted Slices and corrections.
+[Progress](docs/progress.md) keeps immutable Slice acceptance references, original Base/Head, role
+exceptions, deferrals and validation limits. Independent corrections are indexed in the
+[documentation guide](docs/README.md), with their validation boundaries in [Release](docs/release.md#current-v2-validation-boundary).
 
 [Explore](docs/product-experience.md#current--v2-explore-homepage-slice51-pass--closed) is the
 homepage: browse → filter/search → detail → return, with truthful empty states and local read

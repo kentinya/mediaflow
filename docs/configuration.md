@@ -187,6 +187,14 @@ reads the correct movie or TV detail interface and the summary reuses the persis
 saved selection is not confirmed twice or looked up again by the summary stage. A replaced source
 version or a different Active revision never inherits the earlier candidate authority.
 
+In the Files organize dialog and Task Center metadata recovery, explicit candidate search uses
+the current title, movie/TV type and year from that file's correction form. A year must be an
+integer from 1870 through 2100; clearing it removes the year restriction. Changing any search
+condition clears earlier candidates and their selection. An invalid year keeps the inputs and
+shows how to correct or clear it before searching again. Search is read-only; the separate Save
+and re-analysis action uses the same query inputs or the explicitly selected candidate, followed
+by exact-summary confirmation before execution. Candidate browsing does not imply an automatic match.
+
 ## Automation engine settings (native, focused)
 
 ### CURRENT — Three system runtime settings (Slice47 PASS / CLOSED)

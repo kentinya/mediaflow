@@ -922,6 +922,13 @@ show the reason and existing correction/read action; execution still requires it
 confirmation. [Configuration](configuration.md#metadata-query-type-and-saved-identity) distinguishes
 query policy, result type and the saved choice.
 
+For a Metadata correction in either the Files dialog or Task Center recovery, edit the title,
+movie/TV type and year, then explicitly search with those current inputs. Clearing the year removes
+the year restriction; changing a condition clears the earlier candidates and selection. An invalid
+year shows the 1870–2100 integer range and the option to clear it, keeps the input, and allows a
+corrected search in the same card. Search saves no decision. Select a candidate or keep the query,
+then explicitly save and re-analyze; review the exact summary before confirming execution.
+
 V1's explicit one-shot token remains an administration/API-automation/support mechanism, never a
 replacement for the normal V2 journey. Source preparation cannot accept browser-provided raw Storage
 paths, fingerprints, occurrences or IDs as execution authority. In-context summary/confirmation

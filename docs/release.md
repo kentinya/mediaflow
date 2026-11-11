@@ -43,6 +43,22 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [metadata correction search-year fix](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md)
+passed B T3 review on 2026-11-11, from Base
+`e9241d484e33ccb0b1a8def2ab81c17cb1a3d577` through reviewed Head
+`09f55d4be864410a28d22bea125ef4432aceb88c`. Files and Task Center correction searches use
+the current year, including an explicitly cleared year; invalid years show a direct correction
+action. Acceptance passed 142 Python tests, 41 affected Web unit tests and 55 real-Python browser
+tests, plus affected Python quality, Web type/lint/format and fresh production-asset build checks.
+B applied only mechanical formatting after Developer's business fix and verified unchanged syntax
+trees. The fixed report retains the original formatting failures, corrected command and earlier
+inconclusive supplementary probe. Raw evidence remains local at
+`.git/validation-evidence/09f55d4b/patch-20261111-1-b/`. Browser journeys used temporary
+SQLite/Local roots and a fake Provider; TV search and continuation were checked through the real
+API/Worker rather than a separate TV browser journey. This T3 acceptance adds no new full-suite,
+wheel, Docker or production-service validation. Subsequent documentation changes preserve these
+execution inputs and the earlier Slice acceptance identities.
+
 Prior [Slice53 acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) remains unchanged,
 **PASS / CLOSED** on 2026-11-10. Its original Base is
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`, accepted implementation
@@ -145,7 +161,7 @@ Storage/fake Providers; it adds no Docker, production-service, deployment or cro
 Schema and historical records remain unchanged. Subsequent documentation-only reconciliation does
 not change the validated executable inputs.
 
-The latest [failed-file ownership and summary-continuation correction](https://github.com/kentinya/mediaflow/blob/379c3746de2c4cd31ed8a1f558f42c3d2175c2dd/TASK.md#b-final-review--pass)
+The [failed-file ownership and summary-continuation correction](https://github.com/kentinya/mediaflow/blob/379c3746de2c4cd31ed8a1f558f42c3d2175c2dd/TASK.md#b-final-review--pass)
 passed independent B T4 review on 2026-11-09: Base
 `fe3bd99b1cf6046ac716052e5c8ee63851c80f15`, reviewed Head
 `9d05396b02f5f1375819f630a4e7d5a5a7c2c77a`, implementation
