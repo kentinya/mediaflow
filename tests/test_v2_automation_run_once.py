@@ -1378,6 +1378,18 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
             self.assertIsNone(detail["manualRecoveryPreparation"])
+            # The bounded scheduling projection distinguishes human waiting
+            # from an admitted analysis without relying on the overall flow.
+            self.assertEqual(
+                {
+                    "task_id": task_id,
+                    "item_id": item.item_id,
+                    "readable": True,
+                    "queue_state": "waiting_human",
+                    "machine_stage": None,
+                },
+                detail["native_analysis"],
+            )
 
             status, decided = self.request(
                 value,
@@ -1390,6 +1402,8 @@ class RunOnceApiTests(unittest.TestCase):
                 },
             )
             self.assertEqual(200, status, decided)
+            self.assertEqual("waiting_human", decided["native_analysis"]["queue_state"])
+            self.assertIsNone(decided["native_analysis"]["machine_stage"])
 
             status, continued = self.request(
                 value,
@@ -1406,6 +1420,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+            status, queued_detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, queued_detail)
+            self.assertEqual("queued", queued_detail["native_analysis"]["queue_state"])
+            self.assertEqual("analysis", queued_detail["native_analysis"]["machine_stage"])
 
             # A duplicate continue while the analysis is queued is a bounded
             # refusal that changes nothing.
@@ -1433,6 +1454,8 @@ class RunOnceApiTests(unittest.TestCase):
                 value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
+            self.assertEqual("waiting_human", detail["native_analysis"]["queue_state"])
+            self.assertIsNone(detail["native_analysis"]["machine_stage"])
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             self.assertEqual("prepared", preparation["status"])
@@ -1561,6 +1584,135 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIsNotNone(confirmed_summary, detail)
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
+
+    def test_full_queue_refusal_keeps_saved_decision_and_recovers_on_same_action(self):
+        """The real refusal projection is human waiting, not accepted analysis.
+
+        A Run once Task parks its only source at a Recognition review.  The
+        operator saves the decision while a real, capacity-holding Task occupies
+        the shared allowance.  The continue request is refused with the real
+        queue-full answer and writes nothing.  The recovery GET must keep
+        reading the exact Task as human-waiting (not as an admitted analysis
+        only because the overall flow is running).  Releasing the slot and
+        clicking the same action again only requests the analysis: the saved
+        decision is not submitted twice.
+        """
+
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.task_scheduling import (
+            TaskControl,
+            TaskMachineStage,
+            TaskTrigger,
+        )
+
+        self.media("One.2001.mkv")
+        self.change_document = lambda document: (
+            document.update({"recognitionRules": []}),
+            document["automation"].update({"maximumActiveJobs": 1}),
+        )
+        with self.journey() as value:
+            status, admitted = self.admit(value)
+            self.assertEqual(202, status, admitted)
+            result = self.execute(value)
+            task_id = result.task_id
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+
+            active = value.managed.active()
+            scheduling = TaskSchedulingService(value.repository, capacity=1)
+            placeholder = scheduling.admit(
+                "organize",
+                execute_authorized=False,
+                trigger=TaskTrigger.RUN_ONCE,
+                principal="admin",
+                request_id="capacity-holder",
+                scope_path="source",
+                item_limit=1,
+                configuration_snapshot_id=active.revision_id,
+                configuration_snapshot_digest=active.digest,
+                stage=TaskMachineStage.ANALYSIS,
+                now=self.clock.now,
+            )
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            version = detail["checkpoint"]["checkpoint_version"]
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": version,
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            self.assertIsNone(decided["decision"])
+            self.assertIn("retry", decided["checkpoint"]["permitted_action_ids"])
+            self.assertEqual("waiting_human", decided["native_analysis"]["queue_state"])
+
+            status, refused = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("queue_full", refused["error"]["code"])
+            self.assertEqual(
+                "decision_saved_analysis_not_queued",
+                refused["error"]["details"]["durableState"],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The real durable projection proves non-admission: the overall
+            # Task flow still reads running, but no analysis owns the queue.
+            status, after_refusal = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, after_refusal)
+            self.assertEqual("waiting_human", after_refusal["native_analysis"]["queue_state"])
+            self.assertIsNone(after_refusal["native_analysis"]["machine_stage"])
+            self.assertIsNone(after_refusal["decision"])
+            self.assertIsNone(after_refusal["manualRecoveryPreparation"])
+            self.assertIn("retry", after_refusal["checkpoint"]["permitted_action_ids"])
+            self.assertEqual(
+                decided["checkpoint"]["checkpoint_version"],
+                after_refusal["checkpoint"]["checkpoint_version"],
+            )
+
+            # Release the real placeholder through its own scheduling control,
+            # then the same save/analyse action only re-enters the analysis.
+            released = scheduling.request_control(
+                placeholder.task.task_id, TaskControl.CANCEL, now=self.clock.now
+            )
+            self.assertEqual("settled", released.queue_state.value)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": after_refusal["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("queued", state.queue_state.value)
+            self.assertEqual("analysis", state.machine_stage.value)
+            status, admitted_detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, admitted_detail)
+            self.assertEqual("queued", admitted_detail["native_analysis"]["queue_state"])
+            self.assertEqual("analysis", admitted_detail["native_analysis"]["machine_stage"])
+            self.assertIsNone(admitted_detail["decision"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_publication_write_failure_keeps_the_durable_failed_flow_authoritative(self):
         """A48-01 regression: a saved flow failure is never read back as done.

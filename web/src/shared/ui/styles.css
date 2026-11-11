@@ -9495,6 +9495,17 @@ tr[aria-selected="true"] {
   margin-top: 12px;
 }
 
+.mf-organize-correction > summary {
+  cursor: pointer;
+  color: #263b61;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mf-organize-correction[open] > summary {
+  margin-bottom: 4px;
+}
+
 .mf-organize-decision {
   margin-top: 12px;
   padding: 13px 14px;

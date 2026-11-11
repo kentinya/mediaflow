@@ -616,6 +616,13 @@ function recognitionRecoveryDocument(overrides: Record<string, unknown> = {}) {
       next_action: "inspect the current item state",
     },
     decision: null,
+    native_analysis: {
+      task_id: "task-001",
+      item_id: "item-2",
+      readable: true,
+      queue_state: "waiting_human",
+      machine_stage: null,
+    },
     manualRecoveryAvailable: false,
     recoveryKind: "business_problem",
     next_action: "inspect the current item state",
@@ -1995,6 +2002,8 @@ describe("selected-run detail tabs", () => {
     // The explicit reconciliation reads the current durable state; it never
     // resubmits the original decision.
     current = recognitionRecoveryDocument();
+    (current["checkpoint"] as Record<string, unknown>)["permitted_action_ids"] =
+      ["retry"];
     await user.click(
       within(backToItem).getByRole("button", {
         name: /重新读取条目后再继续/,

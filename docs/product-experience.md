@@ -937,9 +937,11 @@ explicitly refused (for example a full shared queue), the same action remains be
 requests only that zero-mutation analysis; it does not save the decision again or ask for the candidate
 again. An accepted analysis keeps the same place in a waiting state, including the native same-Task
 path whose checkpoint may still expose the old retry permission; no second analysis button or
-duplicate request appears. An unknown response stays protected until the same Task's durable state is
-read; a read that proves admission keeps waiting, and only a proved non-admission re-enables the same
-action. The current Task's Metadata confirmation/correction continues using its saved candidate and type
+duplicate request appears. Refresh/reopen reads the exact Task's bounded scheduling projection (or
+a Files Task's linked discovery); the overall flow reading running while human-waiting is not
+admission. An unknown response stays protected until that same durable state is read; a read that
+proves admission keeps waiting, and only a proved non-admission re-enables the same action. The
+current Task's Metadata confirmation/correction continues using its saved candidate and type
 on the same legitimate pin: re-analysis reads the correct detail interface, then the summary uses the
 persisted identity without another Provider lookup or repeating the same confirmation. Invalid/stale
 choices or Provider failure retain the saved state and show the reason and existing correction/read
@@ -1003,13 +1005,16 @@ and the Tasks/recovery journey below remain.
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
    discovery/stability/analysis status and bounded exclusions, rather than waiting to open it.
 2. **Review/action:** one primary file per page; show filename/path, 第 i / N 个, status,
-   the current problem or decision first, then a compact work identity/source → target and
-   operation, with attachments and expandable evidence after that. Do not lead with empty target,
+   one primary status: the current legal decision, its saved waiting/refusal state, or the ready
+   plan. When the plan exists, show the adopted work identity, source → target, operation/source
+   retention and attachment warning compactly before optional evidence; do not repeat the source and
+   operation in a second block. Ordinary identity correction stays collapsed until wanted, and an
+   unsaved draft, refusal or error reopens it with its inputs. Do not lead with empty target,
    operation or attachment blocks before a plan exists; state once that the zero-mutation plan is
    not generated yet. Typical two-candidate decisions and their save action remain visible without
    scrolling past placeholder facts. Exact diagnostics stay expandable under distinct item/decision
-   labels. Legal corrections stay near that file. Previous/Next only browse and preserve per-item
-   drafts and inclusion; they never save, analyze or execute.
+   labels. Previous/Next only browse and preserve per-item drafts and inclusion; they never save,
+   analyze or execute.
 3. **Ten ambiguous files:** on 第 1 / 10 个 select the matching candidate and click
    保存并重新分析; after its saved choice is analyzed, inspect the new exact plan and go to the
    next file. Repeat for all 10: ten candidate selections, ten save/reanalysis actions, no per-file

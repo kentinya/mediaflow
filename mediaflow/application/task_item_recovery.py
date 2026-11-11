@@ -133,6 +133,14 @@ class TaskItemRecoveryService:
             "item_id": item_id,
             "checkpoint": checkpoint_document,
             "decision": decision,
+            # The durable scheduling row is the only proof that an accepted
+            # same-Task analysis really owns machine work.  A whole-Task flow
+            # status also reads ``running`` while the operator is merely
+            # waiting, so it cannot distinguish an admitted analysis from an
+            # explicit queue refusal.  This bounded read-only projection names
+            # that exact Task's queue state and machine stage; it grants no
+            # authority and performs no scheduling transition.
+            "native_analysis": self._native_analysis(task_id, item_id),
             # Whether this exact item is currently one of the four Task Center
             # business problems, and whether an exact persisted recovery lineage
             # already owns it.  Task Center RO-4 publishes technical history
@@ -147,6 +155,39 @@ class TaskItemRecoveryService:
                 checkpoint.actions[0].label
                 if checkpoint.actions
                 else "inspect the saved item evidence"
+            ),
+        }
+
+    def _native_analysis(self, task_id: str, item_id: str) -> dict[str, object]:
+        """The exact Task's read-only machine-analysis admission projection."""
+
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        if not callable(reader):
+            return {
+                "task_id": task_id,
+                "item_id": item_id,
+                "readable": False,
+                "queue_state": None,
+                "machine_stage": None,
+            }
+        state = reader(task_id)
+        if state is None:
+            # A legacy Task keeps its original execution path; absence is an
+            # answer, not a queued or accepted analysis.
+            return {
+                "task_id": task_id,
+                "item_id": item_id,
+                "readable": True,
+                "queue_state": "not_admitted",
+                "machine_stage": None,
+            }
+        return {
+            "task_id": task_id,
+            "item_id": item_id,
+            "readable": True,
+            "queue_state": state.queue_state.value,
+            "machine_stage": (
+                state.machine_stage.value if state.machine_stage is not None else None
             ),
         }
 

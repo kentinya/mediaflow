@@ -10,6 +10,20 @@ import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 
 const checkpointVersion = "b".repeat(64);
 
+/** The recovery GET's bounded scheduling projection for this exact Task. */
+function nativeAnalysis(
+  queueState = "waiting_human",
+  machineStage: string | null = null,
+): Record<string, unknown> {
+  return {
+    task_id: "task-1",
+    item_id: "item-1",
+    readable: true,
+    queue_state: queueState,
+    machine_stage: machineStage,
+  };
+}
+
 function previewDocument(): Record<string, unknown> {
   const value = JSON.parse(
     JSON.stringify(
@@ -82,6 +96,7 @@ function conflictRecovery(resolved = false): Record<string, unknown> {
           target_path: "Movies/Two (2002)/Two (2002).mkv",
         },
     manualRecoveryAvailable: false,
+    native_analysis: nativeAnalysis(),
     recoveryKind: "business_problem",
     next_action: resolved
       ? "continue safe analysis"
@@ -126,6 +141,7 @@ function recognitionRecovery(resolved = false): Record<string, unknown> {
           ],
         },
     manualRecoveryAvailable: false,
+    native_analysis: nativeAnalysis(),
     // Task Center RO-4: a live four-type review is the surface that really owes
     // the operator an action, so the panel keeps its native decision form.
     recoveryKind: "business_problem",
@@ -180,6 +196,7 @@ function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
           conflict_types: [],
         },
     manualRecoveryAvailable: false,
+    native_analysis: nativeAnalysis(),
     recoveryKind: "business_problem",
     next_action: resolved
       ? "continue safe analysis"
@@ -195,6 +212,7 @@ function queuedAnalysisRecovery(status: string): Record<string, unknown> {
     new_task_id: "analysis-task-1",
     new_item_id: "analysis-item-1",
   };
+  value["native_analysis"] = nativeAnalysis("queued", "analysis");
   return value;
 }
 
@@ -1878,7 +1896,9 @@ describe("TaskItemRecoveryPanel", () => {
           });
         }
         if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
-          return new Response(JSON.stringify(runOverviewDocument("waiting")), {
+          // The overall Task flow still reads running while the operator is
+          // only human-waiting; that status is not analysis admission proof.
+          return new Response(JSON.stringify(runOverviewDocument("running")), {
             status: 200,
           });
         }
@@ -1936,6 +1956,186 @@ describe("TaskItemRecoveryPanel", () => {
     ]);
   });
 
+  it("re-enables only the same analysis action after a read proves non-admission", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    // The decision is saved.  The analysis POST response is lost while the
+    // durable scheduling row stays human-waiting, so the request was not
+    // admitted.  Only the readback may prove that and re-enable the action.
+    const currentRecovery = recognitionRecovery(true);
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+          return new Response(JSON.stringify(runOverviewDocument("running")), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          posts.push(url);
+          return new Response(
+            JSON.stringify({ error: { code: "unavailable" } }),
+            { status: 503 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          posts.push(url);
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "保存并重新分析",
+      }),
+    );
+    expect(await within(panel).findByText(/服务响应无法确认/)).toBeVisible();
+    expect(
+      within(panel).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
+
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "重新读取条目后再继续",
+      }),
+    );
+    expect(
+      await within(panel).findByText(/本次分析请求未获受理，决定仍然保存/),
+    ).toBeVisible();
+    const retry = within(panel).getByRole("button", {
+      name: "保存并重新分析",
+    });
+    await user.click(retry);
+    expect(await within(panel).findByText(/服务响应无法确认/)).toBeVisible();
+    expect(posts).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
+  });
+
+  it("keeps the saved-decision action for an automatic Task while the flow itself still reads running", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    // A real Run once Task owns no Files discovery.  The decision is durably
+    // saved, the analysis was explicitly refused, and the overall flow still
+    // reads running because it is human-waiting.  Only the bounded scheduling
+    // projection distinguishes that from an admitted analysis.
+    let currentRecovery = recognitionRecovery(true);
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+          return new Response(JSON.stringify(runOverviewDocument("running")), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          posts.push(url);
+          currentRecovery = recognitionRecovery(true);
+          currentRecovery["native_analysis"] = nativeAnalysis(
+            "queued",
+            "analysis",
+          );
+          return new Response(
+            JSON.stringify({
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: { taskId: "task-1", itemId: "item-1" },
+              sideEffects: "none",
+              executionMode: "dry_run",
+              nextAction: "wait for the new plan",
+            }),
+            { status: 202 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          posts.push(url);
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(<RecoveryPanelHarness />);
+
+    const panel = await screen.findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    expect(await within(panel).findByText("选择已保存")).toBeVisible();
+    const retry = within(panel).getByRole("button", {
+      name: "保存并重新分析",
+    });
+    expect(retry).toBeEnabled();
+
+    // A close/reopen reads the same durable state instead of deciding from
+    // the overall running flow.
+    await user.click(screen.getByRole("button", { name: "关闭卡片" }));
+    await user.click(screen.getByRole("button", { name: "重新打开卡片" }));
+    const reopened = await screen.findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    const reopenedRetry = await within(reopened).findByRole("button", {
+      name: "保存并重新分析",
+    });
+    await user.click(reopenedRetry);
+
+    expect(
+      await within(reopened).findByText(/零变更分析正在等待/),
+    ).toBeVisible();
+    expect(
+      within(reopened).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
+    expect(posts).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
+  });
+
   it("reconciles an unknown analysis against the same Task before unlocking the action", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");
@@ -1974,7 +2174,13 @@ describe("TaskItemRecoveryPanel", () => {
           posts.push(url);
           continuationAttempts += 1;
           // The response is lost after the backend already queued this Task.
-          runStatus = "pending";
+          // Only the durable scheduling projection proves the admission.
+          currentRecovery = recognitionRecovery(true);
+          currentRecovery["native_analysis"] = nativeAnalysis(
+            "queued",
+            "analysis",
+          );
+          runStatus = "running";
           return new Response(
             JSON.stringify({ error: { code: "unavailable" } }),
             { status: 503 },

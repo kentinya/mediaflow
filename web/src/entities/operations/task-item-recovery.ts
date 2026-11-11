@@ -146,11 +146,26 @@ export function normalizeTaskItemRecoveryKind(
   }
 }
 
+/**
+ * The exact Task's read-only machine-analysis admission.
+ *
+ * `queueState` and `machineStage` are bounded internal scheduling facts; the
+ * UI uses them only to distinguish an admitted analysis (queued/claimed at the
+ * analysis stage) from an explicit refusal while the overall Task flow may
+ * still read `running` during human waiting.
+ */
+export interface TaskItemNativeAnalysis {
+  readonly readable: boolean;
+  readonly queueState: string | null;
+  readonly machineStage: string | null;
+}
+
 export interface TaskItemRecoveryModel {
   readonly taskId: string;
   readonly itemId: string;
   readonly checkpoint: TaskItemRecoveryCheckpoint;
   readonly decision: TaskItemDecision | null;
+  readonly nativeAnalysis: TaskItemNativeAnalysis | null;
   readonly manualRecoveryLink: ManualRecoveryLinkModel | null;
   readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
@@ -351,6 +366,22 @@ function readDecision(payload: unknown): TaskItemDecision {
   };
 }
 
+function readNativeAnalysis(payload: unknown): TaskItemNativeAnalysis | null {
+  if (payload === null || payload === undefined) return null;
+  const source = readRecord(payload, "nativeAnalysis");
+  let readable: boolean;
+  try {
+    readable = normalizeBoolean(source["readable"], "nativeAnalysis.readable");
+  } catch {
+    return fail();
+  }
+  return {
+    readable,
+    queueState: optionalText(source, "queue_state"),
+    machineStage: optionalText(source, "machine_stage"),
+  };
+}
+
 function readCheckpoint(payload: unknown): TaskItemRecoveryCheckpoint {
   const source = readRecord(payload, "checkpoint");
   const effects = readRecord(source["effects"], "checkpoint.effects");
@@ -511,10 +542,13 @@ export function normalizeTaskItemRecovery(
     source["manualRecoveryPreparation"] ??
     source["manual_recovery_preparation"];
   const checkpoint = readCheckpoint(source["checkpoint"]);
+  const rawNativeAnalysis =
+    source["nativeAnalysis"] ?? source["native_analysis"];
   return {
     taskId: text(source, "task_id"),
     itemId: text(source, "item_id"),
     checkpoint,
+    nativeAnalysis: readNativeAnalysis(rawNativeAnalysis),
     decision:
       rawDecision === null || rawDecision === undefined
         ? null

@@ -67,6 +67,7 @@ import {
 import {
   TaskItemRecoveryPanel,
   type TaskItemDecisionDraft,
+  type TaskItemRecoveryDecisionStatus,
 } from "./TaskItemRecoveryPanel";
 
 /** One admitted Files organize selection the dialog follows. */
@@ -121,6 +122,22 @@ const metadataKey = (value: {
 /** The compact operation wording an operator reads on one reviewed file. */
 function operationLabel(value: string | null): string {
   return value === null ? "—" : displayEnum(value);
+}
+
+/** Whether the reviewed operation keeps the source, beside the operation. */
+function operationRetentionLabel(value: string | null): string | null {
+  switch (value) {
+    case "MOVE":
+      return "来源不保留";
+    case "COPY":
+    case "LINK":
+      return "来源保留";
+    case "NOOP":
+    case "SKIP":
+      return "不执行文件操作，来源保留";
+    default:
+      return null;
+  }
 }
 
 /** The operator-facing media kind, never the raw provider enum. */
@@ -250,6 +267,14 @@ export function ManualOrganizeDialog({
     Readonly<Record<string, TaskItemDecisionDraft>>
   >({});
   /**
+   * The panel's one primary state per exact problem TaskItem, so the dialog's
+   * nearby copy follows the real decision/waiting/refusal instead of repeating
+   * an outdated instruction.  It is presentation only and grants nothing.
+   */
+  const [decisionStatuses, setDecisionStatuses] = useState<
+    Readonly<Record<string, TaskItemRecoveryDecisionStatus>>
+  >({});
+  /**
    * The preparation's own analysis action has no TaskItem: its in-flight,
    * accepted or rejected fact belongs to this one durable preparation, never
    * to an invented empty item or a confirmation page that cannot be reached.
@@ -336,12 +361,18 @@ export function ManualOrganizeDialog({
       setAllowOverwrite(false);
       setAllowSourceCleanup(false);
       setConfirmationSelectionKey(null);
-      // Per-file save/analysis notices stay keyed by the durable itemId: a new
-      // exact plan must not hide what the operator's last explicit action did.
+      // Per-file refusals stay keyed by the durable itemId because the
+      // refusal is still the operator's next-step fact.  A success notice only
+      // described the analysis that produced this new plan, so it must not
+      // keep occupying the ready page as if the file still waits.
       setResult(null);
-      // An accepted analysis request is superseded by the plan it produced; a
-      // rejection stays visible beside that plan because the refusal itself is
-      // still the operator's next-step fact.
+      setNotices((previous) => {
+        const next: Record<string, SaveNotice> = {};
+        for (const [itemId, notice] of Object.entries(previous)) {
+          if (notice.kind !== "success") next[itemId] = notice;
+        }
+        return next;
+      });
       setPreparationNotice((previous) =>
         previous?.kind === "success" ? null : previous,
       );
@@ -1348,9 +1379,10 @@ export function ManualOrganizeDialog({
       !organizeFlowEnded &&
       organizeTaskId !== null &&
       problemTaskItemId !== null;
-    const metadataNotFound =
-      item.analysis?.metadata?.status === "not_found" ||
-      item.analysis?.metadata?.match?.status === "not_found";
+    const decisionStatus =
+      problemTaskItemId === null
+        ? null
+        : (decisionStatuses[problemTaskItemId] ?? null);
     const recognitionTypeName =
       intent?.options.recognitionTypes.find(
         (value) =>
@@ -1420,15 +1452,17 @@ export function ManualOrganizeDialog({
         {hasCurrentProblem ? (
           <section
             className="mf-organize-section mf-organize-section-primary"
-            aria-label="当前问题"
+            aria-label="当前状态"
           >
             <div className="mf-organize-section-head">
-              <h4>当前问题</h4>
-              <span className="mf-organize-section-note">
-                {hasNativeProblem || item.conflicts.length > 0
-                  ? "先完成这个文件的选择"
-                  : "已记录的核对信息"}
-              </span>
+              <h4>当前状态</h4>
+              {!hasNativeProblem ? (
+                <span className="mf-organize-section-note">
+                  {item.conflicts.length > 0
+                    ? "需要当前文件的冲突决定"
+                    : "已记录的核对信息"}
+                </span>
+              ) : null}
             </div>
             {item.conflicts.length > 0 ? (
               <>
@@ -1458,19 +1492,11 @@ export function ManualOrganizeDialog({
                   这里不会自动覆盖、跳过或移动任何文件。
                 </p>
               </>
-            ) : item.failure !== null ? (
-              hasNativeProblem ? (
-                <p role="status">
-                  {metadataNotFound
-                    ? "当前文件还没有匹配到作品，尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"
-                    : "当前文件尚未就绪。请在下方完成合法决定；保存只记录决定，随后重新分析，不会执行整理。"}
-                </p>
-              ) : (
-                <StatusBanner variant="error" title="条目未就绪">
-                  <p>{item.failure.message}</p>
-                  <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
-                </StatusBanner>
-              )
+            ) : item.failure !== null && !hasNativeProblem ? (
+              <StatusBanner variant="error" title="条目未就绪">
+                <p>{item.failure.message}</p>
+                <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
+              </StatusBanner>
             ) : null}
             {hasNativeProblem && problemTaskItemId !== null ? (
               <TaskItemRecoveryPanel
@@ -1487,6 +1513,13 @@ export function ManualOrganizeDialog({
                     ...previous,
                     [problemTaskItemId]: draft,
                   }))
+                }
+                onDecisionStatusChange={(status) =>
+                  setDecisionStatuses((previous) =>
+                    previous[problemTaskItemId] === status
+                      ? previous
+                      : { ...previous, [problemTaskItemId]: status },
+                  )
                 }
               />
             ) : item.conflicts.length > 0 ? (
@@ -1528,18 +1561,18 @@ export function ManualOrganizeDialog({
           </p>
         )}
 
-        <section className="mf-organize-section" aria-label="作品匹配">
+        <section className="mf-organize-section" aria-label="当前方案">
           <div className="mf-organize-section-head">
-            <h4>作品与识别</h4>
+            <h4>当前方案</h4>
             <span className="mf-organize-section-note">
-              {recognitionTypeName ??
-                item.recognitionType ??
-                "识别类型尚未生成"}
+              {hasGeneratedScheme
+                ? operationLabel(item.operation)
+                : "等待零变更分析"}
             </span>
           </div>
           <dl className="mf-organize-facts">
             <div>
-              <dt>当前作品</dt>
+              <dt>作品</dt>
               <dd>
                 {item.title ?? "尚未匹配作品"}
                 {item.mediaIdentity?.year != null
@@ -1551,67 +1584,118 @@ export function ManualOrganizeDialog({
               </dd>
             </div>
             <div>
-              <dt>来源文件</dt>
-              <dd className="mf-exact-identity">
-                {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+              <dt>识别类型</dt>
+              <dd>
+                {recognitionTypeName ??
+                  item.recognitionType ??
+                  "识别类型尚未生成"}
               </dd>
             </div>
-          </dl>
-          {item.analysis?.metadata?.match != null &&
-          item.analysis.metadata.match.candidates.length > 0 ? (
-            <details className="mf-organize-subdetails">
-              <summary>
-                可读候选（{item.analysis.metadata.match.candidates.length} 个）
-              </summary>
-              <ul className="mf-preview-attachments">
-                {item.analysis.metadata.match.candidates.map(
-                  (candidate, position) => (
-                    <li key={`candidate-${position}`}>
-                      {candidate.title ?? candidate.providerId}
-                      {candidate.year !== null ? ` (${candidate.year})` : ""}
-                      {candidate.mediaType !== null
-                        ? ` · ${mediaTypeLabel(candidate.mediaType)}`
+            {hasGeneratedScheme ? (
+              <>
+                <div>
+                  <dt>来源</dt>
+                  <dd className="mf-exact-identity">
+                    {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                  </dd>
+                </div>
+                {hasGeneratedTarget ? (
+                  <div>
+                    <dt>目标</dt>
+                    <dd className="mf-exact-identity">
+                      {item.targetStorageId ?? "—"}:{targetRelativePath}
+                    </dd>
+                  </div>
+                ) : null}
+                {item.analysis?.classification?.mediaLibraryId != null ? (
+                  <div>
+                    <dt>目标媒体库</dt>
+                    <dd>
+                      {item.analysis.classification.mediaLibraryId}
+                      {item.analysis.classification.matchedRuleName
+                        ? ` · 规则：${item.analysis.classification.matchedRuleName}`
                         : ""}
-                      {candidate.exactTitle ? " · 标题精确" : ""}
-                      {candidate.exactYear ? " · 年份精确" : ""}
-                      {candidate.provider !== null ||
-                      candidate.providerId !== null ? (
-                        <span className="mf-dashboard-meta">
-                          {" "}
-                          身份 {candidate.provider ?? "—"}/
-                          {candidate.providerId ?? "—"}
-                          {candidate.score !== null
-                            ? ` · 评分 ${candidate.score}`
-                            : ""}
-                        </span>
-                      ) : null}
-                    </li>
-                  ),
-                )}
-              </ul>
-              {item.analysis.metadata.match.reasons.length > 0 ? (
-                <p className="mf-dashboard-meta">
-                  {item.analysis.metadata.match.reasons.join(";")}
-                </p>
-              ) : null}
-            </details>
-          ) : (
-            <p className="mf-organize-section-note">
-              当前没有可读的元数据候选。
-            </p>
-          )}
-
-          {!organizeFlowEnded && hasNativeProblem ? (
+                    </dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>操作</dt>
+                  <dd>
+                    {operationLabel(item.operation)}
+                    {operationRetentionLabel(item.operation) !== null
+                      ? ` · ${operationRetentionLabel(item.operation)}`
+                      : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>附件</dt>
+                  <dd>
+                    {item.attachments.length === 0
+                      ? "无关联附件"
+                      : `${item.attachments.length} 个关联附件${
+                          attachmentWarnings.length > 0
+                            ? ` · ${attachmentWarnings.length} 个需核对下一步`
+                            : ""
+                        }`}
+                  </dd>
+                </div>
+              </>
+            ) : null}
+          </dl>
+          {!hasGeneratedScheme ? (
             <p className="mf-organize-section-note" role="status">
-              当前文件的修正决定统一在上方“当前问题”中完成；保存后只重新运行零变更分析，不会执行整理。
+              {decisionStatus === "analysis_waiting"
+                ? "新的零变更方案生成后，这里会显示来源、目标、操作与附件。"
+                : decisionStatus === "analysis_refused"
+                  ? "补做同一零变更分析并生成新方案后，这里会显示来源、目标、操作与附件。"
+                  : decisionStatus === "analysis_unknown"
+                    ? "核对分析结果并生成可确认的新方案后，这里会显示来源、目标、操作与附件。"
+                    : decisionStatus === "analysis_read_pending"
+                      ? "正在确认当前分析状态；确认后会显示可核对的新方案。"
+                      : "零变更方案尚未生成：完成上方当前选择并重新分析后，这里会显示来源、目标、操作与附件。"}
             </p>
+          ) : !hasGeneratedTarget ? (
+            <p className="mf-organize-section-note" role="status">
+              操作已经记录，但目标路径尚未生成；完成当前状态中的步骤并重新分析后即可核对完整来源与目标。
+            </p>
+          ) : item.destructiveImplications !== null &&
+            (item.destructiveImplications.overwriteRequired ||
+              item.destructiveImplications.sourceCleanupRequired) ? (
+            <p className="mf-organize-section-note" role="status">
+              危险影响：
+              {destructiveStatement(
+                item.destructiveImplications,
+                item.operation,
+              )}
+              仅在最后的整批复核中明确授权后才可能执行。
+            </p>
+          ) : null}
+          {notice !== undefined ? (
+            <StatusBanner
+              variant={
+                notice.kind === "success"
+                  ? "success"
+                  : notice.kind === "warning"
+                    ? "warning"
+                    : "error"
+              }
+              title={notice.kind === "success" ? "已保存" : "保存/分析未完成"}
+            >
+              <p role="status">{notice.text}</p>
+            </StatusBanner>
           ) : null}
           {!organizeFlowEnded &&
           !hasNativeProblem &&
           currentIntentItem !== undefined &&
           intent !== undefined ? (
-            <div className="mf-organize-correction mf-organize-decision">
-              <h5>修正识别或作品</h5>
+            <details
+              className="mf-organize-correction mf-organize-decision"
+              open={draftDirty || notice?.retryAnalysis === true}
+            >
+              <summary className="mf-organize-correction-summary">
+                修正识别或作品
+                {draftDirty ? "（有未保存输入）" : ""}
+              </summary>
               <div className="mf-organize-decision-fields">
                 <label className="mf-organize-decision-field">
                   <span className="mf-organize-decision-label">识别类型</span>
@@ -1699,96 +1783,8 @@ export function ManualOrganizeDialog({
                     : "保存并重新分析"}
                 </Button>
               </div>
-              {notice !== undefined ? (
-                <StatusBanner
-                  variant={
-                    notice.kind === "success"
-                      ? "success"
-                      : notice.kind === "warning"
-                        ? "warning"
-                        : "error"
-                  }
-                  title={
-                    notice.kind === "success" ? "已保存" : "保存/分析未完成"
-                  }
-                >
-                  <p role="status">{notice.text}</p>
-                </StatusBanner>
-              ) : null}
-            </div>
+            </details>
           ) : null}
-        </section>
-
-        <section className="mf-organize-section" aria-label="来源到目标">
-          <div className="mf-organize-section-head">
-            <h4>来源与目标</h4>
-            <span className="mf-organize-section-note">
-              {hasGeneratedScheme
-                ? operationLabel(item.operation)
-                : "等待零变更分析"}
-            </span>
-          </div>
-          {hasGeneratedScheme ? (
-            <>
-              <dl className="mf-organize-facts">
-                {item.operation !== null ? (
-                  <div>
-                    <dt>操作</dt>
-                    <dd>{operationLabel(item.operation)}</dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>来源</dt>
-                  <dd className="mf-exact-identity">
-                    {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-                  </dd>
-                </div>
-                {hasGeneratedTarget ? (
-                  <div>
-                    <dt>目标</dt>
-                    <dd className="mf-exact-identity">
-                      {item.targetStorageId ?? "—"}:{targetRelativePath}
-                    </dd>
-                  </div>
-                ) : null}
-                {item.analysis?.classification?.mediaLibraryId != null ? (
-                  <div>
-                    <dt>目标媒体库</dt>
-                    <dd>
-                      {item.analysis.classification.mediaLibraryId}
-                      {item.analysis.classification.matchedRuleName
-                        ? ` · 规则：${item.analysis.classification.matchedRuleName}`
-                        : ""}
-                    </dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>附件</dt>
-                  <dd>
-                    {item.attachments.length === 0
-                      ? "无关联附件"
-                      : `${item.attachments.length} 个关联附件`}
-                  </dd>
-                </div>
-              </dl>
-              {hasGeneratedTarget ? (
-                <p className="mf-organize-section-note">
-                  {destructiveStatement(
-                    item.destructiveImplications,
-                    item.operation,
-                  )}
-                </p>
-              ) : (
-                <p className="mf-organize-section-note" role="status">
-                  操作已经记录，但目标路径尚未生成；完成当前问题并重新分析后即可核对完整来源与目标。
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="mf-organize-section-note" role="status">
-              零变更方案尚未生成：完成上方当前问题并重新分析后，这里会显示操作、来源、目标与附件。
-            </p>
-          )}
           <div className="mf-organize-selection">
             <label>
               <input
@@ -1812,19 +1808,13 @@ export function ManualOrganizeDialog({
               <p className="mf-organize-section-note" role="status">
                 {admittedItemIds.has(item.itemId)
                   ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                  : "该文件当前未就绪,不能纳入本次确认;请先完成上方当前问题中的决定。"}
-              </p>
-            ) : null}
-            {!organizeFlowEnded &&
-            (item.destructiveImplications?.overwriteRequired === true ||
-              item.destructiveImplications?.sourceCleanupRequired === true) ? (
-              <p className="mf-organize-section-note" role="status">
-                危险影响：
-                {destructiveStatement(
-                  item.destructiveImplications,
-                  item.operation,
-                )}
-                仅在最后的整批复核中明确授权后才可能执行。
+                  : decisionStatus === "analysis_waiting"
+                    ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
+                    : decisionStatus === "analysis_refused"
+                      ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
+                      : decisionStatus === "analysis_unknown"
+                        ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
+                        : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
               </p>
             ) : null}
           </div>
@@ -1879,6 +1869,45 @@ export function ManualOrganizeDialog({
 
         <details className="mf-organize-diagnostics">
           <summary>查看匹配与方案依据</summary>
+          {item.analysis?.metadata?.match != null &&
+          item.analysis.metadata.match.candidates.length > 0 ? (
+            <details className="mf-organize-subdetails">
+              <summary>
+                可读候选（{item.analysis.metadata.match.candidates.length} 个）
+              </summary>
+              <ul className="mf-preview-attachments">
+                {item.analysis.metadata.match.candidates.map(
+                  (candidate, position) => (
+                    <li key={`candidate-${position}`}>
+                      {candidate.title ?? candidate.providerId}
+                      {candidate.year !== null ? ` (${candidate.year})` : ""}
+                      {candidate.mediaType !== null
+                        ? ` · ${mediaTypeLabel(candidate.mediaType)}`
+                        : ""}
+                      {candidate.exactTitle ? " · 标题精确" : ""}
+                      {candidate.exactYear ? " · 年份精确" : ""}
+                      {candidate.provider !== null ||
+                      candidate.providerId !== null ? (
+                        <span className="mf-dashboard-meta">
+                          {" "}
+                          身份 {candidate.provider ?? "—"}/
+                          {candidate.providerId ?? "—"}
+                          {candidate.score !== null
+                            ? ` · 评分 ${candidate.score}`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </li>
+                  ),
+                )}
+              </ul>
+              {item.analysis.metadata.match.reasons.length > 0 ? (
+                <p className="mf-dashboard-meta">
+                  {item.analysis.metadata.match.reasons.join(";")}
+                </p>
+              ) : null}
+            </details>
+          ) : null}
           <ItemFindings item={item} />
           <dl>
             <dt>元数据身份</dt>

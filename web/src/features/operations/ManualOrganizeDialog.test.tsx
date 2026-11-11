@@ -94,6 +94,7 @@ function makeBackend() {
     metadataCandidateResolved: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
+    recoveryAnalysisQueued: false as boolean,
     // B-PATCH-01: the next year-conditioned search is refused by the real
     // API's invalid_year envelope before any Provider call.
     rejectMetadataSearchYear: false as boolean,
@@ -458,6 +459,13 @@ function makeBackend() {
           conflict_types: [],
         },
     manualRecoveryAvailable: false,
+    native_analysis: {
+      task_id: "organize-task-1",
+      item_id: "problem-item-1",
+      readable: true,
+      queue_state: state.recoveryAnalysisQueued ? "queued" : "waiting_human",
+      machine_stage: state.recoveryAnalysisQueued ? "analysis" : null,
+    },
     recoveryKind: "business_problem",
     next_action: resolved
       ? "continue safe analysis"
@@ -519,6 +527,13 @@ function makeBackend() {
           conflict_types: [],
         },
     manualRecoveryAvailable: false,
+    native_analysis: {
+      task_id: "organize-task-1",
+      item_id: "problem-item-1",
+      readable: true,
+      queue_state: state.recoveryAnalysisQueued ? "queued" : "waiting_human",
+      machine_stage: state.recoveryAnalysisQueued ? "analysis" : null,
+    },
     recoveryKind: "business_problem",
     next_action: resolved
       ? "continue safe analysis"
@@ -771,6 +786,7 @@ function makeBackend() {
         if (state.failMetadataDecision) {
           return jsonResponse({ error: { code: "stale_checkpoint" } }, 409);
         }
+        state.recoveryAnalysisQueued = false;
         if (state.metadataCandidateProblem) {
           state.metadataCandidateResolved = true;
           return jsonResponse(metadataCandidateRecovery(true));
@@ -790,6 +806,7 @@ function makeBackend() {
         if (state.failMetadataContinue) {
           return jsonResponse({ error: { code: "unavailable" } }, 503);
         }
+        state.recoveryAnalysisQueued = true;
         return jsonResponse({
           sideEffects: "none",
           next_action: "wait for the Worker and inspect its linked result",
@@ -1102,6 +1119,16 @@ function card(): HTMLElement {
   return screen.getByRole("dialog", { name: "整理所选文件" });
 }
 
+/** Open the on-demand correction details the way the operator does. */
+async function openCorrection(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> {
+  const summary = within(card()).queryByText(/^修正识别或作品/);
+  if (summary === null) return;
+  const details = summary.closest("details");
+  if (details !== null && !details.open) await user.click(summary);
+}
+
 /** Mount the real Files page and open the real batch entry. */
 async function openDialog(
   user: ReturnType<typeof userEvent.setup>,
@@ -1153,6 +1180,7 @@ describe("ManualOrganizeDialog", () => {
       );
       expect(within(card()).getAllByText(name).length).toBeGreaterThan(0);
 
+      await openCorrection(user);
       const identitySelect = screen.getByLabelText(`元数据身份 ${name}`);
       const firstIdentity = within(identitySelect)
         .getAllByRole("option")
@@ -1371,6 +1399,17 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() =>
       expect(within(card()).getAllByText("纳入本次整理")[0]).toBeVisible(),
     );
+    // The ready page ends the stale selection/waiting copy and keeps the
+    // ordinary correction collapsed; the adopted plan owns the first screen.
+    expect(within(card()).queryByText(/先完成这个文件的选择/)).toBeNull();
+    expect(within(card()).queryByText(/请在下方完成合法决定/)).toBeNull();
+    const correction = within(card())
+      .getByText(/^修正识别或作品/)
+      .closest("details");
+    expect(correction?.open).toBe(false);
+    expect(
+      within(card()).queryByText(/选择已保存,正在按固定配置重新分析/),
+    ).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
@@ -1529,6 +1568,7 @@ describe("ManualOrganizeDialog", () => {
     const backend = await openDialog(user);
     await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
 
+    await openCorrection(user);
     const identitySelect = screen.getByLabelText("元数据身份 Movie.01.mkv");
     await user.selectOptions(identitySelect, "tmdb/129/movie");
 
@@ -1697,6 +1737,7 @@ describe("ManualOrganizeDialog", () => {
       return original(input, init);
     });
 
+    await openCorrection(user);
     await user.selectOptions(
       screen.getByLabelText("元数据身份 Movie.01.mkv"),
       "tmdb/129/movie",
@@ -1734,6 +1775,7 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
     expect(within(card()).getByText("Movie.01.mkv")).toBeVisible();
 
+    await openCorrection(user);
     await user.selectOptions(
       screen.getByLabelText("元数据身份 Movie.01.mkv"),
       "tmdb/129/movie",

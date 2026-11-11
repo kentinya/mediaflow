@@ -294,6 +294,14 @@ function sameDecisionInputs(
   );
 }
 
+/** One primary per-file decision/analysis state for the dialog's own copy. */
+export type TaskItemRecoveryDecisionStatus =
+  | "decision_required"
+  | "analysis_waiting"
+  | "analysis_refused"
+  | "analysis_unknown"
+  | "analysis_read_pending";
+
 export interface TaskItemRecoveryPanelProps {
   readonly taskId: string;
   readonly itemId: string;
@@ -319,6 +327,13 @@ export interface TaskItemRecoveryPanelProps {
    */
   readonly decisionDraft?: TaskItemDecisionDraft;
   readonly onDecisionDraftChange?: (draft: TaskItemDecisionDraft) => void;
+  /**
+   * Decision-mode hosts use this single state for their own nearby copy; it
+   * never replaces the panel's own status/action or grants authority.
+   */
+  readonly onDecisionStatusChange?: (
+    status: TaskItemRecoveryDecisionStatus,
+  ) => void;
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -334,6 +349,7 @@ export function TaskItemRecoveryPanel({
   onAnalysisRequested,
   decisionDraft,
   onDecisionDraftChange,
+  onDecisionStatusChange,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
   const token = useAuthToken();
@@ -360,9 +376,9 @@ export function TaskItemRecoveryPanel({
     analysis: analysisObservation,
   } = recoverySession.state;
   const updateRecoverySession = recoverySession.update;
-  // The same Task's durable flow status is the only proof that an accepted
-  // native analysis is really queued/running after a reload.  This read does
-  // not contact a Provider, save a decision or replay the request.
+  // This read supplies the linked Files discovery, when the Task owns one.
+  // A discovery-free kernel Task uses the recovery detail's bounded scheduling
+  // projection below; the whole-Task flow status is never admission proof.
   const runOverviewQuery = useQuery(runOverviewQueryOptions(token, runId));
   const linkedDiscoveryId =
     runOverviewQuery.data?.ok === true
@@ -838,18 +854,20 @@ export function TaskItemRecoveryPanel({
     }
   };
 
-  const readDurableAnalysisState = async (): Promise<{
+  const readDurableAnalysisState = async (
+    recoveryModel: typeof model = null,
+  ): Promise<{
     readonly known: boolean;
     readonly active: boolean;
     readonly status: string | null;
   }> => {
     const runRead = await runOverviewQuery.refetch();
-    const status = runRead.data?.ok === true ? runRead.data.model.status : null;
     const discoveryId =
       runRead.data?.ok === true
         ? (runRead.data.model.filesPreparation?.discoveryId ?? null)
         : null;
     if (discoveryId !== null) {
+      // A Files-admitted Task's own discovery is the exact analysis stage.
       const discoveryRead = await queryClient.fetchQuery(
         organizeDiscoveryQueryOptions(token, discoveryId),
       );
@@ -868,10 +886,20 @@ export function TaskItemRecoveryPanel({
         status: discoveryStatus,
       };
     }
+    // A discovery-free kernel Task reads the exact scheduling row: only a
+    // queued/claimed analysis stage is admission.  Human waiting, a full-queue
+    // refusal or a settled Task is a known non-admission.
+    const projection = recoveryModel?.nativeAnalysis ?? null;
+    if (projection === null || !projection.readable) {
+      return { known: false, active: false, status: null };
+    }
     return {
-      known: status !== null && status !== "unknown",
-      active: status === "pending" || status === "running",
-      status,
+      known: true,
+      active:
+        (projection.queueState === "queued" ||
+          projection.queueState === "claimed") &&
+        projection.machineStage === "analysis",
+      status: projection.machineStage,
     };
   };
 
@@ -911,7 +939,7 @@ export function TaskItemRecoveryPanel({
         });
         return;
       }
-      const durableState = await readDurableAnalysisState();
+      const durableState = await readDurableAnalysisState(result.data.model);
       if (durableState.active) {
         updateRecoverySession({
           repeatLocked: false,
@@ -940,7 +968,7 @@ export function TaskItemRecoveryPanel({
       // durable flow: a queued/running Task proves admission, while a still
       // human-waiting (or ended) Task proves this request did not take the
       // analysis.  A failed read never unlocks the original submission.
-      const durableState = await readDurableAnalysisState();
+      const durableState = await readDurableAnalysisState(result.data.model);
       if (!durableState.known) {
         updateRecoverySession({
           repeatLocked: true,
@@ -1026,30 +1054,6 @@ export function TaskItemRecoveryPanel({
     });
   };
 
-  if (query.data === undefined) {
-    return (
-      <section className="mf-count-section" aria-label="条目审核与恢复">
-        <h5>审核与恢复</h5>
-        <StatusBanner variant="info" title="正在读取条目恢复状态">
-          <p>
-            这里只读取已保存的决策与检查点，不会触发 Metadata Provider 搜索。
-          </p>
-        </StatusBanner>
-      </section>
-    );
-  }
-  if (!query.data.ok) {
-    return (
-      <section className="mf-count-section" aria-label="条目审核与恢复">
-        <h5>审核与恢复</h5>
-        <StatusBanner variant="warning" title={query.data.failure.title}>
-          <p>{query.data.failure.nextAction}</p>
-          <RefreshControl onRefresh={refreshReads} />
-        </StatusBanner>
-      </section>
-    );
-  }
-
   const linked = model?.manualRecoveryLink ?? null;
   // Task Center RO-4 publishes a purely technical failure read-only.  Every
   // mutating affordance of this panel (a four-type decision form, the shared
@@ -1082,35 +1086,31 @@ export function TaskItemRecoveryPanel({
     confirmedPreparation !== null ||
     canPreparePreview;
   // The same explicit save/analyse action owns a saved decision that still
-  // needs its zero-mutation analysis.  The durable Task flow is the only
-  // proof of an accepted native analysis after a reopen: a queued/running
-  // Task means the request already landed even when the old checkpoint still
-  // exposes ``retry`` and no legacy ``recovery_continuation`` exists.
-  const runStatus =
-    runOverviewQuery.data?.ok === true
-      ? runOverviewQuery.data.model.status
-      : null;
+  // needs its zero-mutation analysis.  A Files Task reads its linked discovery;
+  // a discovery-free kernel Task reads the recovery detail's exact scheduling
+  // projection.  The overall Task flow is deliberately not admission proof:
+  // an ordinary human wait also reads ``running``.
   const linkedDiscoveryStatus =
     linkedDiscoveryQuery.data?.ok === true
       ? linkedDiscoveryQuery.data.model.status
       : null;
-  const analysisRunActive = runStatus === "pending" || runStatus === "running";
-  const analysisRunKnown = runStatus !== null && runStatus !== "unknown";
-  // A Files-admitted Task's own discovery is the exact durable analysis stage;
-  // a decision save can leave the run projection looking active even when the
-  // analysis request was refused.  Only fall back to the Task flow status for
-  // a kernel Task without a linked discovery.
+  const nativeAnalysis = model?.nativeAnalysis ?? null;
+  const nativeAnalysisActive =
+    nativeAnalysis?.readable === true &&
+    (nativeAnalysis.queueState === "queued" ||
+      nativeAnalysis.queueState === "claimed") &&
+    nativeAnalysis.machineStage === "analysis";
   const analysisDurableActive =
     linkedDiscoveryId !== null
       ? linkedDiscoveryStatus !== null &&
         ["queued", "running", "waiting_stability", "analyzing"].includes(
           linkedDiscoveryStatus,
         )
-      : analysisRunActive;
+      : nativeAnalysisActive;
   const analysisDurableKnown =
     linkedDiscoveryId !== null
       ? linkedDiscoveryStatus !== null
-      : analysisRunKnown;
+      : nativeAnalysis?.readable === true;
   const currentAnalysisObservation =
     analysisObservation !== null &&
     analysisObservation.checkpointVersion === checkpoint?.checkpointVersion
@@ -1127,15 +1127,15 @@ export function TaskItemRecoveryPanel({
   const savedDecisionAwaitingAnalysis = decision === null && owesRecoveryAction;
   const savedDecisionAnalysisVisible =
     savedDecisionAwaitingAnalysis && !offersExplicitSummaryStep;
-  const analysisWaiting =
-    savedDecisionAnalysisVisible &&
-    !analysisRefusedBySession &&
-    (analysisAcceptedBySession ||
-      analysisContinuationActive ||
-      analysisDurableActive);
   const analysisUnknown =
     savedDecisionAnalysisVisible &&
     (analysisUnknownBySession || (repeatLocked && decision === null));
+  const analysisWaiting =
+    savedDecisionAnalysisVisible &&
+    !analysisUnknown &&
+    (analysisAcceptedBySession ||
+      analysisContinuationActive ||
+      analysisDurableActive);
   const analysisActionVisible =
     savedDecisionAnalysisVisible &&
     !analysisWaiting &&
@@ -1148,8 +1148,58 @@ export function TaskItemRecoveryPanel({
     !analysisWaiting &&
     !analysisUnknown &&
     !repeatLocked &&
-    !analysisRefusedBySession &&
-    !analysisDurableKnown;
+    !analysisDurableKnown &&
+    linkedDiscoveryId !== null &&
+    (linkedDiscoveryQuery.isLoading || linkedDiscoveryQuery.isFetching);
+  const decisionStatus: TaskItemRecoveryDecisionStatus | null =
+    owesRecoveryAction && decision !== null
+      ? "decision_required"
+      : savedDecisionAnalysisVisible
+        ? analysisWaiting
+          ? "analysis_waiting"
+          : analysisUnknown
+            ? "analysis_unknown"
+            : analysisActionVisible
+              ? "analysis_refused"
+              : "analysis_read_pending"
+        : null;
+  const lastDecisionStatusRef = useRef<TaskItemRecoveryDecisionStatus | null>(
+    null,
+  );
+  useEffect(() => {
+    if (
+      decisionStatus === null ||
+      lastDecisionStatusRef.current === decisionStatus
+    ) {
+      return;
+    }
+    lastDecisionStatusRef.current = decisionStatus;
+    onDecisionStatusChange?.(decisionStatus);
+  }, [decisionStatus, onDecisionStatusChange]);
+  if (query.data === undefined) {
+    return (
+      <section className="mf-count-section" aria-label="条目审核与恢复">
+        <h5>审核与恢复</h5>
+        <StatusBanner variant="info" title="正在读取条目恢复状态">
+          <p>
+            这里只读取已保存的决策与检查点，不会触发 Metadata Provider 搜索。
+          </p>
+        </StatusBanner>
+      </section>
+    );
+  }
+  if (!query.data.ok) {
+    return (
+      <section className="mf-count-section" aria-label="条目审核与恢复">
+        <h5>审核与恢复</h5>
+        <StatusBanner variant="warning" title={query.data.failure.title}>
+          <p>{query.data.failure.nextAction}</p>
+          <RefreshControl onRefresh={refreshReads} />
+        </StatusBanner>
+      </section>
+    );
+  }
+
   const requestAnalysisOnly = () => {
     if (checkpoint === null || busy || repeatLocked) return;
     void continueAt(checkpoint.checkpointVersion);

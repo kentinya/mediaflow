@@ -67,6 +67,65 @@ describe("Task item recovery contract", () => {
     expect(JSON.stringify(result)).not.toMatch(/\/tmp\/|token|password/i);
   });
 
+  it("normalizes the bounded native-analysis scheduling projection", () => {
+    const result = normalizeTaskItemRecovery({
+      task_id: "task-1",
+      item_id: "item-1",
+      checkpoint: {
+        status: "pending",
+        stage: "queued",
+        raw_stage: "recognition_resolved",
+        effects: { certainty: "none" },
+        retry_safety: "safe",
+        checkpoint_version: checkpointVersion,
+        blocker: null,
+        permitted_action_ids: ["retry"],
+        refusal_reason: null,
+        next_action: "continue the same Task's analysis",
+      },
+      decision: null,
+      native_analysis: {
+        task_id: "task-1",
+        item_id: "item-1",
+        readable: true,
+        queue_state: "queued",
+        machine_stage: "analysis",
+      },
+      manualRecoveryAvailable: false,
+      recoveryKind: "business_problem",
+      next_action: "continue the same Task's analysis",
+    });
+    expect(result.nativeAnalysis).toEqual({
+      readable: true,
+      queueState: "queued",
+      machineStage: "analysis",
+    });
+
+    // A legacy response without the projection stays explicitly absent; the
+    // panel must not infer admission from another Task-level status.
+    const legacy = normalizeTaskItemRecovery({
+      task_id: "task-1",
+      item_id: "item-1",
+      checkpoint: {
+        status: "pending",
+        stage: "queued",
+        raw_stage: "recognition_resolved",
+        effects: { certainty: "none" },
+        retry_safety: "safe",
+        checkpoint_version: checkpointVersion,
+        blocker: null,
+        permitted_action_ids: ["retry"],
+        refusal_reason: null,
+        next_action: "continue the same Task's analysis",
+      },
+      decision: null,
+      manualRecoveryAvailable: false,
+      recoveryKind: "business_problem",
+      next_action: "continue the same Task's analysis",
+    });
+    expect(legacy.nativeAnalysis).toBeNull();
+  });
+
   it("preserves mixed per-item batch outcomes and rejects malformed checkpoint identity", () => {
     const batch = normalizeRecoveryBatch({
       batch_id: "batch-1",

@@ -1498,9 +1498,13 @@ Reuse feature-independent ModalCardShell presentation, not library/Automation fi
 The organizer owns itemId/preparation/summary-bound drafts, inclusion, active file, explicit
 save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. One
 per-file `保存并重新分析` action covers both the unsaved decision and an already saved decision whose
-analysis was refused; a durable Task-flow read (not only the legacy recovery-continuation field)
-distinguishes an accepted native analysis from a non-admission after reopen. Its saved-decision
-facts and waiting state stay in the same form position; no second analysis action or replacement
+analysis was refused. The recovery read publishes one bounded native-analysis projection from the
+exact Task's scheduling row (`queue_state` and `machine_stage`); only a queued/claimed analysis stage
+proves admission after reopen, while human waiting, a queue refusal or a settled Task is a known
+non-admission. The overall Task flow status is never used as admission proof because an ordinary
+human wait also reads `running`; Files keeps its linked discovery as the exact analysis stage. Its
+saved-decision facts and waiting state stay in the same form position; a read failure stays unknown
+instead of re-enabling a request that was already accepted. No second analysis action or replacement
 button exists. Navigation is read-only. Late responses cannot switch files or overwrite unrelated
 drafts. Summary/subset changes invalidate stale dangerous authorization; server gates remain
 authoritative.
