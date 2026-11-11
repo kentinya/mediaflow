@@ -925,7 +925,9 @@ export function TaskItemRecoveryPanel({
               updateDecisionDraft({ selectedChoice: value })
             }
             searchText={effectiveDecisionDraft.searchText}
-            onSearchText={(value) => updateSearchCondition({ searchText: value })}
+            onSearchText={(value) =>
+              updateSearchCondition({ searchText: value })
+            }
             correctedYear={effectiveDecisionDraft.correctedYear}
             onCorrectedYear={(value) =>
               updateSearchCondition({ correctedYear: value })

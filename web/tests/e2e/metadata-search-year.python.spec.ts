@@ -56,16 +56,21 @@ function recordCommands(page: Page): RecordedCommand[] {
 }
 
 async function clearProbeCalls(request: APIRequestContext): Promise<void> {
-  const cleared = await request.delete(`${BASE}/__harness__/metadata-search-calls`);
+  const cleared = await request.delete(
+    `${BASE}/__harness__/metadata-search-calls`,
+  );
   expect(cleared.ok()).toBe(true);
 }
 
 async function probeCalls(
   request: APIRequestContext,
 ): Promise<Record<string, unknown>[]> {
-  const response = await request.get(`${BASE}/__harness__/metadata-search-calls`);
+  const response = await request.get(
+    `${BASE}/__harness__/metadata-search-calls`,
+  );
   expect(response.ok()).toBe(true);
-  return ((await response.json()) as { calls: Record<string, unknown>[] }).calls;
+  return ((await response.json()) as { calls: Record<string, unknown>[] })
+    .calls;
 }
 
 async function probeFileState(
@@ -203,7 +208,8 @@ test("the Task Center recovery search submits the current year to the Provider",
   expect(
     commands.filter(
       (command) =>
-        command.method === "POST" && command.path.endsWith("/recovery/decision"),
+        command.method === "POST" &&
+        command.path.endsWith("/recovery/decision"),
     ),
   ).toHaveLength(0);
 
@@ -292,7 +298,8 @@ test("the Task Center recovery search submits the current year to the Provider",
   const decisionBodies = commands
     .filter(
       (command) =>
-        command.method === "POST" && command.path.endsWith("/recovery/decision"),
+        command.method === "POST" &&
+        command.path.endsWith("/recovery/decision"),
     )
     .map((command) => command.body);
   expect(decisionBodies.at(-1)).toMatchObject({
@@ -334,9 +341,7 @@ test("the Files dialog search submits the current year and completes the correct
   expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await openProbeDirectory(page);
-  await page
-    .getByRole("checkbox", { name: `选择 ${PROBE_FILE}` })
-    .check();
+  await page.getByRole("checkbox", { name: `选择 ${PROBE_FILE}` }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
@@ -344,9 +349,9 @@ test("the Files dialog search submits the current year and completes the correct
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
   // The probe source matches its own rule, so the analysis reaches the real
   // Metadata correction card without a Recognition step.
   await expect(card.getByText("修正作品搜索")).toBeVisible({ timeout: 30_000 });
@@ -370,9 +375,9 @@ test("the Files dialog search submits the current year and completes the correct
 
   await year.fill("");
   await card.getByRole("button", { name: "搜索作品" }).click();
-  await expect(card.getByRole("radio", { name: /DialogYear \(2024\)/ })).toHaveCount(
-    0,
-  );
+  await expect(
+    card.getByRole("radio", { name: /DialogYear \(2024\)/ }),
+  ).toHaveCount(0);
   const clearedCandidate = card.getByRole("radio", { name: /DialogYear 电影/ });
   await expect(clearedCandidate).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
@@ -386,7 +391,8 @@ test("the Files dialog search submits the current year and completes the correct
   const decisionBodies = commands
     .filter(
       (command) =>
-        command.method === "POST" && command.path.endsWith("/recovery/decision"),
+        command.method === "POST" &&
+        command.path.endsWith("/recovery/decision"),
     )
     .map((command) => command.body);
   expect(decisionBodies.at(-1)).toMatchObject({

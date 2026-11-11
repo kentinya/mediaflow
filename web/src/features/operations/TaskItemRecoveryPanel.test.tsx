@@ -376,10 +376,9 @@ describe("TaskItemRecoveryPanel", () => {
           method === "GET" &&
           url === "/api/v1/tasks/task-1/items/item-1/recovery"
         ) {
-          return new Response(
-            JSON.stringify(metadataCorrectionRecovery()),
-            { status: 200 },
-          );
+          return new Response(JSON.stringify(metadataCorrectionRecovery()), {
+            status: 200,
+          });
         }
         if (
           method === "POST" &&
