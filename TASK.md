@@ -14,7 +14,7 @@ Authority: 用户明确指出元数据恢复保存选择后，“确认整理”
 Task ID: PATCH-20261111-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: df44b82f9c184e1598a3a97a680d7e565310370a
 Difficulty: Medium
 Test Level: T3
@@ -153,8 +153,65 @@ git diff --check
 
 ## Developer Completion Report
 
-未实施。后续交付记录精确检查点、`READY FOR B REVIEW`、行为／文件、受影响测试实际
-结果及剩余风险；完整验收由 B 执行。
+**Checkpoint:** `7c267650`（Task Base `df44b82f` → 候选 `7c267650`，分支 `main`；
+接在激活提交 `67b9fe5a` 之后的单一实现检查点。预存 `mediaflow/.DS_Store` 修改及
+全部未跟踪私有文件原样保留，未纳入提交）。状态流转 PLANNED → READY FOR B REVIEW；
+本报告为事实交接，不构成验收。
+
+**实际变更（全部留在本 Task 范围内）**
+
+- `web/src/features/operations/TaskItemRecoveryPanel.tsx`：full-mode 与
+  Files `mode="decision"` 共用的分析动作改为单一谓词 `needsExplicitAnalysisAction`。
+  在原 `owesRecoveryAction && permitted.has("retry")` 之上增加四个隐藏条件：
+  ① 当前摘要可确认（`activePreparation.status === "prepared"`，持久摘要优先于
+  旧本地缓存）；② 已确认摘要（`confirmedPreparation !== null`）；③ 分析续作
+  `queued`／`running`（后端 `RecoveryContinuationStatus.active` 的两个值）；④
+  就绪的同页摘要入口 `canPreparePreview`。另在 `busy && pendingAction ===
+  "continue"`（保存衔接的分析请求在途）时隐藏。未改动 `saveDecision` 的一次
+  衔接、任何请求／权限／持久化逻辑；两个按钮块的文案与禁用语义保持。
+  分析未受理（queue_full/capacity_full）、`failed`／`cancelled` 续作、失效摘要
+  （stale/superseded 后无就绪入口）时按钮保留为就近显式重试入口；后端在
+  `task_retry_requested` 且续作完成时只提供 `inspect_analysis`，不获重放入口。
+- `web/src/features/operations/TaskItemRecoveryPanel.test.tsx`：新增
+  `preparedPreparation()`／`queuedAnalysisRecovery()` 夹具与三个用例——
+  ① durable prepared 摘要 + 后端仍 `retry`：摘要确认可用、无独立分析按钮、
+  无重复 prepare 入口、打开该状态只发 GET；② `queued`／`running` 续作：无重复
+  分析按钮；③ full-mode 保存成功但 `queue_full` 拒绝：已保存决定保留、重试按钮
+  可用、显式点击后队列恢复时发出第二次 continue，无 execute。增强三个既有用例：
+  decision-mode 队列拒绝后重试按钮可达、分析完成后 prepare 入口可用时无重复
+  按钮、确认受理后不重新获得分析动作。
+
+**后端契约核对（只读，未改后端）**
+
+- `mediaflow/application/processing_checkpoint.py::_actions`：确认
+  `_resolved` 与零变更 `WAITING_CONFIRM` 两分支都提供 `retry`，与用户场景一致。
+- `mediaflow/domain/recovery_continuation.py`：状态值域
+  `queued/running/completed/failed/cancelled`，`document()` 序列化
+  `status.value`，前端两值判断与之对应。
+- `mediaflow/application/manual_recovery_continuation.py`：native prepared
+  摘要使 `analysis_summary_available` 为真且 `supports_source_item` 为真，
+  与 `canPreparePreview` 的隐藏分支一致。
+
+**受影响测试实际结果（候选 `7c267650`）**
+
+`web/`：任务指定的四个测试文件 64 tests 通过（原 47＋新增 3＋增强断言；其中
+TaskItemRecoveryPanel 17、ManualOrganizeDialog／OrganizePlanConfirmation／
+RunDetailTabs 共 47）；`npm run typecheck` 通过；`npx eslint` 与
+`npx prettier --check`（两个变更文件）通过（首次 prettier 失败已
+`--write` 修正后复检通过）。仓库根 `git diff --check` 干净。未修改 Python／
+E2E／harness，未要求构建或原生命令。
+
+本轮实施约 40 分钟，其中测试执行合计约 4 分钟（＜30%）。
+
+**剩余风险与移交说明**
+
+- 保存成功自动衔接 continue 之后、refetch 读回 `queued` 之前的极短窗口内按钮
+  可能闪现（保存响应的 checkpoint 尚无续作记录）；在途期间按钮禁用，后端
+  `continuation_exists` 保护二次提交，现有行为未改变。
+- 四类决定的真实保存 → 分析 → 无重复按钮 → 明确确认旅程、队列拒绝后的重试、
+  刷新／重开／重新认证读回，按分工由 B 用原生 Python E2E 验收（新增用例名需含
+  Task ID）。
+- 全仓 lint／format／build 与 Python 侧回归由 B 按验收计划执行。
 
 ## B Review Result
 
