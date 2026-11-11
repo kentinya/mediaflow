@@ -359,6 +359,162 @@ describe("TaskItemRecoveryPanel", () => {
     expect(decisionBodies[0]).not.toHaveProperty("providerId");
   });
 
+  it("shows the bounded year reason when the API refuses the search year, then recovers", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    const searchBodies: Record<string, unknown>[] = [];
+    const decisionBodies: Record<string, unknown>[] = [];
+    const continueBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(
+            JSON.stringify(metadataCorrectionRecovery()),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/metadata-search"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          searchBodies.push(body);
+          if (body["year"] !== 2024 && body["year"] !== null) {
+            // The exact envelope the real API returns for an out-of-range
+            // year, refused before any Provider call.
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: "invalid_year",
+                  message:
+                    "enter a search year between 1870 and 2100, or clear the year",
+                  details: {
+                    sideEffects: "none",
+                    nextAction:
+                      "correct or clear the year, then run Metadata search again",
+                  },
+                },
+              }),
+              { status: 400 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              task_id: "task-1",
+              item_id: "item-1",
+              checkpoint_version: checkpointVersion,
+              provider: "tmdb",
+              media_type: "movie",
+              query: body["query"] ?? "",
+              candidates: [
+                {
+                  rank: 1,
+                  provider_id: "701",
+                  media_type: "movie",
+                  title: "Probe",
+                  original_title: null,
+                  year: body["year"],
+                  release_date: null,
+                  original_language: "en",
+                },
+              ],
+              truncated: false,
+              next_action: "choose one candidate and save the decision",
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          decisionBodies.push(
+            JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+          );
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          continueBodies.push(JSON.parse(String(init?.body ?? "{}")));
+          return new Response(
+            JSON.stringify({
+              continuation_id: "continuation-1",
+              sideEffects: "none",
+              next_action: "wait for the Worker",
+            }),
+            { status: 202 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await within(panel).findByLabelText("搜索标题");
+    const year = within(panel).getByLabelText("年份(可留空)");
+    await user.clear(year);
+    await user.type(year, "1869");
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "显式搜索 Metadata Provider",
+      }),
+    );
+    await waitFor(() => expect(searchBodies).toHaveLength(1));
+    // The exact out-of-range input was submitted; the panel names the year
+    // rule and the correction instead of the generic refusal line.
+    expect(searchBodies[0]).toMatchObject({ year: 1869 });
+    const refusal = await within(panel).findByText(/本次搜索没有完成/);
+    expect(refusal.textContent).toContain("1870–2100");
+    expect(refusal.textContent).toContain("重新搜索");
+
+    // A refused search is a read-only refusal: no decision save, analysis
+    // request or execution was sent, and the operator's input stays.
+    expect(decisionBodies).toHaveLength(0);
+    expect(continueBodies).toHaveLength(0);
+    expect(within(panel).getByLabelText("年份(可留空)")).toHaveValue(1869);
+
+    // Correcting the year on the same card searches again successfully; the
+    // refusal banner is replaced by the grounded result.
+    await user.clear(year);
+    await user.type(year, "2024");
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "显式搜索 Metadata Provider",
+      }),
+    );
+    await waitFor(() => expect(searchBodies).toHaveLength(2));
+    expect(searchBodies[1]).toMatchObject({ year: 2024 });
+    await within(panel).findByRole("radio", { name: /701/ });
+    expect(within(panel).queryByText(/本次搜索没有完成/)).toBeNull();
+    expect(decisionBodies).toHaveLength(0);
+    expect(continueBodies).toHaveLength(0);
+  });
+
   it("saves one exact decision, then explicitly queues analysis without file execution", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");

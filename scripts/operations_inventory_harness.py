@@ -353,9 +353,9 @@ _YEAR_PROBE_IDENTITIES = {
     ("yearrecovery", None): "734",
 }
 _YEAR_PROBE_TITLES_BY_ID = {
-    provider_id: title for title, year in _YEAR_PROBE_IDENTITIES for provider_id in (
-        _YEAR_PROBE_IDENTITIES[(title, year)],
-    )
+    provider_id: title
+    for title, year in _YEAR_PROBE_IDENTITIES
+    for provider_id in (_YEAR_PROBE_IDENTITIES[(title, year)],)
 }
 
 
@@ -380,9 +380,7 @@ class _YearSensitiveMetadataProvider(_QueryScopedMetadataProvider):
         if normalized not in _YEAR_PROBE_TITLES:
             return None
         year = getattr(query, "year", None)
-        self.search_calls.append(
-            {"mediaType": media_type, "title": str(title), "year": year}
-        )
+        self.search_calls.append({"mediaType": media_type, "title": str(title), "year": year})
         provider_id = _YEAR_PROBE_IDENTITIES.get((normalized, year))
         if provider_id is None:
             return ()
@@ -3253,9 +3251,7 @@ def seed_task_item_recovery_journey(
                 # original year by design, so no durable plan request is made:
                 # the recognition review is resolved through the real service
                 # and the correction seam below stages the exact blocker.
-                existing_review = state.repository.get_recognition_review_for_item(
-                    current.item_id
-                )
+                existing_review = state.repository.get_recognition_review_for_item(current.item_id)
                 if existing_review is not None and existing_review.status.value == "pending":
                     recognition_service.resolve(
                         existing_review.review_id,

@@ -181,6 +181,32 @@ test("the Task Center recovery search submits the current year to the Provider",
   await expect(title).toHaveValue("YearRecovery");
   await expect(year).toHaveValue("2025");
 
+  // An out-of-range year is refused by the real API before any Provider
+  // call; the card must name the year rule and the correction instead of a
+  // generic refusal, keep the typed input and save nothing.
+  await year.fill("1869");
+  const rejectedSearch = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+  );
+  await recovery
+    .getByRole("button", { name: "显式搜索 Metadata Provider" })
+    .click();
+  expect((await rejectedSearch).status()).toBe(400);
+  await expect(recovery.getByText(/本次搜索没有完成/)).toBeVisible();
+  await expect(recovery.getByText(/1870–2100/)).toBeVisible();
+  expect(await probeCalls(request)).not.toContainEqual(
+    expect.objectContaining({ year: 1869 }),
+  );
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" && command.path.endsWith("/recovery/decision"),
+    ),
+  ).toHaveLength(0);
+
   // The edited year 2024 is submitted exactly as typed; only that year's
   // candidate is grounded.
   await year.fill("2024");
@@ -244,6 +270,12 @@ test("the Task Center recovery search submits the current year to the Provider",
     )
     .map((command) => command.body);
   expect(searchBodies).toEqual([
+    {
+      expectedCheckpointVersion: expect.any(String),
+      query: "YearRecovery",
+      mediaType: "movie",
+      year: 1869,
+    },
     {
       expectedCheckpointVersion: expect.any(String),
       query: "YearRecovery",

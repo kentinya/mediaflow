@@ -652,6 +652,16 @@ export function TaskItemRecoveryPanel({
               ? "没有找到候选项。修改标题后再搜索。"
               : null,
         });
+      } else if (result.code === "invalid_year") {
+        // The API refused the year before calling any Provider and saved
+        // nothing. The operator must see the exact year rule and the
+        // correction instead of the generic refusal line; the typed input
+        // stays so the same card can search again directly.
+        updateRecoverySession({
+          message:
+            "本次搜索没有完成，也没有保存任何决定：搜索年份需为 1870–2100 的整数，或清空年份不限制。请修改或清空年份后重新搜索。",
+          repeatLocked: false,
+        });
       } else {
         // Search is a deliberate Provider read with no durable mutation. A lost
         // result can be searched again after checking that this item is current.

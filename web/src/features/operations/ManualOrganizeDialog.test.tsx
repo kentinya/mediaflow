@@ -94,6 +94,9 @@ function makeBackend() {
     metadataCandidateResolved: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
+    // B-PATCH-01: the next year-conditioned search is refused by the real
+    // API's invalid_year envelope before any Provider call.
+    rejectMetadataSearchYear: false as boolean,
     // The exact paths the Files admission carried: the summary then plans
     // exactly those files, so a two-file journey is a two-item plan.
     selectedPaths: [] as string[],
@@ -716,6 +719,23 @@ function makeBackend() {
       ) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
         calls.metadataSearchPosts.push(body);
+        if (state.rejectMetadataSearchYear) {
+          return jsonResponse(
+            {
+              error: {
+                code: "invalid_year",
+                message:
+                  "enter a search year between 1870 and 2100, or clear the year",
+                details: {
+                  sideEffects: "none",
+                  nextAction:
+                    "correct or clear the year, then run Metadata search again",
+                },
+              },
+            },
+            400,
+          );
+        }
         return jsonResponse({
           task_id: "organize-task-1",
           item_id: "problem-item-1",
@@ -1453,6 +1473,54 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.recoveryDecisionPosts[0]).not.toHaveProperty(
       "providerId",
     );
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("names the refused search year and keeps the card editable until a legal search succeeds", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+      value.state.rejectMetadataSearchYear = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    const year = screen.getByLabelText("年份（可留空）");
+    await user.clear(year);
+    await user.type(year, "1869");
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await waitFor(() =>
+      expect(backend.calls.metadataSearchPosts).toHaveLength(1),
+    );
+    expect(backend.calls.metadataSearchPosts[0]).toMatchObject({
+      query: "Movie.01",
+      mediaType: "movie",
+      year: 1869,
+    });
+
+    // The exact refusal is visible: this search did not complete, nothing was
+    // saved, the year rule and the correction are named. The dialog is not
+    // locked and the typed input stays for a direct retry.
+    const refusal = await screen.findByText(/本次搜索没有完成/);
+    expect(refusal.textContent).toContain("1870–2100");
+    expect(refusal.textContent).toContain("重新搜索");
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(screen.getByLabelText("年份（可留空）")).toHaveValue(1869);
+
+    // A corrected year searches successfully on the same card; the refusal is
+    // replaced by the grounded candidates and still nothing was saved.
+    backend.state.rejectMetadataSearchYear = false;
+    await user.clear(year);
+    await user.type(year, "2024");
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await waitFor(() =>
+      expect(backend.calls.metadataSearchPosts).toHaveLength(2),
+    );
+    expect(backend.calls.metadataSearchPosts[1]).toMatchObject({ year: 2024 });
+    await screen.findByRole("radio", { name: /DialogRename/ });
+    expect(screen.queryByText(/本次搜索没有完成/)).toBeNull();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
