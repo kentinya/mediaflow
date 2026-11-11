@@ -1,22 +1,8 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Slice54 已于 2026-11-11 经独立 A Final Review **PASS / CLOSED**；Task54.1 的 B Reviewed
-Head 为 `aef044e51dc91655372bf5fe39c6116da976c3b4`，Task Base 为
-`6351b60433f0e79dac6f5f7150884a1fecb0da43`。完整 B 验收、B54-01–07 修正、
-原始失败／限制与 Closure Packet 交接保留于
-[固定 B 终审](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)；
-原 Task 计划／Developer 交接保留于 Git。A 的完整范围及独立验收见
-[固定 A 终审](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed)。
-下一大 Slice 仍由 A 另行选择；下列独立修正不重开 Slice54 或其他已接受 Slice。
-
-用户本轮仅授权 B 规划独立修正 Task。以下为 **PLANNING-ONLY DRAFT**，不授权实施、
-启动其他角色、推送或部署。获得实施授权后，将本通知替换为正式 Task 入口，保留同一
-ID／Base／Goal／Scope；不因规划提交而重定 Base。
-
-## Task PATCH-20261111-1 — 元数据修正作品搜索采用当前年份
+# Task PATCH-20261111-1 — 元数据修正作品搜索采用当前年份
 
 Authority: 用户反馈“整理时元数据修正作品搜索无结果，直接保存并继续分析可以识别”，
-随后明确“规划一个独立修正 Task，按 B 的权限”。按
+随后明确“规划一个独立修正 Task，按 B 的权限”，并于 2026-11-11 明确“激活 Task”，
+正式授权本 Task 范围内的实施。按
 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs) 规划，
 由 B 独立复核和完成；不需要 A 新建或关闭 Slice。
 
@@ -29,8 +15,23 @@ Task Base: e9241d484e33ccb0b1a8def2ab81c17cb1a3d577
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-11
 ```
+
+### Authorization and accepted baseline
+
+本 Task 从规划草案提升为正式可实施的 PLANNED Task；原 ID／Base／Goal／Scope、
+Medium／T3、验收与测试分工保持。Developer 开始实施时转为 IN PROGRESS；B 独立复核，
+本次激活不构成实施完成或验收通过，也不授权启动其他角色、推送、发布或部署。
+
+Slice54 已于 2026-11-11 经独立 A Final Review **PASS / CLOSED**；Task54.1 的 B Reviewed
+Head 为 `aef044e51dc91655372bf5fe39c6116da976c3b4`，Task Base 为
+`6351b60433f0e79dac6f5f7150884a1fecb0da43`。完整 B 验收、B54-01–07 修正、
+原始失败／限制与 Closure Packet 交接保留于
+[固定 B 终审](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)；
+原 Task 计划／Developer 交接保留于 Git。A 的完整范围及独立验收见
+[固定 A 终审](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed)。
+下一大 Slice 仍由 A 另行选择；本独立修正不重开 Slice54 或其他已接受 Slice。
 
 ### Goal and observed gap
 
@@ -66,6 +67,9 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
   `output/organize-flow-2026-11-01.html`、`output/slice50-motion-preview/`、
   `output/slice52-task52-1/` 全部保留，不纳入本 Task 检查点。
 - 已接受 Slice 的 Base／Head／状态不变，`SLICE.md`、Roadmap、Progress 不改。
+- 激活前分支 `main`，HEAD `8f1a5d23a035fb2a8ffdd17e24dbcee8c2dbaeb9`；原 Base 至该
+  HEAD 仅有 TASK 规划文字变更，无实施输入变化。治理检查 PASS，工作区／Git 可写、
+  暂存区为空，上述预存文件原样保留；本激活检查点仅修改 `TASK.md`。
 
 ### User journey
 
@@ -186,7 +190,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/metadata-sear
 
 T3 验收不要求无依据的整仓全量、wheel 或 Docker 矩阵；仅修改只读搜索输入与配套上下文，
 不改核心 pipeline、持久协议、权限或媒体 mutation。若实际实现需要越过该边界，先由 B
-重评范围与 Test Level，不以本草案直接授权。记录实际候选 SHA、命令／结果／失败／限制；
+重评范围与 Test Level，不以本 Task 直接授权。记录实际候选 SHA、命令／结果／失败／限制；
 原始证据可留 `.git/validation-evidence/<candidate>/patch-20261111-1/`。
 
 ### Non-goals
@@ -194,16 +198,16 @@ T3 验收不要求无依据的整仓全量、wheel 或 Docker 矩阵；仅修改
 不调查或修复所有元数据未找到原因，不新增 Provider／多语言算法、放宽评分／TV 年份限制、
 修改 TMDB 回退或缓存、改变手动 ID 权限／保存协议、重试引擎／数据结构／Task 状态、
 重做整理弹窗或 Task 详情、改其他规则／文件功能。不重开或关闭已接受 Slice，不修改
-SLICE／Roadmap／Progress，不读取私有配置／真实媒体。本轮仅规划，实施／推送／发布／
-部署的授权分别处理。
+SLICE／Roadmap／Progress，不读取私有配置／真实媒体。本次仅激活已授权的修正实施，
+不包含推送／发布／部署。
 
 ### Developer completion report
 
-尚未实施。后续授权实施后填写固定 checkpoint、READY FOR B REVIEW、实际变更／决策、
-受影响测试结果和剩余风险；完整验收由 B 负责。
+已获实施授权，尚未开始实施。Developer 交接时填写固定 checkpoint、READY FOR B REVIEW、
+实际变更／决策、受影响测试结果和剩余风险；完整验收由 B 负责。
 
 ### B review result
 
-NOT STARTED — 本轮仅完成规划，未授予 Task PASS 或实施授权。
+NOT STARTED — 本 Task 已激活并获实施授权，尚未实施／验收，未授予 Task PASS。
 实施后 B 独立审查精确 Base..Head 并运行验收；问题保留在同一 Task 修正。PASS 后记录
 实际结果／限制并按工作流恢复简明 `NO ACTIVE IMPLEMENTATION TASK`，无需 A 关闭 Slice。
