@@ -12,8 +12,9 @@ product and authority boundaries.
 
 [Release](release.md) owns release lines; [Roadmap](roadmap.md) priorities/status; [Progress](progress.md)
 accepted closures and deferrals. [SLICE.md](../SLICE.md) and [TASK.md](../TASK.md) own current work.
-CURRENT journeys/contracts live in Product Experience/Architecture; reference images are never
-runtime authority. Accepted43–45 foundations remain; the accepted Slice46 amendments below define
+CURRENT journeys/contracts live in Product Experience/Architecture. Obsolete design images are
+retained only in Git, not as current design or acceptance baselines. Accepted43–45 foundations remain;
+the accepted Slice46 amendments below define
 changed CURRENT behavior. The accepted Task Center filter correction is reflected in
 `V2-OPS-001/003`; the accepted Rules presentation correction is reflected in `V2-RULES-001`
 and current page/journey documents. Accepted Automation presentation and execution-record
@@ -335,7 +336,7 @@ a second execution engine, broad file authority, destructive defaults or histori
 | V2-MIG-001 | Existing `/api/v1/*` and shared application behavior remain authoritative during migration. | V2 UI and V1 UI use the same API semantics, validation, permissions, state transitions and safety gates. |
 | V2-MIG-002 | V1 `/ui` and the V2 migration surface may coexist until parity and cutover acceptance. | The V1 UI remains available during migration, and a separate V2 entry is used until the approved cutover. |
 | V2-SAFE-001 | Read-only V2 UI actions remain zero-side-effect. | A read, refresh or status view does not create Tasks, invoke a Provider or mutate Storage unless a later explicitly approved journey says otherwise. |
-| V2-SHELL-001 | V2 uses one shared reference-aligned operator shell across all V2 routes. | The light left rail/top bar in `docs/pics/文件页.png` replaces the earlier dark horizontal shell; Files does not create a parallel navigation model, existing route/auth/deep-link semantics remain shared, and non-Files business journeys remain functional inside the new chrome. |
+| V2-SHELL-001 | V2 uses one shared light operator shell across all V2 routes. | The shared light left rail/top bar follows the current written Files/Shell composition; Files does not create a parallel navigation model, existing route/auth/deep-link semantics remain shared, and non-Files business journeys remain functional inside the same chrome. |
 | V2-FILES-001 | Files is a live-Storage ResourceLibrary browser and a complete common file-management surface. | An authorized operator can Create Folder/Text File, Rename, Copy, Move, Delete, Edit an allowlisted bounded text file, Upload and Download eligible files/directories, with bounded multi-selection where meaningful, without entering the media-organize policy pipeline. |
 | V2-FILES-002 | Direct file management is low friction but backend authoritative. | A direct command needs no Organize Preview, recognition/metadata/naming/classification stages or raw execution token; it still enforces RBAC, explicit destructive/overwrite intent, Active ResourceLibrary confinement, Storage capability, stale/conflict checks, audit and `OrganizerExecutor`-only mutation. |
 | V2-FILES-003 | Direct file operations preserve truthful state and bounded recovery. | Known success refreshes from live Storage; invalid path/name/content, unsupported capability, conflict, stale source, root/unbounded directory scope, transfer/verification failure, denied permission or uncertain effect remains item-specific and is never silently overwritten/deleted or automatically replayed. Copy/Move source media byte totals are informational rather than admission limits; boundedness is enforced through selection, entry/depth/path and bounded control-plane evidence. |
@@ -377,7 +378,7 @@ amendments; prior wording and acceptance remain in Git.
 ## Operations and Tasks redesign — CURRENT (Slice 45 PASS / CLOSED)
 
 The user-approved 2026-10-15 amendment extends the accepted baseline and passed Slice45 final review.
-The current eight-view/four-type journey and historical reference images are in
+The current eight-view/four-type journey and written presentation contract are in
 [task-center-page-spec.md](task-center-page-spec.md). V2-OPS-014–017 supersede the affected
 nine-view/general-failure/creation/admission wording of the original accepted foundation;
 the stable rows below now state the combined current meaning.
@@ -497,10 +498,10 @@ retained at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/v2-requirements.md`.
 
 ## UI-V2 Files Visual Contract — 2026-09-14
 
-The immutable [`文件页.png`](pics/文件页.png), at 1536×1024, defines the replacement shared light shell
-and Files composition. [Files specification](file-page-visual-spec.md) owns copy/fixture/layout and
-visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md) owns its separate
-page. Shared chrome does not create another authority or imply unrelated business-page redesign.
+The current written [Files specification](file-page-visual-spec.md) owns shared light-shell/Files
+composition, copy, layout and visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md)
+owns its separate page. The obsolete image remains only in Git and is no longer a design or
+acceptance baseline. Shared chrome does not create another authority or imply unrelated business-page redesign.
 
 ## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 

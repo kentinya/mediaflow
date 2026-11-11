@@ -165,7 +165,7 @@ Dashboard API／CLI 也按用户明确要求完全退出：正常配置／合法
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) 于 2026-11-07 经独立 A Final Review **PASS / CLOSED**，原 Base
 `6cd881f0311c9e53bfc6b0ab754bfbe9acefbfd0`，已审实现 `6b0927328a7bf0873faffce9cb38007fd4607764`。
 原八项 `V2-UX-005–012` 和自动化新建/编辑补充 `V2-UX-013` 全部接受，以下完整旅程为 CURRENT。
-它们替换原任务侧详情、所选存储/库抽屉与两页目录树；旧图片/历史接受事实保留，更早 CURRENT
+它们替换原任务侧详情、所选存储/库抽屉与两页目录树；旧图片/历史接受事实保留在 Git，更早 CURRENT
 中的业务、权限、独立结果与非重放规则继续适用。
 
 后续[独立可读性/导航修正](https://github.com/kentinya/mediaflow/blob/db54158dbb5ee9df3b67c26f38999ba87ea6281a/TASK.md)已于 2026-11-07 经 B 验收 PASS，下列旅程包含该修正的现行呈现。原 Slice 接受身份保留。
@@ -668,7 +668,8 @@ never automatically Add again, reset the database or move media. Existing saved 
   recovery with the originating family preserved. The normal workspace omits the sequence/Settings
   utility row; Settings retains version/digest diagnostics and ordinary sidebar access.
 
-Reference images define hierarchy/style, not real names, counts, conditions or backend algorithms.
+The current written Rules requirements define hierarchy/style; obsolete images remain only in Git
+and no longer define design or acceptance. Real names, counts and conditions come from actual configuration.
 TMDB remains the configured Provider abstraction; no implicit fallback or V1 Provider switching.
 The Metadata editor offers only query type: Movie, TV, Auto or None. Save omits the legacy policy
 `mediaType`; old values are ignored, with a missing query type read as Auto. Auto permits movie and

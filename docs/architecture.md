@@ -1976,7 +1976,8 @@ those categories to recovery guidance without exposing adapter exception text.
 ## UI-V2 Files and shared-shell contract update — 2026-09-14
 
 The shared light AppShell and Files hierarchy use [the Files visual specification](file-page-visual-spec.md).
-The supplied image is immutable reference input; samples are not runtime authority. Exact entry/path
+Obsolete design images remain only in Git; current composition and acceptance follow the written
+specification and actual user journeys. Sample data is not runtime authority. Exact entry/path
 identity, responsive/keyboard navigation and bounded actionable states apply to both library kinds;
 page-specific commands remain behind the shared Python authority.
 

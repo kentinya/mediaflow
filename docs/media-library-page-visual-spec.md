@@ -1,13 +1,13 @@
 # MediaLibrary Page Visual Specification
 
 Status: CURRENT — accepted50 cards/tree removal/loading, retaining Slice38 business and editing
-Canonical image: `docs/pics/媒体库页.png` (absent from the current tree; preserved in Git at
-`f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`)
-Reference size: `1536 x 1024`
+Historical image only (not a current design or acceptance baseline): preserved in Git at
+`f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`.
+Desktop validation size: `1536 x 1024`
 Route: `/ui-v2/medialib/files`
 Current scope: [SLICE.md](../SLICE.md); accepted ranges: [Progress](progress.md)
 
-The supplied image defines hierarchy with explicit overrides below: no card statistics or thumbnails;
+The written composition below defines hierarchy: no card statistics or thumbnails;
 both library selectors share cards with name/selection/menu and selected context with enabled state/
 path only. Reuse the shared shell; this visual specification adds no unrelated Files business scope.
 
@@ -31,7 +31,7 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 其他页面业务不重设计。
 
 现行验收以本节替换旧 Directory pane / Add/Edit drawer 及旧图片的对应几何要求；
-其他 CURRENT 业务约束保留，图片/历史验收不改写。桌面 `1536×1024`、`390px` 窄屏、
+其他 CURRENT 业务约束保留，原图片及验收历史保留在 Git。桌面 `1536×1024`、`390px` 窄屏、
 键盘/焦点、卡片/菜单、慢读取/真实空/错误和快速切换/reduced-motion 须有实际交互及视觉
 证据；动态体验不能只靠 DOM/CSS 断言。按用户结果与自动化基准验收，无新增像素/时长指标。
 
@@ -129,8 +129,7 @@ Empty/loading/read-error and keyboard dismissal remain usable; closing neither c
 
 Capture Add/Edit card-open step 1 and card-closed states at `1536 x 1024`, zoom `100%`, scale `1`
 with deterministic entries, plus narrow-screen and keyboard/focus evidence. Verify hierarchy,
-selection-bar position, five columns, context-menu entry, card and required functional states. Tree/drawer geometry
-is superseded; statistics/artwork
-removals are mandatory differences from the image. Font/glyph/spacing variation is acceptable when
-the design remains clear; a nonzero pixel diff alone is not a blocker. Slice tests accept behavior
-and safety.
+selection-bar position, five columns, context-menu entry, card and required functional states
+against the current written composition. No comparison with the retired image is required.
+Tree/drawer geometry, statistics and artwork remain absent under the current presentation contract.
+Verify readable spacing, actual interaction and the existing business/safety rules.

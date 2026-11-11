@@ -2,7 +2,8 @@
 
 Status: CURRENT — accepted50 cards/tree removal/loading and current Files preparation/Task return;
 retained37/38/46 business and shell rules.
-Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
+Current visual acceptance follows this written specification and actual desktop/narrow journeys.
+The obsolete design image is retained only in Git; it is no longer a design or acceptance baseline.
 Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
 [separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
 
@@ -10,14 +11,13 @@ This file owns Files/shared-shell composition and controlled visual acceptance, 
 [SLICE.md](../SLICE.md) selects current changes; [Progress](progress.md) records accepted Base/Head.
 Original revision/delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
-Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
 ## CURRENT — Slice50 弹卡、去目录树与加载体验（PASS / CLOSED）
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
 本节现行呈现替换原 Directory Pane 和 Add/Edit drawer 约束；
-其他浏览、命令、真实状态及安全规则保留。旧参考图片不可改写，也不要求未来同时保留与
-新目标冲突的树/抽屉布局。
+其他浏览、命令、真实状态及安全规则保留。旧参考图片已退出当前文档树，历史保留在 Git；
+不要求保留与现行约定冲突的树/抽屉布局。
 
 - 文件与媒体库页都删除**页内**左侧目录树及占位，浏览区利用释放宽度；共享 Shell 的
   全局侧栏保留。文件夹、面包屑、上一级/根目录、搜索、视图、选择、刷新与分页继续可用，
@@ -92,10 +92,9 @@ analysis/confirmation; former index compatibility/sync obligations are supersede
 
 ## Historical Reference State
 
-The acceptance screenshot uses a deterministic desktop state at exactly `1536 x 1024`, browser zoom
-`100%`, device scale factor `1`, no browser chrome, no page scrollbar and all required fonts/assets
-loaded. The historical drawer is open and shows step 1; current Add/Edit uses the centered card
-and no directory tree, preserving the other fixture values and business constraints.
+The retired image's sample state is recorded below only to explain historical labels. It does not
+define current fixture values, layout or acceptance. Current Add/Edit uses the centered card and
+no directory tree; actual screenshots and interactions are assessed against the written journey.
 
 The reference content is:
 
@@ -115,8 +114,7 @@ The reference content is:
 
 ## Layout Anchors
 
-The image is authoritative for design intent, composition, hierarchy and fixture state. The
-following anchors are implementation guidance for the reference viewport; they are approximate and
+The following written anchors describe the shared layout. They are approximate and
 do not impose pixel-identical CSS geometry:
 
 | Region | Reference placement |
@@ -133,11 +131,11 @@ do not impose pixel-identical CSS geometry:
 | Selection footer | Full-width strip below the directory/file work area |
 | Add/Edit library card | Centered bounded overlay with header, three-step form and reachable footer |
 
-The reference has a light neutral canvas, white surfaces, thin cool-gray borders, dark text and
+The shared light shell has a neutral canvas, white surfaces, thin cool-gray borders, dark text and
 blue primary actions. The selected navigation item, selected library card, selected table checkbox and
 primary buttons use the same blue family. The green `已启用` state is distinct from the blue action
-color. The reference color relationships and visual hierarchy take precedence over named colors,
-but exact raster values are not independently pass/fail criteria.
+color. Verify readable contrast and visual hierarchy in the actual interface;
+exact raster values are not independently pass/fail criteria.
 
 ## Visible Elements
 
@@ -154,8 +152,8 @@ The Files screenshot must show the replacement shared V2 shell in the following 
 
 The shell must not acquire a second Files-only navigation model. The same shell and ordered
 navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.
-Icons, spacing, selected-state backgrounds and alignment must remain recognizably aligned with the
-reference image. Exact glyph artwork, rasterization and CSS measurements may differ. The current
+Icons, spacing, selected-state backgrounds and alignment follow the current shared shell.
+Exact glyph artwork, rasterization and CSS measurements may differ. The current
 product boundary intentionally removes the reference-only `系统存储` usage block because no
 supported authoritative capacity source exists; adding one is outside Slice 37.
 
@@ -177,7 +175,7 @@ The main content shows:
 Slice50 removes the page-local directory tree and its placeholder. Open folders from the live
 listing and use exact breadcrumbs, parent/root navigation, search, view switching, refresh and
 bounded paging. The global navigation rail remains. Old tree geometry belongs only to the
-immutable reference image and is not current acceptance.
+historical Git record and is not current acceptance.
 
 ### File Pane
 
@@ -188,7 +186,7 @@ The file pane shows the breadcrumb and controls:
 - list view selected;
 - grid view available but not selected.
 
-The screenshot remains authoritative for the closed, non-hover success-state composition. Single-entry
+The current written composition applies to the closed, non-hover success state. Single-entry
 commands are exposed through a controlled context menu opened by right-click, the Context Menu key or
 `Shift+F10`; keyboard and touch users receive an equivalent focusable action entry, so right-click is
 not the only discoverability path. Folder names/icons and non-checkbox row areas open folders on left
@@ -201,7 +199,7 @@ The table columns are exactly (current presentation boundary — see above):
 选择 | 名称 | 类型 | 大小 | 修改时间
 ```
 
-The reference rows, in order, are:
+The historical sample rows (not fixed current acceptance data) are:
 
 | Name | Type | Size | Modified |
 |---|---|---:|---|---|
@@ -226,7 +224,7 @@ Folder entries include `打开`, `重命名`, `复制`, `移动` and `删除`; R
 may include `整理`, while MediaLibrary entries never include Organize. Unsupported operations are
 omitted or disabled with a reason. Opening a folder by left click remains available without an
 inline button.
-Opening a direct-action dialog must not disturb the reference screenshot state when the menu is
+Opening a direct-action dialog must not disturb the underlying listing context when the menu is
 closed. Unsupported operations are omitted or disabled with a reason.
 
 ### Common File Actions
@@ -316,7 +314,7 @@ The current page completes one vertical journey:
 | Entry | Select `文件` from the shell or open `/ui-v2/resourcelib/files` |
 | Visible state | Shared shell, ResourceLibrary cards, exact breadcrumbs and full-width file table, common commands/progress, selection footer and explicit Add/Edit card; truthful library/directory loading |
 | Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit eligible content, organize selected media or complete the local add-library flow |
-| Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page matches the reference |
+| Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page follows the current written composition |
 | Failure | Read, permission, capability, path, limit, stale/conflict, partial transfer, malformed-data or activation failure is shown on the affected item without fabricated success or uncertain replay |
 | Recovery | Retry safe reads, return to root, correct input/destination, reload stale text, inspect partial items, reconfirm a current delete/replace, select another library or correct and resubmit a failed ResourceLibrary save |
 
@@ -338,14 +336,12 @@ The following current obligations consolidate accepted37/38/45/46/50; Slice50 re
 selected old tree/drawer geometry and adds the accepted motion/loading/stability behavior. Historical index-sync and
 Upload/Download delivery facts remain in the original Git closures; neither is a current feature:
 
-1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
-   `docs/pics/文件页.png` in the controlled browser/font environment. The report records observed
-   differences, but the pixel count is diagnostic rather than a pass/fail threshold. The shared
-   shell, Files hierarchy, fixture state, labels and control order must remain complete and
-   recognizably aligned. Bounded differences in font/glyph rendering, icon or thumbnail artwork,
-   exact dimensions/spacing, borders, shadows and color nuance are accepted.
-2. The required visible Chinese labels, row order, values, selected states, card state and control
-   order above are present. Dense table cells may use bounded ellipsis when the complete underlying
+1. Inspect actual desktop `1536 x 1024`, narrow and short-window screenshots and interactions
+   against the current written composition and journey. Verify readable hierarchy, spacing,
+   labels, complete controls and usable dialogs; no comparison with the retired design image is required.
+2. The required visible Chinese labels, truthful values, selected states, card state and control
+   order are present. Historical sample names/counts/paths are not fixed acceptance data.
+   Dense table cells may use bounded ellipsis when the complete underlying
    value remains available to assistive technology and the item/action is unambiguous.
 3. The old dark horizontal shell is replaced by the reference light shared shell across V2 without
    creating a Files-only navigation model or breaking existing route/auth/deep-link behavior.
