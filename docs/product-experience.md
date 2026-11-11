@@ -950,8 +950,8 @@ replacement for the normal V2 journey. Source preparation cannot accept browser-
 paths, fingerprints, occurrences or IDs as execution authority. In-context summary/confirmation
 belongs to the admitted task and its exact preparation; no independent Preview product remains.
 Files starts the bounded task/preparation and keeps exact unknown-request reconciliation after close/
-reload/reconnect; the admitted Task Center task detail reopens that same preparation/summary,
-without the former center discovery list or guessed request/library. Generic new
+reload/reconnect; an eligible `继续整理` in the admitted Task Center task detail reopens that same
+preparation/summary, without the former center discovery list or guessed request/library. Generic new
 URLs guide to Files without work; valid prepared-work links keep their legitimate exact context.
 Browsing/separate analysis creates no organizing task or execute intent; admission/decision Save
 does not authorize media effects. Four business blockers stay native to the admitted task.

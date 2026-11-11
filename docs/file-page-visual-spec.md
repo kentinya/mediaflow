@@ -1,6 +1,6 @@
 # Files Page Visual Specification
 
-Status: CURRENT — accepted50 cards/tree removal/loading and standalone Files preparation return;
+Status: CURRENT — accepted50 cards/tree removal/loading and current Files preparation/Task return;
 retained37/38/46 business and shell rules.
 Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
 Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
@@ -58,9 +58,12 @@ directory read error directly. Ordinary browsing does not query/poll organizing 
 organizing submission still reconciles its exact request before returning to the admitted preparation.
 After selecting files and generating a summary, the operator may leave and reopen the original
 Task from Task Center's Running/All views. Its `继续整理` action returns to the same preparation/
-summary after reload or re-authentication while that work remains continuable. Ended work instead
-opens its read-only summary and offers Files for a new selection. A failed file can be selected again
-without cancelling the failed Task; healthy waiting siblings retain their old confirmation.
+summary after reload or re-authentication while that work remains continuable. Ended Task details
+show results and inline file evidence, without a preparation section or summary/restart buttons.
+Existing exact preparation addresses retain read-only history; the shared organizer keeps readable
+space between status text and its colored border. New organizing starts from ResourceLibrary Files.
+A failed file can be selected again without cancelling the failed Task; healthy waiting siblings
+retain their old confirmation.
 The [manual journey](product-experience.md#manual-organize) owns history read recovery and explicit
 new confirmation; original results remain factual. Ordinary-operation status keeps its local modal.
 

@@ -54,9 +54,11 @@ review the ready subset and click `确认整理 N 项` once. Proven admission op
 existing detail in Task Center. A lost response offers original-request reconciliation, retaining
 its original identity even after an unselected file is corrected/reanalyzed. After leaving,
 `继续整理` on the original Task returns to the same still-continuable review,
-including after reload/re-authentication. Ended work offers `查看只读摘要` and a Files entry for
-deliberate new organizing. Failed files can start again from Files without cancelling the ended Task;
-healthy siblings still waiting for confirmation keep their original summary. History read failures
+including after reload/re-authentication. Ended Task details show results and inline file evidence,
+without a preparation section or summary/restart buttons. Existing exact preparation addresses
+remain readable; the shared organizer keeps space between status text and its colored border.
+New organizing starts from ResourceLibrary Files. Failed files can start again without cancelling
+the ended Task; healthy siblings still waiting for confirmation keep their original summary. History read failures
 have an in-page reread action. Explicit confirmation precedes each new execution; original results
 remain factual. The [manual journey](docs/product-experience.md#manual-organize) explains these paths;
 [Release validation](docs/release.md#current-v2-validation-boundary) records their acceptance and limits.

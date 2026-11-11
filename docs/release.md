@@ -59,6 +59,21 @@ API/Worker rather than a separate TV browser journey. This T3 acceptance adds no
 wheel, Docker or production-service validation. Subsequent documentation changes preserve these
 execution inputs and the earlier Slice acceptance identities.
 
+The [Task preparation-entry and status-spacing correction](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
+passed independent B T3 review on 2026-11-11, from Base
+`436117e0588d30794dc3ee17d4fc1d0988a79442` through reviewed implementation
+`408b5303cdabad202188ed252ceaa741159cdeaa`. Ended Task details show results and inline evidence
+without the preparation section or summary/restart buttons. Eligible continuation and existing exact
+historical addresses still open the shared organizer, with readable status-text spacing.
+Acceptance passed 120 affected Web unit tests, 40 Node browser tests and 18 real-Python browser
+tests, plus Web type/lint/format/build checks. The actual Files → leave → Task Center → continue →
+one confirmation → Worker completion journey and a historical address captured from that journey
+were verified; desktop, narrow and short-window views were inspected. The fixed review retains
+commands, non-failure output and local evidence at
+`.git/validation-evidence/408b5303/patch-20261111-5/`. These isolated local checks add no full-repository,
+wheel, Docker or production-service validation. Later documentation reconciliation changes no
+product source, tests or build inputs; Git push does not constitute a V2 release.
+
 Prior [Slice53 acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) remains unchanged,
 **PASS / CLOSED** on 2026-11-10. Its original Base is
 `95c24cd0a3cc51acd6143e37e72371445cb15a72`, accepted implementation
