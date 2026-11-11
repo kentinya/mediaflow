@@ -401,13 +401,14 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
     { timeout: 30_000 },
   );
 
+  await card.getByText("修正识别或作品", { exact: true }).click();
   await card
     .getByLabel(`识别类型 ${conflictFile}`)
     .selectOption({ label: "Copy fixture" });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
-  await expect(card.getByText(/选择已保存,正在按固定配置重新分析/)).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await expect(
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+  ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
@@ -1086,13 +1087,14 @@ test("an unknown original submission is reconciled under a newer sibling summary
   // C, one explicit save, then its own zero-mutation re-analysis.
   await card.getByRole("button", { name: "返回逐项复核" }).click();
   await expect(card.getByText(siblingFile).first()).toBeVisible();
+  await card.getByText("修正识别或作品", { exact: true }).click();
   await card.getByLabel(`识别类型 ${siblingFile}`).selectOption({
     label: "Special",
   });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
-  await expect(card.getByText(/选择已保存,正在按固定配置重新分析/)).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await expect(
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+  ).toBeVisible({ timeout: 30_000 });
 
   // Drive the real Worker until the newer exact summary is linked and read.
   const summaryReadPath = `/api/v1/operations/organize/previews/${executePreviewId}`;

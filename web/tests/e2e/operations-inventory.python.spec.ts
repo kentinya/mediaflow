@@ -1333,11 +1333,12 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     },
   );
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   await recognition.first().selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByText(/选择已保存,正在按固定配置重新分析/),
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -1593,10 +1594,11 @@ test("a selected execution never blocks the unselected sibling's correction and 
   // Correct the unselected sibling's RecognitionType on this card; the
   // analysis must only review the remaining item and succeed.
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await card.getByText("修正识别或作品", { exact: true }).click();
   await recognition.selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByText(/选择已保存,正在按固定配置重新分析/),
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -1997,13 +1999,14 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     },
   );
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   // The correction re-enters the durable analysis stage; the resident Worker
   // links the new exact plan under the same pinned configuration.
   await recognition.first().selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByText(/选择已保存,正在按固定配置重新分析/),
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -2130,7 +2133,9 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   // addresses exactly the run's primary item and not the detail's other
   // (source identity / storage) mentions of the same filename.
   await expect(
-    restored.getByRole("region", { name: "主条目" }).getByText("Four.2004.mkv"),
+    restored
+      .getByRole("region", { name: "主条目" })
+      .getByRole("cell", { name: /^source-storage:Four\.2004\.mkv / }),
   ).toBeVisible();
 
   // Privacy and bounded reads: no raw token or temp path appears, and the
