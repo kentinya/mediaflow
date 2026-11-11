@@ -2,9 +2,10 @@
 
 用户先授权调查，再授权规划；规划提交于 `4ec6cbf55fd936824790585d2280325b2cca36a6`。
 2026-11-11 用户明确“激活Task”，现移除草案／无活动实施通知，正式授权本 Task 实施。
-原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。已由 Developer
-实施完成并转入 READY FOR B REVIEW；本轮只提交实现、受影响测试与验证记录，不包含
-自审验收、启动其他代理、推送或部署。
+原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。Developer 已提交
+候选 `b407dbdba80cb1e9cfd4fb22b37edd3b95a7b2bb`；B 独立审查后于 2026-11-11
+给出 FIX REQUIRED：正常切换条目状态筛选会清空同文件尚未提交的元数据标题。
+按文末指导在本 Task 修正后重交，不新增 Task。
 
 上一独立修复 PATCH-20261111-3 的
 [固定 B PASS](https://github.com/kentinya/mediaflow/blob/7bf958fb1b61b358c5f3f0305fa5137b2caa38f2/TASK.md#b-decision--patch-20261111-3-pass)
@@ -18,7 +19,7 @@ Authority: 用户授权的独立呈现修复；生命周期遵循
 Task ID: PATCH-20261111-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
 Difficulty: Medium
 Test Level: T3
@@ -198,5 +199,69 @@ Base..HEAD 仅含本 Task 规划文档，未出现中间产品变更，原 Task 
 
 ### B Review Result
 
-待独立验收。PASS 后记录准确 Base..Head 与实际结果，恢复紧凑的无活动实施通知；
-不关闭或修改任何 Slice，不规划授权范围之外的后续工作。
+```text
+Reviewer: B
+Date: 2026-11-11
+Reviewed Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
+Reviewed Head: b407dbdba80cb1e9cfd4fb22b37edd3b95a7b2bb
+Decision: FIX REQUIRED
+Task blockers: B-PATCH4-01
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+**交付结果核对：** 完整 Base..Head 共 6 个文件，仅 Task、任务详情组件／样式及相关
+测试。当前页证据已紧跟对应文件，页外证据仍可准确读取；桌面与 390px 的可见位置、
+正文／关闭动作和键盘开关经 B 新构建浏览器验证。Slice54 已关闭且不属于本独立 Task，
+其交付与关闭记录、本次 SLICE／Roadmap／Progress 均未修改。Task 尚未满足同文件
+输入在筛选／位置变化后保持的要求，不能以主布局已完成代替整个 Task 验收。
+
+**B-PATCH4-01（P1）— 改状态筛选会清空正在编辑的同文件标题。**
+
+实际完整旅程：任务中心 → 元数据恢复 → 对现有问题任务点击“查看问题文件” →
+“查看该文件证据与恢复记录” → 在“搜索标题”输入 `Operator edited metadata title` →
+把条目“状态筛选”从全部改为等待处理。相同任务、相同文件仍显示，输入却变为空串。
+B 使用既有 `operations_inventory_harness.py` 的 `metadata_correction` fixture、真实
+Python API／临时 SQLite、新构建和 Chromium 复现；未构造新产品入口、未提交决定／整理。
+
+原因定位：`RunDetailTabs.tsx:896` 的列表 key 包含状态筛选和分页游标；本提交将证据
+及其恢复表单从列表外移入列表内，筛选变化会连表单一起重新挂载。
+`TaskItemRecoveryPanel.tsx:427` 的未提交输入仍由组件本地保存，当前 Task Center 没有
+接入其既有草稿传参，重新挂载后读回初始输入。Base 中证据是列表的兄弟组件，筛选不
+卸载该表单；引入变更为 `b407dbdb`（2026-11-11 22:07:47 +08:00）。此次原生结果说明
+影响也发生在已经加载完成的正常筛选操作，不仅是 Developer 已披露的初次列表迟到。
+
+#### 本次修正的开发指导
+
+1. 让同一账号／任务／文件的既有编辑上下文不随列表筛选或证据位置变化而丢失。
+   可把现有草稿状态放到列表 key 之外的稳定 owner，并通过已有
+   `decisionDraft`／`onDecisionDraftChange` 传递；或保持同一证据表单实例再调整其位置。
+   选择与当前组件结构相符的最小修改，继续沿用原检查点／决定的草稿归属规则。
+   允许为此接通 `RunDetailTabs`、`RunEvidenceSection` 与既有恢复组件的必要传参。
+2. 保持本次已实现的行内位置及页外卡片。用户在同文件编辑后改变状态筛选，输入仍
+   在原文件；列表先显示页外卡、读取完成后迁入行内时也保留该文件的编辑上下文。
+   原有保存、分析、确认和核对继续使用已有流程。
+3. 在现有 `RunDetailTabs.test.tsx` 用真实状态筛选控件补充“编辑同文件标题 → 筛选 →
+   标题保留”的回归，覆盖上述位置迁移。沿用现有原生 fixture 从同一 Web 入口验证，
+   不以重填输入或增加额外确认步骤替代修复。Developer 运行失败用例与原受影响计划，
+   提交新候选；B 复核修正并完成下述尚未运行的原生验收。
+
+#### B 实际验证与证据
+
+证据目录：`.git/validation-evidence/b407dbdb/patch-20261111-4-b/`（本机忽略目录）。
+
+| 验证（产品命令 cwd 为 web/） | 实际结果 |
+|---|---|
+| 原计划 5 个受影响 Vitest 文件 | 90/90 通过，无 skip；9.02s，`affected-unit.log` |
+| `npm run typecheck`、`npm run lint`、`npm run format:check` | 均通过，各自同名日志 |
+| `npm run build` | 通过，`build.log`；保留 chunk >500 kB 构建提示 |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40 通过，26.1s，`browser.log` |
+| 既有原生元数据入口编辑／筛选 | 失败：标题从上述文字变为空串；`native-draft-filter.log` 及前后截图 |
+| 根目录治理检查、完整 Base..Head `git diff --check` | PASS／无输出 |
+
+B 已检查本轮桌面与窄屏截图；1536×600 截图也保存在同一稳定目录。
+原生失败的账号、任务／文件、操作前后值及准确 URL 保存在日志中，数据仅来自临时
+测试 runtime。本轮测试及静态检查执行时间低于总复核时间的 50%；单元和浏览器套件
+合计 35.12s，原生复现约 1s。确认阻塞后依流程提前 FIX REQUIRED，未运行原计划
+`task-flow.python.spec.ts`；该项保留给修正候选的 B 验收，未标记通过。
+本轮仅维护 TASK.md 审查结果，未改产品代码；预存脏文件保持，未推送／部署。
