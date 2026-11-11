@@ -10,7 +10,7 @@ Authority: 用户反馈“整理时元数据修正作品搜索无结果，直接
 Task ID: PATCH-20261111-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: e9241d484e33ccb0b1a8def2ab81c17cb1a3d577
 Difficulty: Medium
 Test Level: T3
@@ -203,8 +203,82 @@ SLICE／Roadmap／Progress，不读取私有配置／真实媒体。本次仅激
 
 ### Developer completion report
 
-已获实施授权，尚未开始实施。Developer 交接时填写固定 checkpoint、READY FOR B REVIEW、
-实际变更／决策、受影响测试结果和剩余风险；完整验收由 B 负责。
+**Checkpoint:** `a78ea121` (Task Base `e9241d48` → 候选 `a78ea121`，分支 `main`，
+单一实现检查点；预存 `mediaflow/.DS_Store` 修改及全部未跟踪私有文件原样保留，未纳入提交)。
+实施中状态流转 PLANNED → IN PROGRESS → READY FOR B REVIEW；本报告为事实交接，不构成验收。
+
+**实际变更（Task 范围内）**
+
+- `mediaflow/application/task_item_recovery.py`：`metadata_search` 新增可选 `year`
+  参数（模块级哨兵区分“未提供”与“显式 null”）。显式整数按 1870–2100 严格校验（拒绝布尔、
+  非整数、越界，拒绝发生在 Provider 调用前，返回有界 `invalid_year` 400）；显式 null 以
+  `None` 到达 Provider；省略字段的旧调用体保留原年份语义（`review.original_year`）。
+- `mediaflow/interfaces/service_api.py`：metadata-search 路由接受可选 `year` 字段，
+  未知字段仍拒绝（既有 400 invalid_request）。
+- `web/src/shared/api/api-client.ts`：`searchTaskItemMetadata` 请求体类型新增
+  `year: number | null`（线上始终携带，null 不省略）。
+- `web/src/features/operations/TaskItemRecoveryPanel.tsx`：`searchMetadata` 提交当前
+  年份（空串 → null，同保存语义）；新增 `updateSearchCondition`——标题／年份／媒体类型
+  变更时失效旧搜索结果与旧选中候选（`metadataResult: null`、`selectedProviderId: ""`），
+  两个呈现（Task Center 面板与整理弹窗卡）共用；候选选择路径不受影响。
+- `tests/test_task_item_metadata_search.py`（新增，7 用例）：真实受管布局＋真实 CLI 受理
+  ＋真实常驻 Worker 分析＋真实 API，用记录入参、按年份返回不同候选的本地假 Provider，
+  覆盖改年 TV 搜索、清空年份、旧调用体兼容、非法参数（含未知字段）Provider 零调用、
+  搜索只读与 checkpoint 绑定、选择候选保存→分析、未选候选直接保存→分析（同一查询条件）、
+  viewer RBAC 拒绝。`tests/test_automation_entrance_recovery.py` 的 `entrance_journey`
+  仅新增可选 `provider_registry`／`viewer_token` 注入（默认行为不变）。
+- `scripts/operations_inventory_harness.py`：新增 `_YearSensitiveMetadataProvider`
+  （仅拦截两个探测标题，其余标题完全委托原行为）；`YearProbe/DialogYear.2025.mkv`
+  探测夹具与其专属识别规则；seeder 可选 `title`/`year` 覆盖（独立缓存键、跳过候选注入
+  与计划请求）；`GET/DELETE /__harness__/metadata-search-calls` 控制路由；
+  `manual-file-state` 允许清单加入探测文件。
+- `web/tests/e2e/metadata-search-year.python.spec.ts`（新增，2 用例）：真实 Python
+  harness 上覆盖 Task Center 逐项恢复入口与 Files 整理弹窗入口——改年搜索发送 2024 并
+  只出现该年份候选（Provider 侧调用记录佐证）、清空发送 null、旧结果/选择随输入失效、
+  保存→真实 Worker 分析完成且零媒体变更。
+- 既有 Web 单测扩展：`TaskItemRecoveryPanel.test.tsx`（新增年份/失效用例）、
+  `ManualOrganizeDialog.test.tsx`（搜索体断言加 `year`，新增失效＋null 搜索用例）、
+  `api-client.test.ts`（新增 year 透传用例）。
+
+**实现决策**
+
+- Web 端不做本地年份范围校验，与保存路径一致地提交当前输入，由 API 严格校验并返回
+  有界错误（旅程第 4 步“无效年份需纠正后搜索”由该错误驱动）。
+- 验收第 1 条中的“TV 搜索”由 Python API 层真实路由用例覆盖（现有夹具的 MetadataPolicy
+  均为 movie 型，浏览器 TV 搜索需改全局策略，超出本 Task 允许的夹具增量边界；
+  API 用例同样证明 Provider 收到 2024 并返回正确候选）。
+
+**受影响测试实际结果（候选 `a78ea121`）**
+
+仓库根：
+- `python3 scripts/check_governance.py` PASS；`git diff --check` 干净。
+- `.venv/bin/python -m unittest tests.test_task_item_metadata_search
+  tests.test_metadata_correction tests.test_metadata
+  tests.test_automation_entrance_recovery` → 63 tests OK。
+- `.venv/bin/ruff check`／`format --check`（全部变更 Python 文件，含 harness）通过。
+
+`web/`：
+- `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/shared/api/api-client.test.ts` → 21＋13＋5 全部通过。
+- `npm run typecheck` 通过；`npm exec eslint`／`npm exec prettier --check`（全部变更
+  文件，含新 e2e 规格）通过；`npm run build` 成功。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/metadata-search-year.python.spec.ts` → 2 passed。
+- 直接受影响 python e2e 回归：`manual-organize-dialog.python.spec.ts` 8 passed、
+  `operations-inventory.python.spec.ts` 45 passed（开发中发现并修正一处 seeder
+  候选注入条件回归后全绿）。
+
+开发用时约 90 分钟，其中测试执行约 15 分钟（<30%）。
+
+**剩余风险与移交说明**
+
+- 真实 TMDB 行为、缓存键/TTL、Movie 去年份回退与 TV 年份过滤未改动，也未连接真实
+  Provider 验证（测试全部使用隔离假 Provider／临时根，不触碰真实配置与用户媒体）。
+- e2e 的 TV 型搜索未在浏览器层覆盖（理由见上）；B 验收时可按 Task 判定该覆盖边界。
+- 全量 Python／Web 回归、`npm run lint`／`format:check` 全仓与 B 列名的其余验收门
+  （`tests.test_processing_checkpoint`、`tests.test_v2_manual_organize`、
+  `tests.test_operations_task_center`、playwright 其余规格）按分工由 B 执行。
 
 ### B review result
 
