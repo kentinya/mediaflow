@@ -2322,54 +2322,23 @@ function RunDetailFacts({
           ) : null}
         </section>
       )}
-      {run.filesPreparation !== null && (
+      {run.filesPreparation !== null && run.filesPreparation.continuable && (
         <section className="mf-run-fact-preparation" aria-label="文件整理准备">
           <h4>文件整理准备</h4>
-          {run.filesPreparation.continuable ? (
-            <>
-              <p>查看整理摘要，确认后执行。</p>
-              <div className="mf-actions">
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/organize/new"
-                  search={{
-                    discoveryId: run.filesPreparation.discoveryId,
-                    resourceLibraryId: run.filesPreparation.resourceLibraryId,
-                    returnOps: preparationReturnOps,
-                  }}
-                >
-                  继续整理
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <p>本次整理已结束。如需再次整理，请从文件页发起。</p>
-              <div className="mf-actions">
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/organize/new"
-                  search={{
-                    discoveryId: run.filesPreparation.discoveryId,
-                    resourceLibraryId: run.filesPreparation.resourceLibraryId,
-                    returnOps: preparationReturnOps,
-                  }}
-                >
-                  查看只读摘要
-                </Link>
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/resourcelib/files"
-                  search={{
-                    resourceLibraryId: run.filesPreparation.resourceLibraryId,
-                    organize: "1",
-                  }}
-                >
-                  从文件页重新发起
-                </Link>
-              </div>
-            </>
-          )}
+          <p>查看整理摘要，确认后执行。</p>
+          <div className="mf-actions">
+            <Link
+              className="mf-button mf-button-secondary"
+              to="/operations/organize/new"
+              search={{
+                discoveryId: run.filesPreparation.discoveryId,
+                resourceLibraryId: run.filesPreparation.resourceLibraryId,
+                returnOps: preparationReturnOps,
+              }}
+            >
+              继续整理
+            </Link>
+          </div>
         </section>
       )}
       {hasDiagnostics && (

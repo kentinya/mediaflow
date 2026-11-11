@@ -9285,13 +9285,13 @@ tr[aria-selected="true"] {
   min-width: 8px;
 }
 
-.mf-organize-dialog-body section,
+.mf-organize-dialog-body section:not(.mf-status),
 .mf-organize-dialog-body header.mf-organize-file-head {
   padding: 10px 0;
   border-bottom: 1px solid #eef2f7;
 }
 
-.mf-organize-dialog-body section:last-of-type {
+.mf-organize-dialog-body section:not(.mf-status):last-of-type {
   border-bottom: 0;
 }
 

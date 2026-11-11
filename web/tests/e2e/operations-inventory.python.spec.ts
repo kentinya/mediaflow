@@ -3887,7 +3887,7 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   expect(intercepted).toBeGreaterThan(0);
 });
 
-test("initial manual preparation remains reachable from Task Center", async ({
+test("initial manual preparation remains reachable from Task Center (PATCH-20261111-5)", async ({
   page,
   request,
 }) => {
@@ -3991,6 +3991,9 @@ test("initial manual preparation remains reachable from Task Center", async ({
   await expect(page).toHaveURL(
     new RegExp(`/operations/organize/new\\?.*discoveryId=${discoveryId}`),
   );
+  // This is the exact historical deep link the Task Center used to expose.
+  // PATCH-20261111-5 removes that duplicate Task-detail entry, not the route.
+  const preparationDeepLink = page.url();
   const reviewDialog = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(reviewDialog).toBeVisible({ timeout: 30_000 });
   await expect(
@@ -4054,9 +4057,38 @@ test("initial manual preparation remains reachable from Task Center", async ({
   await expect(completedDetail.getByText("已完成").first()).toBeVisible({
     timeout: 15_000,
   });
-  // PATCH-20261109-3: a completed run has ended as a whole, so its entry is
-  // the read-only summary link — never an execution-nature "继续整理".
-  await completedDetail.getByRole("link", { name: "查看只读摘要" }).click();
+  // PATCH-20261111-5: an ended Task detail no longer repeats a "文件整理准备"
+  // heading, ending notice, empty action area or either old navigation entry.
+  // The real flow, file result and history evidence remain the detail.
+  await expect(
+    completedDetail.getByRole("region", { name: "文件整理准备" }),
+  ).toHaveCount(0);
+  await expect(completedDetail.getByText("文件整理准备")).toHaveCount(0);
+  await expect(
+    completedDetail.getByText("本次整理已结束。如需再次整理，请从文件页发起。"),
+  ).toHaveCount(0);
+  await expect(
+    completedDetail.getByRole("link", { name: "查看只读摘要" }),
+  ).toHaveCount(0);
+  await expect(
+    completedDetail.getByRole("link", { name: "从文件页重新发起" }),
+  ).toHaveCount(0);
+  await expect(
+    completedDetail.getByRole("link", { name: "继续整理" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+  mkdirSync("test-results/PATCH-20261111-5", { recursive: true });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.screenshot({
+    path: "test-results/PATCH-20261111-5/ended-task-detail-1536.png",
+    animations: "disabled",
+  });
+
+  // The removed entries were duplicate presentation, not the stable route:
+  // the exact historical deep link still reopens this same ended preparation
+  // through the real auth-recovery boundary and stays read-only.
+  await page.goto(preparationDeepLink);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   const historyDialog = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(historyDialog).toBeVisible({ timeout: 30_000 });
   // The same dialog opens the ended work's original summary as read-only
@@ -4080,6 +4112,72 @@ test("initial manual preparation remains reachable from Task Center", async ({
     historyDialog.getByRole("button", { name: /保存并重新分析/ }),
   ).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("discoveryId")).toBe(discoveryId);
+
+  const endedStatus = historyDialog.locator(".mf-status").first();
+  const statusPadding = await endedStatus.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      left: Number.parseFloat(style.paddingLeft),
+      right: Number.parseFloat(style.paddingRight),
+      width: rect.width,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+  expect(statusPadding.left).toBeGreaterThanOrEqual(16);
+  expect(statusPadding.right).toBeGreaterThanOrEqual(16);
+  expect(statusPadding.scrollWidth).toBeLessThanOrEqual(
+    statusPadding.clientWidth + 1,
+  );
+  await page.screenshot({
+    path: "test-results/PATCH-20261111-5/ended-history-1536.png",
+    animations: "disabled",
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(endedStatus).toBeVisible();
+  const narrowStatus = await endedStatus.evaluate((element) => ({
+    left: Number.parseFloat(getComputedStyle(element).paddingLeft),
+    right: Number.parseFloat(getComputedStyle(element).paddingRight),
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(narrowStatus.left).toBeGreaterThanOrEqual(16);
+  expect(narrowStatus.right).toBeGreaterThanOrEqual(16);
+  expect(narrowStatus.scrollWidth).toBeLessThanOrEqual(
+    narrowStatus.clientWidth + 1,
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: "test-results/PATCH-20261111-5/ended-history-390.png",
+    animations: "disabled",
+  });
+
+  await page.setViewportSize({ width: 1536, height: 600 });
+  await expect(endedStatus).toBeVisible();
+  const shortStatus = await endedStatus.evaluate((element) => ({
+    left: Number.parseFloat(getComputedStyle(element).paddingLeft),
+    right: Number.parseFloat(getComputedStyle(element).paddingRight),
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(shortStatus.left).toBeGreaterThanOrEqual(16);
+  expect(shortStatus.right).toBeGreaterThanOrEqual(16);
+  expect(shortStatus.scrollWidth).toBeLessThanOrEqual(
+    shortStatus.clientWidth + 1,
+  );
+  await page.screenshot({
+    path: "test-results/PATCH-20261111-5/ended-history-short.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
   // Reopening and viewing the admitted result submitted nothing.
   expect(executePosts()).toHaveLength(1);
 });

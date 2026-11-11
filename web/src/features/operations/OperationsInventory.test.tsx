@@ -694,6 +694,11 @@ describe("Operations run inventory landing", () => {
     // "processed is not organize success" tutorial is not printed.
     expect(within(detail).getByText("流程状态")).toBeVisible();
     expect(within(detail).queryByText(/不代表整理成功/)).toBeNull();
+    // A run without a Files preparation association publishes no preparation
+    // area at all, not even an empty one.
+    expect(
+      within(detail).queryByRole("region", { name: "文件整理准备" }),
+    ).toBeNull();
     // The historical source and target scope the projection publishes are
     // part of the visible overview (absent evidence renders explicitly).
     expect(within(detail).getByText("Movies")).toBeVisible();
@@ -771,7 +776,7 @@ describe("Operations run inventory landing", () => {
     expect(requested.filter((entry) => entry.method !== "GET")).toEqual([]);
   });
 
-  it("offers no execution entry for an ended flow and keeps the read-only summary", async () => {
+  it("removes the ended flow's duplicate preparation entries and keeps its file truth", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const url = String(input);
@@ -801,28 +806,208 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    // The ended flow publishes no execution-nature entry and states the one
-    // next action; the run status and results above stay unchanged.
-    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+    // The ended flow exposes no duplicate preparation heading, ending notice,
+    // empty action container or either former entry. Its real flow and file
+    // results above are the complete detail.
     expect(
-      within(detail).getByText(
+      within(detail).queryByRole("region", { name: "文件整理准备" }),
+    ).toBeNull();
+    expect(within(detail).queryByText("文件整理准备")).toBeNull();
+    expect(
+      within(detail).queryByText(
         "本次整理已结束。如需再次整理，请从文件页发起。",
       ),
+    ).toBeNull();
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+    expect(
+      within(detail).queryByRole("link", { name: "查看只读摘要" }),
+    ).toBeNull();
+    expect(
+      within(detail).queryByRole("link", { name: "从文件页重新发起" }),
+    ).toBeNull();
+    expect(
+      within(detail).getByRole("region", { name: "文件结果" }),
     ).toBeVisible();
-    expect(within(detail).queryByText(/原计划摘要保留为只读历史/)).toBeNull();
-    // The read-only summary and the ordinary Files re-organize path stay
-    // reachable; both are plain navigation, never a mutating control.
-    const summary = within(detail).getByRole("link", { name: "查看只读摘要" });
-    expect(summary.getAttribute("href")).toContain("discoveryId=discovery-1");
-    const restart = within(detail).getByRole("link", {
-      name: "从文件页重新发起",
-    });
-    expect(restart.getAttribute("href")).toContain("resourceLibraryId=source");
-    await user.click(summary);
-    await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/operations/organize/new"),
-    );
+    // The removed entries were plain navigation; the opening journey itself
+    // never submits anything.
+    expect(router.state.location.pathname).toBe("/operations");
   });
+
+  const PATCH_20261111_5_TERMINAL_CASES = [
+    {
+      name: "completed success",
+      overrides: {
+        status: "completed",
+        current_stage: null,
+        success_items: 1,
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      uncertain: false,
+      missing: false,
+    },
+    {
+      name: "completed with failed and uncertain file effects",
+      overrides: {
+        status: "completed",
+        current_stage: null,
+        success_items: 1,
+        partial_items: 1,
+        failed_items: 2,
+        uncertain_effect_items: 1,
+        missing_result_items: 1,
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      uncertain: true,
+      missing: true,
+    },
+    {
+      name: "failed",
+      overrides: {
+        status: "failed",
+        current_stage: null,
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      uncertain: false,
+      missing: false,
+    },
+    {
+      name: "cancelled",
+      overrides: {
+        status: "cancelled",
+        current_stage: null,
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      uncertain: false,
+      missing: false,
+    },
+    {
+      name: "completed without a preparation association",
+      overrides: { status: "completed", current_stage: null },
+      uncertain: false,
+      missing: false,
+    },
+  ] as const;
+
+  it.each(PATCH_20261111_5_TERMINAL_CASES)(
+    "PATCH-20261111-5 keeps $name detail free of the ended preparation area",
+    async ({ overrides, uncertain, missing }) => {
+      stubFetch(async (input) => {
+        const url = String(input);
+        if (
+          url.startsWith("/api/v1/operations/runs?") ||
+          url === "/api/v1/operations/runs"
+        ) {
+          return jsonResponse(pageDocument());
+        }
+        if (url === "/api/v1/operations/runs/task-001") {
+          return jsonResponse(runDocument(overrides));
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations?run=task-001");
+
+      const detail = await screen.findByRole("dialog", { name: "运行详情" });
+      await within(detail).findByText("流程状态");
+      expect(
+        within(detail).queryByRole("region", { name: "文件整理准备" }),
+      ).toBeNull();
+      expect(within(detail).queryByText("文件整理准备")).toBeNull();
+      expect(
+        within(detail).queryByRole("link", { name: "查看只读摘要" }),
+      ).toBeNull();
+      expect(
+        within(detail).queryByRole("link", { name: "从文件页重新发起" }),
+      ).toBeNull();
+      const results = within(detail).getByRole("region", { name: "文件结果" });
+      if (uncertain) {
+        expect(
+          within(results).getByText(/目标文件结果尚未确认 1 个/),
+        ).toBeVisible();
+      }
+      if (missing) {
+        expect(
+          within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+        ).toBeVisible();
+      }
+    },
+  );
+
+  it("PATCH-20261111-5 drops the continuable preparation area when the selected flow's own poll turns terminal", async () => {
+    const requested: { url: string; method: string }[] = [];
+    let overview = runDocument({
+      status: "running",
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: true,
+      },
+    });
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      requested.push({ url, method: init?.method ?? "GET" });
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    expect(
+      await within(detail).findByRole("link", { name: "继续整理" }),
+    ).toBeVisible();
+    overview = runDocument({
+      status: "completed",
+      current_stage: null,
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: false,
+      },
+    });
+    // The selected overview's own 5s poll reads the durable terminal state;
+    // no operator refresh or command is needed.
+    await waitFor(
+      () =>
+        expect(
+          within(detail).queryByRole("link", { name: "继续整理" }),
+        ).toBeNull(),
+      { timeout: 8_000 },
+    );
+    expect(
+      within(detail).queryByRole("region", { name: "文件整理准备" }),
+    ).toBeNull();
+    expect(router.state.location.pathname).toBe("/operations");
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "task-001",
+    );
+    // The terminal poll never submitted, replayed or navigated.
+    expect(requested.filter((entry) => entry.method !== "GET")).toEqual([]);
+  }, 12_000);
 
   it("opens a supported deep link to the selected run and keeps list context", async () => {
     const requested: string[] = [];

@@ -3,9 +3,9 @@
 用户先授权调查，再授权独立 Task 规划；规划提交于
 `21132098d2bc4484ad2da48a41632d5b2d861c16`。2026-11-11 用户明确“激活Task”，
 现移除草案／无活动实施通知，正式授权本 Task 实施。原 ID／Base／目标／范围、
-Medium／T3 和 Developer／B 测试分工保持。当前为 PLANNED，下一步由 Developer
-开始实施并进入 IN PROGRESS；本激活检查点只更新 TASK.md，不包含产品实现、
-自审验收、启动其他代理、推送或部署。
+Medium／T3 和 Developer／B 测试分工保持。Developer 已按授权完成实现、受影响
+检查、真实 Python 浏览器旅程与视觉核对，当前交 READY FOR B REVIEW；本提交不
+包含自审 PASS、启动其他代理、推送或部署。
 
 Authority: 用户本轮独立修复范围；遵循
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
@@ -18,7 +18,7 @@ SLICE／Roadmap／Progress 不变。
 Task ID: PATCH-20261111-5
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 436117e0588d30794dc3ee17d4fc1d0988a79442
 Difficulty: Medium
 Test Level: T3
@@ -180,6 +180,68 @@ Architecture 中直接提及已删除入口的现行措辞；保留原接受身�
 Base..HEAD 仅含本 Task 规划文档，没有中间产品变更，原 Task Base 保持。
 激活前治理检查 PASS，暂存区为空，预存工作区文件同上保留。
 
-尚未实施、未运行产品验收。实施后由 Developer 提交完整 checkpoint、实际
-受影响检查与限制，交 READY FOR B REVIEW；B 独立验收 PASS／FIX REQUIRED。
-修正保持同一 Task；PASS 后恢复简短无活动实施通知及固定审查指针，不规划授权外工作。
+Developer 已提交本 READY FOR B REVIEW checkpoint、实际受影响检查与限制；尚未
+运行 B 的全量验收。B 独立验收 PASS／FIX REQUIRED；修正保持同一 Task；PASS 后
+恢复简短无活动实施通知及固定审查指针，不规划授权外工作。
+
+
+### Developer Completion Report
+
+**候选检查点：** 本提交，任务 Base `436117e0588d30794dc3ee17d4fc1d0988a79442..`；
+分支 `main`；状态 READY FOR B REVIEW。
+
+**变化：**
+
+- `web/src/features/operations/OperationsLanding.tsx`：`RunDetailFacts` 只在后端为
+  该 Task 关联的 `filesPreparation.continuable === true` 时渲染“文件整理准备”及
+  “继续整理”。已结束（completed／failed／cancelled）、结果混合或后端不可继续、
+  以及无准备关联时，整个区域（标题、结束说明、空动作容器与两个旧入口）都不渲染；
+  任务详情原有流程、处理进度、文件结果、条目证据与记录保持。未新增替代性结束提示、
+  只读摘要第二判断或前端继续资格。
+- `web/src/shared/ui/styles.css`：将整理弹窗的业务分区 padding 选择器收窄为
+  `section:not(.mf-status)`，让共享 `StatusBanner` 恢复自身 `16px 20px` 内边距与
+  左边框间距；未使用 `!important`、全站特异性叠加或删除提示。
+- `web/src/features/operations/OperationsInventory.test.tsx`：无关联运行不再出现准备区；
+  更新原已结束运行用例，明确无标题／说明／“查看只读摘要”／“从文件页重新发起”；
+  新增终态矩阵（completed 成功、completed 含失败／未知／缺结果、failed、cancelled、
+  无关联）、可继续入口在自身轮询转终态后消失且全程仅 GET、既有“继续整理”与文件结果
+  可读。历史计划读取失败与无计划仍由既有 `OrganizeCreationPage.test.tsx` 覆盖。
+- `web/tests/e2e/operations-inventory.python.spec.ts`：在原真实 Files 准入→离开→
+  Task 继续→明确确认→原 Task 结果旅程后，断言已结束详情无重复准备区与旧入口、原
+  列表仍在；再用同一准确历史深链接经认证恢复只读弹窗，验证无确认／整批复核／重新
+  分析、原计划仍可读且零重放；在 1536、390 与 1536×600 实际截图并测量 warning
+  提示左右留白、内部无横向溢出。未改后端、API 类型、路由、继续资格或共享 modal。
+
+**实际检查（cwd `web/`；未新增依赖）：**
+
+| 命令 | 实际结果 |
+|---|---|
+| `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx` | 5 文件通过，120/120 测试通过（无 skip） |
+| `npm run typecheck` | 通过 |
+| `npx eslint`（实际改动的 operations 单元、两个 E2E 与 `operations.spec.ts`） | 通过，无输出 |
+| `npx prettier --check`（同组件／测试／样式／E2E 文件） | 通过 |
+| `npm run build` | Vite 构建成功；仅既有 chunk >500 kB 提示 |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40 通过，22.0s |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable from Task Center\|PATCH-20261111-5'` | 1/1 通过，10.8s；真实 Python／临时 SQLite／Local fixture |
+| 仓库根 `python3 scripts/check_governance.py` | PASS |
+| 仓库根 `git diff --check` | 无输出 |
+
+已查看实际截图：`ended-task-detail-1536.png` 中已结束详情只保留真实流程／结果且原列表
+背景仍在；`ended-history-1536.png`、`ended-history-390.png`、
+`ended-history-short.png` 中 warning 标题／正文与棕色左边框有清楚水平留白，390px 与
+矮窗口无整页横向溢出，关闭动作可达。截图在本轮 `web/test-results/PATCH-20261111-5/`
+（忽略目录），B 需在稳定证据目录保留自己的最终截图。
+
+**剩余风险／限制：**
+
+- 本 Task 未运行 B 负责的全量 Web／Python／E2E、wheel 或 Docker 矩阵；也未运行
+  `manual-organize-dialog.python.spec.ts`、`task-flow.python.spec.ts`。未改后端、
+  权限、schema、Storage 或执行协议，由 B 判定适用门禁。
+- 共享整理弹窗的其它真实 warning／error／info 状态由同一 CSS 规则覆盖；开发者只
+  实际截图了已结束 warning 状态，B 应在保留的“继续整理”、Files 整理与历史深链接
+  上继续核对长路径、多段文字和滚动／键盘关闭。
+- 后端 `_operations_run_files_preparation` 的说明仍描述已结束流程“保留只读摘要链接”；
+  本 Task 未授权改后端注释，待 B PASS 后按结果最小协调现行文档措辞。
+- 设计上仍保留“继续整理”继续打开稳定的 `/operations/organize/new` 接收页；本 Task
+  只移除已结束详情的重复入口，未把该继续旅程改为同页弹窗。
+- 未读取私有配置、运行数据库或用户媒体；未推送、未发布。
