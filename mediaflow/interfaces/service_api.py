@@ -2290,7 +2290,13 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.RESOLVE_METADATA_REVIEW)
             self._require_empty_query(environ, "task item Metadata search")
             document = self._document(environ)
-            if set(document) != {"expectedCheckpointVersion", "query", "mediaType"}:
+            # ``year`` is optional: a legacy body without it keeps the
+            # historical original-year semantics, while an explicit JSON null
+            # searches without a year. Any other unknown field is refused.
+            if set(document) not in (
+                {"expectedCheckpointVersion", "query", "mediaType"},
+                {"expectedCheckpointVersion", "query", "mediaType", "year"},
+            ):
                 raise ValueError("task item Metadata search fields are invalid")
             value = self._task_item_recovery.metadata_search(
                 parts[3],
@@ -2298,6 +2304,7 @@ class MediaFlowApi:
                 expected_checkpoint_version=document["expectedCheckpointVersion"],
                 query=document["query"],
                 media_type=document["mediaType"],
+                **({"year": document["year"]} if "year" in document else {}),
             )
             return self._response(start_response, 200, redact_manual_value(value))
         if (

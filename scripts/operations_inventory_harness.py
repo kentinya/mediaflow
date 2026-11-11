@@ -338,6 +338,103 @@ class _QueryScopedMetadataProvider(SyntheticMetadataProvider):
         )
 
 
+#: The dedicated Metadata-search correction probe titles.  Only searches for
+#: these titles reach the year-conditional responses below; every other
+#: fixture's candidates and data stay exactly as they were.
+_YEAR_PROBE_TITLES = ("dialogyear", "yearrecovery")
+#: Provider identities the probe answers per queried year: the operator-edited
+#: year 2024 resolves to one identity, an explicitly cleared year to another,
+#: and the parsed original year 2025 to no candidate at all.  Each probe title
+#: owns its own identities so a saved selection re-identifies that exact title.
+_YEAR_PROBE_IDENTITIES = {
+    ("dialogyear", 2024): "731",
+    ("dialogyear", None): "732",
+    ("yearrecovery", 2024): "733",
+    ("yearrecovery", None): "734",
+}
+_YEAR_PROBE_TITLES_BY_ID = {
+    provider_id: title for title, year in _YEAR_PROBE_IDENTITIES for provider_id in (
+        _YEAR_PROBE_IDENTITIES[(title, year)],
+    )
+}
+
+
+class _YearSensitiveMetadataProvider(_QueryScopedMetadataProvider):
+    """Serve year-conditional candidates for the dedicated correction probe only.
+
+    Every probe search input is recorded so the browser journey can observe
+    the exact ``(media type, title, year)`` the real recovery service
+    forwarded.  Non-probe titles delegate to the unchanged query-scoped
+    behavior, so no other fixture's candidates or data change.
+    """
+
+    def __init__(self, candidates, *, episodes: tuple[int, ...] = ()) -> None:
+        super().__init__(candidates, episodes)
+        self.search_calls: list[dict[str, object]] = []
+
+    def _probe_search(self, media_type: str, query) -> tuple | None:
+        title = getattr(query, "title_candidate", getattr(query, "title", query))
+        normalized = "".join(
+            character.casefold() for character in str(title) if character.isalnum()
+        )
+        if normalized not in _YEAR_PROBE_TITLES:
+            return None
+        year = getattr(query, "year", None)
+        self.search_calls.append(
+            {"mediaType": media_type, "title": str(title), "year": year}
+        )
+        provider_id = _YEAR_PROBE_IDENTITIES.get((normalized, year))
+        if provider_id is None:
+            return ()
+        return (
+            MediaCandidate(
+                "tmdb",
+                provider_id,
+                MediaType.MOVIE if media_type == "movie" else MediaType.TV,
+                str(title),
+                year=year,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+
+    def search_movie(self, query, policy=None, **kwargs):
+        probe = self._probe_search("movie", query)
+        return probe if probe is not None else super().search_movie(query, policy, **kwargs)
+
+    def search_tv(self, query, policy=None, **kwargs):
+        probe = self._probe_search("tv", query)
+        return probe if probe is not None else super().search_tv(query, policy, **kwargs)
+
+    def get_movie(self, provider_id, policy=None, **kwargs):
+        if provider_id not in _YEAR_PROBE_TITLES_BY_ID:
+            return super().get_movie(provider_id, policy, **kwargs)
+        self.calls += 1
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.MOVIE,
+            _YEAR_PROBE_TITLES_BY_ID[provider_id],
+            year=2024 if provider_id in {"731", "733"} else None,
+            genres=("Animation",),
+            countries=("JP",),
+        )
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        if provider_id not in _YEAR_PROBE_TITLES_BY_ID:
+            return super().get_tv(provider_id, policy, **kwargs)
+        self.calls += 1
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            _YEAR_PROBE_TITLES_BY_ID[provider_id],
+            year=2024 if provider_id in {"731", "733"} else None,
+            genres=("Animation",),
+            countries=("JP",),
+        )
+
+
 def build_managed_fixture(
     database: Path,
     root: Path,
@@ -408,6 +505,16 @@ def build_managed_fixture(
     (dialog_root / "DialogFreeze.2020.mkv").write_bytes(
         b"slice53 preparation handoff synthetic media"
     )
+    # PATCH-20261111-1 browser fixture: a dedicated directory whose only source
+    # parses to the probe title/year.  Its Provider responses are year-
+    # conditional (see _YearSensitiveMetadataProvider), so the correction card's
+    # search inputs are observable in the browser-visible candidate set.  No
+    # other journey's candidates or data change.
+    probe_root = source_root / "YearProbe"
+    probe_root.mkdir(parents=True, exist_ok=True)
+    probe_file = probe_root / "DialogYear.2025.mkv"
+    probe_file.write_bytes(b"metadata search year probe synthetic media")
+    os.utime(probe_file, (time.time() - 86400, time.time() - 86400))
     (dialog_root / "DialogPrepAction.2026.mkv").write_bytes(
         b"slice53 preparation analysis action synthetic media"
     )
@@ -539,6 +646,27 @@ def build_managed_fixture(
                 "operator": "and",
                 "children": [
                     {"field": "resource_library_id", "operator": "equals", "value": "incoming"},
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    # PATCH-20261111-1: the dedicated YearProbe source resolves through its own
+    # pinned rule, so the Files dialog journey reaches the real Metadata
+    # correction card without touching any other fixture's recognition.
+    document["recognitionRules"].append(
+        {
+            "id": "year-probe-video",
+            "name": "Metadata search year probe",
+            "priority": 122,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "source"},
+                    {"field": "path", "operator": "contains", "value": "/YearProbe/"},
                     {"field": "extension", "operator": "in", "value": ["mkv"]},
                 ],
             },
@@ -850,7 +978,7 @@ def build_managed_fixture(
     (retirement_root / "Downloading.mkv.part").write_bytes(b"temporary")
     registry = MetadataProviderRegistry(
         (
-            _QueryScopedMetadataProvider(
+            _YearSensitiveMetadataProvider(
                 (
                     MediaCandidate(
                         "tmdb",
@@ -2925,7 +3053,13 @@ def _fixture_set_item_processing(state: AppState, item: PersistentTaskItem) -> P
     return _fixture_set_item_state(state, item, TaskItemStatus.PROCESSING, "metadata")
 
 
-def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") -> dict[str, str]:
+def seed_task_item_recovery_journey(
+    state: AppState,
+    kind: str = "recognition",
+    *,
+    title: str | None = None,
+    year: int | None = None,
+) -> dict[str, str]:
     """Create one real four-type blocker on a current Files-admitted Task.
 
     The Files discovery, its kernel-managed Task, the intent, the zero-mutation
@@ -2934,6 +3068,12 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
     ordinary Task Center API. No legacy Job, child Task or pre-kernel manual
     Task is minted, so every decision/re-analysis/summary/confirmation below
     continues this same Task through the resident engine.
+
+    The optional ``title``/``year`` override serves the dedicated
+    Metadata-search year probe only: it names its own source file, skips the
+    Provider candidate injection and the durable plan request (the probe's
+    Provider answers no candidate for the original year by design), and caches
+    under its own key so no existing journey's fixture is reused or changed.
     """
 
     supported = {
@@ -2946,9 +3086,11 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
     }
     if kind not in supported:
         raise ValueError("unsupported recovery fixture kind")
+    cache_key = f"{kind}:{title}" if title is not None else kind
+    probe_override = title is not None
     with state._manual_lock:
-        if kind in state.recovery_runs:
-            return dict(state.recovery_runs[kind])
+        if cache_key in state.recovery_runs:
+            return dict(state.recovery_runs[cache_key])
         active = state.managed.active
         titles = {
             "recognition": "Recovery",
@@ -2968,9 +3110,14 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         }
         organize_policy_id = "overwrite-fixture" if kind == "conflict_overwrite" else "A"
         recognition_type_id = "overwrite-fixture" if kind == "conflict_overwrite" else "C"
-        title = titles[kind]
-        year = years[kind]
-        filename = f"{title}.{year}.mkv"
+        if probe_override:
+            title = str(title)
+            year = int(year) if year is not None else None
+            filename = f"{title}.{year}.mkv" if year is not None else f"{title}.mkv"
+        else:
+            title = titles[kind]
+            year = years[kind]
+            filename = f"{title}.{year}.mkv"
         provider_id = {
             "recognition": "205",
             "metadata": "215",
@@ -2990,7 +3137,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
 
         provider = state.managed.metadata_registry.resolve("tmdb")
         existing_candidates = tuple(getattr(provider, "_candidates", ()))
-        if not any(value.provider_id == provider_id for value in existing_candidates):
+        if not probe_override and not any(
+            value.provider_id == provider_id for value in existing_candidates
+        ):
             provider._candidates = existing_candidates + (
                 MediaCandidate(
                     "tmdb",
@@ -3099,9 +3248,25 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             )
             if status != 200:
                 raise RuntimeError(f"recovery Manual Organize choice failed: {status}")
-            preview = _request_intent_plan_via_durable_analysis(
-                state, intent, label="harness-recovery-manual"
-            )
+            if probe_override:
+                # The year probe's Provider answers no candidate for the
+                # original year by design, so no durable plan request is made:
+                # the recognition review is resolved through the real service
+                # and the correction seam below stages the exact blocker.
+                existing_review = state.repository.get_recognition_review_for_item(
+                    current.item_id
+                )
+                if existing_review is not None and existing_review.status.value == "pending":
+                    recognition_service.resolve(
+                        existing_review.review_id,
+                        recognition_type_id,
+                        actor="harness",
+                    )
+                    current = state.repository.get_item(current.item_id) or current
+            else:
+                preview = _request_intent_plan_via_durable_analysis(
+                    state, intent, label="harness-recovery-manual"
+                )
             current = state.repository.get_item(current.item_id) or current
             existing_review = state.repository.get_recognition_review_for_item(current.item_id)
             if existing_review is not None and existing_review.status.value == "pending":
@@ -3258,7 +3423,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         }
         if source_file.read_bytes() != b"synthetic recovery media; no real codec parsing":
             raise RuntimeError("zero-mutation recovery fixture changed the source")
-        state.recovery_runs[kind] = run
+        state.recovery_runs[cache_key] = run
         state.recovery_run = state.recovery_run or run
         return dict(run)
 
@@ -3830,6 +3995,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogRename.2024.mkv",
         "Dialog/DialogReconcile.2027.mkv",
         "Dialog/DialogUnselected.2028.mkv",
+        "YearProbe/DialogYear.2025.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")
@@ -6248,7 +6414,24 @@ def application(environ, start_response):
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             kind = (query.get("kind") or ["recognition"])[0]
-            document = seed_task_item_recovery_journey(STATE, kind)
+            probe_title = (query.get("title") or [None])[0]
+            probe_year = (query.get("year") or [None])[0]
+            document = seed_task_item_recovery_journey(
+                STATE,
+                kind,
+                title=probe_title,
+                year=int(probe_year) if probe_year is not None else None,
+            )
+        elif path == "/__harness__/metadata-search-calls" and method == "GET":
+            provider = STATE.managed.metadata_registry.resolve("tmdb")
+            document = {
+                "calls": list(getattr(provider, "search_calls", ())),
+            }
+        elif path == "/__harness__/metadata-search-calls" and method == "DELETE":
+            provider = STATE.managed.metadata_registry.resolve("tmdb")
+            if hasattr(provider, "search_calls"):
+                provider.search_calls.clear()
+            document = {"cleared": True}
         elif path == "/__harness__/run-task-item-recovery-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             item_id = (query.get("itemId") or [None])[0]

@@ -1257,6 +1257,8 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.metadataSearchPosts[0]).toMatchObject({
       query: "DialogRename",
       mediaType: "movie",
+      // The search submits the exact edited year, not the original 2001.
+      year: 2024,
     });
     await user.click(
       await screen.findByRole("radio", { name: /DialogRename/ }),
@@ -1397,6 +1399,60 @@ describe("ManualOrganizeDialog", () => {
       expect(backend.calls.recoveryContinuePosts).toHaveLength(1),
     );
     expect(await screen.findByText(/服务响应无法确认操作结果/)).toBeVisible();
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("searches with the current year and invalidates stale candidates when the inputs change", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    const year = screen.getByLabelText("年份（可留空）");
+    expect(year).toHaveValue(2001);
+    await user.clear(year);
+    await user.type(year, "2024");
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await waitFor(() =>
+      expect(backend.calls.metadataSearchPosts).toHaveLength(1),
+    );
+    expect(backend.calls.metadataSearchPosts[0]).toMatchObject({
+      query: "Movie.01",
+      mediaType: "movie",
+      year: 2024,
+    });
+    await screen.findByRole("radio", { name: /DialogRename/ });
+    await user.click(screen.getByRole("radio", { name: /DialogRename/ }));
+
+    // Clearing the year invalidates that search's read-only candidates and
+    // the selection made from them: the saved decision can never carry a
+    // Provider ID an older query produced.
+    await user.clear(year);
+    expect(screen.queryByRole("radio", { name: /DialogRename/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await waitFor(() =>
+      expect(backend.calls.metadataSearchPosts).toHaveLength(2),
+    );
+    // The cleared year is an explicit unbounded search, never a silent
+    // fallback to the original or previously edited year.
+    expect(backend.calls.metadataSearchPosts[1]).toMatchObject({
+      query: "Movie.01",
+      mediaType: "movie",
+      year: null,
+    });
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    expect(backend.calls.recoveryDecisionPosts[0]).toMatchObject({
+      kind: "metadata_correction",
+      query: "Movie.01",
+      year: null,
+      mediaType: "movie",
+    });
+    expect(backend.calls.recoveryDecisionPosts[0]).not.toHaveProperty(
+      "providerId",
+    );
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 

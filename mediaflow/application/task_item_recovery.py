@@ -30,6 +30,14 @@ class TaskItemRecoveryError(ValueError):
         self.next_action = next_action
 
 
+#: Sentinel that separates a legacy ``metadata-search`` body without any year
+#: field from an explicit JSON ``null``.  Omitted keeps the historical
+#: original-year semantics; explicit ``null`` must reach the Provider as
+#: ``None`` so an operator-cleared year is never silently replaced by the
+#: parsed original year.
+_YEAR_NOT_PROVIDED = object()
+
+
 #: The bounded recovery surfaces one TaskItem may currently belong to.  The
 #: first two owe a four-type operator action; ``technical_history`` is factual
 #: read-only history (Provider/Storage/permission/uncertain failure) that never
@@ -174,7 +182,25 @@ class TaskItemRecoveryService:
         expected_checkpoint_version: str,
         query: str,
         media_type: str,
+        year: object = _YEAR_NOT_PROVIDED,
     ) -> dict[str, object]:
+        """One read-only Provider candidate search for the current inputs.
+
+        The year the operator submitted governs the Provider query: an explicit
+        integer is forwarded unchanged, an explicit ``null`` searches without a
+        year, and a legacy body without the field keeps the historical
+        original-year semantics.  Invalid parameters are refused here, before
+        any Provider call, and a search never saves a decision or creates work.
+        """
+
+        if year is not _YEAR_NOT_PROVIDED and year is not None:
+            if isinstance(year, bool) or not isinstance(year, int) or not 1870 <= year <= 2100:
+                raise TaskItemRecoveryError(
+                    "invalid_year",
+                    "enter a search year between 1870 and 2100, or clear the year",
+                    status=400,
+                    next_action="correct or clear the year, then run Metadata search again",
+                )
         checkpoint = self._require_checkpoint_version(task_id, item_id, expected_checkpoint_version)
         blocker = checkpoint.blocker
         if blocker is None or blocker.kind != "metadata_correction":
@@ -249,9 +275,13 @@ class TaskItemRecoveryService:
         try:
             providers = self._provider_factory((policy.provider_id,))
             provider = providers.resolve(policy.provider_id)
+            # The same year input governs both the explicit search and the
+            # saved correction's later analysis, so one corrected year cannot
+            # drift back to the parsed original year between the two steps.
+            search_year = review.original_year if year is _YEAR_NOT_PROVIDED else year
             parsed = ParseResult(
                 title_candidate=normalized_query,
-                year=review.original_year,
+                year=search_year,
                 original_filename=PurePosixPath(review.source_path).name,
                 normalized_filename=PurePosixPath(review.source_path).name,
             )

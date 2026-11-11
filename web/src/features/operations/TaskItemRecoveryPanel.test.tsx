@@ -141,6 +141,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
+  return {
+    task_id: "task-1",
+    item_id: "item-1",
+    checkpoint: {
+      status: resolved ? "pending" : "waiting_metadata_correction",
+      stage: resolved ? "queued" : "waiting_metadata_correction",
+      raw_stage: resolved
+        ? "metadata_correction_resolved"
+        : "waiting_metadata_correction",
+      effects: { certainty: "none" },
+      retry_safety: resolved ? "safe" : "unsafe",
+      checkpoint_version: checkpointVersion,
+      blocker: resolved
+        ? null
+        : { kind: "metadata_correction", blocker_id: "correction-1" },
+      permitted_action_ids: resolved
+        ? ["retry"]
+        : ["resolve_metadata_correction", "ignore"],
+      refusal_reason: null,
+      next_action: resolved
+        ? "continue safe analysis"
+        : "correct the metadata search",
+    },
+    decision: resolved
+      ? null
+      : {
+          kind: "metadata_correction",
+          review_id: "correction-1",
+          status: "pending",
+          query: "Probe",
+          year: 2001,
+          media_type: "movie",
+          can_search: true,
+          choices: [],
+          allowed_strategies: [],
+          conflict_types: [],
+        },
+    manualRecoveryAvailable: false,
+    recoveryKind: "business_problem",
+    next_action: resolved
+      ? "continue safe analysis"
+      : "correct the metadata search",
+  };
+}
+
 /** The real panel under the landing-scoped session store, with a card-like
  * close/reopen toggle that keeps the provider mounted. */
 function RecoveryPanelHarness() {
@@ -166,6 +212,153 @@ function RecoveryPanelHarness() {
 }
 
 describe("TaskItemRecoveryPanel", () => {
+  it("searches with the operator's current year and never keeps a stale candidate selection", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = metadataCorrectionRecovery();
+    const searchBodies: Record<string, unknown>[] = [];
+    const decisionBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/metadata-search"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          searchBodies.push(body);
+          return new Response(
+            JSON.stringify({
+              task_id: "task-1",
+              item_id: "item-1",
+              checkpoint_version: checkpointVersion,
+              provider: "tmdb",
+              media_type: body["mediaType"] ?? "movie",
+              query: body["query"] ?? "",
+              candidates: [
+                {
+                  rank: 1,
+                  provider_id: "701",
+                  media_type: "movie",
+                  title: "Probe",
+                  original_title: null,
+                  year: body["year"],
+                  release_date: null,
+                  original_language: "en",
+                },
+              ],
+              truncated: false,
+              next_action: "choose one candidate and save the decision",
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          decisionBodies.push(
+            JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+          );
+          currentRecovery = metadataCorrectionRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          return new Response(
+            JSON.stringify({
+              continuation_id: "continuation-1",
+              sideEffects: "none",
+              next_action: "wait for the Worker",
+            }),
+            { status: 202 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await within(panel).findByLabelText("搜索标题");
+    const year = within(panel).getByLabelText("年份(可留空)");
+    // The saved original year 2001 prefills the correction form.
+    expect(year).toHaveValue(2001);
+    await user.clear(year);
+    await user.type(year, "2024");
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "显式搜索 Metadata Provider",
+      }),
+    );
+    await waitFor(() => expect(searchBodies).toHaveLength(1));
+    // The edited year is submitted exactly as typed — not the original 2001.
+    expect(searchBodies[0]).toMatchObject({
+      query: "Probe",
+      mediaType: "movie",
+      year: 2024,
+    });
+    await within(panel).findByRole("radio", { name: /701/ });
+    await user.click(within(panel).getByRole("radio", { name: /701/ }));
+
+    // Clearing the year invalidates the previous search result and the
+    // selection made from it, so a later save cannot carry that Provider ID.
+    await user.clear(year);
+    expect(within(panel).queryByRole("radio", { name: /701/ })).toBeNull();
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "显式搜索 Metadata Provider",
+      }),
+    );
+    await waitFor(() => expect(searchBodies).toHaveLength(2));
+    // The cleared year is an explicit unbounded search, never a silent
+    // fallback to the original or edited year.
+    expect(searchBodies[1]).toMatchObject({
+      query: "Probe",
+      mediaType: "movie",
+      year: null,
+    });
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "保存决策并继续安全分析",
+      }),
+    );
+    await waitFor(() => expect(decisionBodies).toHaveLength(1));
+    expect(decisionBodies[0]).toMatchObject({
+      kind: "metadata_correction",
+      query: "Probe",
+      year: null,
+      mediaType: "movie",
+    });
+    expect(decisionBodies[0]).not.toHaveProperty("providerId");
+  });
+
   it("saves one exact decision, then explicitly queues analysis without file execution", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");

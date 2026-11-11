@@ -83,6 +83,8 @@ def entrance_journey(
     candidates: tuple | None = None,
     organize_operation: str | None = None,
     recognition_rules: list[dict] | None = None,
+    provider_registry: MetadataProviderRegistry | None = None,
+    viewer_token: str | None = None,
 ):
     """One production-shaped managed layout for one entrance recovery journey.
 
@@ -184,18 +186,19 @@ def entrance_journey(
     document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
     config = root / "bootstrap.json"
     config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-    provider_registry = MetadataProviderRegistry(
-        (
-            SyntheticMetadataProvider(
-                candidates
-                if candidates is not None
-                else (
-                    MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
-                    MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
-                )
-            ),
+    if provider_registry is None:
+        provider_registry = MetadataProviderRegistry(
+            (
+                SyntheticMetadataProvider(
+                    candidates
+                    if candidates is not None
+                    else (
+                        MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+                        MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+                    )
+                ),
+            )
         )
-    )
     with SQLiteConfigurationRepository(database) as configuration_repository:
         managed = ManagedConfigurationService(
             configuration_repository,
@@ -244,6 +247,15 @@ def entrance_journey(
                     ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                     ResolvedApiPrincipal(
                         "operator", OPERATOR_TOKEN, ROLE_PERMISSIONS[ApiRole.OPERATOR]
+                    ),
+                    *(
+                        ()
+                        if viewer_token is None
+                        else (
+                            ResolvedApiPrincipal(
+                                "viewer", viewer_token, ROLE_PERMISSIONS[ApiRole.VIEWER]
+                            ),
+                        )
                     ),
                 ),
                 configuration_service=managed,

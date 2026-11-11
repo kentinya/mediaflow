@@ -1927,6 +1927,13 @@ export async function searchTaskItemMetadata(
     readonly expectedCheckpointVersion: string;
     readonly query: string;
     readonly mediaType: string;
+    /**
+     * The operator's current year input: an integer for a bounded search,
+     * `null` for an explicitly cleared year. The same value the saved
+     * correction decision later analyzes with, so one search cannot silently
+     * fall back to the parsed original year.
+     */
+    readonly year: number | null;
   },
   fetchImpl: FetchLike = fetch,
 ): Promise<OrganizeMutationResult<MetadataSearchModel>> {

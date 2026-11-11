@@ -460,6 +460,24 @@ export function TaskItemRecoveryPanel({
     if (!callerDraftMatches) setInternalDecisionDraft(next);
     onDecisionDraftChange?.(next);
   };
+  /**
+   * One explicit search belongs to the exact title/year/type it was run
+   * with. Editing any condition invalidates that read-only result and any
+   * candidate chosen from it, so a later save can never carry a stale
+   * Provider ID from an older query. Selecting a candidate from the current
+   * result keeps its own path (onSelectProvider) untouched.
+   */
+  const updateSearchCondition = (
+    patch: Partial<
+      Pick<TaskItemDecisionDraft, "searchText" | "correctedYear" | "mediaType">
+    >,
+  ) => {
+    updateDecisionDraft({
+      ...patch,
+      metadataResult: null,
+      selectedProviderId: "",
+    });
+  };
   // A stored draft belongs to one exact checkpoint/decision identity.  Once
   // that identity is superseded its inputs can no longer be saved, so the
   // caller must not keep them as unsaved work or pin a close prompt for them.
@@ -615,6 +633,13 @@ export function TaskItemRecoveryPanel({
         expectedCheckpointVersion: checkpoint.checkpointVersion,
         query: effectiveDecisionDraft.searchText,
         mediaType: effectiveDecisionDraft.mediaType,
+        // The search always submits this exact input: an edited year is
+        // queried as typed, a cleared year is an explicit unbounded search —
+        // never a silent fallback to the parsed original year.
+        year:
+          effectiveDecisionDraft.correctedYear === ""
+            ? null
+            : Number(effectiveDecisionDraft.correctedYear),
       });
       if (result.ok) {
         updateDecisionDraft({
@@ -890,13 +915,13 @@ export function TaskItemRecoveryPanel({
               updateDecisionDraft({ selectedChoice: value })
             }
             searchText={effectiveDecisionDraft.searchText}
-            onSearchText={(value) => updateDecisionDraft({ searchText: value })}
+            onSearchText={(value) => updateSearchCondition({ searchText: value })}
             correctedYear={effectiveDecisionDraft.correctedYear}
             onCorrectedYear={(value) =>
-              updateDecisionDraft({ correctedYear: value })
+              updateSearchCondition({ correctedYear: value })
             }
             mediaType={effectiveDecisionDraft.mediaType}
-            onMediaType={(value) => updateDecisionDraft({ mediaType: value })}
+            onMediaType={(value) => updateSearchCondition({ mediaType: value })}
             selectedProviderId={effectiveDecisionDraft.selectedProviderId}
             onSelectProvider={(providerId, candidateMediaType) =>
               updateDecisionDraft({
@@ -1153,13 +1178,13 @@ export function TaskItemRecoveryPanel({
             updateDecisionDraft({ selectedChoice: value })
           }
           searchText={effectiveDecisionDraft.searchText}
-          onSearchText={(value) => updateDecisionDraft({ searchText: value })}
+          onSearchText={(value) => updateSearchCondition({ searchText: value })}
           correctedYear={effectiveDecisionDraft.correctedYear}
           onCorrectedYear={(value) =>
-            updateDecisionDraft({ correctedYear: value })
+            updateSearchCondition({ correctedYear: value })
           }
           mediaType={effectiveDecisionDraft.mediaType}
-          onMediaType={(value) => updateDecisionDraft({ mediaType: value })}
+          onMediaType={(value) => updateSearchCondition({ mediaType: value })}
           selectedProviderId={effectiveDecisionDraft.selectedProviderId}
           onSelectProvider={(providerId, candidateMediaType) =>
             updateDecisionDraft({

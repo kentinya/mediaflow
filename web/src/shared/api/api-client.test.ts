@@ -5,6 +5,7 @@ import {
   fetchAutomationRecords,
   admitAutomationRunOnce,
   reconcileAutomationRunOnce,
+  searchTaskItemMetadata,
 } from "./api-client";
 
 const TOKEN = "memory-only-token-value";
@@ -152,5 +153,48 @@ describe("records-only outcome API", () => {
     expect(automationRecordsUrl({ status: "failed" })).toBe(
       "/api/v1/operations/automation/records?status=failed",
     );
+  });
+});
+
+describe("task item Metadata search", () => {
+  it("forwards the operator's exact year, including an explicit null", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        task_id: "task-1",
+        item_id: "item-1",
+        checkpoint_version: "c".repeat(64),
+        provider: "tmdb",
+        media_type: "movie",
+        query: "Probe",
+        candidates: [],
+        truncated: false,
+        next_action: "correct the search text before saving",
+      }),
+    );
+    const read = await searchTaskItemMetadata(TOKEN, "task-1", "item-1", {
+      expectedCheckpointVersion: "c".repeat(64),
+      query: "Probe",
+      mediaType: "movie",
+      year: 2024,
+    });
+    expect(read.ok).toBe(true);
+    const [, first] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(first.body))).toMatchObject({ year: 2024 });
+
+    await searchTaskItemMetadata(TOKEN, "task-1", "item-1", {
+      expectedCheckpointVersion: "c".repeat(64),
+      query: "Probe",
+      mediaType: "movie",
+      year: null,
+    });
+    const [, second] = fetchMock.mock.calls[1] as [string, RequestInit];
+    // The cleared year stays an explicit null on the wire, never an omitted
+    // field that would silently restore the original-year semantics.
+    const secondBody = JSON.parse(String(second.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(secondBody).toHaveProperty("year", null);
+    expect(Object.hasOwn(secondBody, "year")).toBe(true);
   });
 });
