@@ -2327,9 +2327,7 @@ function RunDetailFacts({
           <h4>文件整理准备</h4>
           {run.filesPreparation.continuable ? (
             <>
-              <p>
-                此运行由文件页的整理选择发起。可返回同一份计划摘要核对条目；仍需在准备页明确确认后才会执行。
-              </p>
+              <p>查看整理摘要，确认后执行。</p>
               <div className="mf-actions">
                 <Link
                   className="mf-button mf-button-secondary"
@@ -2346,14 +2344,7 @@ function RunDetailFacts({
             </>
           ) : (
             <>
-              <p>
-                本次整理工作已结束，不再提供执行性质的继续入口。上方运行状态、逐项结果与已知效果保持不变；
-                原计划摘要保留为只读历史，可打开核对当时的方案与失败证据。
-              </p>
-              <p>
-                需要再次整理其中的文件时，请从资源库文件页重新选择并发起：新工作会完整分析并生成新摘要，
-                确认前不会修改任何媒体文件。
-              </p>
+              <p>本次整理已结束。如需再次整理，请从文件页发起。</p>
               <div className="mf-actions">
                 <Link
                   className="mf-button mf-button-secondary"

@@ -744,6 +744,14 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The continuable state explains only the next step; the preparation page
+    // itself carries the confirmation boundary.
+    expect(
+      within(detail).getByText("查看整理摘要，确认后执行。"),
+    ).toBeVisible();
+    expect(
+      within(detail).queryByText(/此运行由文件页的整理选择发起/),
+    ).toBeNull();
     const link = await within(detail).findByRole("link", { name: "继续整理" });
     expect(link.getAttribute("href")).toContain("discoveryId=discovery-1");
     expect(link.getAttribute("href")).toContain("resourceLibraryId=source");
@@ -793,13 +801,23 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    // The ended flow publishes no execution-nature entry.
+    // The ended flow publishes no execution-nature entry and states the one
+    // next action; the run status and results above stay unchanged.
     expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
-    expect(within(detail).getByText(/本次整理工作已结束/)).toBeVisible();
+    expect(
+      within(detail).getByText(
+        "本次整理已结束。如需再次整理，请从文件页发起。",
+      ),
+    ).toBeVisible();
+    expect(within(detail).queryByText(/原计划摘要保留为只读历史/)).toBeNull();
     // The read-only summary and the ordinary Files re-organize path stay
     // reachable; both are plain navigation, never a mutating control.
     const summary = within(detail).getByRole("link", { name: "查看只读摘要" });
     expect(summary.getAttribute("href")).toContain("discoveryId=discovery-1");
+    const restart = within(detail).getByRole("link", {
+      name: "从文件页重新发起",
+    });
+    expect(restart.getAttribute("href")).toContain("resourceLibraryId=source");
     await user.click(summary);
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/operations/organize/new"),
