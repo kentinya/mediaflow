@@ -1,33 +1,18 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261111-5 — 任务详情整理入口收敛与提示留白
 
-独立修复 **PATCH-20261111-4 — 任务详情文件证据就地展开** 已由 B 于 2026-11-11
-独立验收 **PASS**，授权目标全部满足，无剩余 Task 阻塞。
-
-- Task Type: STANDALONE MINOR BUG；Parent Slice: NONE；Medium / T3。
-- 完整审查范围：`42e666ca6c600cbaf93625dd5b389763c28ddade..ff8f3a699d2d6a1a27a2a221299cec9c616207ed`。
-- [固定 B 最终审查、完整 Task 与开发／返工记录](https://github.com/kentinya/mediaflow/blob/5ad944f079f617036393440e8e6802d7ee6c7414/TASK.md#b-final-review--patch-20261111-4-pass)。
-- [原规划与开发指导](https://github.com/kentinya/mediaflow/blob/4ec6cbf55fd936824790585d2280325b2cca36a6/TASK.md)。
-
-现行呈现与输入保留规则见[任务正文与文件证据](docs/task-center-page-spec.md#current--任务正文与文件证据)，
-完整用户旅程见[Product Experience](docs/product-experience.md#current--v2-dialog-readability-and-navigation-experience-slice50-pass--closed)。
-
-验收计数、原失败及修正、截图／本地证据与验证限制保留在固定 B 审查中。
-后续收尾与文档治理只改变文档，产品源码、测试和构建输入保持受验候选。
-
-Slice54 继续 PASS / CLOSED；其 Base／接受 Head、SLICE／Roadmap／Progress 不变。
-当前无活动实施 Task。
-
----
-
-## 规划草案 — PATCH-20261111-5：任务详情整理入口收敛与提示留白
-
-本次用户授权“规划一个单独修复Task”，仅授权规划。下列草案不激活实施，不授权产品
-修改、其他代理、推送或部署。后续明确授权激活时，保留本 ID／Base／目标／范围，
-再移除顶部无活动实施通知并进入正式 Task 生命周期。
+用户先授权调查，再授权独立 Task 规划；规划提交于
+`21132098d2bc4484ad2da48a41632d5b2d861c16`。2026-11-11 用户明确“激活Task”，
+现移除草案／无活动实施通知，正式授权本 Task 实施。原 ID／Base／目标／范围、
+Medium／T3 和 Developer／B 测试分工保持。当前为 PLANNED，下一步由 Developer
+开始实施并进入 IN PROGRESS；本激活检查点只更新 TASK.md，不包含产品实现、
+自审验收、启动其他代理、推送或部署。
 
 Authority: 用户本轮独立修复范围；遵循
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
-上一独立修复 PATCH-20261111-4 的接受身份与固定 B 审查保留，不重开 Slice54。
+上一独立修复 PATCH-20261111-4 的
+[固定 B PASS](https://github.com/kentinya/mediaflow/blob/5ad944f079f617036393440e8e6802d7ee6c7414/TASK.md#b-final-review--patch-20261111-4-pass)
+保留原范围、结果及验证限制；不重开 Slice54，其 PASS / CLOSED、Base／接受 Head、
+SLICE／Roadmap／Progress 不变。
 
 ```text
 Task ID: PATCH-20261111-5
@@ -38,7 +23,7 @@ Task Base: 436117e0588d30794dc3ee17d4fc1d0988a79442
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY — NOT AUTHORIZED FOR IMPLEMENTATION
+Development Authorization: IMPLEMENTATION USER AUTHORIZED ON 2026-11-11
 ```
 
 ### Goal and actual gap
@@ -173,7 +158,7 @@ Storage、后端确认／调度／执行协议。不要求全 Python／全 Web�
 整个任务中心／整理路由／全站提示框重设计。PATCH-20261111-4 的就地证据位置和
 同文件输入保留保持；SLICE／Roadmap／Progress 与已接受 Slice 身份不变。
 
-本规划仅更新 TASK.md，不提前把 CURRENT 产品文档写为已实现。B PASS 后，按实际
+规划／激活仅更新 TASK.md，不提前把 CURRENT 产品文档写为已实现。B PASS 后，按实际
 结果最小协调 task-center-page-spec、Product Experience 以及 V2 Requirements／
 Architecture 中直接提及已删除入口的现行措辞；保留原接受身份与安全契约，不把本次
 独立呈现修复写成重开或关闭 Slice。
@@ -185,6 +170,10 @@ Architecture 中直接提及已删除入口的现行措辞；保留原接受身�
 `15`、各目录系统元数据和 `output/` 调查材料原样保留，不纳入规划提交；不读取
 私有配置／运行数据库／用户媒体，不推送或部署。
 
-尚未实施、未运行产品验收。激活并实施后由 Developer 提交完整 checkpoint、实际
+激活前 HEAD：`21132098d2bc4484ad2da48a41632d5b2d861c16`，分支仍为 `main`；
+Base..HEAD 仅含本 Task 规划文档，没有中间产品变更，原 Task Base 保持。
+激活前治理检查 PASS，暂存区为空，预存工作区文件同上保留。
+
+尚未实施、未运行产品验收。实施后由 Developer 提交完整 checkpoint、实际
 受影响检查与限制，交 READY FOR B REVIEW；B 独立验收 PASS／FIX REQUIRED。
 修正保持同一 Task；PASS 后恢复简短无活动实施通知及固定审查指针，不规划授权外工作。
