@@ -1,11 +1,16 @@
-# Task PATCH-20261111-5 — 任务详情整理入口收敛与提示留白
+# NO ACTIVE IMPLEMENTATION TASK
+
+PATCH-20261111-5 已由 B 独立验收 PASS。下方保留本次完整 Task／审查检查点，
+不是活动实施任务；后续收尾以此固定检查点恢复简短指针。
+
+## Accepted Task PATCH-20261111-5 — 任务详情整理入口收敛与提示留白
 
 用户先授权调查，再授权独立 Task 规划；规划提交于
 `21132098d2bc4484ad2da48a41632d5b2d861c16`。2026-11-11 用户明确“激活Task”，
 现移除草案／无活动实施通知，正式授权本 Task 实施。原 ID／Base／目标／范围、
-Medium／T3 和 Developer／B 测试分工保持。Developer 已按授权完成实现、受影响
-检查、真实 Python 浏览器旅程与视觉核对，当前交 READY FOR B REVIEW；本提交不
-包含自审 PASS、启动其他代理、推送或部署。
+Medium／T3 和 Developer／B 测试分工保持。Developer 已完成实现；B 独立审查完整
+Base..候选、运行受影响验收并核对实际截图，结论 PASS，详见下方 B Final Review。
+本次未启动其他代理、推送或部署。
 
 Authority: 用户本轮独立修复范围；遵循
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
@@ -18,7 +23,7 @@ SLICE／Roadmap／Progress 不变。
 Task ID: PATCH-20261111-5
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 436117e0588d30794dc3ee17d4fc1d0988a79442
 Difficulty: Medium
 Test Level: T3
@@ -180,9 +185,8 @@ Architecture 中直接提及已删除入口的现行措辞；保留原接受身�
 Base..HEAD 仅含本 Task 规划文档，没有中间产品变更，原 Task Base 保持。
 激活前治理检查 PASS，暂存区为空，预存工作区文件同上保留。
 
-Developer 已提交本 READY FOR B REVIEW checkpoint、实际受影响检查与限制；尚未
-运行 B 的全量验收。B 独立验收 PASS／FIX REQUIRED；修正保持同一 Task；PASS 后
-恢复简短无活动实施通知及固定审查指针，不规划授权外工作。
+Developer 在下列检查点交 READY FOR B REVIEW；B 已完成本 Task 适用验收并给出 PASS。
+收尾恢复简短无活动实施通知及固定审查指针，不规划授权外工作。
 
 
 ### Developer Completion Report
@@ -245,3 +249,70 @@ Developer 已提交本 READY FOR B REVIEW checkpoint、实际受影响检查与�
 - 设计上仍保留“继续整理”继续打开稳定的 `/operations/organize/new` 接收页；本 Task
   只移除已结束详情的重复入口，未把该继续旅程改为同页弹窗。
 - 未读取私有配置、运行数据库或用户媒体；未推送、未发布。
+
+### B Final Review — PATCH-20261111-5 PASS
+
+```text
+Reviewer: B
+Date: 2026-11-11
+Task Type: STANDALONE MINOR BUG
+Reviewed Base: 436117e0588d30794dc3ee17d4fc1d0988a79442
+Reviewed Head: 408b5303cdabad202188ed252ceaa741159cdeaa
+Decision: PASS
+Task blockers: NONE
+Authorized bug acceptance complete: YES
+Next: NO ACTIVE IMPLEMENTATION TASK
+```
+
+**完整结果核对：** Base..Head 共五个文件，包含 Task 规划／激活／澄清及一个实现
+检查点。产品只改 `RunDetailFacts` 的准备区出现条件和整理弹窗业务分区 CSS；
+另外两处为直接受影响测试。未改变后端、路由、API 类型、状态／继续资格、执行与
+原请求核对。Slice54 已 PASS / CLOSED，本 Task 无父 Slice，不重新验收或关闭旧 Slice。
+
+真实入口旅程：从 Files 选择 Two.2002.mkv 整理，离开未确认弹窗，在任务中心打开
+该任务，刷新／认证后继续到原准备，明确确认一次并由 Worker 完成。完成后的详情
+不再显示“文件整理准备”、结束提示及两个旧入口，原列表背景、真实结果和就地文件
+证据仍在。再打开该旅程实际保存的准备地址，认证后读取原计划历史，无第二次 Execute。
+没有猜造产品入口或通过恢复被删按钮来验收历史只读。
+
+终态矩阵、无关联及轮询变化由单元覆盖；真实混合成功／失败、流程自身失败及取消
+由 Python 旅程覆盖。四类同 Task 决定／分析／摘要／明确确认、策略允许覆盖的
+单独授权、十文件一次批量确认及未知 Execute 在兄弟重分析后核对原请求均通过。
+原计划读取失败／重读及无计划事实由当前受影响单元验证。
+
+**B 实际执行，cwd `web/`：**
+
+| 检查 | 实际结果／日志 |
+|---|---|
+| Task 指定五个 operations／organize 单元文件 | 120/120，5 文件，29.23s；`unit.log` |
+| `npm run typecheck && npm run lint && npm run format:check && npm run build` | 全部通过，22.19s；`quality-build.log` |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | 40/40，23.28s；`node.log` |
+| 下列真实 Python 浏览器组合 | 18/18，77.14s；`native.log` 与每项 `trace.zip` |
+
+```sh
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/manual-organize-dialog.python.spec.ts tests/e2e/task-flow.python.spec.ts --grep 'initial manual preparation remains reachable from Task Center|PATCH-20261111-2|PATCH-20261111-5|ten per-file|unknown Execute response|real destination conflict|follows the completed walk|reports the preparation|missing metadata candidate|keeps the exact admitted|unknown original submission|mixed file population|saved flow failure|acknowledged cancellation' --trace on --output=../.git/validation-evidence/408b5303/patch-20261111-5/native
+```
+
+组合覆盖 Task 原定八项 `manual-organize-dialog`、三项 `task-flow`、六项四类恢复／
+覆盖授权与一项初始准备旅程，未漏选测试。Node 结果也保存到同一证据根的 `node/`。
+独立执行治理检查与完整 Base..Head `git diff --check` 均通过。
+
+**视觉核对：** 查看本次实际生成的成功详情、1536／390／1536×600 历史警告截图，
+确认文字留白、长目标换行、正文及关闭可达；同时查看 trace 中 Files 准备 info、
+逐文件决定、分析反馈、执行结果未知 warning 与 Task“继续整理”实际画面。
+原有滚动／键盘退出／返回用例通过；旧地址仍有自己的接收页背景，正常完成详情
+不再进入它，符合本 Task 的明确边界。
+
+证据根：`.git/validation-evidence/408b5303/patch-20261111-5/`，含原始命令日志、
+trace、`visual/` 截图。以上是本机隔离 Python／临时 SQLite／Local 与 Node 假服务
+验证，不是生产服务或远程 CI。复核以代码、用户旅程和视觉结果为主；测试及质量／
+构建命令分别计时，累计约 152 秒，少于本轮复核总用时的 50%。
+
+全部指定验收通过，无失败或 skip。保留非失败输出：单元环境的 scrollTo 未实现
+提示、Vite chunk 大小提示、Python publication-failure 用例主动注入的
+OperationalError（该用例验证真实文件效果旁的 failed 流程，最终通过）。不要求
+全仓 Python／Web／E2E、wheel 或 Docker 矩阵；本次没有相关执行路径变化。
+
+**收尾：** 本 Task 授权结果全部满足，不增加下一 Task。后续只最小协调已删除入口的
+CURRENT 说明并恢复无活动实施通知；原 Slice54、上一独立修复接受身份和预存脏文件
+保持。不修改运行配置／用户媒体，不推送或部署。
