@@ -871,6 +871,27 @@ export function TaskItemRecoveryPanel({
     model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
+  // The independent "continue this item's safe analysis" action is the
+  // fallback for a saved decision whose analysis was not admitted (a full
+  // shared queue), a failed or cancelled analysis, or a summary the backend
+  // requires re-analyzing.  When this exact item already offers its durable
+  // plan summary (prepared or confirmed), the ready same-page prepare entry,
+  // or an analysis continuation that is queued or running, another analysis
+  // request would only supersede the current plan instead of making new
+  // progress; the durable summary always wins over an older local cache.
+  const analysisContinuationActive =
+    checkpoint?.continuationStatus === "queued" ||
+    checkpoint?.continuationStatus === "running";
+  const offersExplicitSummaryStep =
+    (activePreparation !== null && activePreparation.status === "prepared") ||
+    confirmedPreparation !== null ||
+    canPreparePreview;
+  const needsExplicitAnalysisAction =
+    owesRecoveryAction &&
+    permitted.has("retry") &&
+    !offersExplicitSummaryStep &&
+    !analysisContinuationActive &&
+    !(busy && pendingAction === "continue");
 
   if (decisionMode) {
     return (
@@ -1013,7 +1034,7 @@ export function TaskItemRecoveryPanel({
             </button>
           </div>
         )}
-        {owesRecoveryAction && permitted.has("retry") && (
+        {needsExplicitAnalysisAction && (
           <div className="mf-actions">
             <button
               type="button"
@@ -1255,7 +1276,7 @@ export function TaskItemRecoveryPanel({
           busy={busy}
         />
       )}
-      {owesRecoveryAction && permitted.has("retry") && (
+      {needsExplicitAnalysisAction && (
         <div className="mf-actions">
           <button
             type="button"

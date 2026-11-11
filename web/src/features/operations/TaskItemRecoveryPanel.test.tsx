@@ -187,6 +187,35 @@ function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
   };
 }
 
+function queuedAnalysisRecovery(status: string): Record<string, unknown> {
+  const value = recognitionRecovery(true);
+  const checkpoint = value["checkpoint"] as Record<string, unknown>;
+  checkpoint["recovery_continuation"] = {
+    status,
+    new_task_id: "analysis-task-1",
+    new_item_id: "analysis-item-1",
+  };
+  return value;
+}
+
+function preparedPreparation(): Record<string, unknown> {
+  return {
+    preparation_id: "preparation-1",
+    preview_id: "preview-1",
+    intent_id: "intent-1",
+    source_task_id: "task-1",
+    source_item_id: "item-1",
+    status: "prepared",
+    checkpoint_version: checkpointVersion,
+    configuration_snapshot_id: "active-1",
+    configuration_snapshot_digest: "d".repeat(64),
+    authorization_id: null,
+    execution_id: null,
+    hasExecutionAuthority: false,
+    next_action: "review the current plan summary and confirm",
+  };
+}
+
 /** The real panel under the landing-scoped session store, with a card-like
  * close/reopen toggle that keeps the provider mounted. */
 function RecoveryPanelHarness() {
@@ -723,6 +752,10 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     expect(await within(panel).findByText(/共享队列已满/)).toBeVisible();
+    // The saved decision keeps its own explicit retry entry for the analysis.
+    expect(
+      within(panel).getByRole("button", { name: "继续此条目的安全分析" }),
+    ).toBeEnabled();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
     ).toEqual([
@@ -912,6 +945,11 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    // The completed analysis already offers its own same-page prepare entry;
+    // a second analysis request would only supersede that ready plan.
+    expect(
+      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+    ).toBeNull();
     await user.click(
       await within(panel).findByRole("button", {
         name: "生成计划摘要并在此确认",
@@ -1430,6 +1468,210 @@ describe("TaskItemRecoveryPanel", () => {
         within(panel).queryByRole("button", { name: /确认继续整理/ }),
       ).toBeNull();
     });
+    // The admitted confirmation never regains a duplicate analysis action.
+    expect(
+      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+    ).toBeNull();
+  });
+
+  it("keeps the durable plan summary confirmation without a duplicate analysis action", async () => {
+    authStore.setToken("task-recovery-test-token");
+    // The exact reported gap: the backend still permits "retry" after the
+    // linked analysis completed, while the durable same-page summary is
+    // already prepared.  The summary keeps its explicit confirm action; the
+    // panel must not offer a second analysis request that would only
+    // supersede the current plan, and reopening or refreshing reads the same
+    // durable record instead of reintroducing the duplicate entry.
+    const durable = completedRecovery(preparedPreparation());
+    const calls: { method: string; path: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, path: url });
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(durable), { status: 200 });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    expect(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理 1 项/,
+      }),
+    ).toBeEnabled();
+    expect(
+      within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+    ).toBeNull();
+    expect(
+      within(panel).queryByRole("button", {
+        name: "生成计划摘要并在此确认",
+      }),
+    ).toBeNull();
+    // Opening this state reads the durable records; it never queues work.
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("does not offer a duplicate analysis action while the analysis continuation is queued or running", async () => {
+    for (const status of ["queued", "running"]) {
+      authStore.setToken("task-recovery-test-token");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const method = init?.method ?? "GET";
+          if (
+            method === "GET" &&
+            url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          ) {
+            return new Response(
+              JSON.stringify(queuedAnalysisRecovery(status)),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({ error: { code: "not_found" } }),
+            { status: 404 },
+          );
+        }),
+      );
+
+      renderWithProviders(
+        <TaskItemRecoveryPanel
+          taskId="task-1"
+          itemId="item-1"
+          runId="task-1"
+          active={false}
+        />,
+      );
+
+      const panel = await screen.findByRole("region", {
+        name: "条目审核与恢复",
+      });
+      await within(panel).findByText("当前阶段");
+      expect(
+        within(panel).queryByRole("button", {
+          name: "继续此条目的安全分析",
+        }),
+      ).toBeNull();
+      cleanup();
+      authStore.clearToken();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the explicit analysis retry entry when the queue refuses the continuation", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = recognitionRecovery();
+    let continuationAttempts = 0;
+    const calls: { method: string; path: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, path: url });
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          currentRecovery = recognitionRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          continuationAttempts += 1;
+          if (continuationAttempts === 1) {
+            return new Response(
+              JSON.stringify({ error: { code: "queue_full" } }),
+              { status: 409 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              continuation_id: "continuation-2",
+              sideEffects: "none",
+              next_action: "wait for the Worker and inspect its linked result",
+            }),
+            { status: 202 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(await within(panel).findByLabelText(/Special/));
+    await user.click(
+      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+    );
+
+    expect(await within(panel).findByText(/共享队列已满/)).toBeVisible();
+    // The saved decision keeps its own nearby explicit analysis retry while
+    // the queue is full; no second command was sent without it.
+    const retry = within(panel).getByRole("button", {
+      name: "继续此条目的安全分析",
+    });
+    expect(retry).toBeEnabled();
+    await user.click(retry);
+
+    expect(await within(panel).findByText(/单项分析已进入队列/)).toBeVisible();
+    expect(
+      calls.filter((call) => call.method === "POST").map((call) => call.path),
+    ).toEqual([
+      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+    ]);
+    expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
 });
 
