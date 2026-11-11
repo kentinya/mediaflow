@@ -1160,6 +1160,14 @@ remain separate. Waiting/ignored/uncertain items do not become successes. Detail
 plan/step/result/checkpoint and bounded linked logs/audit; result truth does not depend on logs.
 The existing secret-free result-package service remains export authority.
 
+The Task Center renders one selected file's evidence below its row on the current server page,
+or before the table as an independent card when that row is absent or the list is unavailable.
+Both positions reuse the same exact run/item query and recovery components. Unsaved decision
+drafts belong to the run detail outside the filtered/paged list's mount boundary, keyed by item
+with the existing checkpoint/decision validation; run/account mount boundaries retain isolation.
+Presentation changes do not submit recovery commands. See the
+[current evidence contract](task-center-page-spec.md#current--任务正文与文件证据).
+
 Creation reuses live ResourceLibrary Files selection, exact intent/Preview and existing explicit
 manual execution admission, preserving contextual return to the selected run. FileIndex is not
 physical source authority; MediaLibrary is not a new organizing source. Slice45 supersedes the
