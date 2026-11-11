@@ -1,27 +1,15 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261111-4 — 任务详情文件证据就地展开
 
-最近独立修复 **PATCH-20261111-3 — 精简任务详情“文件整理准备”说明** 已由 B
-于 2026-11-11 验收 **PASS**，无剩余 Task 阻塞。
+用户先授权调查，再授权规划；规划提交于 `4ec6cbf55fd936824790585d2280325b2cca36a6`。
+2026-11-11 用户明确“激活Task”，现移除草案／无活动实施通知，正式授权本 Task 实施。
+原 ID／Base／目标／范围、Medium／T3 和 Developer／B 测试分工保持。当前为 PLANNED，
+下一步由 Developer 开始实施并进入 IN PROGRESS；本激活检查点只更新 TASK.md，
+不包含产品实现、自审验收、启动其他代理、推送或部署。
 
-- Reviewed Base: `7b6cadd050591c339589d042235013ca9ff1f26d`
-- Reviewed Head: `3b710f55201bf7745e766792a58d0090800e379c`
-- [固定 B 验收记录](https://github.com/kentinya/mediaflow/blob/7bf958fb1b61b358c5f3f0305fa5137b2caa38f2/TASK.md#b-decision--patch-20261111-3-pass)：完整范围、实际结果、原始失败、证据位置及验证限制。
-- [原 Task 与开发指导](https://github.com/kentinya/mediaflow/blob/3b710f55201bf7745e766792a58d0090800e379c/TASK.md)：授权、目标、验收和 Developer 交接。
-- 上一独立修复 PATCH-20261111-2 的 [固定 B PASS](https://github.com/kentinya/mediaflow/blob/aff254ce0e3dc8b47714b197a7023509e6cc5f66/TASK.md#b-decision--patch-20261111-2-pass) 保留原范围与结果。
-
-当前行为见 [手动整理旅程](docs/product-experience.md#manual-organize) 和
-[任务中心手动受理与确认](docs/task-center-page-spec.md#手动受理与确认)。
-独立修复不重开 [Slice54](SLICE.md)，其 PASS / CLOSED、原始 Base／接受 Head、
-Roadmap／Progress 及延期保持。下一大 Slice 由 A 单独选择；当前没有授权中的实施 Task。
-
----
-
-## 规划草案 — PATCH-20261111-4 — 任务详情文件证据就地展开
-
-**仅规划，尚未授权实施。** 用户先要求调查且不改文档／代码，随后明确“规划一个修复
-Task”；本次只授权此规划。保留顶部 `NO ACTIVE IMPLEMENTATION TASK`，下列 PLANNED
-元数据是待激活草案，不构成实施、启动其他角色、推送或部署授权。用户授权实施时再移除
-无活动 Task 通知并激活同一 ID／Base／目标／范围，不静默重定 Base。
+上一独立修复 PATCH-20261111-3 的
+[固定 B PASS](https://github.com/kentinya/mediaflow/blob/7bf958fb1b61b358c5f3f0305fa5137b2caa38f2/TASK.md#b-decision--patch-20261111-3-pass)
+保留原范围与结果。本 Task 不重开 [Slice54](SLICE.md)，其 PASS / CLOSED、原始
+Base／接受 Head、Roadmap／Progress 和延期保持。
 
 Authority: 用户授权的独立呈现修复；生命周期遵循
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
@@ -35,7 +23,7 @@ Task Base: 42e666ca6c600cbaf93625dd5b389763c28ddade
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: NOT AUTHORIZED — PLANNING ONLY
+Development Authorization: IMPLEMENTATION USER AUTHORIZED ON 2026-11-11
 ```
 
 ### Goal and actual gap
@@ -140,12 +128,16 @@ fixture 均使用隔离测试数据，不读取生产配置、用户媒体或外
 
 不增加多文件同时展开、自动定位任意服务器页、新证据接口／全局搜索、第二套恢复流程、
 恢复表单改版、其他页面重设计或新配置。SLICE／Roadmap／Progress 及已接受 Slice 的
-身份／Base／Head／关闭事实保持；本轮只更新 TASK.md，不同步产品说明为“已实现”。
+身份／Base／Head／关闭事实保持；规划／激活仅更新 TASK.md，不同步产品说明为“已实现”。
 
 规划基线：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上列 Task Base；治理预检 PASS，
 TASK.md／Git 可写，暂存区原为空。预存 `mediaflow/.DS_Store` 修改以及未跟踪的 `.DS_Store`、
 `.explore_adapter_block.py`、`.mgmt.log`、`.t*.log`、`15`、各目录 `.DS_Store` 和 `output/`
 调查材料原样保留、不纳入检查点。不读取私有配置／运行数据库，不推送或部署。
+
+激活前 HEAD：`4ec6cbf55fd936824790585d2280325b2cca36a6`，分支仍为 `main`；
+Base..HEAD 仅含本 Task 规划文档，未出现中间产品变更，原 Task Base 保持。
+激活前治理检查 PASS，暂存区为空，预存工作区文件同上保留。
 
 ### Developer completion / B review
 
