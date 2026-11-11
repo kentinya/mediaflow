@@ -10,7 +10,7 @@ Authority: 用户反馈“整理时元数据修正作品搜索无结果，直接
 Task ID: PATCH-20261111-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: e9241d484e33ccb0b1a8def2ab81c17cb1a3d577
 Difficulty: Medium
 Test Level: T3
@@ -282,6 +282,77 @@ SLICE／Roadmap／Progress，不读取私有配置／真实媒体。本次仅激
 
 ### B review result
 
-NOT STARTED — 本 Task 已激活并获实施授权，尚未实施／验收，未授予 Task PASS。
-实施后 B 独立审查精确 Base..Head 并运行验收；问题保留在同一 Task 修正。PASS 后记录
-实际结果／限制并按工作流恢复简明 `NO ACTIVE IMPLEMENTATION TASK`，无需 A 关闭 Slice。
+```text
+Reviewer: B
+Date: 2026-11-11
+Reviewed Base: e9241d484e33ccb0b1a8def2ab81c17cb1a3d577
+Reviewed Head: 504dd6d2df48865f1f3591423f9d560a140b6c2b
+Product Checkpoint: a78ea12146475e465c65f18b966d0ba6b74139cf
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+Difficulty / Test Level: Medium / T3 (unchanged)
+```
+
+完整 Base..Head 的 12 个文件已审查；`a78ea121..504dd6d2` 仅修改 TASK 交接文字。
+当前年份／null／旧调用体兼容和旧候选失效已实现，两个既有 Web 入口的正常搜索、保存分析
+及原整理／Task 交接回归通过。仍有下面一个用户旅程阻塞，以及必须修正的格式检查失败。
+本独立修正保持原 ID／Base／范围，Slice54 的接受结果与 SLICE／Roadmap／Progress 均不变。
+
+**B-PATCH-01 — 年份搜索被拒绝后，用户看不到原因及纠正动作（P1）。**
+
+实际旅程：任务中心 → 元数据恢复 → 当前文件 → 年份填写 `1869` → 显式搜索。
+真实 Python API 返回 400 `invalid_year`，明确年份须为 1870–2100 或留空，Provider 未被调用；
+但浏览器仅显示“操作未完成。查看条目当前状态和下一步说明后再提交。”，没有显示年份错误、
+合法范围或修改／清空后重新搜索的动作。改填 2024 后能正常搜索，问题在失败说明与恢复。
+文件页整理弹窗和任务面板共用此搜索处理。此项未满足 User journey 第 4 步及验收的有界错误、
+可纠正输入要求。
+
+原因：本实现新增 `invalid_year` 拒绝路径，`searchMetadata` 仍经 `reportUnknown`／
+`outcomeMessage` 的通用分支显示；API 的具体年份说明未在 Web 呈现。
+定位：`TaskItemRecoveryPanel.tsx` 的 `outcomeMessage` 和 `searchMetadata`。
+
+**Developer 本轮修正指导**
+
+1. 在现有搜索错误处理内识别 `invalid_year`，直接显示可懂的年份要求和“修改或清空后重新
+   搜索”。说明本次搜索未完成、未保存决定；保留输入，让用户直接纠正并再次搜索。复用两种
+   呈现的共用逻辑，不扩展通用恢复状态机或 API 错误框架。
+2. 在现有两个组件测试中覆盖：输入越界年份 → 收到 `invalid_year` → 可见具体原因和
+   下一步 → 改为合法年份／清空 → 搜索成功；失败不发送保存、分析或执行请求。在现有
+   年份 Python E2E 中补这段操作即可，不新增 harness 产品入口或另建探测系统。
+3. 对下列实际变更文件应用现有 formatter；它们是本候选的格式失败，不是工作区私有文件
+   引起。更正交接报告的格式结果，保留本次失败事实。
+
+   仓库根：`.venv/bin/ruff format scripts/operations_inventory_harness.py`
+
+   `web/`：`npm exec prettier --write src/features/operations/TaskItemRecoveryPanel.tsx tests/e2e/metadata-search-year.python.spec.ts`
+
+4. Developer 运行上文受影响测试与变更文件检查，另运行新增年份 E2E；交新检查点后由 B
+   重新执行所列 T3 验收。修正继续留在本 Task，不要求 Developer 跑整仓全量或发布矩阵。
+
+**B 实际验收**
+
+证据根目录（本机，非远程 CI）：`.git/validation-evidence/504dd6d2/patch-20261111-1-b/`。
+JSON 结果记录完整命令、目录及耗时，原始输出在同名 log；均为本候选实跑，没有复用
+Developer 的 PASS 标签。
+测试命令耗时合计约 3 分钟，另两次浏览器补充检查合计不足 1 分钟；测试用时低于本轮
+复核总用时的 50%，其余时间用于合同／旅程／完整代码差异审查、定位和本 Task 交接。
+
+| 检查 | 实际结果 |
+|---|---|
+| B 列名的 6 个 Python 模块，另加直接修改夹具的 `test_automation_entrance_recovery` | 142 tests OK；输出含 ResourceWarning，未改动测试以消除它 |
+| 5 个变更 Python 文件的 Ruff check | PASS |
+| 同 5 文件 Ruff format --check | FAIL：`operations_inventory_harness.py` |
+| Web typecheck／lint | PASS |
+| Web format:check | FAIL：`TaskItemRecoveryPanel.tsx`、`metadata-search-year.python.spec.ts` |
+| 三个指定 Web 单测文件 | 39 tests PASS；jsdom scrollTo 提示保留 |
+| 新生产资产 build | PASS |
+| 指定年份／整理弹窗／Operations inventory 三个真实 Python E2E | 55 tests PASS（2.3 分钟），无重跑 |
+| 治理检查／完整范围 git diff --check | PASS |
+| 真实浏览器越界年份及纠正后搜索 | 复现 B-PATCH-01；`invalid-year-browser.log`、`invalid-year-task-center.png` |
+
+补充两页晚到搜索响应检查未取得新的可编辑 correction：临时 seeder 夹具的 Worker 将该项
+结束为 technical history，脚本等待候选的断言失败。保留 `checkpoint-browser.log`；该执行
+不能证明旧候选覆盖新 checkpoint，未列为产品阻塞，也不要求 Developer 为此扩建工具。
+不将已通过的正常旅程视为该并发场景已经通过。未连接真实 Provider／用户媒体，未跑
+T3 之外的全量、wheel 或 Docker 门禁。全部预存文件保持未暂存。
