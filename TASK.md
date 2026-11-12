@@ -1,33 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Latest independent Task: **PATCH-20261112-1 — B PASS**, 2026-11-12, Medium / T3.
-
-Reviewed range:
-`32bb37262777ae945deb8af4a51d9109876ca804..598bd9726adcf1058a9e8736c582b8c62db0d21c`.
-The organizer now uses one “保存并重新分析” action, with saved-decision recovery and coordinated
-current-state/plan presentation. The independent safe-analysis button and its explanation are removed.
-
-[Fixed B acceptance, actual tests and limits](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)
-records 88 Web unit tests, 28 Python integration tests, 26 native browser journeys and visual checks.
-[Fixed Task plan and implementation handoff](https://github.com/kentinya/mediaflow/blob/c940519b3410373a5a281949d3fc4769606a7d99/TASK.md)
-retains scope, acceptance and Developer guidance. Raw evidence remains local at
-`.git/validation-evidence/c940519b/patch-20261112-1/`; it is not included in GitHub.
-
-Slice54 retains its original **PASS / CLOSED** acceptance; no Slice boundary, Roadmap or Progress
-change accompanies this standalone correction. Current behavior lives in
-[V2 Requirements](docs/v2-requirements.md#current--manual-organize-dialog-slice53-pass--closed),
-[Product Experience](docs/product-experience.md#current--manual-organize-dialog-slice53-pass--closed)
-and [Architecture](docs/architecture.md#current--manual-organize-dialog-slice53-pass--closed).
-Next large-Slice selection remains a separate A action.
-
----
-
-## Planning-only draft — PATCH-20261112-2
+# Task PATCH-20261112-2 — 彻底删除重复的整理执行情况页面
 
 用户于 2026-11-12 授权规划一个独立修复 Task，彻底删除“查看关联执行结果”入口与
-独立“整理执行情况”页面，明确不是隐藏。本节仅为规划草案，不授权实施、激活、推送
-或部署；顶部 `NO ACTIVE IMPLEMENTATION TASK` 保持。后续明确授权实施时再移除该通知，
-保留以下 Task ID／Base／Goal／Scope。此前只读调查授权不延伸为产品修改授权。
+独立“整理执行情况”页面，明确不是隐藏；随后确认沿用已能查看结果的现有任务详情，
+不新增结果查看功能。用户本轮明确“激活Task”，正式授权本 Task 实施；现移除规划草案
+及无活动实施通知，原 Task ID／Base／Goal／Scope 保持。本次激活只更新 Task 文档，
+尚未开始产品实施；状态 PLANNED，下一步由 Developer 按本 Task 开始实施。不授权推送或部署。
 
 ### Task metadata
 
@@ -40,7 +17,7 @@ Task Base: dc2eec67d619bc2e06de5eca0900325a7906fbfd
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-12
 ```
 
 Authority: 用户本轮明确授权的独立界面修复；生命周期与测试分工遵循
@@ -55,6 +32,13 @@ Authority: 用户本轮明确授权的独立界面修复；生命周期与测试
 规划前 `python3 scripts/check_governance.py` PASS。工作区 `/Users/songzhidong/mediaflow`，
 分支 `main`，HEAD 为 Task Base，暂存区与受 Git 跟踪的工作区干净；无预存 dirty 文件。
 规划只修改本文件；不读取私有配置／运行数据库，不操作用户媒体。
+
+激活前 HEAD `3728687402d00489c74c76ebe9ca3ce5684380d1`，治理检查 PASS，暂存区与工作区
+干净；Task Base 以来仅有本 Task 的规划／澄清提交，无介入产品变更，原 Base 保持。
+此前独立 Task PATCH-20261112-1 的
+[B PASS／实际结果与限制](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)
+保留原审查范围 `32bb37262777ae945deb8af4a51d9109876ca804..598bd9726adcf1058a9e8736c582b8c62db0d21c`；
+Slice54 仍为 PASS / CLOSED，选择下一大 Slice 是独立 A 行动。
 
 ### Goal and observed gap
 
@@ -188,11 +172,11 @@ T3 依据是跨入口导航／认证／未知结果核对的集成风险；本 T
 - 不新建结果页面、通用恢复入口、重试／回滚能力；不更改四类决定／分析／确认协议，
   不重做任务中心列表／现有文件证据布局或其他页面。
 - 不调整业务算法、队列、Worker、权限、Active／pins／fences、Storage／Provider。
-- 不激活或实施此草案，不规划下一 Task，不推送／发布／部署。
+- 不规划下一 Task，不推送／发布／部署；Developer 不自审验收。
 
 ### Developer Completion Report / B Review Result
 
-尚未实施，无候选检查点、产品测试结果或审查结论。实施授权后 Developer 按 workflow
+已授权实施，尚未开始，无候选检查点、产品测试结果或审查结论。Developer 按 workflow
 交准确 checkpoint、受影响测试实际结果与风险，状态 READY FOR B REVIEW；B 独立审查
 Task Base..candidate 并运行上述验收，给出 PASS 或同 Task 的 FIX REQUIRED。
 PASS 后恢复紧凑 `NO ACTIVE IMPLEMENTATION TASK` 与精确审查指针；不关闭或重开 Slice。
