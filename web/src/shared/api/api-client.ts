@@ -2452,10 +2452,6 @@ export async function executeOrganizePreview(
   );
 }
 
-export type OrganizeExecutionRead =
-  | { readonly ok: true; readonly model: OrganizeExecutionModel }
-  | { readonly ok: false; readonly failure: OperationsFailure };
-
 export interface OrganizeAdmissionReconciliationOptions {
   readonly previewId: string;
   readonly itemIds: readonly string[];
@@ -2536,51 +2532,6 @@ export async function fetchOrganizeAdmissionOutcome(
   }
   try {
     return { ok: true, model: normalizeOrganizeAdmissionOutcome(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
-
-export async function fetchOrganizeExecution(
-  token: string | null,
-  executionId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<OrganizeExecutionRead> {
-  if (!isSafeIdentifier(executionId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/operations/organize/executions/${encodeURIComponent(executionId)}`,
-      { method: "GET", headers: operationsHeaders(token) },
-    );
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (response.status >= 500) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("rejected") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeOrganizeExecution(payload) };
   } catch {
     throw new OperationsApiError("malformed");
   }

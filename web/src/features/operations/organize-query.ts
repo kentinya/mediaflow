@@ -9,7 +9,6 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import {
-  fetchOrganizeExecution,
   fetchOrganizeExecutions,
   fetchOrganizeIntent,
   fetchOrganizePreviewDetail,
@@ -49,25 +48,6 @@ export function organizePreviewQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 5_000,
-  });
-}
-
-export const organizeExecutionQueryKey =
-  "operations.organize-execution" as const;
-
-export function organizeExecutionQueryOptions(
-  token: string | null,
-  executionId: string,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey: [organizeExecutionQueryKey, executionId],
-    queryFn: () => fetchOrganizeExecution(token, executionId),
-    enabled: token !== null && executionId.length > 0 && enabled,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 2_000,
   });
 }
 

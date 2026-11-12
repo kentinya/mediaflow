@@ -16,8 +16,9 @@ import { expect, test, type Page } from "@playwright/test";
  * Covered journey: durable intent with pinned options and optimistic versions,
  * a choice edit that invalidates earlier plan evidence, the shared analysis with
  * its complete fixed plan summary rendered in that same page, one meaningful
- * Execute action, the durable admitted execution and its per-item outcome, a
- * refresh-safe outcome route and unauthenticated deep-entry continuation.
+ * Execute action that hands the exact admitted Task to the task center, a
+ * terminal failed Task's durable evidence in its own run detail, and the fully
+ * retired execution address landing on the ordinary not-found/auth boundary.
  */
 
 const BASE_URL = "http://127.0.0.1:4173";
@@ -34,7 +35,6 @@ type PlanVariant =
   | "lost"
   | "lost-unadmitted";
 const EXECUTION_ID = "organize-execution-e2e-001";
-const FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
 
 test.beforeEach(async ({ page }) => {
   // One deterministic fake state and one evidence bucket per test: the fake
@@ -190,14 +190,13 @@ test.describe("manual organize journey", () => {
     await expect(execute).toBeEnabled();
     await execute.click();
 
-    await expect(
-      page.getByRole("heading", { name: "整理执行情况" }),
-    ).toBeVisible();
-    await expect(
-      page.getByText(/执行记录 organize-execution-e2e-001/),
-    ).toBeVisible();
-    await expect(page.getByText("已验证完成", { exact: true })).toBeVisible();
-    await expect(page.getByText("任务条目")).toBeVisible();
+    // The admitted outcome hands the exact durable Task to the task center:
+    // the center's default context opens with the admitted run selected, and
+    // the real queue/execution state is read there instead of a separate
+    // execution page.
+    await expect(page).toHaveURL(/run=organize-task-e2e-001/);
+    await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
     const evidence = await manualEvidence(page);
     const admissions = evidence.filter(
@@ -396,9 +395,8 @@ test.describe("manual organize journey", () => {
     await cleanup.check();
     await expect(execute).toBeEnabled();
     await execute.click();
-    await expect(
-      page.getByRole("heading", { name: "整理执行情况" }),
-    ).toBeVisible();
+    await expect(page).toHaveURL(/run=organize-task-e2e-001/);
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
     const evidence = await manualEvidence(page);
     const admissions = evidence.filter(
@@ -414,26 +412,55 @@ test.describe("manual organize journey", () => {
     });
   });
 
-  test("keeps the durable outcome refresh-safe with no authority in the URL", async ({
+  test("the retired execution address lands on the ordinary not-found boundary", async ({
     page,
   }) => {
+    // The independent execution page is fully retired: its old URL has no
+    // route, alias or redirect. Every visit — unauthenticated, connected or
+    // after a token-clearing reload — reaches the ordinary not-found component
+    // with the shell's shared reconnection affordance, never the execution
+    // page and never a special continuation to the deleted destination.
     await page.goto(`/ui-v2/operations/organize/execution/${EXECUTION_ID}`);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Connect API token" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "整理执行情况" }),
+    ).toHaveCount(0);
+
+    // Connecting from the shell's reconnection affordance lands on the
+    // supported default surface; the retired address is never revived.
+    await page.getByRole("link", { name: "Connect API token" }).click();
     await connect(page, VIEWER_TOKEN);
     await expect(
       page.getByRole("heading", { name: "整理执行情况" }),
-    ).toBeVisible();
-    await page.reload();
-    // Bearer material is memory-only, so a reload returns to the shared
-    // connection boundary; connecting again returns to the same durable route.
-    await connect(page, VIEWER_TOKEN);
+    ).toHaveCount(0);
+
+    await page.goto(`/ui-v2/operations/organize/execution/${EXECUTION_ID}`);
     await expect(
-      page.getByRole("heading", { name: "整理执行情况" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "查看关联任务" }),
+      page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
     expect(page.url()).toContain(EXECUTION_ID);
     expect(page.url()).not.toMatch(/token|digest|fingerprint|authorization/i);
+
+    await page.reload();
+    // Bearer material is memory-only, so a reload returns to the shared
+    // connection boundary on the same unknown route; reconnecting still
+    // never revives the old page.
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Connect API token" }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Connect API token" }).click();
+    await connect(page, VIEWER_TOKEN);
+    await expect(
+      page.getByRole("heading", { name: "整理执行情况" }),
+    ).toHaveCount(0);
   });
 
   test("offers no manual organize control to a read-only principal", async ({
@@ -535,85 +562,43 @@ test.describe("manual organize journey", () => {
     ).toHaveLength(0);
   });
 
-  test("renders a real failed execution with its evidence and the Review & Recovery handoff", async ({
+  test("a terminal failed Task states its durable failure in the task center", async ({
     page,
   }) => {
     // A terminal failure is durable, truthful evidence, never a malformed
-    // read: the failed item and its bounded finding render, the recovery
-    // handoff the backend offers without any transport renders as the safe
-    // Review & Recovery destination, and nothing replays or submits the work.
-    await page.goto(
-      `/ui-v2/operations/organize/execution/${FAILED_EXECUTION_ID}`,
-    );
+    // read: the same run detail that owns the task presents the failed file's
+    // bounded finding and the explicit next step, and the read never replays
+    // or submits the uncertain work.
+    await page.goto("/ui-v2/operations?run=task-001");
     await connect(page, VIEWER_TOKEN);
 
+    const detail = page.getByRole("dialog", { name: "运行详情" });
+    await expect(detail).toBeVisible();
+    const evidenceButton = detail
+      .getByRole("button", { name: "查看证据" })
+      .nth(1);
+    await evidenceButton.click();
+    const evidence = detail.getByRole("region", { name: "条目证据" });
     await expect(
-      page.getByRole("heading", { name: "整理执行情况" }),
+      evidence.getByRole("heading", { name: "文件证据：Inception (2010).mkv" }),
     ).toBeVisible();
-    // The bounded finding renders on the execution and on the failed item.
+    // The ended attempt without a durable Result is never presented as a
+    // success: the outcome, the effect certainty and the failure reason stay
+    // exactly separable facts.
     await expect(
-      page
-        .getByText(/destination collision: the configured destination/)
-        .first(),
+      evidence
+        .getByRole("region", { name: "处理结果" })
+        .getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
+    await expect(detail.getByText(/Provider failure: metadata lookup/).first())
+      .toBeVisible();
+    await expect(evidence.getByText(/元数据服务未完成查询/)).toBeVisible();
     await expect(
-      page.getByText(
-        /inspect the pre-mutation failure, repair it, then request a fresh Preview/,
-      ),
+      evidence.getByRole("region", { name: "需处理原因" }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "打开复核与恢复" }),
-    ).toBeVisible();
-    // The recovery handoff is a destination, not a mutation: this journey only
-    // ever read the execution, never submitted anything. (The evidence merges
-    // the shared serial Scan/Preview bucket, so only organize-journey entries
-    // are asserted here.)
-    const evidence = await manualEvidence(page);
-    expect(
-      evidence.filter((entry) => entry.objectType === "organize_execute"),
-    ).toHaveLength(0);
-    expect(
-      evidence.filter(
-        (entry) =>
-          entry.method !== "GET" &&
-          ["organize_choice", "organize_preview", "organize_execute"].includes(
-            entry.objectType,
-          ),
-      ),
-    ).toHaveLength(0);
-  });
-
-  test("the failed execution retires the FileIndex reconciliation surface and never replays Organize", async ({
-    page,
-  }) => {
-    // Task45.5 RO-7: the FileIndex display reconciliation is retired. A
-    // durable Result no longer offers a "re-check the file index" action, and
-    // the page never offers an Organize replay either.
-    await page.goto(
-      `/ui-v2/operations/organize/execution/${FAILED_EXECUTION_ID}`,
-    );
-    await connect(page, VIEWER_TOKEN);
-
-    await expect(
-      page.getByRole("heading", { name: "整理执行情况" }),
-    ).toBeVisible();
-    await expect(page.getByText(/文件索引核对/)).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "重新核对文件索引" }),
-    ).toHaveCount(0);
-
-    const evidence = await manualEvidence(page);
-    expect(
-      evidence.filter(
-        (entry) => entry.objectType === "organize_file_index_reconciliation",
-      ),
-    ).toHaveLength(0);
-    expect(
-      evidence.filter(
-        (entry) =>
-          entry.objectType === "organize_execute" ||
-          entry.objectType === "organize_preview",
-      ),
-    ).toHaveLength(0);
+    // Reading evidence is a bounded read, not a mutation: this journey only
+    // ever issued GETs, never submitted or replayed anything.
+    const recorded = await manualEvidence(page);
+    expect(recorded.filter((entry) => entry.method !== "GET")).toHaveLength(0);
   });
 });

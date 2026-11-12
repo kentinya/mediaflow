@@ -17,7 +17,7 @@
  * replaces it.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch, Link } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -88,7 +88,6 @@ import {
   OPERATIONS_RETURN_KEY,
   operationsLandingSearch,
   operationsReturnContextFromSearch,
-  operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
@@ -961,18 +960,6 @@ export function OperationsLanding() {
                       },
                     })
                   }
-                  onOpenRecoveryExecution={(executionId) =>
-                    void navigate({
-                      to: "/operations/organize/execution/$executionId",
-                      params: { executionId },
-                      search: operationsReturnSearch(
-                        operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                      ),
-                    })
-                  }
                   onSelectRun={selectRun}
                   preparationReturnOps={operationsReturnContextFromSearch({
                     ...listSearch(selectedId),
@@ -1408,7 +1395,6 @@ function RunDetailPanel({
   remainingSession,
   onRemainingSession,
   onOpenLinkedAnalysis,
-  onOpenRecoveryExecution,
   onSelectRun,
   preparationReturnOps,
 }: {
@@ -1426,7 +1412,6 @@ function RunDetailPanel({
   /** Persist one remaining-scope session change in the landing. */
   readonly onRemainingSession: (patch: Partial<RunRemainingSession>) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
-  readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
   /** The exact Task Center context a reopened Files preparation returns to. */
@@ -1483,20 +1468,6 @@ function RunDetailPanel({
       ?.querySelector<HTMLElement>(".mf-modal-close")
       ?.focus({ preventScroll: true });
   }, [modal.layerRef]);
-
-  // This mounted card is the exact processing context a remaining-scope
-  // confirmation was submitted from.  An allowed close or a run switch
-  // unmounts it; the landing session still records the admitted result, but a
-  // late success must not navigate on behalf of a card the operator already
-  // left.  The reopened card offers the persisted execution through its
-  // existing explicit link instead.
-  const contextActiveRef = useRef(true);
-  useEffect(() => {
-    contextActiveRef.current = true;
-    return () => {
-      contextActiveRef.current = false;
-    };
-  }, []);
 
   // Exactly one authenticated POST per deliberate click, carrying the version
   // of the projection that was rendered at click time. There is no retry
@@ -1759,13 +1730,12 @@ function RunDetailPanel({
         });
         void query.refetch();
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-        // Only the still-open card follows the normal success navigation; a
-        // card closed while the request was in flight keeps the operator's
-        // restored list context, and the admitted execution stays reachable
-        // through the session's explicit link after reopening.
-        if (contextActiveRef.current) {
-          onOpenRecoveryExecution(result.model.executionId);
-        }
+        // The operator stays in this exact run detail: the refetches above
+        // refresh its flow, items, results and evidence so the real queue/
+        // execution state is read here instead of a separate execution page.
+        // A card closed while the request was in flight keeps the operator's
+        // restored list context; the durable session keeps the admitted fact
+        // for the next reopen.
       } else {
         if (isUnknownLifecycleOutcome(result)) {
           // A lost response must not be described as a proven zero effect.  Keep
@@ -1947,7 +1917,7 @@ function RunDetailPanel({
                     <p>
                       该剩余范围准备已受理；这是准备受理，不是执行受理。
                       {admittedRemainingExecutionId !== null
-                        ? "该准备此前已确认过一次执行；执行状态以关联执行读取为准，本次读取失败不改变其持久状态。"
+                        ? "该准备此前已确认过一次执行；其排队与逐项结果在本任务详情中呈现，本次读取失败不改变其持久状态。"
                         : " 尚未确认执行；读取失败不代表准备失败，也不代表任何整理效果已发生或未发生。"}
                     </p>
                     <p>{remainingLastKnownLine}</p>
@@ -2035,21 +2005,6 @@ function RunDetailPanel({
                         </button>
                       </div>
                     )}
-                    {admittedRemainingExecutionId !== null && (
-                      <div className="mf-actions">
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={() =>
-                            onOpenRecoveryExecution(
-                              admittedRemainingExecutionId,
-                            )
-                          }
-                        >
-                          查看关联执行结果
-                        </button>
-                      </div>
-                    )}{" "}
                   </StatusBanner>
                 )}
               <RunDetailTabs
@@ -2060,7 +2015,6 @@ function RunDetailPanel({
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
                 owesRecoveryAction={selectedRunOwesRecovery(run)}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-                onOpenRecoveryExecution={onOpenRecoveryExecution}
                 flow={<RunFlowSummary run={run} />}
                 results={{
                   success: run.successItems,

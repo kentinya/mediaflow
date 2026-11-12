@@ -261,66 +261,6 @@ async function openPlan(
   return { calls, router };
 }
 
-/**
- * The exact failed-execution document the real backend publishes for a terminal
- * failure: the aggregate and per-item bounded evidence plus the recovery
- * handoff the backend offers without any transport (available, no method, no
- * route, no reason), exactly as `_organize_execution_document()` emits it.
- */
-function failedExecutionDocument(): Json {
-  const value = executionDocument();
-  value["status"] = "failed";
-  value["durableState"] = "terminal_failure";
-  value["nextAction"] =
-    "inspect each failed item, repair the cause and request a fresh Preview; " +
-    "uncertain effects are never replayed automatically";
-  value["failedItemCount"] = 1;
-  value["completedItemCount"] = 0;
-  value["failure"] = {
-    category: "destination_collision",
-    durableState: "TaskItem and Result are durable with a failed outcome",
-    message: "destination collision: the configured destination already exists",
-    nextAction:
-      "inspect the destination and resolve the collision before explicitly retrying this item",
-    retrySafe: false,
-    sideEffects: "none",
-  };
-  value["knownEffects"] = {
-    failedWithoutEffectCount: 1,
-    statement:
-      "one or more items require investigation; MediaFlow never replays an " +
-      "uncertain mutation automatically",
-    uncertainItemCount: 0,
-    verifiedItemCount: 0,
-  };
-  const item = (value["items"] as Json[])[0];
-  item["status"] = "failed";
-  item["stage"] = "failed";
-  item["effectCertainty"] = "none";
-  item["completedOperations"] = [];
-  item["uncertainEffects"] = [];
-  item["effects"] = [];
-  item["failure"] = {
-    category: "destination_collision",
-    durableState: "TaskItem and Result are durable with a failed outcome",
-    message: "destination collision: the configured destination already exists",
-    nextAction:
-      "inspect the destination and resolve the collision before explicitly retrying this item",
-    retrySafe: false,
-    sideEffects: "none",
-  };
-  item["nextAction"] =
-    "inspect the pre-mutation failure, repair it, then request a fresh Preview";
-  const actions = value["actions"] as Json;
-  (actions["detail"] as Json)["nextAction"] = value["nextAction"];
-  const recovery = actions["recovery"] as Json;
-  recovery["available"] = true;
-  recovery["reason"] = null;
-  recovery["method"] = null;
-  recovery["path"] = null;
-  return value;
-}
-
 describe("V2 manual Organize journey", () => {
   it("renders the durable intent, saves one optimistic choice edit and generates the shared analysis", async () => {
     const user = userEvent.setup();
@@ -730,7 +670,7 @@ describe("V2 manual Organize journey", () => {
   it("renders the complete fixed plan in the intent page and admits exactly the selected ready items", async () => {
     const user = userEvent.setup();
     const execution = executionDocument();
-    const { calls } = await openPlan(user, {
+    const { calls, router } = await openPlan(user, {
       respond: (call) => {
         if (
           call.url ===
@@ -738,12 +678,6 @@ describe("V2 manual Organize journey", () => {
           call.method === "POST"
         ) {
           return jsonResponse(execution, 202);
-        }
-        if (
-          call.url === "/api/v1/operations/organize/executions/execution-1" &&
-          call.method === "GET"
-        ) {
-          return jsonResponse(execution);
         }
         return undefined;
       },
@@ -782,14 +716,20 @@ describe("V2 manual Organize journey", () => {
     expect(serialized).not.toMatch(
       /authorization|token|digest|fingerprint|snapshot/i,
     );
-    // Exactly one submission was attempted, and it continues to the durable
-    // execution identity the backend returned.
+    // Exactly one submission was attempted, and it hands the exact admitted
+    // run to the task center: the durable Task identity the backend returned
+    // becomes the selected run in the center's default context (this journey
+    // carried no returnOps). The retired execution page is never a
+    // destination.
     expect(calls.filter((call) => call.url.endsWith("/execute")).length).toBe(
       1,
     );
-    await screen.findByRole("heading", { name: "整理执行情况" });
-    expect(screen.getByText(/执行记录 execution-1/)).toBeVisible();
-    expect(screen.getByText("结果记录")).toBeVisible();
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+    );
+    const search = new URLSearchParams(router.history.location.search);
+    expect(search.get("run")).toBe("task-1");
+    await screen.findByRole("heading", { name: "任务中心" });
   });
 
   it("restores the durable fixed plan after a hard reload without re-analysing", async () => {
@@ -875,7 +815,7 @@ describe("V2 manual Organize journey", () => {
     });
     expect(screen.getByRole("link", { name: /查看已有执行/ })).toHaveAttribute(
       "href",
-      expect.stringContaining("/operations/organize/execution/execution-1"),
+      expect.stringContaining("/operations?run=task-1"),
     );
     expect(
       screen.getByRole("button", { name: "确认整理 1 项" }),
@@ -1096,7 +1036,7 @@ describe("V2 manual Organize journey", () => {
     expect(confirm).toBeDisabled();
     expect(screen.getByRole("link", { name: /查看已有执行/ })).toHaveAttribute(
       "href",
-      expect.stringContaining("/operations/organize/execution/execution-1"),
+      expect.stringContaining("/operations?run=task-1"),
     );
     expect(
       calls.some(
@@ -1212,7 +1152,7 @@ describe("V2 manual Organize journey", () => {
       "COPY",
     );
     const execution = executionDocument();
-    const { calls } = await openPlan(user, {
+    const { calls, router } = await openPlan(user, {
       detail: value,
       respond: (call) => {
         if (
@@ -1221,9 +1161,6 @@ describe("V2 manual Organize journey", () => {
           call.method === "POST"
         ) {
           return jsonResponse(execution, 202);
-        }
-        if (call.url === "/api/v1/operations/organize/executions/execution-1") {
-          return jsonResponse(execution);
         }
         return undefined;
       },
@@ -1234,7 +1171,9 @@ describe("V2 manual Organize journey", () => {
     });
     await user.click(overwrite);
     await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
-    await screen.findByRole("heading", { name: "整理执行情况" });
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+    );
 
     const execute = calls.find((call) => call.url.endsWith("/execute"));
     expect(execute?.body).toMatchObject({
@@ -1446,110 +1385,6 @@ describe("V2 manual Organize journey", () => {
     expect(previewRequests.count).toBe(malformedVariants.length);
   });
 
-  it("fails closed on malformed execution item and effect data", async () => {
-    const malformedVariants: Array<(value: Json) => void> = [
-      // An unknown execution item status is never modelled.
-      (value) => {
-        (value["items"] as Json[])[0]["status"] = "hacked";
-      },
-      // An unknown effect certainty is never modelled.
-      (value) => {
-        (value["items"] as Json[])[0]["effectCertainty"] = "totally_verified";
-      },
-      // A verified success is never reported with uncertain certainty.
-      (value) => {
-        (value["items"] as Json[])[0]["effectCertainty"] = "unknown";
-      },
-      // A verified flag contradicting its certainty is malformed evidence.
-      (value) => {
-        (value["items"] as Json[])[0]["effects"] = [
-          {
-            action: "MOVE",
-            certainty: "attempted_unverified",
-            destinationLocation: "One (2001)/One (2001).mkv",
-            operation: null,
-            sourceLocation: "One.2001.mkv",
-            verified: true,
-          },
-        ];
-      },
-      // An arbitrary effect action marker is never modelled.
-      (value) => {
-        (value["items"] as Json[])[0]["effects"] = [
-          {
-            action: "RM_RF_SLASH",
-            certainty: "verified_complete",
-            destinationLocation: "One (2001)/One (2001).mkv",
-            operation: null,
-            sourceLocation: "One.2001.mkv",
-            verified: true,
-          },
-        ];
-      },
-      // An unknown uncertain-effect statement is never modelled.
-      (value) => {
-        (value["items"] as Json[])[0]["uncertainEffects"] = ["rm -rf /"];
-      },
-    ];
-
-    for (const mutate of malformedVariants) {
-      const document = executionDocument();
-      mutate(document);
-      recordingFetch((call) => {
-        if (call.url === "/api/v1/operations/organize/executions/execution-1") {
-          return jsonResponse(document);
-        }
-        return undefined;
-      });
-      authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations/organize/execution/execution-1");
-
-      await screen.findByText(
-        /could not be understood as the expected contract/i,
-      );
-      const rendered = (await screen.findByRole("main")).textContent ?? "";
-      expect(rendered).not.toMatch(/hacked|RM_RF_SLASH|rm -rf \/|totally/);
-      cleanup();
-      authStore.clearToken();
-    }
-  });
-
-  it("renders the valid uncertain-outcome evidence without calling it malformed", async () => {
-    // The executor records an attempted/unknown mutation with no verified
-    // effect as the bounded ``UNCERTAIN_EXECUTOR_INVOCATION`` marker. This is
-    // truthful, non-replayable evidence: the detail page must render it, not
-    // refuse the whole read.
-    const document = executionDocument();
-    const item = (document["items"] as Json[])[0];
-    item["status"] = "partial";
-    item["effectCertainty"] = "attempted_unverified";
-    item["completedOperations"] = ["UNCERTAIN_EXECUTOR_INVOCATION"];
-    item["uncertainEffects"] = ["executor_invocation"];
-    item["effects"] = [
-      {
-        action: "UNCERTAIN_EXECUTOR_INVOCATION",
-        certainty: "attempted_unverified",
-        destinationLocation: "One (2001)/One (2001).mkv",
-        operation: null,
-        sourceLocation: "One.2001.mkv",
-        verified: false,
-      },
-    ];
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
-        return jsonResponse(document);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/execution/execution-1");
-
-    await screen.findByRole("heading", { name: "整理执行情况" });
-    const rendered = (await screen.findByRole("main")).textContent ?? "";
-    expect(rendered).toContain("UNCERTAIN_EXECUTOR_INVOCATION");
-    expect(rendered).not.toMatch(/could not be understood as the expected/);
-  });
-
   it("renders no confirm control when the plan action names another route or method", async () => {
     // The confirmation control is rendered only from the mutating POST route of
     // this exact plan. A contradictory transport — a safe method, a route
@@ -1620,37 +1455,5 @@ describe("V2 manual Organize journey", () => {
       authStore.clearToken();
       vi.unstubAllGlobals();
     }
-  });
-
-  it("renders a real failed execution with its per-item evidence and the non-transport recovery handoff", async () => {
-    // A terminal failure is durable, truthful evidence, never a malformed
-    // read: the failed item, its bounded finding and the recovery handoff the
-    // backend offers without any transport must all render, and nothing may
-    // replay or submit the uncertain work.
-    const document = failedExecutionDocument();
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
-        return jsonResponse(document);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/execution/execution-1");
-
-    await screen.findByRole("heading", { name: "整理执行情况" });
-    const rendered = (await screen.findByRole("main")).textContent ?? "";
-    expect(rendered).not.toMatch(/could not be understood as the expected/);
-    // The per-item evidence is rendered, not swallowed by a malformed state:
-    // the bounded finding appears on the execution and on the failed item.
-    expect(screen.getAllByText(/destination collision:/)).toHaveLength(2);
-    expect(
-      screen.getByText(
-        /inspect the pre-mutation failure, repair it, then request a fresh Preview/,
-      ),
-    ).toBeVisible();
-    // The safe Slice 34 destination is offered exactly once as a handoff.
-    expect(screen.getByRole("link", { name: "打开复核与恢复" })).toBeVisible();
-    // Recovery is a destination, not a mutation: nothing was ever submitted.
-    expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 });

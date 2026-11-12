@@ -330,9 +330,13 @@ async function finishNativeRecovery(
     readonly executionId: string;
   };
   expect(confirmation.taskId).toBe(seeded.taskId);
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
-  );
+  // The operator stays in the exact Task detail that confirmed the subset:
+  // the refreshed panel states the accepted admission, and the real queue/
+  // execution state is read here instead of a separate execution page.
+  await expect(
+    recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
+  ).toBeVisible();
+  await expect(page).not.toHaveURL(/organize\/execution/);
   const worker = await (
     await request.post(`${BASE}/__harness__/run-manual-worker`)
   ).json();

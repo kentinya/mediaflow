@@ -27,7 +27,6 @@ import {
 import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
-import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
 import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
@@ -185,12 +184,6 @@ const organizeDiscoveryRoute = createRoute({
   component: OrganizeDiscoveryPage,
 });
 
-const organizeExecutionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/organize/execution/$executionId",
-  component: OrganizeExecutionPage,
-});
-
 const automationListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation",
@@ -315,7 +308,6 @@ const routeTree = rootRoute.addChildren([
   organizeNewRoute,
   organizeIntentRoute,
   organizeDiscoveryRoute,
-  organizeExecutionRoute,
   automationListRoute,
   automationNewRoute,
   automationLifecycleRoute,

@@ -710,9 +710,12 @@ export function OrganizeIntentPage() {
                 expectedIntentId={intent.intentId}
                 heading="当前整理计划（零变更摘要）"
                 onAdmitted={(admitted) => {
-                  if (admitted.taskId !== null && operationsReturn !== null) {
-                    // A task-center-originated journey returns to its preserved
-                    // list context with the admitted run selected.
+                  if (admitted.taskId !== null && admitted.taskId !== "") {
+                    // The admitted run opens in the task center: a
+                    // task-center-originated journey keeps its preserved list
+                    // context, and any other journey uses the center's legal
+                    // default context. The deleted execution page is never a
+                    // destination.
                     void navigate({
                       to: "/operations",
                       search: operationsLandingSearch(
@@ -722,16 +725,10 @@ export function OrganizeIntentPage() {
                     });
                     return;
                   }
-                  void navigate({
-                    to: "/operations/organize/execution/$executionId",
-                    params: { executionId: admitted.executionId },
-                    search: {
-                      ...(filesReturn === null
-                        ? {}
-                        : filesReturnSearch(filesReturn)),
-                      ...operationsReturnSearch(operationsReturn),
-                    },
-                  });
+                  // Admitted without a provable task identity: stay here with
+                  // the known admission fact. The refreshed durable history
+                  // below shows the admitted record; nothing guesses a run or
+                  // addresses an invented route.
                 }}
               />
             ) : null}

@@ -158,16 +158,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/organize/discovery/" as const,
   },
   {
-    id: "operations-organize-execution",
-    label: "Organize execution",
-    path: "/operations/organize/execution/$executionId",
-    title: "Organize execution | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Durable admitted execution, Worker outcome and independent item results.",
-    dynamicPrefix: "/operations/organize/execution/" as const,
-  },
-  {
     id: "operations-automation",
     label: "Automation",
     path: "/operations/automation",
@@ -1070,16 +1060,17 @@ export function allowlistedDestinationSearch(
   }
   if (
     path === "/operations/organize/intent/$intentId" ||
-    path === "/operations/organize/discovery/$discoveryId" ||
-    path === "/operations/organize/execution/$executionId"
+    path === "/operations/organize/discovery/$discoveryId"
   ) {
-    // The intent, durable discovery and execution pages of one Organize journey
+    // The intent and durable discovery pages of one Organize journey
     // carry only the bounded return contexts that let them offer their two
     // explicit back actions; nothing else survives a reconnect here. The
     // discovery page keeps the exact admitted discovery identity in its path,
     // so a refresh or reconnect continues the same durable record without
     // admitting work.  The complete plan summary is rendered in the page that
     // produced it, so no separate plan destination carries state either.
+    // The retired execution address is not a destination: its old URL lands
+    // on the ordinary not-found/auth boundary like any unknown route.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setJourneyReturnContexts(allowed, current);

@@ -33,7 +33,6 @@ describe("destination model", () => {
       "Manual organize",
       "Manual intent",
       "整理发现",
-      "Organize execution",
       "Automation",
       "Create Automation definition",
       "New Automation definition",
@@ -582,12 +581,12 @@ describe("destination model", () => {
       expect(
         new URLSearchParams(intentContext as string).get("returnOps"),
       ).toBe("q=%E7%94%B5%E5%BD%B1");
+      // The retired Organize execution address is not a destination at all:
+      // it never re-enters an Operations URL and never carries the Files
+      // origin through an authentication continuation.
       expect(
-        allowlistedDestinationSearch(
-          "/operations/organize/execution/$executionId",
-          "returnTo=files&returnResourceLibraryId=resources",
-        ),
-      ).toBe("returnTo=files&returnResourceLibraryId=resources");
+        destinationForPath("/operations/organize/execution/execution-1"),
+      ).toBeUndefined();
     });
 
     it("replays the empty-but-present task-center origin through continuation", () => {
@@ -599,7 +598,6 @@ describe("destination model", () => {
       for (const path of [
         "/operations/organize/new",
         "/operations/organize/intent/$intentId",
-        "/operations/organize/execution/$executionId",
         "/resourcelib/files",
       ] as const) {
         const current =

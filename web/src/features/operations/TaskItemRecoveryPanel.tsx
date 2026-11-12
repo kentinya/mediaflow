@@ -309,7 +309,6 @@ export interface TaskItemRecoveryPanelProps {
   readonly active: boolean;
   readonly analysisDepth?: number;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   /**
    * `full` is the Task Center panel. `decision` is the same typed decision and
    * analysis session rendered compactly inside the manual-organize card; it
@@ -344,7 +343,6 @@ export function TaskItemRecoveryPanel({
   active,
   analysisDepth = 0,
   onOpenLinkedAnalysis,
-  onOpenRecoveryExecution,
   mode = "full",
   onAnalysisRequested,
   decisionDraft,
@@ -400,19 +398,6 @@ export function TaskItemRecoveryPanel({
         : Promise.resolve(),
     ]);
   };
-  // This mounted panel instance is the exact processing context a recovery
-  // request was submitted from.  An allowed card close, a Task/item switch or
-  // a principal change unmounts it; the durable session still records the
-  // outcome, but a late success must not navigate on behalf of a context the
-  // operator already left.  The reopened panel offers the persisted result
-  // with its existing explicit link instead.
-  const contextActiveRef = useRef(true);
-  useEffect(() => {
-    contextActiveRef.current = true;
-    return () => {
-      contextActiveRef.current = false;
-    };
-  }, []);
   const beginAction = (
     action: TaskItemRecoveryPendingAction,
     message: string | null = null,
@@ -823,21 +808,20 @@ export function TaskItemRecoveryPanel({
       );
       if (result.ok) {
         updateRecoverySession({
-          message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。可在关联执行中跟踪逐项结果。`,
+          message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。`,
           repeatLocked: false,
           submittedPreparationId: null,
         });
         setPreparation(null);
         setConfirmSelection(null);
         refreshLinkedReads();
-        // The success navigation belongs to the live processing context only.
+        // The operator stays in this exact Task detail: refreshLinkedReads
+        // refreshes the flow, items, results and evidence so the real queue/
+        // execution state is read here instead of a separate execution page.
         // When this panel was unmounted while the confirmation was in flight
         // (card closed, Task/item switched), the operator's restored list or
         // other item context stays untouched; the accepted result is kept in
         // the durable session and re-read on the next reopen.
-        if (contextActiveRef.current) {
-          onOpenRecoveryExecution?.(result.model.executionId);
-        }
       } else {
         // An unknown response is never treated as a refusal.  Keep the
         // submission locked and let the operator explicitly re-read the
@@ -1033,8 +1017,7 @@ export function TaskItemRecoveryPanel({
         updateRecoverySession({
           repeatLocked: false,
           submittedPreparationId: null,
-          message:
-            "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 ",
+          message: "已读取持久状态：本次确认已经受理。 ",
         });
         return;
       }
@@ -1049,7 +1032,7 @@ export function TaskItemRecoveryPanel({
       repeatLocked: false,
       message:
         durable?.status === "confirmed"
-          ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
+          ? "已读取持久状态：本次确认已经受理。"
           : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
     });
   };
@@ -1558,25 +1541,6 @@ export function TaskItemRecoveryPanel({
             heading="新计划摘要（零变更）"
           />
         )}
-      {confirmedPreparation !== null && (
-        <StatusBanner variant="info" title="本次确认已经受理">
-          <p>
-            已确认的精确子集已进入常驻 Worker
-            执行；受理不代表文件整理已成功。请打开关联执行查看逐项结果。
-          </p>
-          {confirmedPreparation.executionId && onOpenRecoveryExecution && (
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() =>
-                onOpenRecoveryExecution(confirmedPreparation.executionId!)
-              }
-            >
-              查看关联执行结果
-            </button>
-          )}
-        </StatusBanner>
-      )}
       {repeatLocked && (
         <div className="mf-actions">
           <button
@@ -1707,7 +1671,6 @@ export function TaskItemRecoveryPanel({
                   runId={runId}
                   active={active}
                   analysisDepth={analysisDepth + 1}
-                  onOpenRecoveryExecution={onOpenRecoveryExecution}
                 />
                 <button
                   type="button"
@@ -1753,24 +1716,6 @@ export function TaskItemRecoveryPanel({
           </p>
           <p>下一步：{linked.nextAction}</p>
           {linked.executionId && <p>执行记录：{linked.executionId}</p>}
-          {linked.executionId && onOpenRecoveryExecution && (
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() => onOpenRecoveryExecution(linked.executionId!)}
-            >
-              查看关联执行结果
-            </button>
-          )}
-          {onOpenRecoveryExecution && linked.executionId && (
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() => onOpenRecoveryExecution(linked.executionId!)}
-            >
-              查看关联执行结果
-            </button>
-          )}
         </div>
       )}
     </section>

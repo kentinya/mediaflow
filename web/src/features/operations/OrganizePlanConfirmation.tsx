@@ -22,7 +22,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
@@ -40,6 +40,10 @@ import {
   displayEnum,
 } from "./organize-summary";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import {
+  operationsLandingSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import { Button } from "../../shared/ui/Button";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -73,6 +77,12 @@ export interface OrganizePlanConfirmationProps {
 export function OrganizePlanConfirmation(props: OrganizePlanConfirmationProps) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
+  // The journey's own bounded return context decides how an existing durable
+  // execution is re-opened in the task center: a task-center-originated
+  // journey keeps its preserved list context; any other journey uses the
+  // center's legal default context with the exact task selected.
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const operationsReturn = readOperationsReturnContext(searchParams);
   const previewQuery = useQuery(
     organizePreviewQueryOptions(token, props.previewId),
   );
@@ -422,6 +432,7 @@ export function OrganizePlanConfirmation(props: OrganizePlanConfirmationProps) {
                   ? executionHistoryQuery.data.failure.nextAction
                   : null
               }
+              operationsReturn={operationsReturn}
               executePending={executeMutation.isPending}
               reconcilePending={reconcileMutation.isPending}
               result={result}
@@ -494,6 +505,8 @@ interface PlanBodyProps {
       }
     | undefined;
   readonly executionHistoryFailure: string | null;
+  /** The journey's bounded task-center return context for its own links. */
+  readonly operationsReturn: string | null;
   readonly executePending: boolean;
   readonly reconcilePending: boolean;
   readonly result: { readonly ok: boolean; readonly message: string } | null;
@@ -565,13 +578,23 @@ function PlanBody(props: PlanBodyProps) {
           <ul>
             {props.executionHistory.items.map((existing) => (
               <li key={existing.executionId}>
-                <Link
-                  to="/operations/organize/execution/$executionId"
-                  params={{ executionId: existing.executionId }}
-                >
-                  查看已有执行：{existing.selectedItemCount} 个条目，
-                  {displayEnum(existing.status)}
-                </Link>
+                {existing.taskId !== "" ? (
+                  <Link
+                    to="/operations"
+                    search={operationsLandingSearch(
+                      props.operationsReturn,
+                      existing.taskId,
+                    )}
+                  >
+                    查看已有执行：{existing.selectedItemCount} 个条目，
+                    {displayEnum(existing.status)}
+                  </Link>
+                ) : (
+                  <span>
+                    已有执行：{existing.selectedItemCount} 个条目，
+                    {displayEnum(existing.status)}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -708,11 +731,16 @@ function PlanBody(props: PlanBodyProps) {
                 {props.reconcilePending ? "核对中..." : "核对提交结果"}
               </Button>
               {props.reconciliation !== null &&
-                props.reconciliation.executionId !== null && (
+                props.reconciliation.executionId !== null &&
+                props.reconciliation.taskId !== null &&
+                props.reconciliation.taskId !== "" && (
                   <Link
                     className="mf-button mf-button-secondary"
-                    to="/operations/organize/execution/$executionId"
-                    params={{ executionId: props.reconciliation.executionId }}
+                    to="/operations"
+                    search={operationsLandingSearch(
+                      props.operationsReturn,
+                      props.reconciliation.taskId,
+                    )}
                   >
                     查看已公告执行
                   </Link>

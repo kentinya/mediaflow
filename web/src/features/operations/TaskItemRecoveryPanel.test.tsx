@@ -1291,7 +1291,7 @@ describe("TaskItemRecoveryPanel", () => {
       within(panel).getByRole("button", { name: /重新读取条目后再继续/ }),
     );
     expect(
-      await within(panel).findByRole("heading", { name: "本次确认已经受理" }),
+      await within(panel).findByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();
     await waitFor(() => {
       expect(
@@ -1425,9 +1425,7 @@ describe("TaskItemRecoveryPanel", () => {
       }),
     );
     expect(
-      await within(reopened).findByRole("heading", {
-        name: "本次确认已经受理",
-      }),
+      await within(reopened).findByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();
     await waitFor(() => {
       expect(
@@ -1547,9 +1545,13 @@ describe("TaskItemRecoveryPanel", () => {
     await user.click(
       within(panel).getAllByRole("button", { name: "刷新" })[0]!,
     );
-    expect(
-      await within(panel).findByRole("heading", { name: "本次确认已经受理" }),
-    ).toBeVisible();
+    // The refreshed durable read wins: the local prepared summary and its
+    // confirm action disappear once the confirmed record arrives.
+    await waitFor(() => {
+      expect(
+        within(panel).queryByRole("region", { name: "新计划摘要" }),
+      ).toBeNull();
+    });
     await waitFor(() => {
       expect(
         within(panel).queryByRole("button", { name: /确认继续整理/ }),

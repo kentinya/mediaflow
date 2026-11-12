@@ -2125,7 +2125,9 @@ describe("selected-run detail tabs", () => {
     );
     expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull();
 
-    // Reopening reads the persisted admission instead of resubmitting it.
+    // Reopening reads the persisted admission instead of resubmitting it; the
+    // panel states the known admission fact and offers no execution-page
+    // navigation.
     await user.click(
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
@@ -2138,13 +2140,15 @@ describe("selected-run detail tabs", () => {
       name: "条目审核与恢复",
     });
     expect(
-      await within(reopenedRecovery).findByText(/本次确认已经受理/),
+      await within(reopenedRecovery).findByText(
+        /已受理 1 项；常驻 Worker 将执行已确认的精确子集/,
+      ),
     ).toBeVisible();
     expect(
-      within(reopenedRecovery).getByRole("button", {
+      within(reopenedRecovery).queryByRole("button", {
         name: "查看关联执行结果",
       }),
-    ).toBeEnabled();
+    ).toBeNull();
     expect(confirmPosts).toBe(1);
   });
 
@@ -3016,7 +3020,7 @@ describe("selected-run detail tabs", () => {
       releaseBatchRead?.(jsonResponse(batchDocument("confirmed")));
       await delayedBatchRead;
     });
-    await within(summary).findByText(/本次确认已经受理/);
+    await within(summary).findByText(/持久状态已确认本次精确子集/);
     expect(confirmPosts).toHaveLength(1);
   });
 

@@ -436,7 +436,11 @@ export function AutomationRunOncePage() {
                   heading="本次运行计划的零变更摘要"
                   confirmLabel={(count) => `确认整理本次运行 ${count} 项`}
                   onAdmitted={(admitted) => {
-                    if (admitted.taskId !== null && operationsReturn !== null) {
+                    if (admitted.taskId !== null && admitted.taskId !== "") {
+                      // The admitted run opens in the task center with the
+                      // preserved context when present, or the center's legal
+                      // default context otherwise. The deleted execution page
+                      // is never a destination.
                       void navigate({
                         to: "/operations",
                         search: operationsLandingSearch(
@@ -446,11 +450,9 @@ export function AutomationRunOncePage() {
                       });
                       return;
                     }
-                    void navigate({
-                      to: "/operations/organize/execution/$executionId",
-                      params: { executionId: admitted.executionId },
-                      search: { ...operationsReturnSearch(operationsReturn) },
-                    });
+                    // Admitted without a provable task identity: stay here
+                    // with the known admission fact; the refreshed durable
+                    // history shows the admitted record.
                   }}
                 />
               ) : null}

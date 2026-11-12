@@ -786,7 +786,6 @@ export interface RunDetailTabsProps {
    */
   readonly owesRecoveryAction?: boolean;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
 
 export function RunDetailTabs({
@@ -801,7 +800,6 @@ export function RunDetailTabs({
   actions,
   owesRecoveryAction = false,
   onOpenLinkedAnalysis,
-  onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
   /** A filter change always starts from the first page: a cursor minted for
@@ -924,7 +922,6 @@ export function RunDetailTabs({
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
             onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-            onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
             owesRecoveryAction={owesRecoveryAction}
             evidenceDecisionDrafts={evidenceDecisionDrafts}
@@ -1189,7 +1186,6 @@ function RunItemsSection({
   onStateChange,
   onInspectItem,
   onOpenLinkedAnalysis,
-  onOpenRecoveryExecution,
   active,
   owesRecoveryAction,
   evidenceDecisionDrafts,
@@ -1201,7 +1197,6 @@ function RunItemsSection({
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string | null) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
   readonly owesRecoveryAction: boolean;
   readonly evidenceDecisionDrafts: Readonly<
@@ -1276,7 +1271,6 @@ function RunItemsSection({
         itemId={evidenceItem}
         active={active}
         onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-        onOpenRecoveryExecution={onOpenRecoveryExecution}
         onClose={() => onInspectItem(null)}
         decisionDraft={evidenceDecisionDrafts[evidenceItem]}
         onDecisionDraftChange={(draft) =>
@@ -1511,7 +1505,6 @@ function RunItemsSection({
                   selected={selectedRecoveryItems}
                   onSelectionChange={setSelectedRecoveryItems}
                   onInspectItem={onInspectItem}
-                  onOpenRecoveryExecution={onOpenRecoveryExecution}
                 />
               )}
             </>
@@ -1574,14 +1567,12 @@ function FailedAnalysisBatchControls({
   selected,
   onSelectionChange,
   onInspectItem,
-  onOpenRecoveryExecution,
 }: {
   readonly taskId: string;
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
   readonly onInspectItem: (itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }) {
   const token = useAuthToken();
   const authGeneration = useAuthGeneration();
@@ -1616,7 +1607,6 @@ function FailedAnalysisBatchControls({
             selected={selected}
             onSelectionChange={onSelectionChange}
             onInspectItem={onInspectItem}
-            onOpenRecoveryExecution={onOpenRecoveryExecution}
             principalId={data.principalId}
             authGeneration={authGeneration}
           />
@@ -1632,7 +1622,6 @@ function VerifiedFailedAnalysisBatchControls({
   selected,
   onSelectionChange,
   onInspectItem,
-  onOpenRecoveryExecution,
   principalId,
   authGeneration,
 }: {
@@ -1641,7 +1630,6 @@ function VerifiedFailedAnalysisBatchControls({
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
   readonly onInspectItem: (itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly principalId: string;
   readonly authGeneration: number;
 }) {
@@ -1962,7 +1950,6 @@ function VerifiedFailedAnalysisBatchControls({
                 busy={summaryBusy}
                 onBusyChange={setSummaryBusy}
                 onPendingChange={setPendingManualConfirmation}
-                onOpenRecoveryExecution={onOpenRecoveryExecution}
                 onRefresh={async () => {
                   void queryClient.invalidateQueries({
                     queryKey: [runItemsQueryKey, runId],
@@ -2105,7 +2092,6 @@ function BatchRecoverySummary({
   busy,
   onBusyChange,
   onPendingChange,
-  onOpenRecoveryExecution,
   onRefresh,
 }: {
   readonly taskId: string;
@@ -2116,7 +2102,6 @@ function BatchRecoverySummary({
   readonly busy: boolean;
   readonly onBusyChange: (value: boolean) => void;
   readonly onPendingChange: (value: boolean) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onRefresh: () => Promise<RecoveryBatchModel | null>;
 }) {
   const confirmationStorageKey = recoveryBatchConfirmationSessionKey(
@@ -2179,9 +2164,6 @@ function BatchRecoverySummary({
     child.manualRecoveryPreparation ?? prepared[child.itemId] ?? null;
   const readyChildren = actionableChildren.filter(
     (child) => preparationFor(child)?.status === "prepared",
-  );
-  const confirmedChildren = actionableChildren.filter(
-    (child) => preparationFor(child)?.status === "confirmed",
   );
   const notReady = actionableChildren.filter((child) => {
     const preparation = preparationFor(child);
@@ -2505,29 +2487,6 @@ function BatchRecoverySummary({
           </button>
         </div>
       )}
-      {confirmedChildren.map((child) => {
-        const confirmedPreparation = preparationFor(child);
-        return (
-          <StatusBanner
-            key={child.itemId}
-            variant="info"
-            title={`${child.itemId}：本次确认已经受理`}
-          >
-            <p>该精确子集已进入常驻 Worker；受理不代表文件整理已成功。</p>
-            {confirmedPreparation?.executionId && onOpenRecoveryExecution && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() =>
-                  onOpenRecoveryExecution(confirmedPreparation.executionId!)
-                }
-              >
-                查看关联执行结果
-              </button>
-            )}
-          </StatusBanner>
-        );
-      })}
       {readyChildren.map((child) => {
         const preparation = preparationFor(child)!;
         const current = stateFor(child.itemId);
@@ -2742,7 +2701,6 @@ function RunEvidenceSection({
   itemId,
   active,
   onOpenLinkedAnalysis,
-  onOpenRecoveryExecution,
   onClose,
   decisionDraft,
   onDecisionDraftChange,
@@ -2752,7 +2710,6 @@ function RunEvidenceSection({
   readonly itemId: string;
   readonly active: boolean;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onClose: () => void;
   /** The same file's unsaved decision inputs, owned outside the paged list. */
   readonly decisionDraft?: TaskItemDecisionDraft;
@@ -2984,7 +2941,6 @@ function RunEvidenceSection({
                 runId={runId}
                 active={active}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-                onOpenRecoveryExecution={onOpenRecoveryExecution}
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fixture from "./__fixtures__/manual-operations.json";
 import {
   normalizeOrganizeAction,
+  normalizeOrganizeExecution,
   normalizeOrganizeIntent,
   normalizeOrganizePreview,
   OrganizeNormalizationError,
@@ -359,5 +360,111 @@ describe("normalizeOrganizePreview candidate safety binding", () => {
     expect(() => normalizeOrganizePreview(value)).toThrow(
       OrganizeNormalizationError,
     );
+  });
+});
+
+function executionDocument(): Json {
+  const value = JSON.parse(
+    JSON.stringify(documents["organizeExecutionDetail"]),
+  ) as Json;
+  value["executionId"] = "execution-1";
+  // The checked-in fixture masks every durable identity, so the exact objects
+  // this document belongs to are restored here: the normalizer must name the
+  // exact execution and its exact Task, exactly as the real backend emits
+  // them for the Execute response and the durable history list.
+  value["taskId"] = "task-1";
+  const actions = value["actions"] as Json;
+  (actions["detail"] as Json)["path"] =
+    "/api/v1/operations/organize/executions/execution-1";
+  (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
+  return value;
+}
+
+describe("normalizeOrganizeExecution durable evidence", () => {
+  it("accepts an attempted/unknown mutation as truthful non-replayable evidence", () => {
+    // The executor records an attempted/unknown mutation with no verified
+    // effect as the bounded ``UNCERTAIN_EXECUTOR_INVOCATION`` marker. This is
+    // truthful evidence, never a malformed read: the model must carry it so a
+    // reader can present it instead of replaying the uncertain work.
+    const value = executionDocument();
+    const item = (value["items"] as Json[])[0];
+    item["status"] = "partial";
+    item["effectCertainty"] = "attempted_unverified";
+    item["completedOperations"] = ["UNCERTAIN_EXECUTOR_INVOCATION"];
+    item["uncertainEffects"] = ["executor_invocation"];
+    item["effects"] = [
+      {
+        action: "UNCERTAIN_EXECUTOR_INVOCATION",
+        certainty: "attempted_unverified",
+        destinationLocation: "One (2001)/One (2001).mkv",
+        operation: null,
+        sourceLocation: "One.2001.mkv",
+        verified: false,
+      },
+    ];
+
+    const model = normalizeOrganizeExecution(value);
+    expect(model.items[0]?.effectCertainty).toBe("attempted_unverified");
+    expect(model.items[0]?.uncertainEffects).toEqual(["executor_invocation"]);
+    expect(model.items[0]?.effects[0]?.action).toBe(
+      "UNCERTAIN_EXECUTOR_INVOCATION",
+    );
+    expect(model.items[0]?.effects[0]?.verified).toBe(false);
+  });
+
+  it("fails closed on malformed execution item and effect data", () => {
+    const malformedVariants: Array<(value: Json) => void> = [
+      // An unknown execution item status is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["status"] = "hacked";
+      },
+      // An unknown effect certainty is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["effectCertainty"] = "totally_verified";
+      },
+      // A verified success is never reported with uncertain certainty.
+      (value) => {
+        (value["items"] as Json[])[0]["effectCertainty"] = "unknown";
+      },
+      // A verified flag contradicting its certainty is malformed evidence.
+      (value) => {
+        (value["items"] as Json[])[0]["effects"] = [
+          {
+            action: "MOVE",
+            certainty: "attempted_unverified",
+            destinationLocation: "One (2001)/One (2001).mkv",
+            operation: null,
+            sourceLocation: "One.2001.mkv",
+            verified: true,
+          },
+        ];
+      },
+      // An arbitrary effect action marker is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["effects"] = [
+          {
+            action: "RM_RF_SLASH",
+            certainty: "verified_complete",
+            destinationLocation: "One (2001)/One (2001).mkv",
+            operation: null,
+            sourceLocation: "One.2001.mkv",
+            verified: true,
+          },
+        ];
+      },
+      // An unknown uncertain-effect statement is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["uncertainEffects"] = ["rm -rf /"];
+      },
+    ];
+
+    for (const mutate of malformedVariants) {
+      const value = executionDocument();
+      mutate(value);
+      // Closed-set item fields surface as the shared invalid-field error;
+      // organize-specific contradictions fail with the Organize contract
+      // error. Either way the read fails closed: no partial model escapes.
+      expect(() => normalizeOrganizeExecution(value)).toThrow();
+    }
   });
 });
