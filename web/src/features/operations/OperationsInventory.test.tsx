@@ -13,6 +13,7 @@ import {
   parseOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { renderApp } from "../../../tests/utils";
+import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 import { localDayEndIso, localDayStartIso } from "./run-time";
 
 const TOKEN = "operations-inventory-token";
@@ -2567,6 +2568,232 @@ describe("Operations run inventory landing", () => {
     ).toBeDisabled();
     // The locked reopen never resubmits: still exactly one cancel POST.
     expect(posted).toEqual(["/api/v1/tasks/task-001/cancel"]);
+  });
+
+  /** The zero-change Preview a paused run's remaining-scope continuation reads. */
+  function remainingPreviewDocument(): Record<string, unknown> {
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-1";
+    preview["intentId"] = "intent-1";
+    preview["intentVersion"] = 1;
+    preview["executionCandidateItemIds"] = ["item-2"];
+    const items = preview["items"] as Record<string, unknown>[];
+    items[0]!["itemId"] = "item-2";
+    items[0]!["previewItemId"] = "preview-item-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "item-2",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const actions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    actions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-1/execute";
+    return preview;
+  }
+
+  /** The durable admission answer a successful reconciliation read returns. */
+  function remainingAdmissionDocument(): Record<string, unknown> {
+    return {
+      outcome: "known",
+      reason: null,
+      executionId: "execution-remaining",
+      taskId: "task-001",
+      status: "queued",
+      selectedItemIds: ["item-2"],
+      completedItemCount: 0,
+      failedItemCount: 0,
+      sideEffects: "none",
+      nextAction:
+        "the admitted execution queues in this task; its per-item results appear in the task detail",
+    };
+  }
+
+  function emptyItemsPageDocument(): Record<string, unknown> {
+    return {
+      items: [],
+      total: 0,
+      matching_total: 0,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+    };
+  }
+
+  it("PATCH-20261112-2 proves the remaining-scope reconciliation result stays in this task detail", async () => {
+    const user = userEvent.setup();
+    const continuation = {
+      continuationId: "continuation-remaining",
+      status: "accepted",
+      command: "organize",
+      newTaskId: null,
+      itemLimit: null,
+      createdAt: "2026-08-22T12:41:00+00:00",
+      completedAt: null,
+      attemptCount: 1,
+      truncated: false,
+      recoveryKind: "exact_preview",
+      recoveryPreviewId: "preview-1",
+      executionId: null,
+      nextAction: "review the remaining scope and confirm its ready subset",
+      sideEffects: "none",
+    };
+    const overview = runDocument({
+      command: "organize",
+      command_label: "整理",
+      status: "paused",
+      pause_requested: true,
+      continuation,
+    });
+    const refreshedOverview = runDocument({
+      command: "organize",
+      command_label: "整理",
+      status: "paused",
+      pause_requested: true,
+      updated_at: "2026-09-09T12:09:00+00:00",
+      continuation,
+    });
+    const executePosts: string[] = [];
+    const admissionReads: string[] = [];
+    const heldOverviewResponses: ((response: Response) => void)[] = [];
+    const heldItemsResponses: ((response: Response) => void)[] = [];
+    let overviewReads = 0;
+    let itemsReads = 0;
+    // Reads issued after this flag are held, so only the reconciliation
+    // refresh (not a routine poll) can release them below.
+    let holdDetailReads = false;
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (
+        url.startsWith("/api/v1/operations/runs?") ||
+        url === "/api/v1/operations/runs"
+      ) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/v1/operations/runs/task-001" && method === "GET") {
+        overviewReads += 1;
+        if (!holdDetailReads || overviewReads === 1) {
+          return jsonResponse(overview);
+        }
+        return new Promise((resolve) => {
+          heldOverviewResponses.push(resolve);
+        });
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        itemsReads += 1;
+        if (!holdDetailReads || itemsReads === 1) {
+          return jsonResponse(emptyItemsPageDocument());
+        }
+        return new Promise((resolve) => {
+          heldItemsResponses.push(resolve);
+        });
+      }
+      if (
+        method === "POST" &&
+        url === "/api/v1/operations/organize/previews/preview-1/execute"
+      ) {
+        executePosts.push(url);
+        // The response never reaches the browser: the durable outcome stays
+        // unknown until one explicit reconciliation read proves it.
+        throw new TypeError("network unreachable");
+      }
+      if (
+        url.startsWith(
+          "/api/v1/operations/organize/previews/preview-1/admission",
+        )
+      ) {
+        admissionReads.push(url);
+        return jsonResponse(remainingAdmissionDocument());
+      }
+      if (url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(remainingPreviewDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(
+      within(table).getByRole("button", { name: "Movies，整理详情" }),
+    );
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findByText("暂停运行的剩余范围");
+    // The plan summary defaults to the exact ready subset the backend
+    // advertised; the confirm button names that count.
+    const itemChoice =
+      await within(detail).findByLabelText("选择 One.2001.mkv");
+    await waitFor(() => expect(itemChoice).toBeChecked());
+
+    await user.click(
+      within(detail).getByRole("button", { name: "确认继续整理剩余 1 项" }),
+    );
+    // The lost response is an unknown outcome: the submitted admission is
+    // kept for one explicit reconciliation read, never replayed.
+    expect(await within(detail).findByText(/确认响应未送达/)).toBeVisible();
+    expect(executePosts).toEqual([
+      "/api/v1/operations/organize/previews/preview-1/execute",
+    ]);
+
+    holdDetailReads = true;
+    await user.click(
+      within(detail).getByRole("button", {
+        name: "核对本次确认的持久状态",
+      }),
+    );
+    expect(admissionReads).toHaveLength(1);
+
+    // The known admission is stated in this same task detail; the retired
+    // execution-page phrase is gone and the next step names this detail.
+    const admittedMessage =
+      await within(detail).findByText(/该精确子集已经受理/);
+    expect(admittedMessage).toBeVisible();
+    expect(admittedMessage.textContent).not.toContain("关联执行");
+    expect(admittedMessage.textContent).toContain("本任务详情正在刷新");
+
+    // The stated refresh really happens: the overview re-read and the
+    // invalidated run-items read are both re-issued and their results land
+    // in this same detail.
+    await waitFor(() => expect(heldOverviewResponses.length).toBe(1));
+    await waitFor(() => expect(heldItemsResponses.length).toBe(1));
+    heldOverviewResponses[0]!(jsonResponse(refreshedOverview));
+    heldItemsResponses[0]!(jsonResponse(emptyItemsPageDocument()));
+    expect(await within(detail).findByText(/2026-09-09/)).toBeVisible();
+
+    // One deliberate confirmation, one bounded reconciliation read; the
+    // submission was never replayed and the operator never left this task.
+    expect(executePosts).toEqual([
+      "/api/v1/operations/organize/previews/preview-1/execute",
+    ]);
+    expect(admissionReads).toHaveLength(1);
+    expect(
+      within(detail).queryByRole("button", {
+        name: "核对本次确认的持久状态",
+      }),
+    ).toBeNull();
   });
 
   it("shows only the reopened run's evidence after switching runs", async () => {

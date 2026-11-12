@@ -590,8 +590,9 @@ test.describe("manual organize journey", () => {
         .getByRole("region", { name: "处理结果" })
         .getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
-    await expect(detail.getByText(/Provider failure: metadata lookup/).first())
-      .toBeVisible();
+    await expect(
+      detail.getByText(/Provider failure: metadata lookup/).first(),
+    ).toBeVisible();
     await expect(evidence.getByText(/元数据服务未完成查询/)).toBeVisible();
     await expect(
       evidence.getByRole("region", { name: "需处理原因" }),

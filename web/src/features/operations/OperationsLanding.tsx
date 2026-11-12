@@ -1797,7 +1797,7 @@ function RunDetailPanel({
               }
             : {}),
           message:
-            "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
+            "已读回本次确认的持久状态：该精确子集已经受理；本任务详情正在刷新，其排队与逐项结果将在下方任务详情呈现。 ",
         });
         void query.refetch();
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
