@@ -12,7 +12,7 @@
 Task ID: PATCH-20261112-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: dc2eec67d619bc2e06de5eca0900325a7906fbfd
 Difficulty: Medium
 Test Level: T3
@@ -176,7 +176,81 @@ T3 依据是跨入口导航／认证／未知结果核对的集成风险；本 T
 
 ### Developer Completion Report / B Review Result
 
-已授权实施，尚未开始，无候选检查点、产品测试结果或审查结论。Developer 按 workflow
-交准确 checkpoint、受影响测试实际结果与风险，状态 READY FOR B REVIEW；B 独立审查
-Task Base..candidate 并运行上述验收，给出 PASS 或同 Task 的 FIX REQUIRED。
-PASS 后恢复紧凑 `NO ACTIVE IMPLEMENTATION TASK` 与精确审查指针；不关闭或重开 Slice。
+Developer 提交候选 `c8aa4d9da172639ba58a70cc52860b42ee1927fb`。B 已独立审查完整
+`dc2eec67d619bc2e06de5eca0900325a7906fbfd..c8aa4d9da172639ba58a70cc52860b42ee1927fb`
+差异、路由／destination 注册、旧回调链、任务中心交接、未知受理核对及现有结果读取
+入口。已确认独立执行页组件、Web 路由、destination、专属单执行读取包装和
+`onOpenRecoveryExecution` 链已删除；当前已有执行记录和已知 Task 身份会回到任务中心，
+旧地址进入普通未找到／认证边界，未发现把 `executionId` 猜作 `taskId` 的实现。
+
+**B Decision: FIX REQUIRED**
+
+阻塞项只有一项：`web/src/features/operations/OperationsLanding.tsx:1800` 的剩余范围
+受理核对成功文案仍写“可打开关联执行查看逐项结果”。用户在任务详情中完成一次明确
+核对后会看到这句仍指向已删除的独立执行结果表面，违反“任务详情内删除仅为旧页服务的
+请打开关联执行提示”，并与当前“留在同一 Task 详情刷新流程／条目／结果／证据”的
+实际旅程不一致。该句必须改为说明精确子集已受理并会在当前 Task 详情刷新查看，不能
+加入新链接、重定向、结果页或第二套展示。
+
+**Developer fix guidance (same Task)**
+
+1. 在 `OperationsLanding.tsx` 将上述核对成功文案改为当前 Task 详情的事实和下一步，
+   保留已有 `query.refetch()` 与 `runItemsQueryKey` 失效刷新；不得再出现“关联执行”或
+   旧执行页含义。
+2. 为剩余范围核对成功分支补一个直接受影响的组件测试，断言可见文案不含“关联执行”且
+   任务详情刷新仍发生；保留现有精确 `taskId`、未知结果与不重提断言。
+3. 运行并记录该组件测试、现有 operations 受影响测试、`npm run typecheck`、
+   `npm run lint`、`npm run format:check`、`npm run build`、`git diff --check`，再提交
+   新 checkpoint 交 B 复核。不要改 Slice／Roadmap／Progress 或后台 execution API。
+
+B 已实际运行（候选仍未通过）：
+
+```text
+web: npm run test -- run src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizePlanConfirmation.test.tsx src/shared/navigation/destination-model.test.ts — 5 files / 106 tests PASS
+web: npm run build — PASS
+git diff --check dc2eec67d619bc2e06de5eca0900325a7906fbfd..c8aa4d9da172639ba58a70cc52860b42ee1927fb — PASS
+production-source retired-symbol/phrase check — FAIL: OperationsLanding.tsx:1800 residual stale phrase
+```
+
+由于已证实的生产文案阻塞，B 未宣称 T3 全部验收；Python／浏览器真实集成、认证续转、
+四类恢复完整旅程及截图门禁待修正 checkpoint 后执行。修正完成后仍由 B 独立复核同一
+Task，PASS 后恢复紧凑 `NO ACTIVE IMPLEMENTATION TASK` 与精确审查指针；不关闭或重开 Slice。
+
+## Developer Completion Report — Fix Round
+
+READY FOR B REVIEW
+
+- Prior B review range:
+  `dc2eec67d619bc2e06de5eca0900325a7906fbfd..c8aa4d9da172639ba58a70cc52860b42ee1927fb`。
+  本轮在同 Task/Base 内修复其唯一阻塞项；原审查细节保留在 Git，Task ID／Goal／Scope 不变。
+- Fix checkpoint: `1b7e23e7`（完整候选为 Task Base `dc2eec67d619bc2e06de5eca0900325a7906fbfd`
+  到本轮 HEAD；本报告随独立 Task 文档检查点提交）。
+- Fix — 剩余范围核对成功文案指向已删除的独立执行页：
+  - `OperationsLanding.tsx` 的 `reconcileRemainingScope` known 分支文案改为
+    “已读回本次确认的持久状态：该精确子集已经受理；本任务详情正在刷新，其排队与逐项
+    结果将在下方任务详情呈现。”不再出现“关联执行”或旧执行页含义；未加链接、重定向或
+    第二套展示。原有 `query.refetch()` 与 `runItemsQueryKey` 失效刷新原样保留。
+  - 生产源码全局检索确认无任何“关联执行”残留（新增组件测试也断言可见文案不含该词）。
+  - 新增直接受影响组件旅程（`OperationsInventory.test.tsx`）：暂停运行的 exact_preview
+    继续范围 → 计划摘要默认就绪子集 → 明确确认 → Execute 响应丢失（未知结果）→
+    “核对本次确认的持久状态” → admission 读取返回 known（精确 taskId task-001／
+    execution-remaining）→ 同一详情内出现新文案（不含“关联执行”）且 overview 重读与
+    run-items 失效重读都被重新发出并渲染进同一详情（门控请求验证刷新非轮询）→
+    Execute POST 恰 1 次、admission GET 恰 1 次、核对按钮消失、无重提。沿用现有
+    精确 taskId、未知结果与不重提断言（ManualOrganizeDialog／TaskItemRecoveryPanel 等）
+    全部保留未删。
+  - 同 Task 上轮候选的 `tests/e2e/manual-organize.spec.ts` 补齐缺失的 prettier 格式
+    （仅空白换行，无断言变化），使 format:check 门禁可过。
+- Verification (actual):
+  - cwd `web/`: `npm run test -- run` 本轮全部受影响集合（router、destination-model、
+    operations-return、OrganizeRouter、OrganizePlanConfirmation、OperationsRouter、
+    RunDetailTabs、TaskItemRecoveryPanel、ManualOrganizeDialog、
+    AutomationRunOncePage、OperationsInventory 含新用例）→ **11 files / 202 tests passed**。
+  - cwd `web/`: `npm run typecheck` → pass；`npm run lint` → pass；`npm run format:check`
+    → pass（修复同 Task e2e spec 的预存格式问题后全绿）；`npm run build` → pass
+    （仅既有 chunk-size 提示）。
+  - cwd 仓库根：`git diff --check` → 无输出；`python3 scripts/check_governance.py` → PASS。
+- Remaining risks: B 按原验收计划执行 Python／真实浏览器集成、认证续转、四类恢复
+  完整旅程、旧地址与迟到响应门禁及桌面／390px 截图；Node E2E（manual-organize／
+  operations／automation spec）未在本轮运行（格式改动无断言变化，且为 B 门禁范围）。
+  未推送或部署；未改 Slice／Roadmap／Progress／后台 execution API。
