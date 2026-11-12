@@ -511,6 +511,15 @@ the final A review; that role exception and evidence limits remain in the Contra
 These requirements refine `V2-OPS-010/012/017` presentation and post-confirmation navigation;
 early durable admission and execution authority remain unchanged.
 
+The independently accepted [organizer correction](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)
+keeps one per-item `保存并重新分析` action across Files and Task Center recovery. A saved decision
+whose analysis was refused uses that same action for analysis only; accepted work waits, and an
+unknown response is reconciled before another submission. The independent safe-analysis button
+and its dedicated explanation are removed. The dialog prioritizes the current decision/state and
+adopted plan, with ordinary correction on demand and readable desktop/narrow/short layouts.
+This refines `V2-OPS-018` and the shared recovery presentation without reopening Slice53 or
+changing the exact confirmation, scheduling or execution-authority contracts.
+
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-OPS-018 | ResourceLibrary Files manual single/batch/folder organizing uses a readable centered modal, one primary plus attachments per page, with per-item correction and one final subset confirmation. | Preserve Files background and existing library/Automation card conventions. Show real preparation, readable identity/source/target/operation/issues, and expandable exact diagnostics. Previous/Next only browse and preserve item drafts. Explicit Save and re-analyze saves the legal decision then generates the new exact plan, without execution. For 10 ambiguous files, make 10 candidate selections and 10 save/reanalysis actions, review all 10 and confirm once with 确认整理 10 项. Unready/readonly/admitted items remain independent; only the selected eligible exact subset may execute under existing overwrite/cleanup authority. Desktop/390px/short viewport, keyboard/focus/scroll/close, failures and exact-context reopen remain usable. |

@@ -1521,8 +1521,8 @@ or another execution submission. Existing historical execution addresses stay re
 Slice53 preserved Task Center task-detail layout/content/progress/results/recovery UI. The later
 independent entry correction follows the current preparation-section contract above; shared recovery
 logic and authority are unchanged. Eligible continue links and exact historical addresses reuse the
-same organizer. Its business-section CSS excludes `.mf-status`, preserving the status component's
-padding and borders across Files, continue and historical consumers. The organizer has no second
+same organizer. Explicit organizer-local section classes preserve the status component's padding
+and borders across Files, continue and historical consumers. The organizer has no second
 progress/result center. Early task admission, legitimate pins, source ownership, five-state flow versus
 file effects, Executor-only mutation, RBAC/fences and completed/uncertain non-replay remain CURRENT.
 
