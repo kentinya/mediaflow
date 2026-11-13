@@ -1770,6 +1770,10 @@ class TransitionBoundaryTests(unittest.TestCase):
             "application/manual_task_continuation.py",
             "application/manual_task_engine.py",
             "application/media_discovery.py",
+            # The Task Center's per-item recovery read projects the exact Task's
+            # scheduling row (queue_state/machine_stage) as a bounded, read-only
+            # admission fact. It never claims, transitions or dispatches work.
+            "application/task_item_recovery.py",
             # Task Center pause/cancel for a kernel-managed Task routes to the
             # same Task control boundary the Files page uses instead of the
             # legacy version-checked writer.

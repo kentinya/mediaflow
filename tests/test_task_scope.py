@@ -77,6 +77,22 @@ class RelativeScopeTests(unittest.TestCase):
         _library, relative = resolve_resource_library_scope(runtime, "media/Incoming/   ")
         self.assertEqual(relative, "Incoming/   ")
 
+    def test_ordinary_name_colons_are_preserved_but_uri_prefixes_are_refused(self) -> None:
+        runtime = _Runtime(
+            (_Library("source", "media"),),
+            (("source", "/mnt/library"),),
+        )
+        library, relative = resolve_resource_library_scope(
+            runtime, "/mnt/library/Show: Season 1/Episode: One.mkv"
+        )
+        self.assertEqual(library.library_id, "source")
+        self.assertEqual(relative, "Show: Season 1/Episode: One.mkv")
+        for scope in ("/mnt/library/C:/escape.mkv", "/mnt/library/smb://share/x.mkv"):
+            with self.subTest(scope=scope):
+                with self.assertRaises(ScopeResolutionError) as raised:
+                    resolve_resource_library_scope(runtime, scope)
+                self.assertEqual(raised.exception.reason, "invalid_path")
+
     def test_unicode_and_long_names_are_preserved(self) -> None:
         runtime = _Runtime((_Library("source", "media"),))
         long_name = "剧集 " + "x" * 200

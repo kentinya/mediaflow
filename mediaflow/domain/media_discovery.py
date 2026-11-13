@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from mediaflow.domain.storage import has_absolute_or_uri_prefix
+
 MAX_DISCOVERY_ID_LENGTH = 128
 MAX_DISCOVERY_TEXT_LENGTH = 512
 MAX_DISCOVERY_SCOPE_PATHS = 100
@@ -1381,7 +1383,7 @@ def bounded_path(value: object, *, allow_empty: bool = False) -> str:
             code="invalid_path",
             next_action="select folders or files inside the ResourceLibrary and retry",
         )
-    if value.startswith(("/", "\\")) or "\\" in value or ":" in value:
+    if value.startswith(("/", "\\")) or "\\" in value or has_absolute_or_uri_prefix(value):
         raise DiscoveryError(
             "the selected scope must be a safe ResourceLibrary-relative path",
             code="invalid_path",

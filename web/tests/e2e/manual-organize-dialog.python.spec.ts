@@ -751,7 +751,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
-  await expect(card.getByText("当前文件的合法决定")).toBeVisible();
+  await expect(card.getByRole("heading", { name: "当前状态" })).toBeVisible();
   // The renamed file no longer matches a RecognitionRule, so the operator
   // first selects one recognition type on this same file.
   await expect(card.getByText("确认识别类型")).toBeVisible();

@@ -32,7 +32,6 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from urllib.parse import urlparse
 
 # The ResourceLibrary include/exclude/extension/depth and stability semantics
 # live in one shared pure module so the bounded Files discovery stage and this
@@ -72,6 +71,7 @@ from mediaflow.domain.storage import (
     StorageEntry,
     StorageEntryType,
     StorageError,
+    has_absolute_or_uri_prefix,
 )
 
 __all__ = [
@@ -654,7 +654,7 @@ class StorageScanner:
 
 
 def normalize_resource_root(path: str) -> str:
-    if not isinstance(path, str) or "\x00" in path or urlparse(path).scheme:
+    if not isinstance(path, str) or "\x00" in path or has_absolute_or_uri_prefix(path):
         raise ValueError("invalid resource library root")
     parts: list[str] = []
     for part in path.replace("\\", "/").split("/"):
@@ -675,9 +675,8 @@ def normalize_source_path(path: str) -> str:
     if (
         not isinstance(path, str)
         or "\x00" in path
-        or urlparse(path).scheme
+        or has_absolute_or_uri_prefix(path)
         or path.startswith(("/", "\\"))
-        or (len(path) > 1 and path[1] == ":")
     ):
         raise ValueError("invalid source path")
     parts: list[str] = []

@@ -1294,12 +1294,14 @@ export function TaskItemRecoveryPanel({
   })();
 
   if (decisionMode) {
+    // The organizer already owns the "当前状态" section heading. The native
+    // decision form is that section's content, not a second nested card with
+    // its own header and refresh toolbar.
     return (
-      <section className="mf-count-section" aria-label="条目审核与恢复">
-        <div className="mf-run-items-head">
-          <h5>当前文件的合法决定</h5>
-          <RefreshControl onRefresh={refreshReads} />
-        </div>
+      <section
+        className="mf-organize-decision-host"
+        aria-label="条目审核与恢复"
+      >
         {query.isLoading && (
           <p className="mf-dashboard-meta" role="status">
             正在读取当前文件的合法决定…

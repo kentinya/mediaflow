@@ -138,6 +138,47 @@ class RecoveryAdmissionTests(unittest.TestCase):
             snapshot_validator=self._validator,
         )
 
+    def test_colon_named_source_is_admitted_while_uri_and_drive_prefixes_stay_refused(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _coordinator, task = self._task(repository)
+                source_path = "电影/Show: One/movie: one.mkv"
+                item, _result = self._failed_item(repository, task, source_path=source_path)
+                gate = self._gate(repository)
+                checkpoint = gate.checkpoint_service.get(item.item_id, task_id=task.task_id)
+                admitted = gate.admit(
+                    task.task_id,
+                    item.item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+                self.assertEqual(source_path, admitted.source_path)
+                for unsafe in ("C:/escape.mkv", "smb://share/movie.mkv"):
+                    with self.subTest(source_path=unsafe):
+                        other, _ = self._failed_item(
+                            repository,
+                            task,
+                            item_id="unsafe-item",
+                            source_path=unsafe,
+                        )
+                        other_checkpoint = gate.checkpoint_service.get(
+                            other.item_id, task_id=task.task_id
+                        )
+                        with self.assertRaises(RecoveryAdmissionError) as raised:
+                            gate.admit(
+                                task.task_id,
+                                other.item_id,
+                                action_id="retry",
+                                expected_checkpoint_version=other_checkpoint.checkpoint_version,
+                                actor="operator",
+                            )
+                        self.assertEqual(
+                            RecoveryAdmissionReason.INVALID_INPUT, raised.exception.reason
+                        )
+
     def test_retry_admission_is_version_bound_audited_and_preserves_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:

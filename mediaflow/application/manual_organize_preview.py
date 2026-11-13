@@ -88,7 +88,13 @@ from mediaflow.domain.source_evidence import (
     source_fingerprint,
     stored_source_version_evidence,
 )
-from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
+from mediaflow.domain.storage import (
+    Storage,
+    StorageEntry,
+    StorageEntryType,
+    StorageError,
+    has_absolute_or_uri_prefix,
+)
 
 _MAX_COLLECTION = 64
 _MAX_TEXT = 512
@@ -849,7 +855,7 @@ class ManualOrganizePreviewService:
                 code="invalid_path",
                 next_action="select a file inside the ResourceLibrary",
             )
-        if value.startswith(("/", "\\")) or "\\" in value or ":" in value:
+        if value.startswith(("/", "\\")) or "\\" in value or has_absolute_or_uri_prefix(value):
             raise ManualPreviewError(
                 "relativePath must be a safe ResourceLibrary-relative path",
                 code="invalid_path",

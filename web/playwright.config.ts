@@ -24,6 +24,7 @@ export default defineConfig({
     "**/operations-task-center-visual.python.spec.ts",
     "**/organize-source-history.python.spec.ts",
     "**/manual-organize-dialog.python.spec.ts",
+    "**/metadata-search-year.python.spec.ts",
     "**/openlist-metadata.python.spec.ts",
   ],
   // The Node fake API is one process with shared in-memory state. Keep one

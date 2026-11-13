@@ -792,7 +792,9 @@ export function RulesObjectTestPanel({
   const [testAssociatedRules, setTestAssociatedRules] = useState(false);
   const [liveMetadata, setLiveMetadata] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [runs, setRuns] = useState<readonly AnalysisRun[]>([]);
+  // One current result position: a rerun replaces this exact evidence instead
+  // of appending another copy of the whole result group.
+  const [currentRun, setCurrentRun] = useState<AnalysisRun | null>(null);
   const nextId = useRef(1);
   const candidate = useMemo(
     () => ruleCandidateFields(family, values),
@@ -827,8 +829,8 @@ export function RulesObjectTestPanel({
     previousKey.current = currentnessKey;
     // A relevant edit or Active change invalidates currency; the operator must
     // explicitly rerun. Nothing is resubmitted automatically.
-    setRuns((items) =>
-      items.map((item) => (item.stale ? item : { ...item, stale: true })),
+    setCurrentRun((item) =>
+      item === null || item.stale ? item : { ...item, stale: true },
     );
   }, [currentnessKey]);
 
@@ -858,20 +860,17 @@ export function RulesObjectTestPanel({
           sample = buildIdentitySample(identity, boundRecognitionType, family);
       }
     } catch (error) {
-      setRuns((items) => [
-        ...items,
-        {
-          id: nextId.current++,
-          submittedKey: currentnessKey,
-          sampleLabel: "当前输入",
-          pending: false,
-          model: null,
-          error: "invalid_sample",
-          failureStage: "sample",
-          nextAction: String(error),
-          stale: false,
-        },
-      ]);
+      setCurrentRun({
+        id: nextId.current++,
+        submittedKey: currentnessKey,
+        sampleLabel: "当前输入",
+        pending: false,
+        model: null,
+        error: "invalid_sample",
+        failureStage: "sample",
+        nextAction: String(error),
+        stale: false,
+      });
       return;
     }
     const submittedKey = currentnessKey;
@@ -884,20 +883,17 @@ export function RulesObjectTestPanel({
           : spec.input === "path"
             ? `${resourceLibraryId || "未选择来源库"} · ${syntheticPath}`
             : `${String(sample?.title ?? "")} · ${String(sample?.mediaType ?? "")}`;
-    setRuns((items) => [
-      ...items,
-      {
-        id,
-        submittedKey,
-        sampleLabel,
-        pending: true,
-        model: null,
-        error: null,
-        failureStage: null,
-        nextAction: null,
-        stale: false,
-      },
-    ]);
+    setCurrentRun({
+      id,
+      submittedKey,
+      sampleLabel,
+      pending: true,
+      model: null,
+      error: null,
+      failureStage: null,
+      nextAction: null,
+      stale: false,
+    });
     setBusy(true);
     const response = await runRulesObjectAnalysis(token, family, {
       ...authorityIdentity(authority.active),
@@ -906,24 +902,24 @@ export function RulesObjectTestPanel({
       liveMetadata: spec.liveMetadata ? liveMetadata : false,
     });
     setBusy(false);
-    setRuns((items) =>
-      items.map((item) =>
-        item.id !== id
-          ? item
-          : {
-              ...item,
-              pending: false,
-              model: response.ok ? response.model : null,
-              error: response.ok ? null : response.code,
-              failureStage: response.ok
-                ? null
-                : (response.details?.stage ?? "request"),
-              nextAction: response.ok
-                ? null
-                : (response.details?.nextAction ?? null),
-              stale: item.stale || submittedKey !== currentnessKeyRef.current,
-            },
-      ),
+    // A response may only settle the run that is still current. A replaced or
+    // superseded result can never be resurrected by a late arrival.
+    setCurrentRun((item) =>
+      item?.id !== id
+        ? item
+        : {
+            ...item,
+            pending: false,
+            model: response.ok ? response.model : null,
+            error: response.ok ? null : response.code,
+            failureStage: response.ok
+              ? null
+              : (response.details?.stage ?? "request"),
+            nextAction: response.ok
+              ? null
+              : (response.details?.nextAction ?? null),
+            stale: item.stale || submittedKey !== currentnessKeyRef.current,
+          },
     );
   };
 
@@ -1164,116 +1160,124 @@ export function RulesObjectTestPanel({
           {spec.action}
         </button>
       </div>
-      {runs.map((runItem, runIndex) => (
+      {currentRun !== null ? (
         <article
-          key={runItem.id}
+          key={currentRun.id}
           className="mf-rules-object-test-result"
           aria-live="polite"
         >
-          <h3>本地测试结果 #{runIndex + 1}</h3>
-          <p>样本/上下文: {runItem.sampleLabel}</p>
-          {runItem.pending ? (
+          <h3>本地测试结果</h3>
+          <p>样本/上下文: {currentRun.sampleLabel}</p>
+          {currentRun.pending ? (
             <p role="status">正在测试提交时的未保存对象...</p>
           ) : null}
-          {runItem.stale || runItem.model?.stale ? (
+          {currentRun.stale || currentRun.model?.stale ? (
             <p role="status">
               该结果已过期;当前表单、样本或 Active 已变化,请显式重新运行。
             </p>
           ) : null}
-          {runItem.error ? (
+          {currentRun.error ? (
             <div className="mf-rules-object-test-summary" role="alert">
               <dl>
                 <dt>结论</dt>
                 <dd>测试未完成:提交前的输入被拒绝,没有产生测试结论。</dd>
                 <dt>原因</dt>
                 <dd>
-                  {runItem.error}(阶段:
-                  {runItem.failureStage ?? "未知"})。
+                  {currentRun.error}(阶段:
+                  {currentRun.failureStage ?? "未知"})。
                 </dd>
                 <dt>下一步</dt>
                 <dd>
-                  {runItem.nextAction ?? "检查相关输入与当前 Active 后显式重跑"}
+                  {currentRun.nextAction ??
+                    "检查相关输入与当前 Active 后显式重跑"}
                   。输入仍保留。
                 </dd>
               </dl>
             </div>
           ) : null}
-          {runItem.model ? (
+          {currentRun.model ? (
             <>
               <div className="mf-rules-object-test-summary">
                 <dl>
                   <dt>结论</dt>
-                  <dd>{runItem.model.conclusion}</dd>
+                  <dd>{currentRun.model.conclusion}</dd>
                   <dt>实际输出</dt>
-                  <dd>{analysisOutput(family, runItem.model)}</dd>
+                  <dd>{analysisOutput(family, currentRun.model)}</dd>
                   <dt>原因</dt>
                   <dd>
-                    {runItem.model.message ??
+                    {currentRun.model.message ??
                       "基于当前未保存候选与所选样本完成本地求值。"}
                   </dd>
                   <dt>下一步</dt>
                   <dd>
-                    {runItem.model.nextAction ??
+                    {currentRun.model.nextAction ??
                       "按结论决定是否保持或修正候选;本地测试不代替发布或完整流程检查。"}
                   </dd>
                 </dl>
               </div>
               <p className="mf-rules-object-test-meta">
                 结果类别{" "}
-                {OUTCOME_LABEL[runItem.model.outcome] ?? runItem.model.outcome}·
-                适用性{" "}
-                {APPLICABILITY_LABEL[runItem.model.applicability] ??
-                  runItem.model.applicability}{" "}
+                {OUTCOME_LABEL[currentRun.model.outcome] ??
+                  currentRun.model.outcome}
+                · 适用性{" "}
+                {APPLICABILITY_LABEL[currentRun.model.applicability] ??
+                  currentRun.model.applicability}{" "}
                 · 运行时资格{" "}
-                {runItem.model.runtimeEligibility === "separate"
+                {currentRun.model.runtimeEligibility === "separate"
                   ? "与本次本地结论分开判定"
-                  : runItem.model.runtimeEligibility}{" "}
+                  : currentRun.model.runtimeEligibility}{" "}
                 · 完整流程就绪{" "}
-                {runItem.model.readiness === null
+                {currentRun.model.readiness === null
                   ? "不适用(本地测试不判定完整流程)"
-                  : runItem.model.readiness === "complete_plan_ready"
+                  : currentRun.model.readiness === "complete_plan_ready"
                     ? "完整计划就绪"
                     : "受阻"}
               </p>
               <p>本地测试不发布、不激活、不产生可执行工作,也不授予执行权限。</p>
-              <Blockers blockers={runItem.model.blockers} />
-              <AnalysisEvidence family={family} result={runItem.model.result} />
+              <Blockers blockers={currentRun.model.blockers} />
+              <AnalysisEvidence
+                family={family}
+                result={currentRun.model.result}
+              />
               <details className="mf-rules-object-test-diagnostics">
                 <summary>诊断信息</summary>
                 <dl>
                   <dt>family / objectId</dt>
                   <dd>
-                    {runItem.model.family} / {runItem.model.objectId ?? "-"}
+                    {currentRun.model.family} /{" "}
+                    {currentRun.model.objectId ?? "-"}
                   </dd>
                   <dt>原始结果类别 / 适用性</dt>
                   <dd>
-                    {runItem.model.outcome} / {runItem.model.applicability}
+                    {currentRun.model.outcome} /{" "}
+                    {currentRun.model.applicability}
                   </dd>
                   <dt>候选状态</dt>
-                  <dd>{runItem.model.candidateState}</dd>
+                  <dd>{currentRun.model.candidateState}</dd>
                   <dt>候选修订 / 版本</dt>
                   <dd>
-                    {runItem.model.revisionId.slice(0, 8)}... ·{" "}
-                    {runItem.model.revisionVersion}
+                    {currentRun.model.revisionId.slice(0, 8)}... ·{" "}
+                    {currentRun.model.revisionVersion}
                   </dd>
                   <dt>Provider 调用 / Storage 读取</dt>
                   <dd>
-                    {runItem.model.providerCalls} / {runItem.model.storageReads}
+                    {currentRun.model.providerCalls} /{" "}
+                    {currentRun.model.storageReads}
                   </dd>
                   <dt>失败类别 / 合成身份</dt>
                   <dd>
-                    {runItem.model.failureCategory ?? "-"} /{" "}
-                    {runItem.model.syntheticIdentity ? "是" : "否"}
+                    {currentRun.model.failureCategory ?? "-"} /{" "}
+                    {currentRun.model.syntheticIdentity ? "是" : "否"}
                   </dd>
                 </dl>
               </details>
               <details className="mf-rules-object-test-advanced">
                 <summary>高级 / 支持:查看完整证据 JSON</summary>
-                <pre>{JSON.stringify(runItem.model.result, null, 2)}</pre>
+                <pre>{JSON.stringify(currentRun.model.result, null, 2)}</pre>
               </details>
             </>
           ) : null}
-          {!runItem.pending ? (
+          {!currentRun.pending ? (
             <div className="mf-actions">
               <button
                 type="button"
@@ -1286,7 +1290,7 @@ export function RulesObjectTestPanel({
             </div>
           ) : null}
         </article>
-      ))}
+      ) : null}
     </section>
   );
 }

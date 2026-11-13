@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import BinaryIO, Protocol, TypeAlias
+
+#: A path that begins like a Windows drive (``C:``) or a URI scheme followed by
+#: a separator (``smb://``, ``file:/``) is never a Storage-relative path.
+#: Ordinary names may contain ``:`` (``Movie: Title``).
+_ABSOLUTE_OR_URI_PREFIX = re.compile(r"(?i)^[a-z][a-z0-9+.-]*:[/\\]")
+
+
+def has_absolute_or_uri_prefix(value: object) -> bool:
+    """Whether a relative path starts with a drive or URI prefix.
+
+    A bare punctuation colon inside an ordinary filename or directory name is
+    allowed and preserved exactly; only a prefix that a host could interpret as
+    a different root is refused.
+    """
+
+    if not isinstance(value, str) or not value:
+        return False
+    if len(value) > 1 and value[1] == ":":
+        return True
+    return bool(_ABSOLUTE_OR_URI_PREFIX.match(value))
 
 
 class StorageEntryType(StrEnum):

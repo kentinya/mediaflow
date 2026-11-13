@@ -12,7 +12,6 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from mediaflow.application.read_only_storage import ReadOnlyStorageGuard
 from mediaflow.domain.configuration_management import (
@@ -26,6 +25,7 @@ from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
     StoragePage,
+    has_absolute_or_uri_prefix,
 )
 from mediaflow.infrastructure.runtime_configuration import (
     create_storage_from_definition,
@@ -1159,12 +1159,7 @@ def _normalize_storage_relative_path(value: object) -> str:
         raise StorageBrowserService._browser_failure("invalid_path", None, "")
     if len(value.encode("utf-8")) > _MAX_PATH_BYTES:
         raise StorageBrowserService._browser_failure("invalid_path", None, "")
-    if (
-        value.startswith(("/", "\\"))
-        or "\\" in value
-        or urlparse(value).scheme
-        or (len(value) > 1 and value[1] == ":")
-    ):
+    if value.startswith(("/", "\\")) or "\\" in value or has_absolute_or_uri_prefix(value):
         raise StorageBrowserService._browser_failure("invalid_path", None, "")
     segments = value.split("/")
     if len(segments) > _MAX_PATH_SEGMENTS or any(

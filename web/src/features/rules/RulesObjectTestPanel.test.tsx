@@ -146,6 +146,139 @@ describe("Rules object-scoped local test", () => {
     );
   });
 
+  it("replaces the one current result on a repeated check and reruns a failure in place", async () => {
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      stubRulesRoutes(() => {
+        call += 1;
+        if (call === 1) return new Response(JSON.stringify(analysisPayload()));
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "rules_reference_unavailable",
+              message: "reference unavailable",
+              details: {
+                stage: "reference",
+                nextAction: "修正引用后显式重跑",
+                durableState: "active_unchanged",
+              },
+            },
+          }),
+          { status: 409 },
+        );
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
+    const runButton = await screen.findByRole("button", {
+      name: "测试该识别规则",
+    });
+    await userEvent.click(runButton);
+    await screen.findByText(/规则在提交路径上匹配/);
+    expect(
+      screen.getAllByRole("heading", { name: "本地测试结果" }),
+    ).toHaveLength(1);
+
+    // The main action is a replacement, not another result group.
+    await userEvent.click(runButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "rules_reference_unavailable",
+    );
+    expect(
+      screen.getAllByRole("heading", { name: "本地测试结果" }),
+    ).toHaveLength(1);
+    expect(screen.queryByText(/规则在提交路径上匹配/)).toBeNull();
+
+    // A result-local rerun updates the same position again.
+    await userEvent.click(
+      screen.getByRole("button", { name: "用当前输入重新运行此项" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("修正引用后显式重跑"),
+    );
+    expect(
+      screen.getAllByRole("heading", { name: "本地测试结果" }),
+    ).toHaveLength(1);
+    expect(screen.getByLabelText("测试合成路径")).toHaveValue(
+      "电影/Example.Movie.2024.mkv",
+    );
+  });
+
+  it("keeps one current result for a rejected local sample", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stubRulesRoutes((body) => {
+        bodies.push(body);
+        return new Response(JSON.stringify(analysisPayload()));
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
+    await screen.findByRole("heading", { name: "测试与预览" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "测试该识别规则" }),
+    );
+    await screen.findByText(/规则在提交路径上匹配/);
+    fireEvent.change(screen.getByLabelText("测试合成路径"), {
+      target: { value: "   " },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "测试该识别规则" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("invalid_sample");
+    expect(alert).toHaveTextContent("阶段:sample");
+    expect(
+      screen.getAllByRole("heading", { name: "本地测试结果" }),
+    ).toHaveLength(1);
+    expect(bodies).toHaveLength(1);
+  });
+
+  it("marks a late response stale instead of making it current again", async () => {
+    const pending: { resolve?: (response: Response) => void } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.includes("/objects/"))
+          return new Response(JSON.stringify(editProjectionPayload));
+        if (url.includes("/analysis/"))
+          return await new Promise<Response>((resolve) => {
+            pending.resolve = resolve;
+          });
+        if (url.includes("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
+    await screen.findByRole("heading", { name: "测试与预览" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "测试该识别规则" }),
+    );
+    await waitFor(() => expect(pending.resolve).toBeTypeOf("function"));
+    fireEvent.change(screen.getByLabelText("测试合成路径"), {
+      target: { value: "电影/Changed.Movie.2024.mkv" },
+    });
+    pending.resolve?.(new Response(JSON.stringify(analysisPayload())));
+    expect(
+      await screen.findByText(/该结果已过期;当前表单、样本或 Active 已变化/),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("heading", { name: "本地测试结果" }),
+    ).toHaveLength(1);
+  });
+
   it("never submits on edit, navigation or refresh and marks the result stale", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
@@ -831,7 +964,7 @@ describe("Rules local-test result readability", () => {
     await userEvent.click(runButton);
 
     const heading = await screen.findByRole("heading", {
-      name: "本地测试结果 #1",
+      name: "本地测试结果",
     });
     const article = heading.closest("article");
     expect(article).not.toBeNull();

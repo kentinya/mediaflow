@@ -987,6 +987,17 @@ export function ManualOrganizeDialog({
     !organizeFlowEnded;
   const isIncluded =
     currentItemId !== null && isExecutable && !excluded.has(currentItemId);
+  const lastScrollAnchor = useRef<string | null>(null);
+  useEffect(() => {
+    const anchor =
+      preview === undefined ? "preparation" : `${step}:${currentItemId ?? ""}`;
+    if (lastScrollAnchor.current === anchor) return;
+    lastScrollAnchor.current = anchor;
+    const body = layer.layerRef.current?.querySelector<HTMLElement>(
+      ".mf-organize-dialog-body",
+    );
+    if (body !== null && body !== undefined) body.scrollTop = 0;
+  }, [currentItemId, layer.layerRef, preview, step]);
 
   const recognitionOptions = (intent?.options.recognitionTypes ?? []).filter(
     (value) => value.enabled,
@@ -1072,6 +1083,74 @@ export function ManualOrganizeDialog({
     );
 
   // ---- body -----------------------------------------------------------
+  const preparationRunning =
+    preparation !== undefined &&
+    ["queued", "running", "waiting_stability", "analyzing"].includes(
+      preparation.status,
+    );
+  const preparationStageText = (() => {
+    if (preparation === undefined) return null;
+    const visited = preparation.progress.visitedEntries;
+    switch (preparation.status) {
+      case "queued":
+        return visited === 0
+          ? "所选范围已受理，等待后台 Worker 开始检查；已保存受理记录，无需重新提交。"
+          : "所选范围已受理，后台 Worker 即将继续检查；无需重新提交。";
+      case "running":
+        return visited === 0
+          ? "后台 Worker 已开始检查所选范围；当前还没有完成检查的条目。"
+          : "正在检查所选范围；下面的计数是当前已完成的真实进度。";
+      case "waiting_stability":
+        return "所选范围已遍历；部分来源仍在等待稳定，达到条件后同一准备会自动继续，无需重新提交。";
+      case "analyzing":
+        return "范围检查已完成，正在运行零变更分析；精确方案就绪后会在此显示。";
+      case "completed":
+        return preparation.previewId === null
+          ? "范围检查已完成，正在生成并关联计划摘要；无需重新提交。"
+          : "准备已完成。";
+      case "partial_success":
+        return "范围检查已达到限制，只保留了已确认的子集；这不是完整遍历。请按下方原因缩小范围后重新准备。";
+      case "failed":
+        return "准备失败；已保存的受理记录与已知状态保留，没有修改任何文件。请核对下方原因后再决定重新读取或重新发起。";
+      case "cancelled":
+        return "准备已取消；没有执行任何整理，已记录的进度保留。";
+      case "paused":
+        return "准备处于暂停状态；当前版本不提供继续暂停，请关闭后重新从 Files 发起新的准备。";
+      default:
+        return "正在读取准备状态。";
+    }
+  })();
+  const preparationCounts = [
+    ["可整理主文件", preparation?.progress.primarySources ?? 0],
+    ["已检查条目", preparation?.progress.visitedEntries ?? 0],
+    ["已排除", preparation?.progress.excludedEntries ?? 0],
+    ["等待稳定", preparation?.progress.unstableEntries ?? 0],
+    ["读取失败", preparation?.progress.errorEntries ?? 0],
+  ].filter(([, count]) => Number(count) > 0) as [string, number][];
+  const preparationBusy =
+    session.phase === "submitting" ||
+    preparationRunning ||
+    saveMutation.isPending ||
+    preparationQuery.isFetching;
+  const preparationTraversalNote = (() => {
+    if (preparation === undefined) return null;
+    if (preparation.progress.incomplete) {
+      return `未完整遍历：${label(REASON_LABELS, preparation.progress.incompleteReason ?? "")}。`;
+    }
+    if (preparation.status === "analyzing")
+      return "遍历已结束，正在分析已发现的来源。";
+    if (preparation.status === "waiting_stability")
+      return "所选范围已遍历，正在等待未稳定来源达到稳定条件。";
+    if (preparation.status === "queued" || preparation.status === "running")
+      return "遍历尚未结束，不会声称已完整遍历所选范围。";
+    if (
+      preparation.status === "completed" ||
+      preparation.status === "partial_success"
+    )
+      return "已完整遍历所选范围。";
+    return "遍历尚未开始。";
+  })();
+
   const renderPreparationContent = () => {
     if (preparationUnavailable) {
       return (
@@ -1247,22 +1326,21 @@ export function ManualOrganizeDialog({
               : label(PREPARATION_STATUS_LABELS, preparation.status)
           }
         >
-          {preparationPlanExpected ? (
-            <p role="status">
-              同一准备的完整零变更分析正在运行;精确计划摘要关联后会在本弹窗
-              自动显示,无需重新提交,也不会修改任何文件。
-            </p>
-          ) : (
-            <p>{preparation.nextAction}</p>
-          )}
-          {preparation.progress.message !== "" ? (
-            <p>{preparation.progress.message}</p>
-          ) : null}
+          <p role="status" aria-busy={preparationBusy || undefined}>
+            {preparationBusy ? (
+              <span className="mf-organize-busy-dot" aria-hidden="true" />
+            ) : null}
+            <span className="mf-organize-stage-copy">
+              {preparationPlanExpected
+                ? "同一准备的完整零变更分析正在运行；精确计划摘要关联后会在本弹窗自动显示，无需重新提交，也不会修改任何文件。"
+                : preparationStageText}
+            </span>
+          </p>
           {preparation.failure !== null ? (
-            <p role="status">{preparation.failure}</p>
+            <p className="mf-dashboard-meta">失败说明：{preparation.failure}</p>
           ) : null}
           <p className="mf-dashboard-meta">
-            来源资源库:{preparation.resourceLibraryId} · 所选范围:
+            来源资源库：{preparation.resourceLibraryId} · 所选范围：
             {preparation.selection.scopes.length === 0
               ? "—"
               : preparation.selection.scopes
@@ -1271,75 +1349,119 @@ export function ManualOrganizeDialog({
                       `${scope.kind === "directory" ? "文件夹" : "文件"} ${scope.path}`,
                   )
                   .join("、")}{" "}
-            · 零变更准备,不授予执行权限。
+            · 零变更准备，不授予执行权限。
           </p>
         </StatusBanner>
         <section aria-label="准备进度">
-          <h3>准备进度</h3>
-          <dl>
-            <dt>可整理主文件</dt>
-            <dd>{preparation.progress.primarySources}</dd>
-            <dt>已检查条目</dt>
-            <dd>{preparation.progress.visitedEntries}</dd>
-            <dt>已排除</dt>
-            <dd>{preparation.progress.excludedEntries}</dd>
-            <dt>等待稳定</dt>
-            <dd>{preparation.progress.unstableEntries}</dd>
-            <dt>读取失败</dt>
-            <dd>{preparation.progress.errorEntries}</dd>
-          </dl>
-          <p className="mf-dashboard-meta">
-            {preparation.progress.incomplete
-              ? `未完整遍历：${label(REASON_LABELS, preparation.progress.incompleteReason ?? "")}`
-              : "已完整遍历所选范围。"}
-            {preparation.progress.materialRefusal !== null
-              ? ` 达到预算或安全上限(${label(REASON_LABELS, preparation.progress.materialRefusal)}),已记录的来源只是截断前缀,不能冻结为可执行清单。`
-              : ""}
-          </p>
-        </section>
-        <section aria-label="排除与等待原因">
-          <h3>排除与等待原因</h3>
-          {preparation.progress.reasons.length === 0 ? (
-            <p className="mf-dashboard-meta">暂无记录的排除或等待原因。</p>
+          <div className="mf-organize-section-head">
+            <h3>准备进度</h3>
+          </div>
+          {preparationCounts.length === 0 ? (
+            <p className="mf-dashboard-meta">
+              {preparationRunning
+                ? "尚未完成任何检查条目；真实进度会在此原位更新。"
+                : "本次准备没有可显示的正向计数。"}
+            </p>
           ) : (
-            <ul>
-              {preparation.progress.reasons.map((item) => (
-                <li key={item.reason}>
-                  {label(REASON_LABELS, item.reason)} × {item.count}
-                  {item.examplePath !== null ? (
-                    <>
-                      {" "}
-                      (例如{" "}
-                      <code className="mf-exact-identity">
-                        {item.examplePath}
-                      </code>
-                      )
-                    </>
-                  ) : null}
-                </li>
+            <dl className="mf-organize-counts">
+              {preparationCounts.map(([name, count]) => (
+                <div key={name}>
+                  <dt>{name}</dt>
+                  <dd>{count}</dd>
+                </div>
               ))}
-            </ul>
+            </dl>
           )}
-          {preparation.selection.refused.length > 0 ? (
-            <details>
-              <summary>
-                未受理的所选条目({preparation.selection.refused.length} 项)
-              </summary>
+          <p className="mf-dashboard-meta">{preparationTraversalNote}</p>
+          {preparation.progress.materialRefusal !== null ? (
+            <p className="mf-organize-section-note" role="status">
+              达到预算或安全上限（
+              {label(REASON_LABELS, preparation.progress.materialRefusal)}
+              ），已记录的来源只是截断前缀，不能冻结为可执行清单。
+            </p>
+          ) : null}
+        </section>
+        {preparation.progress.reasons.length > 0 ||
+        preparation.selection.refused.length > 0 ? (
+          <section aria-label="排除与等待原因">
+            <div className="mf-organize-section-head">
+              <h3>排除与等待原因</h3>
+            </div>
+            {preparation.progress.reasons.length > 0 ? (
               <ul>
-                {preparation.selection.refused.map((refused) => (
-                  <li key={`${refused.kind}:${refused.path}`}>
-                    <span className="mf-exact-identity">{refused.path}</span> —{" "}
-                    {label(REASON_LABELS, refused.reason)};{refused.nextAction}
+                {preparation.progress.reasons.map((item) => (
+                  <li key={item.reason}>
+                    {label(REASON_LABELS, item.reason)} × {item.count}
+                    {item.examplePath !== null ? (
+                      <>
+                        {" "}
+                        (例如{" "}
+                        <code className="mf-exact-identity">
+                          {item.examplePath}
+                        </code>
+                        )
+                      </>
+                    ) : null}
                   </li>
                 ))}
               </ul>
-            </details>
-          ) : null}
-        </section>
+            ) : null}
+            {preparation.selection.refused.length > 0 ? (
+              <details>
+                <summary>
+                  未受理的所选条目（{preparation.selection.refused.length} 项）
+                </summary>
+                <ul>
+                  {preparation.selection.refused.map((refused) => (
+                    <li key={`${refused.kind}:${refused.path}`}>
+                      <span className="mf-exact-identity">{refused.path}</span>{" "}
+                      — {label(REASON_LABELS, refused.reason)}；
+                      {refused.nextAction}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </section>
+        ) : null}
+        <details className="mf-organize-diagnostics">
+          <summary>准备诊断（技术原话与已知状态）</summary>
+          <dl>
+            <dt>阶段</dt>
+            <dd>{preparation.status}</dd>
+            <dt>遍历状态</dt>
+            <dd>
+              {preparation.progress.incomplete
+                ? `未完整：${preparation.progress.incompleteReason ?? "—"}`
+                : "未记录不完整"}
+            </dd>
+            <dt>进度消息</dt>
+            <dd>{preparation.progress.message || "—"}</dd>
+            <dt>后端下一步</dt>
+            <dd>{preparation.nextAction}</dd>
+            {preparation.failure !== null ? (
+              <>
+                <dt>失败说明</dt>
+                <dd>{preparation.failure}</dd>
+              </>
+            ) : null}
+          </dl>
+        </details>
         {preparation.worker.ready !== true ? (
-          <StatusBanner variant="warning" title="处理 Worker 不可用">
-            <p>{preparation.worker.durableState}</p>
-            <p>{preparation.worker.nextAction}</p>
+          <StatusBanner variant="warning" title="处理 Worker 暂不可用">
+            <p role="status">
+              本准备已受理并保存，不需要重新提交；Worker
+              恢复后会继续同一准备，已记录的进度和排除原因保留。
+            </p>
+            <p className="mf-dashboard-meta">
+              请由管理员启动或修复 Processing
+              Worker；恢复后可直接重新读取本准备。
+            </p>
+            <details className="mf-organize-diagnostics">
+              <summary>Worker 诊断原话</summary>
+              <p>{preparation.worker.durableState}</p>
+              <p>{preparation.worker.nextAction}</p>
+            </details>
           </StatusBanner>
         ) : null}
         {preparation.status !== "analyzing" &&
@@ -1454,12 +1576,15 @@ export function ManualOrganizeDialog({
               {filename}
             </p>
             <p className="mf-organize-file-path mf-dashboard-meta">
-              {item.resourceLibraryId !== null
-                ? `来源库：${item.resourceLibraryId} · `
-                : ""}
-              <span className="mf-exact-identity">
-                {item.sourcePath ?? "—"}
-              </span>
+              来源库：{item.resourceLibraryId ?? "—"}
+              {hasGeneratedScheme ? null : (
+                <>
+                  {" · "}
+                  <span className="mf-exact-identity">
+                    {item.sourcePath ?? "—"}
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </header>
@@ -1579,11 +1704,9 @@ export function ManualOrganizeDialog({
         <section className="mf-organize-section" aria-label="当前方案">
           <div className="mf-organize-section-head">
             <h4>当前方案</h4>
-            <span className="mf-organize-section-note">
-              {hasGeneratedScheme
-                ? operationLabel(item.operation)
-                : "等待零变更分析"}
-            </span>
+            {!hasGeneratedScheme ? (
+              <span className="mf-organize-section-note">等待零变更分析</span>
+            ) : null}
           </div>
           <dl className="mf-organize-facts">
             <div>
@@ -1608,16 +1731,11 @@ export function ManualOrganizeDialog({
             </div>
             {hasGeneratedScheme ? (
               <>
-                <div>
-                  <dt>来源</dt>
-                  <dd className="mf-exact-identity">
-                    {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-                  </dd>
-                </div>
                 {hasGeneratedTarget ? (
                   <div>
-                    <dt>目标</dt>
+                    <dt>来源 → 目标</dt>
                     <dd className="mf-exact-identity">
+                      {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"} →{" "}
                       {item.targetStorageId ?? "—"}:{targetRelativePath}
                     </dd>
                   </div>
@@ -1685,7 +1803,12 @@ export function ManualOrganizeDialog({
               仅在最后的整批复核中明确授权后才可能执行。
             </p>
           ) : null}
-          {notice !== undefined ? (
+          {notice !== undefined &&
+          !(
+            notice.kind === "success" &&
+            hasNativeProblem &&
+            decisionStatus !== null
+          ) ? (
             <StatusBanner
               variant={
                 notice.kind === "success"
@@ -2285,100 +2408,104 @@ export function ManualOrganizeDialog({
   // Ended work is read-only history: it keeps one ordinary close action and
   // never offers paging over a live plan, a batch confirmation or a second
   // re-analysis entry.
-  const footer = organizeFlowEnded ? (
-    <>
-      <span className="mf-modal-footer-spacer" />
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={closeLocked}
-        onClick={attemptClose}
-      >
-        关闭
-      </Button>
-    </>
-  ) : step === "review" ? (
-    <>
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={pageInfo <= 0 || items.length === 0}
-        onClick={() => goTo(pageInfo - 1)}
-      >
-        上一项
-      </Button>
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={pageInfo >= items.length - 1}
-        onClick={() => goTo(pageInfo + 1)}
-      >
-        下一项
-      </Button>
-      <span className="mf-dashboard-meta">
-        第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
-        {currentItemId !== null && (draftDirty || currentDecisionDraftDirty)
-          ? " · 有未保存的修正"
-          : ""}
-      </span>
-      <span className="mf-modal-footer-spacer" />
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={closeLocked}
-        onClick={attemptClose}
-      >
-        关闭
-      </Button>
-      <Button
-        type="button"
-        disabled={items.length === 0}
-        onClick={() => setStep("confirm")}
-      >
-        整批复核(已选 {activeSelection.length} 项)
-      </Button>
-    </>
-  ) : (
-    <>
-      <Button
-        type="button"
-        variant="secondary"
-        onClick={() => setStep("review")}
-      >
-        返回逐项复核
-      </Button>
-      <span className="mf-modal-footer-spacer" />
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={closeLocked}
-        onClick={attemptClose}
-      >
-        关闭
-      </Button>
-      <Button
-        type="button"
-        disabled={executeDisabled}
-        aria-busy={executeMutation.isPending}
-        onClick={() => {
-          if (preview === undefined) return;
-          // One identity captured here serves both the request and any later
-          // reconciliation of this exact confirmation.
-          executeMutation.mutate({
-            previewId: preview.previewId,
-            itemIds: [...activeSelection],
-            intentVersion: preview.intentVersion ?? 0,
-            allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
-            allowSourceCleanup: requiresCleanup && effectiveAllowSourceCleanup,
-          });
-        }}
-      >
-        {executeMutation.isPending
-          ? "正在提交..."
-          : `确认整理 ${activeSelection.length} 项`}
-      </Button>
-    </>
-  );
+  const preparationOnlyFooter =
+    !organizeFlowEnded && (preview === undefined || items.length === 0);
+  const footer =
+    organizeFlowEnded || preparationOnlyFooter ? (
+      <>
+        <span className="mf-modal-footer-spacer" />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+      </>
+    ) : step === "review" ? (
+      <>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pageInfo <= 0 || items.length === 0}
+          onClick={() => goTo(pageInfo - 1)}
+        >
+          上一项
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pageInfo >= items.length - 1}
+          onClick={() => goTo(pageInfo + 1)}
+        >
+          下一项
+        </Button>
+        <span className="mf-dashboard-meta">
+          第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
+          {currentItemId !== null && (draftDirty || currentDecisionDraftDirty)
+            ? " · 有未保存的修正"
+            : ""}
+        </span>
+        <span className="mf-modal-footer-spacer" />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+        <Button
+          type="button"
+          disabled={items.length === 0}
+          onClick={() => setStep("confirm")}
+        >
+          整批复核(已选 {activeSelection.length} 项)
+        </Button>
+      </>
+    ) : (
+      <>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setStep("review")}
+        >
+          返回逐项复核
+        </Button>
+        <span className="mf-modal-footer-spacer" />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+        <Button
+          type="button"
+          disabled={executeDisabled}
+          aria-busy={executeMutation.isPending}
+          onClick={() => {
+            if (preview === undefined) return;
+            // One identity captured here serves both the request and any later
+            // reconciliation of this exact confirmation.
+            executeMutation.mutate({
+              previewId: preview.previewId,
+              itemIds: [...activeSelection],
+              intentVersion: preview.intentVersion ?? 0,
+              allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
+              allowSourceCleanup:
+                requiresCleanup && effectiveAllowSourceCleanup,
+            });
+          }}
+        >
+          {executeMutation.isPending
+            ? "正在提交..."
+            : `确认整理 ${activeSelection.length} 项`}
+        </Button>
+      </>
+    );
 
   return (
     <ModalCardShell

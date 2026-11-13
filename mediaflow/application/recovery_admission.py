@@ -20,6 +20,7 @@ from mediaflow.domain.recovery import (
     RecoveryAdmissionReason,
     RecoveryRequest,
 )
+from mediaflow.domain.storage import has_absolute_or_uri_prefix
 from mediaflow.domain.task_persistence import require_retryable_task_command
 
 _SENSITIVE_NOTE = re.compile(
@@ -214,7 +215,7 @@ class RecoveryAdmissionService:
             or normalized.startswith("/")
             or _UNSAFE_SOURCE_PREFIX.match(normalized)
             or "\x00" in normalized
-            or ":" in normalized
+            or has_absolute_or_uri_prefix(normalized)
             or any(part == ".." for part in parts)
             or normalized.startswith("[")
         ):

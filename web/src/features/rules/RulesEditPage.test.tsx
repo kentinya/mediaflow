@@ -981,8 +981,10 @@ describe("RulesEditPage single-item test after a second administrator publishes 
         description: "Special handling",
       }),
     });
+    // The rerun replaces the one current result instead of stacking a second
+    // copy of the same conclusion; the submitted identity is the re-checked v2.
     await waitFor(() =>
-      expect(within(dialog).getAllByText(/本地检查通过/)).toHaveLength(2),
+      expect(within(dialog).getAllByText(/本地检查通过/)).toHaveLength(1),
     );
 
     // Save and test share the explicitly re-checked identity: the kept input

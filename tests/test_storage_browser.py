@@ -272,6 +272,51 @@ class StorageBrowserApplicationTests(unittest.TestCase):
                 self.assertFalse(second["hasNext"])
                 self.assertFalse((media / "zeta.mkv").stat().st_size == 0)
 
+    def test_a_colon_named_directory_is_browsable_while_uri_and_drive_prefixes_are_refused(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            colon_dir = media / "Show: Season 1"
+            colon_dir.mkdir(parents=True)
+            (colon_dir / "Episode: One.mkv").write_bytes(b"colon")
+            document = _document(root)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(
+                    repository,
+                    bootstrap_document={
+                        "persistence": {"databasePath": str(root / "configuration.sqlite3")}
+                    },
+                    management_only=True,
+                )
+                draft = managed.import_draft(document, actor="admin")
+                objects = ConfigurationObjectService(
+                    managed,
+                    storage_adapters={"storage": LocalStorage("storage", media)},
+                    storage_browser_cursor_secret="browser-test-secret",
+                )
+                page = objects.browse_storage(
+                    draft.revision_id,
+                    storage_id="storage",
+                    path="Show: Season 1",
+                    limit=100,
+                )
+                self.assertEqual(
+                    [entry["name"] for entry in page["entries"]],
+                    ["Episode: One.mkv"],
+                )
+                for hostile in ("C:/escape", "smb://share", "file:/escape"):
+                    with self.subTest(path=hostile):
+                        with self.assertRaises(StorageBrowserError) as raised:
+                            objects.browse_storage(
+                                draft.revision_id,
+                                storage_id="storage",
+                                path=hostile,
+                                limit=100,
+                            )
+                        self.assertEqual("storage_browser_invalid_path", raised.exception.code)
+
     def test_nested_empty_directory_and_hostile_name_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

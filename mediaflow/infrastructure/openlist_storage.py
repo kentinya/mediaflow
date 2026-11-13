@@ -18,6 +18,7 @@ from mediaflow.domain.storage import (
     StorageErrorCode,
     StoragePage,
     WriteSource,
+    has_absolute_or_uri_prefix,
 )
 
 Result = TypeVar("Result")
@@ -421,7 +422,7 @@ class OpenListStorage:
         if not isinstance(path, str) or "\x00" in path:
             raise ValueError("invalid path")
         value = path.replace("\\", "/")
-        if value.startswith("/") or urlparse(value).scheme or (len(value) > 1 and value[1] == ":"):
+        if value.startswith("/") or has_absolute_or_uri_prefix(value):
             raise ValueError("absolute path")
         parts: list[str] = []
         for part in value.split("/"):

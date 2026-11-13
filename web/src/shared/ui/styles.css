@@ -9977,6 +9977,90 @@ tr[aria-selected="true"] {
   border: 0;
 }
 
+/* The native decision form is the primary section's content, so it must not
+   read as a third nested card. Its candidate options keep their own cards. */
+.mf-organize-section-primary .mf-organize-decision.mf-count-section {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mf-organize-decision-host {
+  display: grid;
+  gap: 8px;
+}
+
+/* Preparation progress is a compact true-count list, not five fixed rows with
+   zeros or an empty reason area. */
+.mf-organize-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.mf-organize-counts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mf-organize-counts dt {
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.mf-organize-counts dd {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.mf-organize-busy-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #1268f5;
+  animation: mf-organize-busy-dot 1.1s ease-in-out infinite;
+}
+
+@keyframes mf-organize-busy-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Stage changes are immediate local fades, never a re-mounted card or a
+   delayed command. Polling an unchanged stage does not re-run the animation. */
+.mf-organize-dialog-body > .mf-organize-file-head,
+.mf-organize-dialog-body > section,
+.mf-organize-dialog-body > .mf-modal-card-status,
+.mf-organize-dialog-body > .mf-status-banner {
+  animation: mf-organize-stage-in 140ms ease-out;
+}
+
+@keyframes mf-organize-stage-in {
+  from {
+    opacity: 0.65;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .mf-organize-dialog-body .mf-organize-decision.mf-count-section {
   padding: 13px 14px;
   border: 1px solid #dbe4f3;
@@ -10026,6 +10110,14 @@ tr[aria-selected="true"] {
 /* Current-page ordering, selection and column resizing are immediate feedback:
    reduced motion keeps the state change but removes the transition. */
 @media (prefers-reduced-motion: reduce) {
+  .mf-organize-busy-dot,
+  .mf-organize-dialog-body > .mf-organize-file-head,
+  .mf-organize-dialog-body > section,
+  .mf-organize-dialog-body > .mf-modal-card-status,
+  .mf-organize-dialog-body > .mf-status-banner {
+    animation: none;
+  }
+
   .mf-files-table tbody td,
   .mf-grid-cell {
     transition: none;

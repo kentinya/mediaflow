@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import PurePath
 
+from mediaflow.domain.storage import has_absolute_or_uri_prefix
+
 
 class ScopeResolutionError(ValueError):
     """A bounded, operator-correctable scope-resolution refusal.
@@ -124,7 +126,7 @@ def _normalize_library_relative_path(value: object, *, allow_empty: bool) -> str
         raise ScopeResolutionError(
             "invalid_path", "relativePath must be a safe ResourceLibrary-relative path"
         )
-    if value.startswith(("/", "\\")) or "\\" in value or ":" in value:
+    if value.startswith(("/", "\\")) or "\\" in value or has_absolute_or_uri_prefix(value):
         raise ScopeResolutionError(
             "invalid_path", "relativePath must be a safe ResourceLibrary-relative path"
         )

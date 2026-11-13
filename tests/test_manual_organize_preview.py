@@ -195,7 +195,9 @@ class ManualOrganizePreviewTests(unittest.TestCase):
         source_root = Path(directory.name)
         target_root = Path(target_directory.name)
         for name in source_names:
-            Path(source_root, name).write_bytes(b"x" * 123)
+            path = Path(source_root, name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * 123)
 
         database = source_root / "runtime.sqlite3"
         live = LocalStorage("source", source_root)
@@ -513,6 +515,43 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                 self.assertIsNotNone(item.source.fingerprint)
                 self.assertIsNotNone(item.source.occurrence_id)
                 self.assertTrue(item.zero_mutation)
+                self.assertEqual(source.calls, [])
+                self.assertEqual(target.calls, [])
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    def test_a_colon_named_source_path_stays_exact_in_preview(self):
+        """PATCH-20261114-1: ordinary name colons are not a URI prefix."""
+
+        relative = "Shows: Archive/One.2001.mkv"
+        fixture = self._fixture((relative,))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            provider,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                _intents, previews, source, target = self._services(
+                    repository, configuration, provider, source_root, target_root
+                )
+                preview = previews.create_current_from_storage(
+                    scope_kind="file",
+                    actor="operator",
+                    resource_library_id="library",
+                    relative_path=relative,
+                )
+                self.assertEqual(preview.source_scope_id, relative)
+                self.assertEqual(len(preview.items), 1)
+                self.assertEqual(preview.items[0].source.path, relative)
+                self.assertEqual(preview.items[0].source.filename, "One.2001.mkv")
+                self.assertTrue(preview.items[0].zero_mutation)
                 self.assertEqual(source.calls, [])
                 self.assertEqual(target.calls, [])
         finally:

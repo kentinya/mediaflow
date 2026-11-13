@@ -786,6 +786,13 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             cases = (
                 (["../escape.mkv"], 400, "invalid_path"),
                 (["/etc/passwd"], 400, "invalid_path"),
+                (["C:/Movies/One.mkv"], 400, "invalid_path"),
+                (["C:Movies/One.mkv"], 400, "invalid_path"),
+                (["smb://share/One.mkv"], 400, "invalid_path"),
+                (["file:/Movies/One.mkv"], 400, "invalid_path"),
+                (["//server/share/One.mkv"], 400, "invalid_path"),
+                (["\\\\server\\share\\One.mkv"], 400, "invalid_path"),
+                (["Movies/One\x00.mkv"], 400, "invalid_path"),
                 (["Movies" + chr(92) + "One.mkv"], 400, "invalid_path"),
                 (["Movies/./One.mkv"], 400, "invalid_path"),
                 ([], 400, "selection_empty"),
@@ -8228,3 +8235,159 @@ class NativeRecognitionJourneyTests(_DiscoveryFixture):
             )
             # The Task the Files selection admitted is the one that settled.
             self.assertEqual("completed", value.repository.get_task(task_id).status.value)
+
+    def test_colon_named_directory_and_file_mixed_selections_admit_exact_plans(self) -> None:
+        """PATCH-20261114-1: directory and mixed scopes keep colon names exact."""
+
+        directory = "电影/Directory: Set"
+        mixed_folder = "电影/Mixed: Folder"
+        mixed_file = "电影/Mixed: Other/Mixed Two.2026.mkv"
+        sources = {
+            f"{directory}/Directory One.2026.mkv": "Directory One",
+            f"{directory}/Directory Two.2026.mkv": "Directory Two",
+            f"{mixed_folder}/Mixed One.2026.mkv": "Mixed One",
+            mixed_file: "Mixed Two",
+        }
+        self._no_rules = False
+        for path in sources:
+            self.media(path, size=256)
+        provider = SyntheticMetadataProvider(
+            tuple(
+                MediaCandidate(
+                    "tmdb",
+                    str(300 + index),
+                    MediaType.MOVIE,
+                    title,
+                    year=2026,
+                    genres=("Animation",),
+                    countries=("CN",),
+                )
+                for index, title in enumerate(sources.values())
+            )
+        )
+        document = self.document()
+        document["recognitionRules"][0]["condition"]["children"][0]["value"] = "library"
+        with self.journey(provider=provider) as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            value.intents._runtime_resolver = lambda sid, digest: runtime
+            value.previews._runtime_resolver = lambda sid, digest: runtime
+
+            _admitted, settled = self._admit_and_settle(value, [directory])
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                sorted(sources)[:2], sorted(item["path"] for item in settled["sources"])
+            )
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual(
+                sorted(sources)[:2], sorted(item.source.path for item in preview.items)
+            )
+            self.assertEqual(
+                [ManualPreviewItemStatus.PREVIEWED] * 2,
+                [item.status for item in preview.items],
+            )
+
+            _admitted, mixed = self._admit_and_settle(value, [mixed_folder, mixed_file])
+            self.assertEqual("completed", mixed["status"], mixed)
+            expected = sorted((f"{mixed_folder}/Mixed One.2026.mkv", mixed_file))
+            self.assertEqual(expected, sorted(item["path"] for item in mixed["sources"]))
+            mixed_preview = value.repository.get_manual_preview(mixed["previewId"])
+            self.assertIsNotNone(mixed_preview)
+            self.assertEqual(expected, sorted(item.source.path for item in mixed_preview.items))
+            self.assertEqual(
+                [ManualPreviewItemStatus.PREVIEWED] * 2,
+                [item.status for item in mixed_preview.items],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_colon_named_scope_reaches_one_real_confirmed_move(self) -> None:
+        """PATCH-20261114-1: real punctuation colons stay one exact source.
+
+        The operator's actual source names contain two ordinary colons. The
+        admitted scope, Storage observations, Preview plan and confirmed Worker
+        execution must all preserve those bytes instead of rejecting them as a
+        host/URI prefix.
+        """
+
+        source_path = (
+            "电影/Perfect World Movie: Nine Tribulations Incinerate the Heavens "
+            "(2026) [tmdbid=1598732]/Perfect World Movie: Nine Tribulations "
+            "Incinerate the Heavens.2026.2160p.WEB-DL.SDR.42.0Mbps.H.265."
+            "Dolby Digital Plus.mkv"
+        )
+        title = "Perfect World Movie: Nine Tribulations Incinerate the Heavens"
+        self._no_rules = False
+        self.media(source_path, size=512)
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "1598732",
+                    MediaType.MOVIE,
+                    title,
+                    year=2026,
+                    genres=("Animation",),
+                    countries=("CN",),
+                ),
+            )
+        )
+        document = self.document()
+        # The fixture's ResourceLibrary id is its own identity; the example
+        # rule names the Storage id. Point this rule at the fixture library so
+        # only the colon path is under test, not the example's identity binding.
+        document["recognitionRules"][0]["condition"]["children"][0]["value"] = "library"
+        with self.journey(provider=provider) as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            value.intents._runtime_resolver = lambda sid, digest: runtime
+            value.previews._runtime_resolver = lambda sid, digest: runtime
+            admitted, settled = self._admit_and_settle(value, [source_path])
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([source_path], [item["path"] for item in settled["sources"]])
+            self.assertIsNotNone(settled["previewId"])
+
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual([source_path], [item.source.path for item in preview.items])
+            self.assertEqual(["previewed"], [item.status.value for item in preview.items])
+
+            status, preview_document = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{settled['previewId']}",
+            )
+            self.assertEqual(200, status, preview_document)
+            ready = [
+                item["itemId"]
+                for item in preview_document["items"]
+                if item["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview_document)
+
+            status, admitted_execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{settled['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview_document["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), admitted_execution)
+            completed = value.execution_worker.run_next()
+            self.assertIsNotNone(completed)
+            execution = value.repository.get_manual_execution(completed.execution_id)
+            self.assertEqual(["success"], [item.status.value for item in execution.items])
+            self.assertEqual(source_path, execution.items[0].source.path)
+            self.assertFalse((self.source_root / source_path).exists())
+            moved = list(Path(self.target_root).rglob("*.mkv"))
+            self.assertEqual(1, len(moved))
+            self.assertEqual(b"m" * 512, moved[0].read_bytes())
+            self.assertEqual(
+                "completed", value.repository.get_task(admitted["organizeTaskId"]).status.value
+            )

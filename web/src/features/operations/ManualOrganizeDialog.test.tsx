@@ -74,6 +74,9 @@ function makeBackend() {
     // The number of leading discovery reads that still report an unchanged
     // waiting state before the plan links.
     waitingReads: 0 as number,
+    // Leading reads of a just-admitted, still-queued preparation whose walk
+    // has not started.
+    queuedReads: 0 as number,
     // The real Worker publishes the completed walk before it freezes and enters
     // analysis.  These two counts stage exactly that gap: an unfrozen completed
     // walk, then the frozen intent whose analysis is still linking the plan.
@@ -663,6 +666,25 @@ function makeBackend() {
         method === "GET"
       ) {
         state.discoveryReads += 1;
+        if (state.queuedReads > 0) {
+          state.queuedReads -= 1;
+          const queued = discoveryDocument();
+          queued["status"] = "queued";
+          queued["previewId"] = null;
+          queued["prepared"] = false;
+          queued["intentId"] = null;
+          queued["frozen"] = false;
+          queued["primarySourceCount"] = 0;
+          const progress = queued["progress"] as Json;
+          progress["visitedEntries"] = 0;
+          progress["visitedDirectories"] = 0;
+          progress["primarySources"] = 0;
+          progress["excludedEntries"] = 0;
+          progress["unstableEntries"] = 0;
+          progress["errorEntries"] = 0;
+          progress["message"] = "bounded discovery is running";
+          return jsonResponse(queued);
+        }
         if (state.discoveryReads <= state.waitingReads) {
           const waiting = discoveryDocument();
           waiting["status"] = "waiting_stability";
@@ -1920,6 +1942,26 @@ describe("ManualOrganizeDialog", () => {
     }
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
+
+  it("shows a queued preparation truthfully without a completed-walk claim or an empty pager", async () => {
+    const user = userEvent.setup();
+    await openDialog(user, (value) => {
+      value.state.queuedReads = 10;
+    });
+    const stage = await screen.findByText(
+      (_text, element) =>
+        element?.classList.contains("mf-organize-stage-copy") === true,
+      {},
+      { timeout: 5_000 },
+    );
+    expect(stage).toHaveTextContent("所选范围已受理，等待后台 Worker 开始检查");
+    expect(screen.queryByText("已完整遍历所选范围。")).toBeNull();
+    expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
+    expect(screen.queryByText(/第 0 \/ 0 个/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "下一项" })).toBeNull();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeVisible();
+  }, 20_000);
 
   it("keeps polling an unchanged waiting preparation until the exact plan links", async () => {
     const user = userEvent.setup();

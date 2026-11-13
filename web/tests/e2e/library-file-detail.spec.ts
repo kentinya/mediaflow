@@ -75,9 +75,22 @@ test("Files listing is live-Storage bounded evidence with a safe directory conte
   await expect(
     page.getByRole("columnheader", { name: "选择全部" }),
   ).toBeVisible();
-  for (const column of ["名称", "类型", "大小", "修改时间"]) {
+  // Each physical column also exposes its accessible resize separator, so the
+  // header's accessible name includes that control. Locate the real header by
+  // its stable column hook and prove both the visible label and the control.
+  for (const [column, label] of [
+    ["name", "名称"],
+    ["type", "类型"],
+    ["size", "大小"],
+    ["modified", "修改时间"],
+  ] as const) {
+    const header = page.locator(`th[data-column-width="${column}"]`);
     await expect(
-      page.getByRole("columnheader", { name: column, exact: true }),
+      page.getByRole("columnheader", { name: new RegExp(`^${label}`) }),
+    ).toBeVisible();
+    await expect(header).toContainText(label);
+    await expect(
+      header.getByRole("separator", { name: `调整${label}列宽` }),
     ).toBeVisible();
   }
   // The removed business concepts are not Files page presentation.
