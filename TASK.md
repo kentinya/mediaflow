@@ -8,7 +8,7 @@ Authority: 用户于 2026-11-13 授权独立界面修复规划，随后明确“
 Task ID: PATCH-20261113-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 31f4b56936831699f75590f5afd49d58d630ba9c
 Difficulty: Medium
 Test Level: T3
@@ -309,6 +309,52 @@ B 从现有任务列表与按钮进入，未新增产品入口、未改响应制
 `test-times.json`、三个首跑／复现日志、`corrected-assertions.log`、trace、
 `technical-failure-body.txt`／`technical-failure-diagnostics.txt` 与三个视口截图；不是远程 CI。
 本轮 B 只维护 Task、直接原生验收测试和失效文档链接，未实施产品修正。
+
+## Developer Fix Report — 2026-11-13
+
+READY FOR B REVIEW
+
+- 产品修正 checkpoint：`ce09e116`（Task Base `31f4b569` → 本轮实现）；交付前 HEAD
+  为 `e7c7e20c`，本报告随后续文档 checkpoint 提交。修正前治理检查 PASS；分支 `main`，
+  工作区除本任务文件外无其他改动。
+- 仅修正 B13-01：`RunEvidenceSection` 的失败记录与检查点下一步在值相等时只渲染一份，
+  标签为“服务下一步（失败记录与检查点一致）”；仅一处有值时分别保留原来源标签；
+  值不同时继续逐项显示“失败记录”／“检查点”。未做全文去重，未改 Result、日志、审计、
+  后端投影、查询身份、恢复判定或命令生命周期。
+- 复用既有诊断单元旅程补充相等值、仅失败记录、仅检查点三种情形，并断言相等值在
+  展开诊断后只出现一次；原不同值均可查的断言保留。
+
+**实际验证（Developer 分工内）**
+
+```text
+web: npm run test -- run src/features/operations/RunDetailTabs.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/features/operations/AttachmentResults.test.tsx
+  src/features/operations/OperationsInventory.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx — 5 files / 123 tests PASS（27.31s）
+  （RunDetailTabs 29 PASS，含新增相等值单次呈现、仅失败记录、仅检查点）
+web: npm run typecheck / lint / format:check / build — PASS
+web: npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
+  — 40 passed（21.8s）
+web: npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep "a mixed run never offers"
+  — 1 passed（2.1s，全新 Python/API／临时 SQLite harness；B 新增 expected 1 断言现通过）
+根目录 python3 scripts/check_governance.py、git diff --check — PASS
+```
+
+本轮自动测试合计约 75 秒，低于本轮开发约 10 分钟总时间的 30%。原生复现只运行该
+mixed-run 用例，不代替 B 的完整 Python 验收；`task-flow`、`operations-inventory`、
+`manual-organize-dialog` 完整门禁及桌面／窄屏实际视觉验收仍由 B 执行。
+
+**未运行项与剩余风险（交 B）**
+
+1. 未运行完整 Python harness 门禁及视觉截图；新标签为纯呈现文字，未改变任何请求或
+   持久状态，B 的完整验收仍需覆盖多次执行、附件、四类处理与视口。
+2. 合并条件按两个字段的值相等处理，与后端 `ProcessingCheckpoint.document()` 将
+   `failure.next_action` 投影为 `nextAction` 的实际关系一致；旧记录只有一处值或两值
+   不同时维持分来源显示。
+3. CURRENT 文档已要求“同源同值只呈现一次”，本轮实现使该事实成立，无需改写产品
+   义务或已接受结果。
 
 ---
 
