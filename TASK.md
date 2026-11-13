@@ -1,12 +1,11 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261113-2 — 两种库文件浏览的提示、交互反馈与表头调节
 
-以下 `PATCH-20261113-2` 是用户于 2026-11-13 要求的**独立修复规划草案**，仅授权规划；
-尚未激活，不授权产品实现、其他角色工作、推送或部署。实施须另获用户授权，再将本通知
-替换为正式 Task 状态。此前独立修复的 PASS 记录保留在本文末尾。
+用户于 2026-11-13 明确“激活Task”，现将已提交规划转为正式、已授权实施的独立修复
+Task。保留原 Task ID／Base／Goal／Scope／Medium／T3，不重设基线或扩大范围。
+当前为 `PLANNED`，Developer 开始实施时进入 `IN PROGRESS`；本激活检查点仅更新 Task，
+未开始产品实现，不授权推送、部署、其他角色工作或另起代理。此前 PASS 记录保留在本文末尾。
 
-## PATCH-20261113-2 — 两种库文件浏览的提示、交互反馈与表头调节（规划草案）
-
-Authority: 用户本轮三项问题及“规划一版独立修复Task”；
+Authority: 用户本轮三项问题、“规划一版独立修复Task”及“激活Task”；
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 为生命周期依据。
 
 ```text
@@ -18,11 +17,14 @@ Task Base: 9811df4559d94db5b648f6152476f39035a12ae5
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING DRAFT ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-13
 ```
 
 规划前治理检查 PASS；分支 `main`，HEAD 为上述 Task Base，暂存区／工作区干净，
 工作区与 Git 可写。未读取运行数据库、私有配置、凭据或用户媒体。
+激活前治理检查 PASS；分支仍为 `main`，HEAD 为规划提交
+`f232b51382825d8ddb835a254385c78f1dc0f8a1`，暂存区／工作区干净；该提交只改 Task，
+原 Task Base 保持不变。
 
 ### Goal / existing behavior
 
@@ -77,7 +79,7 @@ Implementation Authorization: NOT GRANTED — PLANNING DRAFT ONLY
    同页切目录、翻页、刷新读取和列表／网格切换保持；整页重载可恢复默认，不新增持久偏好。
 5. **验证并协调直接相关说明。** 补充有意义的选择／排序／调宽行为测试及真实视觉检查；
    后续实施只协调两份页面规范中已变化的 banner／交互描述，不修改已接受 Slice 边界或
-   宣称新后端能力。现阶段仅提交本 Task 草案，不修改产品、测试或其他文档。
+   宣称新后端能力。本激活检查点只更新 Task；产品、测试及上述说明在 Developer 实施时完成。
 
 ### Acceptance Criteria
 
@@ -155,7 +157,7 @@ Implementation Authorization: NOT GRANTED — PLANNING DRAFT ONLY
 
 ### B Review Result
 
-尚未提交候选、未验收。仅规划草案完成，不是产品通过。PASS 后按 workflow 记录精确
+尚未提交候选、未验收。Task 已激活授权实施，不是产品通过。PASS 后按 workflow 记录精确
 Base..Head 与真实结果，恢复简洁 `NO ACTIVE IMPLEMENTATION TASK`，不关闭任何 Slice。
 
 ---
