@@ -926,9 +926,10 @@ unconfirmed summary stays reachable from Running/All after leaving, reload or re
 Ended work has no 文件整理准备 section, ending notice, `查看只读摘要` or `从文件页重新发起`
 entry. The operator reads actual flow, independent file results and inline evidence in the same
 Task detail above its preserved list; new organizing still starts from ResourceLibrary Files.
-The canonical in-place continuation address retains the original plan, failure stage and known
-effects without selection, correction, re-analysis or confirmation. It is the same `/operations`
-background with the exact selected Task and one closed hosted-card marker; the retired standalone
+For ended work, the canonical in-place continuation address retains the original plan, failure
+stage and known effects as read-only history, without selection, correction, re-analysis or
+confirmation. It is the same `/operations` background with the exact selected Task and one closed
+hosted-card marker; the retired standalone
 receiving page has no route, alias, redirect or guidance shell.
 If no plan was generated, say so; if its history cannot be read, show the read failure and let the
 operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
@@ -936,12 +937,17 @@ operator use `重新读取原计划摘要` or Refresh to read it again. These re
 Only an exact preparation association with backend continuation eligibility shows 文件整理准备,
 the sentence 查看整理摘要，确认后执行。 and 继续整理. The action opens the shared organizer above the
 same task center background: the list stays mounted and positioned, the detail keeps its state, and
-only the topmost card handles Tab/Escape. Missing associations or ineligible work show no empty
-section, guess no preparation and create no work. Failure stages, per-file results and known effects
-remain independently readable. The shared Files/continue/historical organizer keeps horizontal space between status
-text and its colored border; removing the ended entry does not remove that shared dialog.
-The [independent B acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
-records this presentation correction. See the
+only the topmost card handles Tab/Escape. If a background Task-detail read fails after the card
+has opened, the same card retains unsaved per-file choices and any unknown Execute reconciliation.
+Use `重新读取任务` there to reread the same Task; the read does not submit or replay work.
+Missing associations or ineligible work show no empty section, guess no preparation and create
+no work. Failure stages, per-file results and known effects remain independently readable. The
+shared Files/continue/historical organizer keeps horizontal space between status text and its
+colored border; removing the ended entry does not remove that shared dialog.
+The [in-place continuation B acceptance](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)
+records the current journey and background-read recovery. The earlier
+[entry/padding acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
+retains its original result. See the
 [current Task Center presentation](task-center-page-spec.md#手动受理与确认) for the displayed copy.
 
 A failed file can be selected again in Files without cancelling a failed Task or clearing records.

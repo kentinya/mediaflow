@@ -58,10 +58,13 @@ per-file dialog. Choose candidates and use `保存并重新分析` for each file
 review the ready subset and click `确认整理 N 项` once. Proven admission opens that exact Task's
 existing detail in Task Center. A lost response offers original-request reconciliation, retaining
 its original identity even after an unselected file is corrected/reanalyzed. After leaving,
-`继续整理` on the original Task returns to the same still-continuable review,
-including after reload/re-authentication. Ended Task details show results and inline file evidence,
-without a preparation section or summary/restart buttons. Existing exact preparation addresses
-remain readable; the shared organizer keeps space between status text and its colored border.
+`继续整理` on the original Task opens the same still-continuable review above the preserved
+Task Center list/detail, including after reload/re-authentication. Its canonical address is
+`/ui-v2/operations?run=<Task>&dialog=organize`. Ended Task details show results and inline file
+evidence, without a preparation section or summary/restart buttons; the canonical address keeps
+their saved plan readable in the same shared dialog. The former `/operations/organize/new`
+page is removed and its addresses return ordinary not-found. The shared organizer keeps space
+between status text and its colored border.
 Task recovery uses the same `保存并重新分析` action for a saved decision whose analysis was refused;
 accepted analysis shows its waiting state. Results remain in the existing Task detail/file evidence.
 The duplicate Organize execution page is removed; former links open the exact associated Task,

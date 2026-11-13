@@ -1488,8 +1488,8 @@ successful read with no saved plan. Historical reads do not analyze, issue autho
 The Files entry starts deliberate new work under the existing source-history contract.
 
 The retired generic new-organize address is an ordinary not-found; ResourceLibrary Files remains the
-only new-work entry. Ordinary initial summary confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
-population and four-type lineage described above.
+only new-work entry. Ordinary initial summary confirmation stays in Running/All outside Attention.
+The center uses only the admitted organizing population and four-type lineage described above.
 
 Shell return context comes from the router's committed validated search, preserving bounded
 filters/selection through Files and recovery without a second address-bar-derived state or allowing
@@ -1509,6 +1509,11 @@ refresh/re-authentication. No browser-supplied preparation/library identity is a
 standalone receiving route is gone. Route adaptation must not guess current Active, a newer Task or a
 different source. Reuse feature-independent ModalCardShell presentation, not library/Automation fields or
 commands.
+
+After an exact association opens the card, a transient background Task-detail read failure retains
+that same mounted organizer, its drafts and original unknown-submission identity. The card exposes
+the read issue and rereads the same Task. First-entry read failures have no retained association;
+permission loss, a missing Task or a settled association change use their existing unavailable state.
 
 The organizer owns itemId/preparation/summary-bound drafts, inclusion, active file, explicit
 save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. One

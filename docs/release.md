@@ -43,6 +43,31 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [Task Center in-place continuation correction](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)
+passed independent B T4 review on 2026-11-14: Base
+`1c625220b9552bd1e75bfd351a54ddb524ff3e65` through reviewed Head
+`218e6bf6213fbec538056e9271a95734d784c1d4`. Continue opens the shared organizer above the
+preserved Task Center list/detail, using the exact Task's backend preparation association.
+The standalone receiving page/route is removed. Background Task-detail read failure retains the
+opened card, unsaved choices and original Execute reconciliation. Close, keyboard/focus,
+Back/Forward, reload/re-authentication and exact admission handoff were verified.
+
+Acceptance recorded Python 2686 tests: 2678 passed, 7 optional external-service/endurance skips
+and 1 failure reproduced at Base. Web unit tests passed 99 files/1561 tests; default Node browser
+tests recorded 273 passes and 3 failures, all reproduced at Base. The Python failure is an existing
+scheduling-kernel consumer whitelist omission; Node failures are the existing exact file-name
+column-header locator and two Python-only year-search tests included by the Node configuration.
+The four required real-Python browser specs passed 56 cases; the two year-search cases passed
+under their existing Python configuration. Critical continuation, normal/reduced-motion keyboard
+and retained-background checks, three viewport reviews, quality/configuration/build checks and
+fresh wheel/outside-source installation smoke passed. The full suites are not all green; no
+assertions were weakened. Detailed failures, commands and artifact identities remain in the fixed
+report. Raw evidence is local at `.git/validation-evidence/218e6bf6/patch-20261113-3-b/`, not remote
+CI. No container path changed, so the broad Docker matrix was not applicable. The existing skips,
+production-service limits and remaining non-blocking read-error copy issue remain disclosed.
+This standalone acceptance preserves Slice54's closure and makes no V2 release claim;
+documentation-only successors change no executable validation inputs.
+
 The [Files/MediaLibrary browse-interaction correction](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)
 passed independent B T3 review on 2026-11-13: Base
 `9811df4559d94db5b648f6152476f39035a12ae5`, reviewed Head

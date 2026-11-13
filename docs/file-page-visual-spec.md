@@ -61,11 +61,14 @@ library cards/context, the workarea presents directory waiting, live entries or 
 directory read error directly. Ordinary browsing does not query/poll organizing history. An unknown
 organizing submission still reconciles its exact request before returning to the admitted preparation.
 After selecting files and generating a summary, the operator may leave and reopen the original
-Task from Task Center's Running/All views. Its `继续整理` action returns to the same preparation/
-summary after reload or re-authentication while that work remains continuable. Ended Task details
-show results and inline file evidence, without a preparation section or summary/restart buttons.
-Existing exact preparation addresses retain read-only history; the shared organizer keeps readable
-space between status text and its colored border. New organizing starts from ResourceLibrary Files.
+Task from Task Center's Running/All views. Its `继续整理` action opens the same preparation/summary
+above the preserved Task Center list/detail, including after reload or re-authentication while
+that work remains continuable. Ended Task details show results and inline file evidence, without
+a preparation section or summary/restart buttons.
+The canonical `/ui-v2/operations?run=<Task>&dialog=organize` address retains ended work's read-only
+history in that same shared dialog. The former standalone receiving page and route are removed;
+its old addresses return ordinary not-found. The shared organizer keeps readable space between
+status text and its colored border. New organizing starts from ResourceLibrary Files.
 A failed file can be selected again without cancelling the failed Task; healthy waiting siblings
 retain their old confirmation.
 The [manual journey](product-experience.md#manual-organize) owns history read recovery and explicit
