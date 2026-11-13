@@ -256,19 +256,63 @@ export interface FilesColumnWidthsController {
   readonly tableRef: React.RefObject<HTMLTableElement | null>;
   readonly values: FilesColumnWidths;
   readonly resized: boolean;
+  /** Exact session widths; null keeps the default CSS table layout. */
+  readonly resizedWidths: FilesColumnWidths | null;
   readonly tableStyle: CSSProperties | undefined;
   readonly setColumnWidth: (column: FilesColumnKey, width: number) => void;
   readonly resetWidths: () => void;
 }
 
+/**
+ * The pages keep sort and explicit widths above the directory read so a
+ * loading/failure branch that unmounts the browse body cannot erase them. The
+ * hook still owns the table DOM and its measurements on the browse side.
+ */
+export interface FilesColumnWidthsControl {
+  readonly resized: FilesColumnWidths | null;
+  readonly onResizedChange: (widths: FilesColumnWidths | null) => void;
+}
+
+/**
+ * Column geometry is exact once the operator sets widths: the table is as wide
+ * as its five columns, so the browser cannot redistribute leftover space into
+ * a column the handle says it resized. Leftover container space stays outside
+ * the table. The default layout still fills the pane.
+ */
+export function FilesTableColumnGroup({
+  widths,
+}: {
+  readonly widths: FilesColumnWidths;
+}) {
+  return (
+    <colgroup>
+      <col style={{ width: FILES_SELECTION_COLUMN_WIDTH }} />
+      <col style={{ width: widths.name }} />
+      <col style={{ width: widths.type }} />
+      <col style={{ width: widths.size }} />
+      <col style={{ width: widths.modified }} />
+    </colgroup>
+  );
+}
+
 export function useFilesColumnWidths(
   active: boolean,
+  control?: FilesColumnWidthsControl,
 ): FilesColumnWidthsController {
   const tableRef = useRef<HTMLTableElement | null>(null);
-  const [resized, setResized] = useState<FilesColumnWidths | null>(null);
+  const [internalResized, setInternalResized] =
+    useState<FilesColumnWidths | null>(null);
   const [measured, setMeasured] = useState<FilesColumnWidths | null>(null);
   const measuredRef = useRef<FilesColumnWidths | null>(null);
+  const resized = control === undefined ? internalResized : control.resized;
   const resizedActive = resized !== null;
+  const applyResized = useCallback(
+    (next: FilesColumnWidths | null) => {
+      if (control === undefined) setInternalResized(next);
+      else control.onResizedChange(next);
+    },
+    [control],
+  );
 
   useLayoutEffect(() => {
     if (!active) return;
@@ -303,17 +347,16 @@ export function useFilesColumnWidths(
   const setColumnWidth = useCallback(
     (column: FilesColumnKey, width: number) => {
       const clamped = clampColumnWidth(column, width);
-      setResized((current) => {
-        const base =
-          current ?? measuredRef.current ?? FILES_COLUMN_DEFAULT_WIDTH;
-        if (current !== null && base[column] === clamped) return current;
-        return { ...base, [column]: clamped };
-      });
+      const base = resized ?? measuredRef.current ?? FILES_COLUMN_DEFAULT_WIDTH;
+      if (resized !== null && base[column] === clamped) return;
+      const next = { ...base, [column]: clamped };
+      if (control === undefined) setInternalResized(next);
+      else control.onResizedChange(next);
     },
-    [],
+    [control, resized],
   );
 
-  const resetWidths = useCallback(() => setResized(null), []);
+  const resetWidths = useCallback(() => applyResized(null), [applyResized]);
 
   const values = resized ?? measured ?? FILES_COLUMN_DEFAULT_WIDTH;
   const tableStyle = useMemo<CSSProperties | undefined>(() => {
@@ -329,6 +372,7 @@ export function useFilesColumnWidths(
       "--mf-col-type-width": `${resized.type}px`,
       "--mf-col-size-width": `${resized.size}px`,
       "--mf-col-modified-width": `${resized.modified}px`,
+      width: `${total}px`,
       minWidth: `${total}px`,
     } as CSSProperties;
   }, [resized]);
@@ -337,6 +381,7 @@ export function useFilesColumnWidths(
     tableRef,
     values,
     resized: resized !== null,
+    resizedWidths: resized,
     tableStyle,
     setColumnWidth,
     resetWidths,

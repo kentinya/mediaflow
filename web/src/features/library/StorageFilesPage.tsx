@@ -73,9 +73,11 @@ import {
   FilesGridSelectAll,
   FilesSortButton,
   FilesSortScope,
+  FilesTableColumnGroup,
   nextFilesSort,
   sortFilesRows,
   useFilesColumnWidths,
+  type FilesColumnWidths,
   type FilesSortState,
 } from "./files-browse-presentation";
 import {
@@ -1042,6 +1044,10 @@ function FileBrowseView({
   selectedLibraryId,
   selected,
   view,
+  sort,
+  onSortChange,
+  columnWidths,
+  onColumnWidthsChange,
   query,
   previewing,
   refreshing,
@@ -1075,6 +1081,10 @@ function FileBrowseView({
   readonly selectedLibraryId: string;
   readonly selected: ReadonlySet<string>;
   readonly view: FilesView;
+  readonly sort: FilesSortState | null;
+  readonly onSortChange: (sort: FilesSortState | null) => void;
+  readonly columnWidths: FilesColumnWidths | null;
+  readonly onColumnWidthsChange: (widths: FilesColumnWidths | null) => void;
   readonly query: string;
   readonly previewing: boolean;
   /** A same-context re-read keeps the rendered rows and states it explicitly. */
@@ -1112,14 +1122,17 @@ function FileBrowseView({
   readonly onReturnRoot: () => void;
 }) {
   const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
-  const [sort, setSort] = useState<FilesSortState | null>(null);
   const {
     tableRef: columnTableRef,
     values: columnWidthValues,
+    resizedWidths: columnResizedWidths,
     tableStyle: columnWidthStyle,
     setColumnWidth: setFilesColumnWidth,
     resetWidths: resetFilesColumnWidths,
-  } = useFilesColumnWidths(view === "list");
+  } = useFilesColumnWidths(view === "list", {
+    resized: columnWidths,
+    onResizedChange: onColumnWidthsChange,
+  });
   const rows = useMemo(
     () => sortFilesRows(buildRows(model, selected, query), sort),
     [model, selected, query, sort],
@@ -1327,7 +1340,7 @@ function FileBrowseView({
           {rows.length > 0 && (
             <FilesSortScope
               sort={sort}
-              onResetSort={() => setSort(null)}
+              onResetSort={() => onSortChange(null)}
               onResetWidths={
                 view === "list" ? resetFilesColumnWidths : undefined
               }
@@ -1356,6 +1369,9 @@ function FileBrowseView({
                 className="mf-files-table"
                 style={columnWidthStyle}
               >
+                {columnResizedWidths !== null && (
+                  <FilesTableColumnGroup widths={columnResizedWidths} />
+                )}
                 <thead>
                   <tr>
                     <th scope="col" className="mf-col-check">
@@ -1382,7 +1398,7 @@ function FileBrowseView({
                         label="名称"
                         sort={sort}
                         onSort={(field) =>
-                          setSort((current) => nextFilesSort(current, field))
+                          onSortChange(nextFilesSort(sort, field))
                         }
                       />
                       <FilesColumnResizeHandle
@@ -1417,7 +1433,7 @@ function FileBrowseView({
                         label="大小"
                         sort={sort}
                         onSort={(field) =>
-                          setSort((current) => nextFilesSort(current, field))
+                          onSortChange(nextFilesSort(sort, field))
                         }
                       />
                       <FilesColumnResizeHandle
@@ -2375,6 +2391,12 @@ export function StorageFilesPage() {
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [view, setView] = useState<FilesView>("list");
+  // Presentation state lives above the directory read: a first uncached read
+  // unmounts the browse body, but the operator's current-page order and column
+  // widths stay for the same page session.
+  const [filesSort, setFilesSort] = useState<FilesSortState | null>(null);
+  const [filesColumnWidths, setFilesColumnWidths] =
+    useState<FilesColumnWidths | null>(null);
   // The Add ResourceLibrary drawer is an operator-invoked action state only:
   // mount, re-entry, refresh and authentication recovery keep it closed.
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -3956,6 +3978,10 @@ export function StorageFilesPage() {
                         selectedLibraryId={activeLibraryId}
                         selected={selectedFiles}
                         view={view}
+                        sort={filesSort}
+                        onSortChange={setFilesSort}
+                        columnWidths={filesColumnWidths}
+                        onColumnWidthsChange={setFilesColumnWidths}
                         query={query}
                         previewing={
                           organizeMutation.isPending ||

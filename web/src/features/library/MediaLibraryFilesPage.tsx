@@ -54,9 +54,11 @@ import {
   FilesGridSelectAll,
   FilesSortButton,
   FilesSortScope,
+  FilesTableColumnGroup,
   nextFilesSort,
   sortFilesRows,
   useFilesColumnWidths,
+  type FilesColumnWidths,
   type FilesSortState,
 } from "./files-browse-presentation";
 import {
@@ -680,6 +682,10 @@ function MediaBrowseView({
   model,
   selected,
   view,
+  sort,
+  onSortChange,
+  columnWidths,
+  onColumnWidthsChange,
   query,
   page,
   canPrev,
@@ -704,6 +710,10 @@ function MediaBrowseView({
   readonly model: MediaLibraryFilesModel;
   readonly selected: ReadonlySet<string>;
   readonly view: MediaView;
+  readonly sort: FilesSortState | null;
+  readonly onSortChange: (sort: FilesSortState | null) => void;
+  readonly columnWidths: FilesColumnWidths | null;
+  readonly onColumnWidthsChange: (widths: FilesColumnWidths | null) => void;
   readonly query: string;
   readonly page: number;
   readonly canPrev: boolean;
@@ -735,14 +745,17 @@ function MediaBrowseView({
   ) => void;
 }) {
   const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
-  const [sort, setSort] = useState<FilesSortState | null>(null);
   const {
     tableRef: columnTableRef,
     values: columnWidthValues,
+    resizedWidths: columnResizedWidths,
     tableStyle: columnWidthStyle,
     setColumnWidth: setFilesColumnWidth,
     resetWidths: resetFilesColumnWidths,
-  } = useFilesColumnWidths(view === "list");
+  } = useFilesColumnWidths(view === "list", {
+    resized: columnWidths,
+    onResizedChange: onColumnWidthsChange,
+  });
   const rows = useMemo(
     () => sortFilesRows(buildRows(model, selected, query), sort),
     [model, selected, query, sort],
@@ -919,7 +932,7 @@ function MediaBrowseView({
           {rows.length > 0 && (
             <FilesSortScope
               sort={sort}
-              onResetSort={() => setSort(null)}
+              onResetSort={() => onSortChange(null)}
               onResetWidths={
                 view === "list" ? resetFilesColumnWidths : undefined
               }
@@ -948,6 +961,9 @@ function MediaBrowseView({
                 className="mf-files-table"
                 style={columnWidthStyle}
               >
+                {columnResizedWidths !== null && (
+                  <FilesTableColumnGroup widths={columnResizedWidths} />
+                )}
                 <thead>
                   <tr>
                     <th scope="col" className="mf-col-check">
@@ -974,7 +990,7 @@ function MediaBrowseView({
                         label="名称"
                         sort={sort}
                         onSort={(field) =>
-                          setSort((current) => nextFilesSort(current, field))
+                          onSortChange(nextFilesSort(sort, field))
                         }
                       />
                       <FilesColumnResizeHandle
@@ -1009,7 +1025,7 @@ function MediaBrowseView({
                         label="大小"
                         sort={sort}
                         onSort={(field) =>
-                          setSort((current) => nextFilesSort(current, field))
+                          onSortChange(nextFilesSort(sort, field))
                         }
                       />
                       <FilesColumnResizeHandle
@@ -2107,6 +2123,12 @@ export function MediaLibraryFilesPage() {
     new Set(),
   );
   const [view, setView] = useState<MediaView>("list");
+  // Presentation state lives above the directory read: a first uncached read
+  // unmounts the browse body, but the operator's current-page order and column
+  // widths stay for the same page session.
+  const [filesSort, setFilesSort] = useState<FilesSortState | null>(null);
+  const [filesColumnWidths, setFilesColumnWidths] =
+    useState<FilesColumnWidths | null>(null);
   // Operator-invoked action state for the Add drawer and the removal dialog.
   // Mount, re-entry, reload and authentication reconnect all start with both
   // closed: neither survives as durable page state.
@@ -3563,6 +3585,10 @@ export function MediaLibraryFilesPage() {
                       model={model}
                       selected={selectedFiles}
                       view={view}
+                      sort={filesSort}
+                      onSortChange={setFilesSort}
+                      columnWidths={filesColumnWidths}
+                      onColumnWidthsChange={setFilesColumnWidths}
                       query={query}
                       page={cursorHistory.length + 1}
                       canPrev={cursorHistory.length > 0}

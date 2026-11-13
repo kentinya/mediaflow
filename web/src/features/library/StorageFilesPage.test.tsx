@@ -1338,6 +1338,191 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.getByText("已选择 0 个文件", { exact: true })).toBeVisible();
   });
 
+  it("keeps current-page order and exact widths through a first directory read, retry and paging", async () => {
+    const user = userEvent.setup();
+    // The browse body unmounts while a new directory is first read; its order
+    // and user widths must survive because they belong to the page session.
+    let failBravo = false;
+    const directory = (name: string) => ({
+      name,
+      path: name,
+      type: "directory",
+      size: 0,
+      modifiedAt: "2026-08-23T11:15:00Z",
+      isDirectory: true,
+      isSymlink: false,
+      traversable: true,
+      selectable: true,
+    });
+    const file = (name: string, path: string, size: number) => ({
+      name,
+      path,
+      type: "file",
+      size,
+      modifiedAt: "2026-08-23T11:15:00Z",
+      isDirectory: false,
+      isSymlink: false,
+      traversable: false,
+      selectable: true,
+    });
+    const page1 = {
+      ...filesPayload("lib-a", null),
+      entries: [
+        file("alpha.mkv", "alpha.mkv", 100),
+        directory("Bravo"),
+        file("zeta.txt", "zeta.txt", 300),
+      ],
+      nextCursor: "page-2",
+      hasNext: true,
+      exhausted: false,
+    };
+    const page2 = {
+      ...page1,
+      entries: [file("page2.mkv", "page2.mkv", 50)],
+      nextCursor: null,
+      hasNext: false,
+      exhausted: true,
+    };
+    const bravo = {
+      ...page1,
+      path: "Bravo",
+      breadcrumbs: [
+        { name: "root", path: "", isRoot: true },
+        { name: "Bravo", path: "Bravo", isRoot: false },
+      ],
+      entries: [
+        file("inner-a.mkv", "Bravo/inner-a.mkv", 10),
+        file("inner-b.mkv", "Bravo/inner-b.mkv", 20),
+      ],
+      nextCursor: null,
+      hasNext: false,
+      exhausted: true,
+    };
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+    });
+    const original = (
+      fetchMock as unknown as ReturnType<typeof vi.fn>
+    ).getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    (fetchMock as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/resource-libraries\/[^/]+\/files(\?|$)/.test(url)) {
+          const parsed = new URL(url, "http://x");
+          const requestedPath = parsed.searchParams.get("path") ?? "";
+          if (requestedPath === "Bravo") {
+            if (failBravo) {
+              failBravo = false;
+              return jsonResponse(
+                {
+                  error: {
+                    code: "storage_browser_not_found",
+                    message: "Storage directory was not found",
+                    details: {
+                      category: "not_found",
+                      durableState: "active_runtime_preserved",
+                      sideEffects: "none",
+                      retrySafe: true,
+                      nextAction: "make the configured directory available",
+                    },
+                  },
+                },
+                404,
+              );
+            }
+            return jsonResponse(bravo);
+          }
+          if (parsed.searchParams.get("cursor") === "page-2") {
+            return jsonResponse(page2);
+          }
+          return jsonResponse(page1);
+        }
+        return original(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
+    const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
+    await user.click(within(nameHeader).getByRole("button", { name: "名称" }));
+    expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => row.getAttribute("aria-label")),
+    ).toEqual(["文件条目 alpha.mkv", "文件条目 Bravo", "文件条目 zeta.txt"]);
+
+    const resize = screen.getByRole("separator", { name: "调整名称列宽" });
+    const widthBefore = Number(resize.getAttribute("aria-valuenow"));
+    resize.focus();
+    await user.keyboard("{ArrowRight}");
+    const sessionWidth = widthBefore + 16;
+    expect(resize).toHaveAttribute("aria-valuenow", String(sessionWidth));
+    // Explicit widths are realized by a table as wide as its five columns.
+    expect(screen.getByRole("table")).toHaveStyle({
+      width: String(34 + sessionWidth + 76 + 92 + 128) + "px",
+    });
+
+    await enterDirectory(user, "Bravo");
+    await screen.findByRole("row", { name: "文件条目 inner-a.mkv" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("columnheader", { name: /名称/ }),
+      ).toHaveAttribute("aria-sort", "ascending"),
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+    expect(screen.getAllByRole("row").slice(1)[0]).toHaveAccessibleName(
+      "文件条目 inner-a.mkv",
+    );
+
+    // A failed read unmounts the body; its retry returns with the same order
+    // and widths instead of silently restoring defaults.
+    failBravo = true;
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+    expect(
+      await screen.findByRole("heading", { name: "Directory not found" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByRole("row", { name: "文件条目 inner-a.mkv" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("columnheader", { name: /名称/ }),
+      ).toHaveAttribute("aria-sort", "ascending"),
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+
+    await user.click(screen.getByRole("button", { name: "返回资源库根目录" }));
+    await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("columnheader", { name: /名称/ }),
+      ).toHaveAttribute("aria-sort", "ascending"),
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByRole("row", { name: "文件条目 page2.mkv" });
+    expect(screen.getByRole("columnheader", { name: /名称/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+  });
+
   it("hands a slow directory read straight to the page without a temporary organize history", async () => {
     // The first directory read stays pending long enough for the existing
     // coordinated wait state.  Nothing describes or reads an organizing

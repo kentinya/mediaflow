@@ -516,6 +516,142 @@ describe("MediaLibrary Files journey", () => {
     );
   });
 
+  it("keeps current-page order and exact widths through a first directory read, retry and paging", async () => {
+    // The browse body unmounts while a new directory is first read; its order
+    // and user widths must survive because they belong to the page session.
+    let failBravo = false;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+        const parsed = new URL(url, "http://x");
+        const requestedPath = parsed.searchParams.get("path") ?? "";
+        if (requestedPath === "Bravo") {
+          if (failBravo) {
+            failBravo = false;
+            return jsonResponse(
+              {
+                error: {
+                  code: "storage_browser_not_found",
+                  message: "Storage directory was not found",
+                  details: {
+                    category: "not_found",
+                    nextAction: "make the configured directory available",
+                  },
+                },
+              },
+              404,
+            );
+          }
+          return jsonResponse(
+            filesDocument("movies", "Bravo", [
+              entry("inner-a.mkv", "Bravo/inner-a.mkv"),
+              entry("inner-b.mkv", "Bravo/inner-b.mkv"),
+            ]),
+          );
+        }
+        if (parsed.searchParams.get("cursor") === "media-page-2") {
+          return jsonResponse(
+            filesDocument("movies", "", [entry("page2.mkv", "page2.mkv")]),
+          );
+        }
+        return jsonResponse(
+          filesDocument(
+            "movies",
+            "",
+            [
+              entry("alpha.mkv", "alpha.mkv", { size: 100 }),
+              entry("Bravo", "Bravo", { directory: true }),
+              entry("zeta.txt", "zeta.txt", { size: 300 }),
+            ],
+            { nextCursor: "media-page-2" },
+          ),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
+    const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
+    await user.click(within(nameHeader).getByRole("button", { name: "名称" }));
+    expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => row.getAttribute("aria-label")),
+    ).toEqual(["文件条目 alpha.mkv", "文件条目 Bravo", "文件条目 zeta.txt"]);
+
+    const resize = screen.getByRole("separator", { name: "调整名称列宽" });
+    const widthBefore = Number(resize.getAttribute("aria-valuenow"));
+    resize.focus();
+    await user.keyboard("{ArrowRight}");
+    const sessionWidth = widthBefore + 16;
+    expect(resize).toHaveAttribute("aria-valuenow", String(sessionWidth));
+    expect(screen.getByRole("table")).toHaveStyle({
+      width: String(34 + sessionWidth + 76 + 92 + 128) + "px",
+    });
+
+    await user.click(
+      within(screen.getByRole("row", { name: "文件条目 Bravo" })).getByRole(
+        "button",
+        { name: "Bravo" },
+      ),
+    );
+    await screen.findByRole("row", { name: "文件条目 inner-a.mkv" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("columnheader", { name: /名称/ }),
+      ).toHaveAttribute("aria-sort", "ascending"),
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+    expect(screen.getAllByRole("row").slice(1)[0]).toHaveAccessibleName(
+      "文件条目 inner-a.mkv",
+    );
+
+    // The existing read failure keeps its retry; the retried body returns with
+    // the page-session order and widths rather than defaults.
+    await user.click(screen.getByRole("button", { name: "返回媒体库根目录" }));
+    await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
+    failBravo = true;
+    await user.click(
+      within(screen.getByRole("row", { name: "文件条目 Bravo" })).getByRole(
+        "button",
+        { name: "Bravo" },
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Directory not found" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByRole("row", { name: "文件条目 inner-a.mkv" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("columnheader", { name: /名称/ }),
+      ).toHaveAttribute("aria-sort", "ascending"),
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+
+    await user.click(screen.getByRole("button", { name: "返回媒体库根目录" }));
+    await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByRole("row", { name: "文件条目 page2.mkv" });
+    expect(screen.getByRole("columnheader", { name: /名称/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(sessionWidth));
+  });
+
   it("supports list/grid, selection summary and honest cursor paging", async () => {
     stubFetch(async (input) => {
       const url = String(input);

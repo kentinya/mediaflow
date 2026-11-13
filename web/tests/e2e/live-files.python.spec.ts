@@ -308,6 +308,18 @@ test("sorted and selected live folders open the same real entry on both pages", 
     await nameSort.click();
     await expect(nameHeader).toHaveAttribute("aria-sort", "descending");
 
+    // The page-session width must survive the real Storage read of a new
+    // directory, so the visible boundary is the same before and after.
+    const nameResize = page.getByRole("separator", {
+      name: "调整名称列宽",
+    });
+    const widthBefore = Number(await nameResize.getAttribute("aria-valuenow"));
+    await nameResize.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => Number(await nameResize.getAttribute("aria-valuenow")))
+      .toBe(widthBefore + 16);
+
     // The selected path is the real directory, not a re-ordered display index.
     await page.getByRole("checkbox", { name: "选择 Gamma-Directory" }).check();
     await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();
@@ -334,6 +346,12 @@ test("sorted and selected live folders open the same real entry on both pages", 
       page.getByLabel("文件条目 child.txt", { exact: true }),
     ).toBeVisible();
     await expect(page.getByText(/Gamma-Directory/).first()).toBeVisible();
+    // The new real directory keeps the same order and column width.
+    await expect(nameHeader).toHaveAttribute("aria-sort", "descending");
+    await expect(nameResize).toHaveAttribute(
+      "aria-valuenow",
+      String(widthBefore + 16),
+    );
   }
 });
 

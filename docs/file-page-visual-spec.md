@@ -206,8 +206,11 @@ row's command path. The same order is used by list and grid views.
 
 The four data columns expose a focusable boundary handle for pointer dragging, `ArrowLeft`/
 `ArrowRight` keyboard adjustment, and `恢复默认列宽` (double-click a handle resets the widths). Widths
-are session-only and survive directory, paging, refresh and list/grid changes. Dragging never sorts,
-selects or opens an entry; narrow screens keep any horizontal overflow inside the table scroller.
+are session-only and survive directory, paging, refresh and list/grid changes. Once widths are
+user-set the table is exactly as wide as its five columns, so the visible boundary follows the
+announced width and leftover pane space stays outside the table (the default layout still fills the
+pane). Dragging never sorts, selects or opens an entry; narrow screens keep any horizontal overflow
+inside the table scroller.
 The selection checkbox and grid tile share the exact path selection, and the grid offers the same
 select-all/clear entries with a visible selected tile state.
 
