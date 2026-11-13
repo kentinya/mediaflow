@@ -1,15 +1,16 @@
 # PATCH-20261114-1 — 整理来源路径、规则重跑与弹窗体验修复
 
 用户于 2026-11-14 明确“激活Task”，正式授权本独立 Task 实施；原 Task ID、Base、
-Goal 与 Scope 保持，移除规划草案限制。当前状态 PLANNED，待 Developer 按计划开始
-实施。本次激活只更新授权，不代行产品实现或 B 独立验收，不授权启动其他代理、推送
-或部署。范围为本会话原五项问题与随后确认的冒号路径拒绝问题。
+Goal 与 Scope 保持，移除规划草案限制。当前状态 READY FOR B REVIEW，候选 checkpoint
+`02ee5fcce7b27ece83f323ddb43beb5ec587c394`；Developer 已完成实现与受影响检查，等待 B 独立验收。本次激活只更新授权，
+不代行产品实现或 B 独立验收，不授权启动其他代理、推送或部署。范围为本会话原五项
+问题与随后确认的冒号路径拒绝问题。
 
 ```text
 Task ID: PATCH-20261114-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 6bf8f58b8283bc891c4b768208d343d2d52600f2
 Difficulty: High
 Test Level: T4
@@ -210,8 +211,94 @@ Task Center 详情／全站主题／规则清单，不恢复旧接收页、Pause
 
 ## Developer completion report
 
-待 Developer 实施完成后填写：完整候选 SHA、READY FOR B REVIEW；变更／关键决定、实际
-受影响检查结果／已知限制和剩余工作。B 独立验收未进行，不自批 PASS。
+```text
+Candidate: 02ee5fcce7b27ece83f323ddb43beb5ec587c394
+Status: READY FOR B REVIEW
+Scope: Task Base 6bf8f58b..02ee5fcce7b27ece83f323ddb43beb5ec587c394
+```
+
+完整候选 SHA：`02ee5fcce7b27ece83f323ddb43beb5ec587c394`（本轮实现 commit）。
+开发分支 `main`，Task Base `6bf8f58b8283bc891c4b768208d343d2d52600f2`；开始与结束时
+工作区除本轮变更外干净，未推送、未发布、未部署。
+
+### 变更与关键决定
+
+1. **来源冒号**：新增共享判断 `domain/storage.py:has_absolute_or_uri_prefix`，只拒绝
+   盘符（`C:`/`C:/`/`C:...`）和 URI scheme 后接分隔符（`smb://`、`file:/`），
+   普通名称中的冒号原位保留。应用到 Files 准入 `bounded_path`、Preview 相对路径、
+   Task scope、恢复准入、Scanner、Storage browser 及 OpenList/S3 逻辑路径校验；
+   绝对路径、反斜杠、UNC、NUL、空/点/父段、字节/段数预算、符号链接和根约束保持。
+   未改前端绕过任何后端校验，也未改源名称。
+2. **Rules 单项重跑**：共用面板只保留一个当前结果位置；主按钮重复检查与结果内
+   “用当前输入重新运行此项”都原位替换同一结果，不增长结果组；loading、成功、
+   不匹配/失败、输入拒绝、迟到结果过期仍按当前性与提交身份处理。
+3. **准备页**：主文案改为真实阶段的中文状态；queued/running/analyzing/waiting_stability
+   不再声称“已完整遍历”；只显示非零计数，取消空原因区与 0/0 翻页；Worker 不可用、
+   读取失败均区分已受理/未受理并给出合法下一步；英文 `nextAction`/progress message/
+   Worker 原话收进“准备诊断”。
+4. **逐项/整批复核**：去除“当前文件的合法决定”第二层标题，原生决定表单成为
+   “当前状态”内容；有方案时只保留一条完整“来源 → 目标”，不再在上方重复来源路径或
+   操作；成功保存通知在原生决定状态已说明时不再重复；长名称/路径仍完整可查。
+5. **过渡**：切换逐项/整批或当前文件时只把该弹窗正文滚回顶部，轮询同一摘要不跳位；
+   阶段内容使用 140ms 局部淡入，`prefers-reduced-motion: reduce` 下关闭。
+6. **已知失败测试**：Task 调度只读消费者允许集合加入 `application/task_item_recovery.py`
+   并说明；Files 名称表头改用稳定 `data-column-width` + 列名/调整控件断言；默认
+   Playwright 配置补排除 `metadata-search-year.python.spec.ts`，Node `--list` 无 Python-only spec。
+
+### 实际检查结果
+
+仓库根：
+
+```text
+python3 scripts/check_governance.py                                          PASS
+.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_storage_browser tests.test_local_storage tests.test_task_scope tests.test_processing_recovery_admission
+                                                                             291 passed
+.venv/bin/python -m unittest tests.test_task_scheduling.TransitionBoundaryTests.test_only_the_named_production_files_wire_the_kernel
+                                                                             1 passed
+.venv/bin/ruff check mediaflow tests scripts                                PASS
+.venv/bin/ruff format --check mediaflow tests scripts                       356 files formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts                   PASS
+git diff --check                                                             PASS
+```
+
+新增/更新的关键证明：`test_a_colon_named_scope_reaches_one_real_confirmed_move` 用原样
+两层冒号样本走真实 Python/SQLite/Local/synthetic Provider 的 Files 准入、discovery、
+Preview、显式确认和 Worker 执行，源路径逐字保留且最终移动成功；目录与“目录+文件”
+混选另行验证 2 项精确计划与零变更；URI/盘符/UNC/NUL/点段拒绝覆盖仍在。Preview、
+Task scope、恢复准入、Storage browser 均有冒号保留与非法前缀拒绝用例。
+
+`web/`：
+
+```text
+npm run test -- run <RulesObjectTestPanel, RulesEditPage, ManualOrganizeDialog,
+  TaskItemRecoveryPanel, StorageFilesPage, modal-card>
+                                                                             6 files / 161 passed
+npm run typecheck / lint / format:check / build                              PASS
+npm run test:e2e -- tests/e2e/library-file-detail.spec.ts rules-identity.spec.ts
+  manual-organize.spec.ts storage-management.spec.ts automation-presentation.spec.ts
+                                                                             55 passed
+npm run test:e2e -- --list                                                   Node list 0 个 python spec
+npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts tests/e2e/metadata-search-year.python.spec.ts
+                                                                             10 passed
+```
+
+实际三视口截图（1440×900、390×844、1280×600）与流程中间帧查看：准备页、逐项决定、
+保存后等待、新方案、整批复核；无横向溢出，长路径换行可查，底栏动作可达；实测
+逐项→整批正文 `scrollTop` 446→0，轮询同一摘要不回顶；reduced-motion 下阶段
+`animation-name` 为 `none`。截图位于 `/tmp/mediaflow-shots*`，仅本机开发证据，
+不作为 B 的耐久证据。
+
+### 已知限制与剩余工作
+
+- 全量 T4/全仓回归、精确 wheel/源码外安装与 B 的独立验收未由 Developer 执行，按流程
+  由 B 在候选 `02ee5fcce7b27ece83f323ddb43beb5ec587c394` 上完成。
+- 冒号链路用真实 Local Storage 验证；未对生产 SMB/OpenList/S3 远程适配器做外部环境
+  验证（按 Task 约束不访问真实服务）。
+- 任意后端失败文本仍以原始英文作为“失败说明/诊断”证据保留，主结论与下一步已中文化；
+  未新增后端错误翻译层。
+- 过渡使用直接正文 `scrollTop=0` 与 CSS 淡入，不增加滚动动画或动效设置。
+- 本报告不声明 PASS；B 独立审查完整 Base..candidate 后才能给出结论。
 
 ## B review result
 
