@@ -808,14 +808,16 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await expect(
     evidence
       .getByRole("region", { name: "执行记录" })
-      .getByText("已验证完成", { exact: true }),
+      .getByText("效果：已验证完成", { exact: true }),
   ).toBeVisible();
   await expect(
     evidence.getByRole("region", { name: "来源与目标" }),
   ).toBeVisible();
-  await expect(
-    evidence.getByRole("region", { name: "处理依据" }),
-  ).toBeVisible();
+  // This repository-written historical fixture has no reviewed manual plan;
+  // its captured analysis remains in diagnostics without an empty basis block.
+  await expect(evidence.getByRole("region", { name: "处理依据" })).toHaveCount(
+    0,
+  );
   // The technical records stay reachable inside the diagnostics group.
   await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
@@ -1242,7 +1244,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await detail.getByRole("button", { name: "操作记录" }).click();
   const records = detail.getByRole("region", { name: "操作记录", exact: true });
   await expect(records.getByRole("cell", { name: "执行结果" })).toBeVisible();
-  await expect(records.getByText("匹配 1 条记录")).toBeVisible();
+  await expect(records.getByText(/^共 1 条记录 · 结果 1/)).toBeVisible();
   await detail.getByRole("button", { name: "任务详情" }).click();
   const restoredItems = detail.getByRole("region", { name: "主条目" });
   await restoredItems.getByRole("button", { name: "查看证据" }).click();
@@ -2402,17 +2404,28 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
       .getByText("目标存储拒绝操作。", { exact: true }),
   ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
-  await expect(
-    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
-  ).toBeVisible();
+  await expect(recovery).toHaveCount(0);
   // The raw persisted server guidance stays available on demand inside the
   // closed technical diagnostics; it is not a visible standing repair
   // invitation in the panel's primary body.
   await expect(
-    recovery.getByText(
+    itemEvidence
+      .getByText(
+        "repair the destination Storage permission, then re-check this item",
+      )
+      .first(),
+  ).toBeHidden();
+  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await expect(
+    itemEvidence.getByText(
       "repair the destination Storage permission, then re-check this item",
     ),
-  ).toBeHidden();
+  ).toHaveCount(1);
+  await expect(
+    itemEvidence.getByText(
+      "repair the destination Storage permission, then re-check this item",
+    ),
+  ).toBeVisible();
   await expect(
     recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);
@@ -2540,10 +2553,7 @@ test("the exact undecided batch item is reachable read-only without a generic re
       .getByText("安全分析中断。", { exact: true }),
   ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
-  await expect(recovery).toBeVisible();
-  await expect(
-    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
-  ).toBeVisible();
+  await expect(recovery).toHaveCount(0);
   await expect(
     recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);

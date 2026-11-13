@@ -8,7 +8,7 @@ Authority: 用户于 2026-11-13 授权独立界面修复规划，随后明确“
 Task ID: PATCH-20261113-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 31f4b56936831699f75590f5afd49d58d630ba9c
 Difficulty: Medium
 Test Level: T3
@@ -244,7 +244,71 @@ web: npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layo
 
 ## B Review Result
 
-尚未产生实现候选或验收结论；Task 已激活，不构成产品 PASS。
+**FIX REQUIRED — 2026-11-13，Reviewer B。**
+
+完整审查范围：`31f4b56936831699f75590f5afd49d58d630ba9c..737718f750c813a9da603a512432db090b9ec1d0`。
+产品实现为 `d3a68160e21227cbf1404d422384d365adebe555`，后继仅交付报告。开始时
+`main`／工作区／暂存区干净，治理检查 PASS，Git 和工作区可写。完整差异限定于本文、
+两个呈现组件、直接测试与两份 CURRENT 呈现文档；Slice54 已关闭，本独立 Task 不重开
+它，不改其 Base／接受结果，也不改 Roadmap／Progress。
+
+已核对的交付：单份逐次执行历史、无待办空恢复区隐藏、记录标题／计数精简均已实现；
+四类决定／摘要确认的原生旅程在首跑中通过。下述一个范围内缺口使本 Task 尚不能 PASS。
+
+### B13-01 — 同一失败记录的下一步仍重复显示（P1，未满足 Scope 3）
+
+**用户旅程与实际结果：** 从任务中心打开有目标存储拒绝的任务 → 在失败文件行点击
+“查看证据” → 展开“技术诊断”。同一句
+`repair the destination Storage permission, then re-check this item`
+出现两遍，分别标为“服务下一步（失败记录）”和“服务下一步（检查点）”。这不是两次
+处理或两个不同建议。既有 Python harness 的混合任务通过生产服务／仓储写入该事实，
+B 从现有任务列表与按钮进入，未新增产品入口、未改响应制造重复。
+
+**根因定位：** `RunDetailTabs.tsx` 的失败说明和 `checkpoint.nextAction` 各自无条件
+渲染一行。`ProcessingCheckpoint.document()` 将该检查点的 `failure.next_action` 投影为
+`nextAction`；本例两处是同一持久失败的重复投影。改两个标签只区分显示位置，没有完成
+原任务要求的“同源同值只呈现一次”。原来的重复在本轮实现中仍保留，本结论不把它
+称为新引入的执行／权限回归。
+
+### Developer 修正指导（仍在 PATCH-20261113-1 内）
+
+1. 在 `RunEvidenceSection` 当前诊断组合处合并这两项失败下一步的重复投影：有同一失败
+   且下一步相等时只显示一份，并让标签说明包含失败／检查点事实；只有一处有值时正常
+   显示；值不同时继续逐项标清来源。按此字段的实际投影关系处理，不做全文去重，不按
+   文案删除 Result、日志、审计或其他来源的记录，不改后端协议与命令生命周期。
+2. 复用已有“failure-record and checkpoint next steps distinguishable”单元旅程，补上
+   相等值及仅一处有值的情形；保留现有不同值均可查的断言。B 已在原生 mixed-run 用例
+   加入打开诊断后仅出现一次的验收断言；当前准确失败为 expected 1 / received 2。
+3. 用该断言验证修正，再跑 `RunDetailTabs.test.tsx`、直接受影响测试及现有 Web 静态检查。
+   更新本 Task 的交付事实并提交同一 Task 修正 checkpoint；不另建 Task，不扩大组件重构。
+   文档按最终实现协调，不提前填写 B PASS。
+
+### B 实际验收、测试修正及未完成项
+
+- 当前候选新 `npm run build` PASS；真实 Python/API／临时 SQLite／Local 根的
+  `task-flow.python.spec.ts` **3 PASS**，7.34 秒（含启动）。其中原始日志保留一次
+  Task 状态发布 OperationalError 与 state preserved；对应失败状态保留旅程通过。
+- `operations-inventory.python.spec.ts` 首跑 **40 PASS / 5 FAIL**，131.36 秒。
+  B 查明四项是旧呈现断言：带“效果：”前缀的文本、无审核计划的历史夹具不应出现空
+  “处理依据”、未筛选记录的“共 N”、已隐藏的两个技术历史空恢复区；另一次手动旅程
+  因此前用例提前退出使共享种子数量改变而失败。B 已修正这些断言，未改产品、超时或
+  重试；原权限／无写请求／不重放断言保留。独立新 harness 对相应四个用例复跑
+  **4 PASS**（9.5 秒），包含真实 Worker、导出／重启及未知提交核对的完整旅程。
+- 原生 mixed-run 新验收断言 **1 FAIL**：展开现有诊断后，同一下一步 expected 1 /
+  received 2。日志、trace、页面文字与截图共同确认 B13-01；它不是旧断言失败。
+- `npm run typecheck` PASS；改动 spec 的 Prettier 格式化完成；治理和 `git diff --check`
+  PASS。本轮自动测试约 2 分 40 秒，连同截图检查计入测试后仍少于复核总时间一半。
+- 实际查看 1536×1024 与 390×844 完整弹卡失败文件，保存同候选的 1536×600 截图，
+  确认正文、无 Result、失败原因和可展开原始事实。视觉覆盖仅限该复现，**不宣称完成**
+  所有成功／多次执行／附件／四类视口或改前改后验收。
+- 已证实范围内阻塞，按工作流停止后续门禁。`manual-organize-dialog.python.spec.ts`、
+  修正后完整 operations-inventory、剩余视觉／多次历史／诊断差异浏览器覆盖待修正候选
+  由 B 继续完成；Developer 不承担这些 B 门禁。Task 保留原 Medium／T3／Base／Goal／Scope。
+
+原始本机证据：`.git/validation-evidence/737718f7/patch-20261113-1-b/`，包含
+`test-times.json`、三个首跑／复现日志、`corrected-assertions.log`、trace、
+`technical-failure-body.txt`／`technical-failure-diagnostics.txt` 与三个视口截图；不是远程 CI。
+本轮 B 只维护 Task、直接原生验收测试和失效文档链接，未实施产品修正。
 
 ---
 
