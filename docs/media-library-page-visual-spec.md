@@ -5,7 +5,10 @@ Historical image only (not a current design or acceptance baseline): preserved i
 `f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`.
 Desktop validation size: `1536 x 1024`
 Route: `/ui-v2/medialib/files`
-Current scope: [SLICE.md](../SLICE.md); accepted ranges: [Progress](progress.md)
+Work authority: [SLICE.md](../SLICE.md) / [TASK.md](../TASK.md) under the
+[workflow](development-workflow.md); large-Slice acceptance: [Progress](progress.md).
+The [accepted browse correction](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)
+records shared list/grid feedback, current-page sorting and session column widths specified below.
 
 The written composition below defines hierarchy: no card statistics or thumbnails;
 both library selectors share cards with name/selection/menu and selected context with enabled state/

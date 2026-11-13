@@ -48,7 +48,12 @@ runtime settings live in System Settings. Five-state Task flow stays independent
 completion neither proves file success nor grants replay.
 
 Files opens directly into the selected library's directory loading, listing or read error; its
-former organizing-history panel is removed. Select files and click Organize to open a centered
+former organizing-history panel and fixed blue browse notice are removed. Both library pages provide
+hover/pressed/focus/selected feedback and share exact file/folder selection across list/grid views.
+Name/size sorting applies only to the loaded current page. Drag or use the keyboard to adjust column
+widths; sorting and widths survive directory changes, paging and refresh within the page session.
+A full page reload restores defaults. See the [browse controls](docs/product-experience.md#browse-feedback-selection-and-table-controls).
+Select files and click Organize to open a centered
 per-file dialog. Choose candidates and use `保存并重新分析` for each file that needs correction;
 review the ready subset and click `确认整理 N 项` once. Proven admission opens that exact Task's
 existing detail in Task Center. A lost response offers original-request reconciliation, retaining

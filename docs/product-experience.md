@@ -794,13 +794,35 @@ and deployment are deferred. C→A identity, exact publication, audit/redaction 
 
 Library cards show icon/name/selection/menu, no Storage/root/count/capacity. Selected context shows
 enabled state and exact configured path only, not a repeated name. Disabled libraries are hidden
-truthfully with an existing Web re-enable path. The immutable visual references and responsive/
+truthfully with an existing Web re-enable path. The current written composition and responsive/
 keyboard states are in [Files specification](file-page-visual-spec.md) and
 [MediaLibrary specification](media-library-page-visual-spec.md).
 
 OpenList browsing and native Move／Rename checks use directory attributes. The verified result
 records the target's actual attributes and, for Move, the source's disappearance. NFO parsing,
 Hash checks and streamed transfers read content according to the selected operation.
+
+### Browse feedback, selection and table controls
+
+Both library pages show light hover/pressed feedback, a clear keyboard focus and persistent selected
+states for files/folders in list and grid. A checkbox selects the exact path without opening a folder;
+Space toggles a focused checkbox. List/grid changes preserve the same selection and count, with
+select-all/clear for the loaded page. Directory/page/library changes keep the existing selection
+lifecycle. Folder clicks still open that folder; ordinary file clicks add no new operation.
+
+Name/size headers sort only the loaded current page, with visible `当前页排序`, ascending/descending
+state and `恢复默认顺序`. List and grid share that order; sorting neither fetches more pages nor
+changes command targets. Four data-column handles support dragging and left/right keys; double-click
+or `恢复默认列宽` resets them. The visible boundary matches the chosen width, with horizontal overflow
+inside the table scroller. Sort and widths survive directory changes, paging, refresh and read-failure
+retry within that page session; full page reload restores defaults. Reduced-motion keeps immediate
+feedback. The Files fixed blue browse explanation is removed; meaningful errors/results remain.
+
+For example: open a library → sort the current page by name → narrow the name column → select a file
+→ switch to grid to see the same selected item → return to list and open a folder. The folder loads
+with the same sort/width settings; if reading fails, use the existing bounded-read recovery above.
+These controls do not start work, publish configuration or mutate media. The accepted correction and
+actual desktop/narrow/short-window validation are linked from the [documentation guide](README.md).
 
 ### Common file maintenance
 

@@ -43,6 +43,25 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [Files/MediaLibrary browse-interaction correction](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)
+passed independent B T3 review on 2026-11-13: Base
+`9811df4559d94db5b648f6152476f39035a12ae5`, reviewed Head
+`14da49b8489e511a8ea588a40f7a10a869522c05`, product checkpoint
+`a2effc4b0ed4503d230ff9b684d3d1e869793e95`. It removes the Files fixed blue notice,
+adds list/grid interaction and selection feedback, current-page name/size sorting and accurate
+pointer/keyboard column widths. Directory changes, paging and read retries retain session settings;
+full page reload restores defaults. No backend, permission or Storage protocol changed.
+
+Acceptance passed 106 affected Web unit tests, 71 Node browser tests, 6 real-Python live-list tests
+and 4 real-Python rename/delete tests, plus Web type/lint/format/build and governance checks.
+Desktop, 390px and short-window interactions and reduced-motion were inspected. Initial concurrent
+browser runs had trace-artifact ENOENT failures (Node: 69 passed/2 failed; direct: 3 passed/1 failed);
+unchanged tests passed with isolated output directories (71 and 4). The fixed review retains the
+prior two product blockers, their corrections and both initial/repeated results. Raw logs/screenshots
+remain local at `.git/validation-evidence/14da49b8/patch-20261113-2-b/`. These T3 checks add no
+whole-repository, wheel, Docker or production-service validation. Documentation-only successors
+change no executable inputs; this is development acceptance.
+
 The [per-file decision and reanalysis correction](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)
 passed independent B T3 review on 2026-11-12, from Base
 `32bb37262777ae945deb8af4a51d9109876ca804` through reviewed Head
