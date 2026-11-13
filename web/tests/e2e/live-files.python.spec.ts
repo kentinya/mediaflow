@@ -294,6 +294,49 @@ test("the live read is strictly read-only on the server", async ({ page }) => {
   expect(mutations).toEqual([]);
 });
 
+test("sorted and selected live folders open the same real entry on both pages", async ({
+  page,
+}) => {
+  for (const kind of ["resource", "media"] as const) {
+    const library = kind === "resource" ? "source" : "movies";
+    await openWebFiles(page, kind, library, LIVE_PATH);
+
+    const nameHeader = page.locator('th[data-column-width="name"]');
+    const nameSort = nameHeader.getByRole("button", { name: "名称" });
+    await nameSort.click();
+    await expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
+    await nameSort.click();
+    await expect(nameHeader).toHaveAttribute("aria-sort", "descending");
+
+    // The selected path is the real directory, not a re-ordered display index.
+    await page.getByRole("checkbox", { name: "选择 Gamma-Directory" }).check();
+    await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();
+
+    // The same exact selection follows the grid/list switch before opening.
+    await page.getByRole("button", { name: "网格视图" }).click();
+    await expect(
+      page.getByRole("checkbox", { name: "选择 Gamma-Directory" }),
+    ).toBeChecked();
+    await expect(
+      page.getByLabel("文件条目 Gamma-Directory", { exact: true }),
+    ).toHaveClass(/is-selected/);
+    await page.getByRole("button", { name: "列表视图" }).click();
+    await expect(
+      page.getByRole("checkbox", { name: "选择 Gamma-Directory" }),
+    ).toBeChecked();
+
+    // Opening the sorted/selected row performs the real Storage read.
+    await page
+      .getByRole("row", { name: "文件条目 Gamma-Directory" })
+      .getByRole("button", { name: "Gamma-Directory" })
+      .click();
+    await expect(
+      page.getByLabel("文件条目 child.txt", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/Gamma-Directory/).first()).toBeVisible();
+  }
+});
+
 test("unknown library and missing directory answer honestly and recover", async ({
   page,
 }) => {

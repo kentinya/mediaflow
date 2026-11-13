@@ -449,6 +449,73 @@ describe("MediaLibrary Files journey", () => {
     expect(screen.queryByRole("heading", { name: "路径无效" })).toBeNull();
   });
 
+  it("orders the current page, shares exact selection with the grid and keeps column widths across views", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+        return jsonResponse(
+          filesDocument("movies", "", [
+            entry("Zeta.txt", "Zeta.txt", { size: 100 }),
+            entry("alpha.mkv", "alpha.mkv", { size: 300 }),
+            entry("Bravo", "Bravo", { directory: true }),
+          ]),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    await screen.findByRole("table");
+    const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
+    const nameSort = within(nameHeader).getByRole("button", { name: "名称" });
+    await user.click(nameSort);
+    expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(screen.getByText(/当前页排序：名称升序/)).toBeVisible();
+
+    const sizeHeader = screen.getByRole("columnheader", { name: /大小/ });
+    await user.click(within(sizeHeader).getByRole("button", { name: "大小" }));
+    expect(sizeHeader).toHaveAttribute("aria-sort", "ascending");
+    const sizeRows = screen.getAllByRole("row").slice(1);
+    expect(sizeRows[0]).toHaveAccessibleName("文件条目 Zeta.txt");
+    expect(sizeRows[1]).toHaveAccessibleName("文件条目 alpha.mkv");
+    expect(sizeRows[2]).toHaveAccessibleName("文件条目 Bravo");
+
+    const resizeHandle = screen.getByRole("separator", {
+      name: "调整名称列宽",
+    });
+    const widthBefore = Number(resizeHandle.getAttribute("aria-valuenow"));
+    resizeHandle.focus();
+    await user.keyboard("{ArrowRight}");
+
+    await user.click(screen.getByRole("checkbox", { name: "选择 alpha.mkv" }));
+    expect(screen.getByText(/已选择 1 个文件/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "网格视图" }));
+    const gridSelection = screen.getByRole("checkbox", {
+      name: "选择 alpha.mkv",
+    });
+    expect(gridSelection).toBeChecked();
+    expect(gridSelection.closest(".mf-grid-cell")).toHaveClass("is-selected");
+    await user.click(screen.getByRole("checkbox", { name: "选择全部" }));
+    expect(screen.getByText(/已选择 3 个项目/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "取消选择" }));
+    expect(screen.getByText("已选择 0 个项目", { exact: true })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "列表视图" }));
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(widthBefore + 16));
+    expect(
+      screen.getByRole("columnheader", { name: /名称/ }),
+    ).not.toHaveAttribute("aria-sort");
+    expect(screen.getByRole("columnheader", { name: /大小/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+  });
+
   it("supports list/grid, selection summary and honest cursor paging", async () => {
     stubFetch(async (input) => {
       const url = String(input);

@@ -46,17 +46,20 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 | Directory navigation | No page-local tree/placeholder; folders, exact breadcrumbs and parent/root navigation retain browsing. |
 | File toolbar | Relative breadcrumbs, `刷新`, list/grid controls and existing bounded search through the top bar. |
 | Selection bar | Above rows: selected count/known size and bounded batch Copy/Move/Delete; ResourceLibrary batch Organize remains available. Single-entry commands are not duplicated here. |
-| Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间`; type icons, directory navigation and selection. No persistent operation column. |
+| Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间`; type icons, directory navigation and selection. Name/size sort only the loaded current page with visible `当前页排序` scope/reset; the four data columns have discoverable drag/keyboard width handles and a session-only `恢复默认列宽` entry. No persistent operation column. |
 | Entry context menu | Right-click, Context Menu key or `Shift+F10` opens the applicable single-entry commands. Folder left click opens directly; no inline Open button. |
-| Grid | Same entries, selection and commands using type icons, without thumbnails/artwork. |
+| Grid | Same entries, exact path selection, select-all/clear, commands and current-page order using type icons, without thumbnails/artwork. |
 | Paging | Existing supported bounded previous/next/cursor behavior; accurately labelled loaded/visible count, no fabricated full totals. |
 | Add/Edit card | Centered bounded overlay, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
 
 The desktop reference has an approximately `208 px` left rail and `58 px` top bar. These guide
 composition, not pixel thresholds; its right drawer/tree geometry is superseded by Slice50. Retain
 the light canvas, white panels, cool borders, blue actions/selection and green enabled badges.
-Library cards sit above the full-width browse area; Add/Edit uses a bounded centered overlay. Narrow layouts retain actions,
-readable content and keyboard/focus behavior.
+Library cards sit above the full-width browse area; Add/Edit uses a bounded centered overlay. Narrow
+layouts retain actions, readable content and keyboard/focus behavior. Hover, focus, pressed and
+selected list/grid states change a light background without row/tile movement; selected stays
+distinguishable while hovered, and reduced-motion keeps the feedback immediate without a slide.
+Column widths and current-page order are presentation session state, not durable preferences.
 
 ## Explicit Image Overrides
 

@@ -1983,7 +1983,84 @@ body {
 }
 
 .mf-grid-cell {
+  position: relative;
   min-width: 0;
+  border-radius: 8px;
+  transition: background-color 120ms ease;
+}
+
+.mf-grid-cell:hover {
+  background: #f4f8ff;
+}
+
+.mf-grid-cell.is-selected {
+  background: #e5efff;
+}
+
+.mf-grid-cell.is-selected:hover {
+  background: #dbe8ff;
+}
+
+.mf-grid-cell:not(.is-selected):active {
+  background: #eaf2ff;
+}
+
+.mf-grid-cell:hover:not(.is-selected) .mf-grid-button {
+  background: #f7faff;
+  border-color: #bcd5ff;
+}
+
+.mf-grid-cell.is-selected .mf-grid-button {
+  background: #eaf3ff;
+  border-color: #bcd5ff;
+}
+
+.mf-grid-cell.is-selected:hover .mf-grid-button {
+  background: #dbe8ff;
+}
+
+.mf-grid-select {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: var(--files-surface);
+}
+
+.mf-grid-select input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #1268f5;
+}
+
+.mf-grid-selection-bar {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 2px;
+}
+
+.mf-grid-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #39547f;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mf-grid-select-all input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #1268f5;
 }
 
 .mf-grid-button {
@@ -3083,23 +3160,29 @@ button.mf-grid-button {
 .mf-files-table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   background: #ffffff;
 }
 
 .mf-files-table {
   width: 100%;
+  min-width: 640px;
   font-size: 12px;
   line-height: 17px;
 }
 
 .mf-files-table th {
+  position: relative;
   height: 43px;
   padding: 0 6px;
   color: #223b6d;
   font-size: 12px;
   font-weight: 600;
   vertical-align: middle;
+}
+
+.mf-files-table th[data-column-width] {
+  padding-right: 14px;
 }
 
 .mf-files-table td {
@@ -3117,24 +3200,22 @@ button.mf-grid-button {
 
 .mf-files-table th:nth-child(2),
 .mf-files-table td:nth-child(2) {
-  /* The single flexible column: it absorbs the remaining pane width so the
-     bounded physical columns and the action column keep their exact size. */
-  width: auto;
+  width: var(--mf-col-name-width, auto);
 }
 
 .mf-files-table th:nth-child(3),
 .mf-files-table td:nth-child(3) {
-  width: 47px;
+  width: var(--mf-col-type-width, 76px);
 }
 
 .mf-files-table th:nth-child(4),
 .mf-files-table td:nth-child(4) {
-  width: 63px;
+  width: var(--mf-col-size-width, 92px);
 }
 
 .mf-files-table th:nth-child(5),
 .mf-files-table td:nth-child(5) {
-  width: 112px;
+  width: var(--mf-col-modified-width, 128px);
   white-space: nowrap;
 }
 
@@ -3150,8 +3231,121 @@ button.mf-grid-button {
   accent-color: #1268f5;
 }
 
-.mf-files-table tr.is-selected td {
+.mf-files-table tbody td {
+  transition: background-color 120ms ease;
+}
+
+.mf-files-table tbody tr:not(.is-selected):hover td {
+  background: #f4f8ff;
+}
+
+.mf-files-table tbody tr.is-selected td {
   background: #e5efff;
+}
+
+.mf-files-table tbody tr.is-selected:hover td {
+  background: #dbe8ff;
+}
+
+.mf-files-table tbody tr:not(.is-selected):active td {
+  background: #eaf2ff;
+}
+
+.mf-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  padding: 3px 2px;
+  cursor: pointer;
+}
+
+.mf-sort-button:hover,
+.mf-sort-button:focus-visible {
+  color: var(--files-accent-strong);
+  background: #f0f6ff;
+}
+
+.mf-sort-button.is-active {
+  color: var(--files-accent-strong);
+}
+
+.mf-sort-indicator {
+  color: var(--files-muted);
+  font-size: 0.8rem;
+}
+
+.mf-sort-button.is-active .mf-sort-indicator {
+  color: var(--files-accent);
+}
+
+.mf-files-sortscope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 30px;
+  color: var(--files-muted);
+  font-size: 12px;
+  padding: 4px 2px;
+}
+
+.mf-files-sortscope-label {
+  color: #39547f;
+}
+
+.mf-files-sortscope-reset {
+  border: 1px solid var(--files-line);
+  border-radius: 4px;
+  background: var(--files-surface);
+  color: var(--files-accent-strong);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.mf-files-sortscope-reset:disabled {
+  border-color: var(--files-disabled-line);
+  background: var(--files-disabled-surface);
+  color: var(--files-disabled-ink);
+  cursor: default;
+}
+
+.mf-col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.mf-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 3px;
+  border-left: 1px solid #dbe4f0;
+}
+
+.mf-col-resize:hover::after,
+.mf-col-resize:focus-visible::after {
+  border-left-color: var(--files-accent);
+}
+
+.mf-col-resize:focus-visible {
+  outline: 2px solid var(--files-accent);
+  outline-offset: -2px;
 }
 
 .mf-cell-name {
@@ -9826,5 +10020,14 @@ tr[aria-selected="true"] {
 
   .mf-organize-decision-option {
     padding: 10px;
+  }
+}
+
+/* Current-page ordering, selection and column resizing are immediate feedback:
+   reduced motion keeps the state change but removes the transition. */
+@media (prefers-reduced-motion: reduce) {
+  .mf-files-table tbody td,
+  .mf-grid-cell {
+    transition: none;
   }
 }

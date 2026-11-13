@@ -50,6 +50,16 @@ import {
 import { LibraryFileOperationsDialog } from "./LibraryFileOperationsDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
+  FilesColumnResizeHandle,
+  FilesGridSelectAll,
+  FilesSortButton,
+  FilesSortScope,
+  nextFilesSort,
+  sortFilesRows,
+  useFilesColumnWidths,
+  type FilesSortState,
+} from "./files-browse-presentation";
+import {
   MEDIA_LIBRARY_DELETE_IMPACT_QUERY_KEY,
   MEDIA_LIBRARY_FILES_QUERY_KEY,
   MEDIA_LIBRARY_RENAME_EVIDENCE_QUERY_KEY,
@@ -372,11 +382,17 @@ function MediaState({
 
 function MediaGridView({
   rows,
+  allChecked,
+  onToggle,
+  onToggleAll,
   onOpenPath,
   onOpenMenu,
   renderMenu,
 }: {
   readonly rows: readonly MediaRowVm[];
+  readonly allChecked: boolean;
+  readonly onToggle: (path: string) => void;
+  readonly onToggleAll: () => void;
   readonly onOpenPath: (path: string) => void;
   readonly onOpenMenu: (
     row: MediaRowVm,
@@ -385,52 +401,73 @@ function MediaGridView({
   readonly renderMenu: (row: MediaRowVm) => ReactNode;
 }) {
   return (
-    <ul className="mf-files-grid">
-      {rows.map((row) => (
-        <li
-          key={row.path}
-          className="mf-grid-cell"
-          tabIndex={0}
-          data-row-menu={row.path}
-          aria-label={`文件条目 ${identityAccessibleName(row.name)}`}
-          onContextMenu={(event) => onOpenMenu(row, event)}
-          onKeyDown={(event) => {
-            if (
-              event.key === "ContextMenu" ||
-              (event.shiftKey && event.key === "F10") ||
-              (event.key === "Enter" && event.target === event.currentTarget)
-            ) {
-              onOpenMenu(row, event);
+    <>
+      <FilesGridSelectAll allChecked={allChecked} onToggleAll={onToggleAll} />
+      <ul className="mf-files-grid">
+        {rows.map((row) => (
+          <li
+            key={row.path}
+            className={
+              row.checked ? "mf-grid-cell is-selected" : "mf-grid-cell"
             }
-          }}
-        >
-          {row.isDirectory && row.traversable ? (
-            <button
-              type="button"
-              className="mf-grid-button"
-              onClick={() => onOpenPath(row.path)}
-            >
-              <span className="mf-grid-icon" aria-hidden="true">
-                <Icon name="folder" />
+            tabIndex={0}
+            data-row-menu={row.path}
+            aria-label={`文件条目 ${identityAccessibleName(row.name)}`}
+            onClick={(event) => {
+              if (
+                row.isDirectory &&
+                row.traversable &&
+                !(event.target as Element).closest("input, button, a")
+              ) {
+                onOpenPath(row.path);
+              }
+            }}
+            onContextMenu={(event) => onOpenMenu(row, event)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10") ||
+                (event.key === "Enter" && event.target === event.currentTarget)
+              ) {
+                onOpenMenu(row, event);
+              }
+            }}
+          >
+            <input
+              type="checkbox"
+              className="mf-grid-select"
+              aria-label={"选择 " + identityAccessibleName(row.name)}
+              checked={row.checked}
+              onChange={() => onToggle(row.path)}
+            />
+            {row.isDirectory && row.traversable ? (
+              <button
+                type="button"
+                className="mf-grid-button"
+                onClick={() => onOpenPath(row.path)}
+              >
+                <span className="mf-grid-icon" aria-hidden="true">
+                  <Icon name="folder" />
+                </span>
+                <span className="mf-grid-name">
+                  <IdentityLabel value={row.name} />
+                </span>
+              </button>
+            ) : (
+              <span className="mf-grid-button">
+                <span className="mf-grid-icon" aria-hidden="true">
+                  <Icon name="file" />
+                </span>
+                <span className="mf-grid-name">
+                  <IdentityLabel value={row.name} />
+                </span>
               </span>
-              <span className="mf-grid-name">
-                <IdentityLabel value={row.name} />
-              </span>
-            </button>
-          ) : (
-            <span className="mf-grid-button">
-              <span className="mf-grid-icon" aria-hidden="true">
-                <Icon name="file" />
-              </span>
-              <span className="mf-grid-name">
-                <IdentityLabel value={row.name} />
-              </span>
-            </span>
-          )}
-          {renderMenu(row)}
-        </li>
-      ))}
-    </ul>
+            )}
+            {renderMenu(row)}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -697,9 +734,18 @@ function MediaBrowseView({
     paths: readonly string[],
   ) => void;
 }) {
+  const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
+  const [sort, setSort] = useState<FilesSortState | null>(null);
+  const {
+    tableRef: columnTableRef,
+    values: columnWidthValues,
+    tableStyle: columnWidthStyle,
+    setColumnWidth: setFilesColumnWidth,
+    resetWidths: resetFilesColumnWidths,
+  } = useFilesColumnWidths(view === "list");
   const rows = useMemo(
-    () => buildRows(model, selected, query),
-    [model, selected, query],
+    () => sortFilesRows(buildRows(model, selected, query), sort),
+    [model, selected, query, sort],
   );
   const selectedRows = rows.filter((row) => selected.has(row.path));
   const selectedCount = selectedRows.length;
@@ -710,7 +756,6 @@ function MediaBrowseView({
   const selectedPaths = model.entries
     .filter((entry) => selected.has(entry.path))
     .map((entry) => entry.path);
-  const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
   const openEntryMenu = useCallback(
     (row: MediaRowVm, event: ReactMouseEvent | ReactKeyboardEvent) => {
       event.preventDefault();
@@ -871,6 +916,15 @@ function MediaBrowseView({
             </div>
           </div>
           <FilesRefreshState refreshing={refreshing} />
+          {rows.length > 0 && (
+            <FilesSortScope
+              sort={sort}
+              onResetSort={() => setSort(null)}
+              onResetWidths={
+                view === "list" ? resetFilesColumnWidths : undefined
+              }
+            />
+          )}
           {rows.length === 0 ? (
             <p className="mf-files-state">
               {query !== ""
@@ -880,13 +934,20 @@ function MediaBrowseView({
           ) : view === "grid" ? (
             <MediaGridView
               rows={rows}
+              allChecked={allChecked}
+              onToggle={onToggle}
+              onToggleAll={onToggleAll}
               onOpenPath={onOpenPath}
               onOpenMenu={openEntryMenu}
               renderMenu={renderEntryMenu}
             />
           ) : (
             <div className="mf-files-table-scroll">
-              <table className="mf-files-table">
+              <table
+                ref={columnTableRef}
+                className="mf-files-table"
+                style={columnWidthStyle}
+              >
                 <thead>
                   <tr>
                     <th scope="col" className="mf-col-check">
@@ -897,20 +958,76 @@ function MediaBrowseView({
                         onChange={onToggleAll}
                       />
                     </th>
-                    <th scope="col">
-                      名称{" "}
-                      <span className="mf-sort" aria-hidden="true">
-                        ⇅
-                      </span>
+                    <th
+                      scope="col"
+                      data-column-width="name"
+                      aria-sort={
+                        sort?.field === "name"
+                          ? sort.direction === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      <FilesSortButton
+                        field="name"
+                        label="名称"
+                        sort={sort}
+                        onSort={(field) =>
+                          setSort((current) => nextFilesSort(current, field))
+                        }
+                      />
+                      <FilesColumnResizeHandle
+                        column="name"
+                        width={columnWidthValues.name}
+                        onWidthChange={setFilesColumnWidth}
+                        onReset={resetFilesColumnWidths}
+                      />
                     </th>
-                    <th scope="col">类型</th>
-                    <th scope="col">
-                      大小{" "}
-                      <span className="mf-sort" aria-hidden="true">
-                        ⇅
-                      </span>
+                    <th scope="col" data-column-width="type">
+                      类型
+                      <FilesColumnResizeHandle
+                        column="type"
+                        width={columnWidthValues.type}
+                        onWidthChange={setFilesColumnWidth}
+                        onReset={resetFilesColumnWidths}
+                      />
                     </th>
-                    <th scope="col">修改时间</th>
+                    <th
+                      scope="col"
+                      data-column-width="size"
+                      aria-sort={
+                        sort?.field === "size"
+                          ? sort.direction === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      <FilesSortButton
+                        field="size"
+                        label="大小"
+                        sort={sort}
+                        onSort={(field) =>
+                          setSort((current) => nextFilesSort(current, field))
+                        }
+                      />
+                      <FilesColumnResizeHandle
+                        column="size"
+                        width={columnWidthValues.size}
+                        onWidthChange={setFilesColumnWidth}
+                        onReset={resetFilesColumnWidths}
+                      />
+                    </th>
+                    <th scope="col" data-column-width="modified">
+                      修改时间
+                      <FilesColumnResizeHandle
+                        column="modified"
+                        width={columnWidthValues.modified}
+                        onWidthChange={setFilesColumnWidth}
+                        onReset={resetFilesColumnWidths}
+                      />
+                    </th>
                   </tr>
                 </thead>
                 <tbody>

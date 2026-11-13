@@ -1175,6 +1175,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("movie.mkv")).toBeVisible();
+    // The retired informational banner is absent rather than leaving an empty
+    // band above the live table.
+    expect(screen.queryByText(/当前显示的是资源库中的文件/)).toBeNull();
     // The first column is the select-all control; the remaining five are the
     // physical/action columns.
     expect(
@@ -1202,6 +1205,137 @@ describe("Files entry state and ResourceLibrary strip", () => {
         String(url).includes("/files/organize-work"),
       ),
     ).toHaveLength(0);
+  });
+
+  it("orders the current page, shares grid selection and keeps path-bound actions after presentation changes", async () => {
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () => {
+        const payload = filesPayload("lib-a", null);
+        return jsonResponse({
+          ...payload,
+          entries: [
+            {
+              name: "zeta.txt",
+              path: "zeta.txt",
+              type: "file",
+              size: 100,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: true,
+            },
+            {
+              name: "alpha.mkv",
+              path: "alpha.mkv",
+              type: "file",
+              size: 300,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: true,
+            },
+            {
+              name: "Bravo",
+              path: "Bravo",
+              type: "directory",
+              size: 0,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: true,
+              isSymlink: false,
+              traversable: true,
+              selectable: true,
+            },
+          ],
+        });
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByText("alpha.mkv");
+    const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
+    const nameSort = within(nameHeader).getByRole("button", { name: "名称" });
+
+    await user.click(nameSort);
+    expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(screen.getByText(/当前页排序：名称升序/)).toBeVisible();
+    expect(screen.getAllByRole("row").slice(1)[0]).toHaveAccessibleName(
+      "文件条目 alpha.mkv",
+    );
+
+    await user.click(nameSort);
+    expect(nameHeader).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getByText(/当前页排序：名称降序/)).toBeVisible();
+    expect(screen.getAllByRole("row").slice(1)[0]).toHaveAccessibleName(
+      "文件条目 zeta.txt",
+    );
+
+    // Size keeps the directory after valid byte sizes, even descending.
+    await user.click(
+      within(screen.getByRole("columnheader", { name: /大小/ })).getByRole(
+        "button",
+        { name: "大小" },
+      ),
+    );
+    expect(screen.getByRole("columnheader", { name: /大小/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    const sizeRows = screen.getAllByRole("row").slice(1);
+    expect(sizeRows[0]).toHaveAccessibleName("文件条目 zeta.txt");
+    expect(sizeRows[1]).toHaveAccessibleName("文件条目 alpha.mkv");
+    expect(sizeRows[2]).toHaveAccessibleName("文件条目 Bravo");
+
+    // The command menu still names the row it was opened on after reordering.
+    openEntryMenu("zeta.txt");
+    await user.click(screen.getByRole("menuitem", { name: "重命名" }));
+    const renameDialog = await screen.findByRole("dialog", {
+      name: "重命名",
+    });
+    expect(within(renameDialog).getByLabelText("新名称")).toHaveValue(
+      "zeta.txt",
+    );
+    await user.click(
+      within(renameDialog).getByRole("button", { name: "取消" }),
+    );
+
+    // Keyboard resizing uses the same session state and does not sort or select.
+    const resizeHandle = screen.getByRole("separator", {
+      name: "调整名称列宽",
+    });
+    const widthBefore = Number(resizeHandle.getAttribute("aria-valuenow"));
+    resizeHandle.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(Number(resizeHandle.getAttribute("aria-valuenow"))).toBe(
+      widthBefore + 16,
+    );
+    expect(screen.getByRole("columnheader", { name: /大小/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(
+      screen.getByRole("columnheader", { name: /名称/ }),
+    ).not.toHaveAttribute("aria-sort");
+
+    await user.click(screen.getByRole("checkbox", { name: "选择 alpha.mkv" }));
+    expect(screen.getByText(/已选择 1 个文件/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "网格视图" }));
+    expect(screen.queryByRole("table")).toBeNull();
+    const gridSelection = screen.getByRole("checkbox", {
+      name: "选择 alpha.mkv",
+    });
+    expect(gridSelection).toBeChecked();
+    expect(gridSelection.closest(".mf-grid-cell")).toHaveClass("is-selected");
+    // The grid's select-all/clear entries operate on the same exact path set.
+    await user.click(screen.getByRole("checkbox", { name: "选择全部" }));
+    expect(screen.getByText(/已选择 3 个项目/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "取消选择" }));
+    expect(screen.getByText("已选择 0 个文件", { exact: true })).toBeVisible();
   });
 
   it("hands a slow directory read straight to the page without a temporary organize history", async () => {

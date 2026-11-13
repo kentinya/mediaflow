@@ -254,12 +254,14 @@ test("Files success state presents the reference composition with live Storage r
   const apiRequests = apiRequestsOf(page);
   await openFiles(page);
 
-  // Reference hierarchy: banner, ResourceLibrary card strip, directory pane,
+  // Reference hierarchy: ResourceLibrary card strip, directory pane,
   // breadcrumb, toolbar, table, selection footer and pagination.  Two enabled
   // libraries render the directly visible card strip; the first eligible
-  // library is selected without any hard-coded default.
+  // library is selected without any hard-coded default.  The retired
+  // informational banner leaves no band or placeholder behind.
   const strip = page.locator(".mf-library-strip");
-  await expect(page.getByText(/当前显示的是资源库中的文件/)).toBeVisible();
+  await expect(page.getByText(/当前显示的是资源库中的文件/)).toHaveCount(0);
+  await expect(page.locator(".mf-files-banner")).toHaveCount(0);
   await expect(strip).toBeVisible();
   await expect(
     strip.getByRole("button", { name: "Resources", exact: true }),
@@ -1256,11 +1258,12 @@ test("create folder and rename complete through the direct command dialogs", asy
   await openFiles(page);
 
   await page.getByRole("button", { name: "新建文件夹" }).click();
-  await page.getByLabel("名称").fill("bad/name");
+  const createDialog = page.getByRole("dialog", { name: "新建文件夹" });
+  await createDialog.getByLabel("名称").fill("bad/name");
   await page.getByRole("button", { name: "创建" }).click();
   await expect(page.getByRole("alert")).toContainText("单个安全文件名");
 
-  await page.getByLabel("名称").fill("E2E 新目录");
+  await createDialog.getByLabel("名称").fill("E2E 新目录");
   await page.getByRole("button", { name: "创建" }).click();
   await expect(page.getByRole("dialog", { name: "新建文件夹" })).toHaveCount(0);
 

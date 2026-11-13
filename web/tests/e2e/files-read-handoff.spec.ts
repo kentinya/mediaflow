@@ -52,12 +52,14 @@ test("a fast directory read shows the page context and table with no organizing 
   const api = apiRequestsOf(page);
   await connectAndOpenFiles(page);
 
-  // One visible page: notice, library cards and the real directory table.
+  // One visible page: library cards and the real directory table. The old
+  // informational banner is gone rather than leaving an empty placeholder.
   await expect(
     page.getByText(
       "当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。",
     ),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.locator(".mf-files-banner")).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
   await expect(page.getByText("整理记录")).toHaveCount(0);
   await expect(

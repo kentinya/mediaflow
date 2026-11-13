@@ -53,7 +53,7 @@ recovery state when absent. Explicit Files organizing admits its durable task be
 readiness; exact analysis/summary and selected confirmation still precede media mutation.
 
 The Files page has no organizing-history panel in loading, ready or error states. After the header,
-banner and library cards/context, the workarea presents directory waiting, live entries or the
+library cards/context, the workarea presents directory waiting, live entries or the
 directory read error directly. Ordinary browsing does not query/poll organizing history. An unknown
 organizing submission still reconciles its exact request before returning to the admitted preparation.
 After selecting files and generating a summary, the operator may leave and reopen the original
@@ -124,7 +124,6 @@ do not impose pixel-identical CSS geometry:
 | Main page content | Starts inside the top bar and uses a wide constrained content area |
 | Page title block | Upper-left of the main content: `文件` followed by the subtitle |
 | Header actions | Upper-right: `当前页面操作状态` immediately left of `+ 添加资源库`, with the same style |
-| Information banner | Full content-width light-blue band directly below the title block |
 | Library selector/context | Shared card strip showing `source` by name; selected context below shows `已启用` and `路径: /media/incoming` |
 | Directory pane | Removed by accepted Slice50; no tree or blank placeholder |
 | File pane | Full available workarea width, containing breadcrumb, toolbar and table |
@@ -164,8 +163,6 @@ The main content shows:
 - heading `文件`;
 - subtitle `浏览资源库中的文件，选择需要整理的文件。`;
 - primary button `+ 添加资源库`;
-- information banner:
-  `当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。`;
 - selected context:
   - green state `已启用`;
   - `路径: /media/incoming`.
@@ -186,18 +183,33 @@ The file pane shows the breadcrumb and controls:
 - list view selected;
 - grid view available but not selected.
 
-The current written composition applies to the closed, non-hover success state. Single-entry
-commands are exposed through a controlled context menu opened by right-click, the Context Menu key or
-`Shift+F10`; keyboard and touch users receive an equivalent focusable action entry, so right-click is
-not the only discoverability path. Folder names/icons and non-checkbox row areas open folders on left
-click, while the context menu retains an explicit `打开` item. No persistent row action buttons or
-operation column are rendered.
+The written composition applies to the closed, non-hover success state. Hover, focus, pressed and
+selected states use a light background change without moving the row, and selection remains
+distinct while hovered. Single-entry commands are exposed through a controlled context menu opened
+by right-click, the Context Menu key or `Shift+F10`; keyboard and touch users receive an equivalent
+focusable action entry, so right-click is not the only discoverability path. Folder names/icons and
+non-checkbox row areas open folders on left click, while the context menu retains an explicit `打开`
+item. No persistent row action buttons or operation column are rendered.
 
 The table columns are exactly (current presentation boundary — see above):
 
 ```text
 选择 | 名称 | 类型 | 大小 | 修改时间
 ```
+
+Name and size headers are buttons that order only the already loaded page; the visible
+`当前页排序` line names the active field/direction and offers `恢复默认顺序`. Server order is the
+initial state, clicking a field starts ascending and the next click reverses it. Equal values keep an
+exact-path tie-break, directories do not pretend to have a zero-byte size and appear after real
+files in size order. Sorting never requests another page or changes the cursor, selection or a
+row's command path. The same order is used by list and grid views.
+
+The four data columns expose a focusable boundary handle for pointer dragging, `ArrowLeft`/
+`ArrowRight` keyboard adjustment, and `恢复默认列宽` (double-click a handle resets the widths). Widths
+are session-only and survive directory, paging, refresh and list/grid changes. Dragging never sorts,
+selects or opens an entry; narrow screens keep any horizontal overflow inside the table scroller.
+The selection checkbox and grid tile share the exact path selection, and the grid offers the same
+select-all/clear entries with a visible selected tile state.
 
 The historical sample rows (not fixed current acceptance data) are:
 
