@@ -43,6 +43,39 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [per-file decision and reanalysis correction](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)
+passed independent B T3 review on 2026-11-12, from Base
+`32bb37262777ae945deb8af4a51d9109876ca804` through reviewed Head
+`598bd9726adcf1058a9e8736c582b8c62db0d21c`. Files and Task recovery use one save/reanalysis
+action; a saved decision refused analysis retries analysis only, accepted work waits, and the
+adopted plan precedes optional correction. Acceptance passed 88 affected Web unit tests,
+28 Python integration tests and 26 distinct real-Python browser cases, plus affected quality/build
+checks and desktop/narrow/short-window review. The real queue-full → reload/re-authenticate →
+analysis-only continuation → lost-response reconciliation → explicit confirmation → Worker result
+journey preserved the successful sibling. B updated browser actions for the new disclosures/state
+and one exact table-cell locator; original assertions of effects and non-replay remain. Initial
+stale-action, fixture-order and locator failures remain in the fixed report and local evidence at
+`.git/validation-evidence/c940519b/patch-20261112-1/`.
+
+The [duplicate Organize execution-page removal](https://github.com/kentinya/mediaflow/blob/f3bca4cf72a8cdaa15f5646f13d72f45ad954678/TASK.md#patch-20261112-2--b-pass)
+passed independent B T3 review on 2026-11-13, from Base
+`dc2eec67d619bc2e06de5eca0900325a7906fbfd` through reviewed Head
+`114078829ed4f3820818cc219007c4b07af1ebdf`; product checkpoint
+`1b7e23e72f45f4f8c02372cc120991009808f07a`. Results use existing Task detail/file evidence,
+same-Task confirmation refreshes it, and former execution-page links open the exact linked Task.
+Acceptance passed 219 affected Web unit tests, 50 Node browser tests and 61 real-Python browser
+tests on fresh per-spec instances, plus Web quality/build and desktop/390px review. The initial
+combined Python-browser command had 24 passed, 3 failed, 1 interrupted and 33 not run because
+earlier specs changed the shared fixture population/source context. The unchanged specs then
+passed separately, including all three failed cases; the combined run remains a failed result.
+Its logs/traces and final runs remain local at
+`.git/validation-evidence/11407882/patch-2-b/`.
+
+Both corrections used temporary SQLite/Local media and fake Providers. Their T3 acceptance adds
+no full-repository, wheel, Docker or production-service validation; earlier Slice acceptance
+identities and release status remain unchanged. Subsequent documentation-only reconciliation
+preserves the tested executable inputs. Local evidence paths are not GitHub downloads.
+
 The [metadata correction search-year fix](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md)
 passed B T3 review on 2026-11-11, from Base
 `e9241d484e33ccb0b1a8def2ab81c17cb1a3d577` through reviewed Head

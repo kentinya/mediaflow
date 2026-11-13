@@ -21,6 +21,8 @@ Slice53 及更早接受身份、延期保持；开发关闭与发布事实分别
 
 | 已接受修正 | 当前结果与固定验收 |
 |---|---|
+| 整理结果沿用任务详情 | [PATCH-20261112-2](https://github.com/kentinya/mediaflow/blob/f3bca4cf72a8cdaa15f5646f13d72f45ad954678/TASK.md#patch-20261112-2--b-pass)：删除重复执行页、旧 Web 路由及专属入口；同任务恢复后刷新原详情，历史／意图／运行一次的相关入口进入准确关联 Task。后台执行记录及核对保留；T3 结果、首次联跑失败与分组通过记录见固定验收及 [发布验证边界](release.md#current-v2-validation-boundary) |
+| 逐文件决定与重新分析 | [PATCH-20261112-1](https://github.com/kentinya/mediaflow/blob/56a84e9e171400e77595678e6b77700bfe3cc9ee/TASK.md#patch-20261112-1--b-pass)：当前决定／等待状态和已采用方案优先，普通修正按需展开；统一使用“保存并重新分析”，已保存但未获分析受理时只补分析，移除独立安全分析按钮。现行旅程见 [逐文件整理](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)，T3 结果与失败尝试见固定验收及 [发布验证边界](release.md#current-v2-validation-boundary) |
 | 任务整理入口与提示留白 | [PATCH-20261111-5](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)：已结束任务直接查看结果／文件证据，删除重复准备区及只读摘要／从文件页重新发起按钮；必要的继续整理和准确历史地址保留，共用弹窗提示文字有清楚留白。T3 验收见固定记录与 [发布验证边界](release.md#current-v2-validation-boundary) |
 | 文件证据就地展开 | [PATCH-20261111-4](https://github.com/kentinya/mediaflow/blob/5ad944f079f617036393440e8e6802d7ee6c7414/TASK.md#b-final-review--patch-20261111-4-pass)：唯一证据区域紧跟对应文件；筛选／分页隐藏该文件时仍可读取和关闭，同文件未提交决定保留。现行呈现见 [任务中心](task-center-page-spec.md#current--任务正文与文件证据) |
 | 元数据修正搜索年份 | [PATCH-20261111-1](https://github.com/kentinya/mediaflow/blob/d1631be651eefc5ed9c0b1bb80dcb195cf921cda/TASK.md)：文件页整理弹窗和任务元数据恢复均按当前标题／类型／年份搜索，清空年份不限制年份；修改条件清除旧候选，年份错误可纠正后直接重搜。T3 验收及原失败／限制见固定记录与 [发布验证边界](release.md#current-v2-validation-boundary) |

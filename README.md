@@ -57,6 +57,10 @@ its original identity even after an unselected file is corrected/reanalyzed. Aft
 including after reload/re-authentication. Ended Task details show results and inline file evidence,
 without a preparation section or summary/restart buttons. Existing exact preparation addresses
 remain readable; the shared organizer keeps space between status text and its colored border.
+Task recovery uses the same `保存并重新分析` action for a saved decision whose analysis was refused;
+accepted analysis shows its waiting state. Results remain in the existing Task detail/file evidence.
+The duplicate Organize execution page is removed; former links open the exact associated Task,
+and confirmation within a Task refreshes that same detail.
 New organizing starts from ResourceLibrary Files. Failed files can start again without cancelling
 the ended Task; healthy siblings still waiting for confirmation keep their original summary. History read failures
 have an in-page reread action. Explicit confirmation precedes each new execution; original results
