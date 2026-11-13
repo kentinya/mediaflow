@@ -2,8 +2,9 @@
 
 用户于 2026-11-13 明确“激活Task”，现将已提交规划转为正式、已授权实施的独立修复
 Task。保留原 Task ID／Base／Goal／Scope／Medium／T3，不重设基线或扩大范围。
-当前为 `PLANNED`，Developer 开始实施时进入 `IN PROGRESS`；本激活检查点仅更新 Task，
-未开始产品实现，不授权推送、部署、其他角色工作或另起代理。此前 PASS 记录保留在本文末尾。
+激活检查点记录为 `PLANNED`；Developer 实施后已完成检查点及报告，当前状态见上方
+`READY FOR B REVIEW`。本激活记录不授权推送、部署、其他角色工作或另起代理。此前 PASS
+记录保留在本文末尾。
 
 Authority: 用户本轮三项问题、“规划一版独立修复Task”及“激活Task”；
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs) 为生命周期依据。
@@ -12,7 +13,7 @@ Authority: 用户本轮三项问题、“规划一版独立修复Task”及“�
 Task ID: PATCH-20261113-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 9811df4559d94db5b648f6152476f39035a12ae5
 Difficulty: Medium
 Test Level: T3
@@ -152,8 +153,49 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-13
 
 ### Developer Completion Report
 
-尚未实施。实施后以一个连贯 checkpoint 交 `READY FOR B REVIEW`：实际改动与决策、
-受影响测试精确命令／结果、剩余问题／风险；完整验收由 B 独立完成。
+实施检查点 `31466c1d600f850f06cf26c2c42f62b1ba555ebf`（Task Base 保持
+`9811df4559d94db5b648f6152476f39035a12ae5`）；报告提交在其后，B 以实际候选 HEAD 复核。
+分支 `main`；未推送、未部署、未改 SLICE／Roadmap／Progress。
+
+实际改动：
+
+- 删除文件页 `FILES_BANNER` 的成功、加载与失败上下文渲染；保留空库、操作核对等真实状态提示。
+- 新增共享 `files-browse-presentation`：当前页名称／大小排序（原始值、精确 path 决胜、
+  目录不参与有效字节排序）、col-resize 手柄、会话列宽、`aria-sort`／`当前页排序`／恢复入口。
+- 两页接入同一排序行集合；名称／大小表头改为语义按钮，四个数据列支持指针拖动、左右键、
+  失焦／取消／卸载清理和双击／显式恢复默认列宽；窄屏横向溢出留在表格容器。
+- 列表和网格共享精确 path 选择；网格增加复选框、全选／清除、选中与悬停／按下外观；
+  空格切换原生复选框；保留文件夹左击打开与普通文件无新增动作。
+- 同步两份页面规范中的 banner 与交互描述；新增共享行为测试、两页接线测试、Node 交互
+  E2E 与真实 Python/Storage 打开用例；调整依赖旧 banner 文案的断言和新建对话框定位。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck`：PASS。
+- `npx eslint`（上述 10 个变更 TS/TSX 文件）：PASS。
+- `npx prettier --check`（上述文件 + `src/shared/ui/styles.css`）：PASS。
+- `npm run build`：PASS；仅现有 chunk >500 kB 体积提醒。
+- `npm run test -- run src/features/library/FilesBrowsePresentation.test.tsx
+  src/features/library/StorageFilesPage.test.tsx
+  src/features/library/MediaLibraryFilesPage.test.tsx
+  src/shared/ui/files-toolbar-styles.test.ts src/shared/ui/files-path.test.tsx`：
+  **104 passed / 5 files**。
+- `npm run test:e2e -- tests/e2e/files-interactions.spec.ts
+  tests/e2e/files-read-handoff.spec.ts`：**6 passed**（新增 2 条交互用例 + 原读取交接 4 条）。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/live-files.python.spec.ts`：**6 passed**；新增用例在两页排序、勾选并保持
+  Gamma-Directory 精确身份后打开真实子项 `child.txt`。
+- 根目录 `python3 scripts/check_governance.py`：PASS；`git diff --check`：无问题。
+- 手动浏览器检查：1536×1024、390×844、900×520 两页；文档横向溢出均为 false，
+  窄／短窗口横向滚动只在表格容器；表头粘附、底栏在滚动容器外；手柄默认可见；
+  `prefers-reduced-motion: reduce` 下列表单元格与网格 transition 均为 `0s`。
+  截图证据在本机临时路径，不随 Git 推送。
+
+初次失败与限制：完整 `library-files.spec.ts` 首轮有 1 条旧用例以
+`getByLabel("名称")` 同时匹配新建对话框和可访问的“调整名称列宽”手柄；已改为在新建
+文件夹对话框内定位后通过。未执行 B 的完整验收、全量 Python／Web／E2E 矩阵或 direct-files
+两条危险操作回归；排序明确仅当前页，不提供整目录排序；列宽为页面会话状态，整页重载恢复默认；
+短窗口底栏仍需随页面纵向滚动到达（不产生文档横向溢出）。本机无屏幕阅读器实测。
 
 ### B Review Result
 
