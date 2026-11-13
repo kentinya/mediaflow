@@ -1318,6 +1318,69 @@ describe("selected-run detail tabs", () => {
     expect(
       within(evidence).getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
+    // The missing-result truth and the checkpoint's known steps stay in the
+    // file's one execution history instead of a fabricated result.
+    expect(
+      within(evidence).getByText("该文件还没有持久执行结果。"),
+    ).toBeVisible();
+    expect(within(evidence).getByText("已完成：移动（MOVE）")).toBeVisible();
+  });
+
+  it("keeps failure-record and checkpoint next steps distinguishable in the one diagnostics entry", async () => {
+    const failed = manualExecutionEvidenceDocument({
+      item: itemRow({
+        status: "failed",
+        failure: {
+          category: "storage_failure",
+          message: "the destination write did not commit",
+          durableState: "destination unchanged",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "verify the destination storage",
+        },
+      }),
+    });
+    (failed.checkpoint as { nextAction: string | null }).nextAction =
+      "check the pinned snapshot before continuing";
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        return jsonResponse(failed);
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const evidence = await findInlineEvidence(detail);
+    await within(evidence).findByText("文件证据：a.mkv");
+    // The current conclusion, its central reason and the raw checkpoint stay
+    // in their own levels of the same file evidence.
+    expect(within(evidence).getByText("处理失败")).toBeVisible();
+    expect(within(evidence).getByText("存储操作未完成。")).toBeVisible();
+    await userEvent
+      .setup()
+      .click(within(evidence).getByText(/技术诊断（检查点、计划、日志与审计/));
+    // Same-kind fields from different sources stay distinguishable instead
+    // of collapsing into one ambiguous 服务下一步.
+    expect(within(evidence).getByText("服务下一步（失败记录）")).toBeVisible();
+    expect(within(evidence).getByText("服务下一步（检查点）")).toBeVisible();
+    expect(
+      within(evidence).getByText("verify the destination storage"),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText("check the pinned snapshot before continuing"),
+    ).toBeVisible();
   });
 
   it("PATCH-20261107-1 explains a successful file in business terms and keeps terminal refusal in diagnostics", async () => {
@@ -1359,8 +1422,9 @@ describe("selected-run detail tabs", () => {
     await within(evidence).findByText("文件证据：a.mkv");
     expect(within(evidence).getByText("文件已整理")).toBeVisible();
     // The real API returns an uppercase SUCCESS status; it reads as the same
-    // business fact as the lowercase item status.
-    expect(within(evidence).getByText("第 1 次执行：成功")).toBeVisible();
+    // business fact as the lowercase item status, inside the file's one
+    // merged execution history.
+    expect(within(evidence).getByText(/执行记录 1（.*）：成功/)).toBeVisible();
 
     // Recognition, metadata, naming and classification are readable without
     // opening the raw plan or querying current configuration.
@@ -1381,32 +1445,36 @@ describe("selected-run detail tabs", () => {
       ),
     ).toBeVisible();
 
-    // A completed successful file has no standing technical-failure tutorial,
-    // no empty control block and no reason-to-act section.
-    const recovery = await within(evidence).findByRole("region", {
-      name: "条目审核与恢复",
-    });
-    expect(
-      await within(recovery).findByText("文件已整理完成，没有待处理操作。"),
-    ).toBeVisible();
-    expect(within(recovery).queryByText(/技术失败条目/)).toBeNull();
+    // A completed successful technical-history file renders no 审核与恢复
+    // area in the evidence host: no no-op conclusion and no empty region.
+    // The recovery read still happened; the settled facts live in the body
+    // and the one unified diagnostics entry.
+    await waitFor(() =>
+      expect(
+        within(evidence).queryByRole("region", { name: "条目审核与恢复" }),
+      ).toBeNull(),
+    );
+    expect(within(evidence).queryByText(/没有待处理操作/)).toBeNull();
+    expect(within(evidence).queryByText(/技术失败条目/)).toBeNull();
     expect(within(evidence).queryByText(/需处理原因/)).toBeNull();
 
-    // The terminal refusal and raw checkpoint stay in the collapsed technical
-    // diagnostics, not in the primary body.
-    await user.click(within(evidence).getByText(/技术诊断（计划、日志与审计/));
+    // The terminal refusal and the raw entry/checkpoint stay in the single
+    // collapsed technical diagnostics, not in the primary body.
+    await user.click(
+      within(evidence).getByText(/技术诊断（检查点、计划、日志与审计/),
+    );
     expect(
       await within(evidence).findByText(/已结束的条目不再提供重放/),
     ).toBeVisible();
-    await user.click(
-      within(recovery).getByText("技术诊断（状态、重试与权限）"),
-    );
     expect(
-      within(recovery).getByText(
-        "replay_not_offered: item has a terminal outcome",
+      within(evidence).getByText(
+        /replay_not_offered: item has a terminal outcome/,
       ),
     ).toBeVisible();
-    expect(within(recovery).getByText("unsafe")).toBeVisible();
+    expect(within(evidence).getByText("safe")).toBeVisible();
+    expect(within(evidence).getByText("verified_complete")).toBeVisible();
+    expect(within(evidence).getByText("1 次")).toBeVisible();
+    expect(within(evidence).getByText("可用操作标识")).toBeVisible();
   });
 
   it("submits the item disposition filter to the server and keeps the population totals", async () => {
@@ -1419,16 +1487,25 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
 
+    // The unfiltered read states one population count, not two equal numbers.
+    expect(await screen.findByText(/共 4 条/)).toBeVisible();
+    const statusSelect = screen.getByLabelText("状态筛选");
+    expect(
+      within(statusSelect).getByRole("option", { name: "全部状态" }),
+    ).toBeVisible();
+    expect(
+      within(statusSelect).queryByRole("option", { name: /服务器筛选/ }),
+    ).toBeNull();
+
     await user.selectOptions(screen.getByLabelText("状态筛选"), "waiting");
     await waitFor(() =>
       expect(requested.some((url) => url.includes("status=waiting"))).toBe(
         true,
       ),
     );
-    // The filter narrows the page but the reported population keeps its
-    // whole-run partition.
-    expect(await screen.findByText(/匹配 1 条/)).toBeVisible();
-    expect(screen.getByText(/运行共 4 条/)).toBeVisible();
+    // The filter narrows the page; the count names both the matches and the
+    // whole-run population.
+    expect(await screen.findByText(/匹配 1 \/ 共 4 条/)).toBeVisible();
     expect(await screen.findByText(/movies\/b\.mkv/)).toBeVisible();
     // The filter state is in the URL so refresh/history/reconnect restore it.
     const detailRequest = requested.find((url) =>
@@ -1496,7 +1573,23 @@ describe("selected-run detail tabs", () => {
     );
     expect(await screen.findByLabelText("操作记录")).toBeVisible();
     expect(await screen.findByText(/organizer.execution_result/)).toBeVisible();
-    expect(screen.getByText(/匹配 4 条记录/)).toBeVisible();
+    // The tab name is not repeated as a visible heading, the default option
+    // is plain, and the unfiltered count is one population total plus the
+    // backend kind counts without the standing server tutorial.
+    expect(
+      within(detail).queryByRole("heading", { name: "操作记录" }),
+    ).toBeNull();
+    expect(within(detail).queryByText(/服务器分页/)).toBeNull();
+    const kindSelect = screen.getByLabelText("类型筛选");
+    expect(
+      within(kindSelect).getByRole("option", { name: "全部类型" }),
+    ).toBeVisible();
+    expect(
+      within(kindSelect).queryByRole("option", { name: /服务器筛选/ }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/共 4 条记录 · 结果 3 · 证据 1 · 日志 0 · 审计 0/),
+    ).toBeVisible();
 
     await user.selectOptions(screen.getByLabelText("类型筛选"), "log");
     await waitFor(() =>
@@ -2216,8 +2309,8 @@ describe("selected-run detail tabs", () => {
       within(evidence).getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）"),
     ).toBeVisible();
     expect(within(evidence).getByText("已验证")).toBeVisible();
-    // "已验证完成" appears both in the top checkpoint facts and in the durable
-    // step table; both must speak the same label.
+    // "已验证完成" appears in the merged execution history and in the
+    // durable step table; both must speak the same label.
     expect(within(evidence).getAllByText("已验证完成").length).toBeGreaterThan(
       1,
     );
@@ -2296,7 +2389,11 @@ describe("selected-run detail tabs", () => {
       ),
     ).toBeVisible();
     // Each durable result states its own persisted steps and effect —
-    // including the second, uncertain result — not just the aggregate.
+    // including the second, uncertain result — not just the aggregate. Both
+    // attempts stay as separate merged history entries with their own time,
+    // result, operation, steps, cleanup and exceptions.
+    expect(within(evidence).getByText(/执行记录 1（/)).toBeVisible();
+    expect(within(evidence).getByText(/执行记录 2（/)).toBeVisible();
     expect(
       within(evidence).getByText(
         "已完成：创建目录（CREATE_DIRECTORY）、移动（MOVE）",
@@ -3043,7 +3140,7 @@ describe("selected-run detail tabs", () => {
     await user.click(
       await within(detail).findByRole("button", { name: "操作记录" }),
     );
-    await screen.findByText(/匹配 4 条记录/);
+    await screen.findByText(/共 4 条记录/);
 
     expect(requested.length).toBeGreaterThan(0);
     for (const call of requested) {

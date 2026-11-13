@@ -333,6 +333,19 @@ export interface TaskItemRecoveryPanelProps {
   readonly onDecisionStatusChange?: (
     status: TaskItemRecoveryDecisionStatus,
   ) => void;
+  /**
+   * The Task Center file-evidence host owns the single unified technical
+   * diagnostics entry for this exact item (entry/checkpoint facts included)
+   * and its readable body already carries the outcome, target and basis
+   * facts. With `hostedDiagnostics` the panel therefore hides its own
+   * duplicate diagnostics shell, and when nothing is actually pending — no
+   * four-type action, durable summary, lineage link, completed analysis
+   * continuation or unresolved session feedback — it renders nothing at all
+   * instead of a no-op conclusion. The recovery read still happens and the
+   * session state stays intact; nested/standalone consumers keep their own
+   * facts and diagnostics.
+   */
+  readonly hostedDiagnostics?: boolean;
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -348,6 +361,7 @@ export function TaskItemRecoveryPanel({
   decisionDraft,
   onDecisionDraftChange,
   onDecisionStatusChange,
+  hostedDiagnostics = false,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
   const token = useAuthToken();
@@ -1424,6 +1438,28 @@ export function TaskItemRecoveryPanel({
     );
   }
 
+  // In the Task Center file-evidence host the readable body already carries
+  // this file's outcome, target and basis facts, and the host owns the single
+  // unified diagnostics entry. A four-type action, a durable summary, a
+  // lineage link, a completed analysis continuation or unresolved session
+  // feedback renders below; anything else is a no-op shell, so the host shows
+  // no 审核与恢复 area at all. The recovery read still happened and the
+  // session state stays intact for the next render.
+  const hasLiveRecoveryAction =
+    owesRecoveryAction ||
+    activePreparation !== null ||
+    checkpoint?.continuationStatus === "completed" ||
+    linked !== null;
+  const hasSessionFeedback =
+    busy ||
+    pendingAction !== null ||
+    message !== null ||
+    repeatLocked ||
+    submittedPreparationId !== null;
+  if (hostedDiagnostics && !hasLiveRecoveryAction && !hasSessionFeedback) {
+    return null;
+  }
+
   return (
     <section className="mf-count-section" aria-label="条目审核与恢复">
       <div className="mf-run-items-head">
@@ -1469,45 +1505,47 @@ export function TaskItemRecoveryPanel({
             </dd>
           </div>
         </dl>
-      ) : (
+      ) : hostedDiagnostics ? null : (
         <p className="mf-dashboard-meta">
           {technicalHistoryMessage(checkpoint)}
         </p>
       )}
-      <details className="mf-run-fact-diagnostics">
-        <summary>技术诊断（状态、重试与权限）</summary>
-        <dl className="mf-dashboard-facts">
-          <div>
-            <dt>阶段</dt>
-            <dd>{checkpoint?.stage ?? "不可用"}</dd>
-          </div>
-          <div>
-            <dt>效果确定性</dt>
-            <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
-          </div>
-          <div>
-            <dt>重试安全性</dt>
-            <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
-          </div>
-          <div>
-            <dt>可用操作标识</dt>
-            <dd>{permitted.size === 0 ? "无" : [...permitted].join("、")}</dd>
-          </div>
-          {checkpoint?.refusalReason !== null &&
-            checkpoint?.refusalReason !== undefined && (
+      {!hostedDiagnostics && (
+        <details className="mf-run-fact-diagnostics">
+          <summary>技术诊断（状态、重试与权限）</summary>
+          <dl className="mf-dashboard-facts">
+            <div>
+              <dt>阶段</dt>
+              <dd>{checkpoint?.stage ?? "不可用"}</dd>
+            </div>
+            <div>
+              <dt>效果确定性</dt>
+              <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
+            </div>
+            <div>
+              <dt>重试安全性</dt>
+              <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
+            </div>
+            <div>
+              <dt>可用操作标识</dt>
+              <dd>{permitted.size === 0 ? "无" : [...permitted].join("、")}</dd>
+            </div>
+            {checkpoint?.refusalReason !== null &&
+              checkpoint?.refusalReason !== undefined && (
+                <div>
+                  <dt>拒绝原因</dt>
+                  <dd>{checkpoint.refusalReason}</dd>
+                </div>
+              )}
+            {checkpoint?.nextAction && (
               <div>
-                <dt>拒绝原因</dt>
-                <dd>{checkpoint.refusalReason}</dd>
+                <dt>服务下一步</dt>
+                <dd>{checkpoint.nextAction}</dd>
               </div>
             )}
-          {checkpoint?.nextAction && (
-            <div>
-              <dt>服务下一步</dt>
-              <dd>{checkpoint.nextAction}</dd>
-            </div>
-          )}
-        </dl>
-      </details>
+          </dl>
+        </details>
+      )}
       {busy && pendingAction !== null && (
         <StatusBanner variant="info" title="操作请求仍在进行">
           <p>

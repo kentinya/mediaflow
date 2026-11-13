@@ -764,7 +764,7 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
     evidence.getByRole("region", { name: "来源与目标" }),
   ).toBeVisible();
   await expect(
-    evidence.getByRole("region", { name: "处理经过" }),
+    evidence.getByRole("region", { name: "执行记录" }),
   ).toBeVisible();
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
   await evidence

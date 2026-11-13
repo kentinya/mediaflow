@@ -573,7 +573,7 @@ test("inventory count card applies its server filter and the run overview opens 
     detail.getByRole("region", { name: "操作记录", exact: true }),
   ).toBeVisible();
   await expect(
-    detail.getByText("匹配 0 条记录 · 结果 0 · 证据 0 · 日志 0 · 审计 0"),
+    detail.getByText("共 0 条记录 · 结果 0 · 证据 0 · 日志 0 · 审计 0"),
   ).toBeVisible();
   await detail.getByRole("button", { name: "任务详情", exact: true }).click();
   await expect(detail.getByText("流程状态", { exact: true })).toBeVisible();
@@ -795,7 +795,7 @@ test("item and record filters page on the server and survive a reload", async ({
     )
     .toBe(true);
   // The whole-run partition stays visible beside the narrowed page.
-  await expect(detail.getByText(/运行共 \d+ 条/)).toBeVisible();
+  await expect(detail.getByText(/匹配 \d+ \/ 共 \d+ 条/)).toBeVisible();
 
   await page.getByLabel("状态筛选").selectOption("success");
   await expect(page).toHaveURL(/istat=success/);
@@ -906,9 +906,12 @@ test("one item's evidence opens through exact links and closes again", async ({
   ).toBeVisible();
   const result = evidence.getByRole("region", { name: "处理结果" });
   await expect(result.getByText("文件已整理")).toBeVisible();
-  await expect(result.getByText("主文件已完成；附件有警告")).toBeVisible();
-  await expect(result.getByText(/subtitle（zh）/)).toBeVisible();
-  await expect(result.getByText(/附件效果尚未验证/)).toBeVisible();
+  // The one merged execution history keeps the main file and its subtitle as
+  // separate outcomes beside the current conclusion.
+  const history = evidence.getByRole("region", { name: "执行记录" });
+  await expect(history.getByText("主文件已完成；附件有警告")).toBeVisible();
+  await expect(history.getByText(/subtitle（zh）/)).toBeVisible();
+  await expect(history.getByText(/附件效果尚未验证/)).toBeVisible();
   const paths = evidence.getByRole("region", { name: "来源与目标" });
   await expect(
     paths.getByText("local-media:movies/The Matrix (1999).mkv"),
@@ -918,8 +921,9 @@ test("one item's evidence opens through exact links and closes again", async ({
   ).toBeVisible();
   await expect(
     evidence
-      .getByRole("region", { name: "处理经过" })
-      .getByText(/移动（move）/),
+      .getByRole("region", { name: "执行记录" })
+      .getByText(/移动（move）/)
+      .first(),
   ).toBeVisible();
   // The technical plan/log/audit records stay reachable inside diagnostics.
   await evidence.getByText(/技术诊断/).click();

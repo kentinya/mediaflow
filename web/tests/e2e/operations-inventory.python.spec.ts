@@ -771,7 +771,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await expect(items.getByRole("row")).toHaveCount(7); // header + six items
   await expect(items.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
   await expect(items.getByText("Dune.2021.2160p.mkv")).toBeVisible();
-  await expect(items.getByText("匹配 6 条 / 运行共 6 条")).toBeVisible();
+  await expect(items.getByText("共 6 条")).toBeVisible();
 
   // A status filter is submitted to the server and kept in the URL, while
   // the whole-run totals stay page- and filter-independent.
@@ -788,7 +788,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     )
     .toBeGreaterThan(0);
   await expect(items.getByRole("row")).toHaveCount(3); // header + two successes
-  await expect(items.getByText("匹配 2 条 / 运行共 6 条")).toBeVisible();
+  await expect(items.getByText("匹配 2 / 共 6 条")).toBeVisible();
 
   // One exact item's durable evidence: the checkpoint facts, its persisted
   // Result, the captured pipeline evidence and the plan-linked operational
@@ -803,17 +803,21 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   ).toBeVisible();
   const readableResult = evidence.getByRole("region", { name: "处理结果" });
   await expect(readableResult.getByText("文件已整理")).toBeVisible();
+  // The durable result's verified effect reads inside the one merged
+  // execution history instead of restating the current conclusion.
   await expect(
-    readableResult.getByText("已验证完成", { exact: true }),
+    evidence
+      .getByRole("region", { name: "执行记录" })
+      .getByText("已验证完成", { exact: true }),
   ).toBeVisible();
   await expect(
     evidence.getByRole("region", { name: "来源与目标" }),
   ).toBeVisible();
   await expect(
-    evidence.getByRole("region", { name: "处理经过" }),
+    evidence.getByRole("region", { name: "处理依据" }),
   ).toBeVisible();
   // The technical records stay reachable inside the diagnostics group.
-  await evidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
 
@@ -841,7 +845,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await expect(
     records.getByRole("cell", { name: "分析与计划" }).first(),
   ).toBeVisible();
-  await expect(records.getByText("匹配 5 条记录")).toBeVisible();
+  await expect(records.getByText(/共 5 条记录/)).toBeVisible();
 
   // The record kind filter is a server-side read bound into the URL.
   await records.getByLabel("类型筛选").selectOption("log");
@@ -1154,7 +1158,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await expect(
     itemEvidence.getByText("文件已整理", { exact: true }),
   ).toBeVisible();
-  await expect(itemEvidence.getByText("第 1 次执行：成功")).toBeVisible();
+  await expect(itemEvidence.getByText(/执行记录 1（.*）：成功/)).toBeVisible();
   // The successful Worker result states recognition, match, naming and the
   // Anime classification reason without opening the raw plan diagnostics.
   await expect(
@@ -1191,13 +1195,16 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // technical-failure tutorial; its terminal no-replay token stays technical.
   await expect(itemEvidence.getByText("需处理原因")).toHaveCount(0);
   await expect(itemEvidence.getByText(/技术失败条目/)).toHaveCount(0);
+  // The settled no-op 审核与恢复 shell is gone from the evidence host;
+  // the recovery read still happened without rendering an empty area.
   await expect(
-    itemEvidence.getByText("文件已整理完成，没有待处理操作。"),
-  ).toBeVisible();
+    itemEvidence.getByRole("region", { name: "条目审核与恢复" }),
+  ).toHaveCount(0);
+  await expect(itemEvidence.getByText(/没有待处理操作/)).toHaveCount(0);
   await expect(
     itemEvidence.getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
-  await itemEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   await expect(
     itemEvidence.getByText(/已结束的条目不再提供重放/),
   ).toBeVisible();
@@ -1265,7 +1272,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
       "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
-  await reloadedEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await reloadedEvidence
+    .getByText(/技术诊断（检查点、计划、日志与审计/)
+    .click();
   await expect(
     reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1491,7 +1500,9 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // The captured plan now lives inside the collapsed technical diagnostics;
   // the operator opens that disclosure before reading it. Do not expand it by
   // default or move the plan back into the primary body.
-  await restoredEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await restoredEvidence
+    .getByText(/技术诊断（检查点、计划、日志与审计/)
+    .click();
   await expect(
     restoredEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1858,7 +1869,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect(
     itemEvidence.getByText("文件已整理", { exact: true }),
   ).toBeVisible();
-  await itemEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   // The reviewed-plan section keeps its honest unavailability…
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
@@ -1924,7 +1935,9 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
       exact: true,
     }),
   ).not.toHaveCount(0);
-  await reloadedEvidence.getByText(/技术诊断（计划、日志与审计/).click();
+  await reloadedEvidence
+    .getByText(/技术诊断（检查点、计划、日志与审计/)
+    .click();
   await expect(
     reloadedEvidence.getByText(/createdDirectories=Movies\/Movies\/Anime/),
   ).toBeVisible();
