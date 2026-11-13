@@ -372,6 +372,7 @@ function resolveOrganizeContinuation(
       nextAction: null,
       category,
       canRetry: category !== "unauthorized" && category !== "forbidden",
+      canRetainSession: category !== "unauthorized" && category !== "forbidden",
     };
   }
   const read = query.data;
@@ -382,6 +383,7 @@ function resolveOrganizeContinuation(
       nextAction: null,
       category: null,
       canRetry: true,
+      canRetainSession: true,
     };
   }
   if (!read.ok) {
@@ -391,6 +393,10 @@ function resolveOrganizeContinuation(
       nextAction: read.failure.nextAction,
       category: null,
       canRetry: true,
+      canRetainSession:
+        read.failure.kind !== "not_found" &&
+        read.failure.kind !== "unauthorized" &&
+        read.failure.kind !== "forbidden",
     };
   }
   const preparation = read.model.filesPreparation;
@@ -509,6 +515,15 @@ export function OperationsLanding() {
   const [remainingSessions, setRemainingSessions] = useState<
     Readonly<Record<string, RunRemainingSession>>
   >({});
+  // The exact association an already-open continuation came from. It is only
+  // a mount-retention latch: the dialog's own durable reads and the Task's
+  // current eligibility still decide what can be edited, analyzed or
+  // confirmed. A successful Task read always replaces it; closing the card,
+  // selecting another Task or losing the read authority clears it.
+  const [openedOrganizeAssociation, setOpenedOrganizeAssociation] = useState<{
+    readonly runId: string;
+    readonly discoveryId: string;
+  } | null>(null);
   const updateControlSession = useCallback(
     (runId: string, patch: Partial<RunControlSession>) => {
       setControlSessions((previous) => ({
@@ -884,11 +899,78 @@ export function OperationsLanding() {
   // that first read is pending the existing run-detail loading state remains
   // the honest intermediate frame; a settled marker without usable association
   // opens one bounded explanation instead of guessing work.
-  const organizeContinuation = resolveOrganizeContinuation(
+  const resolvedOrganizeContinuation = resolveOrganizeContinuation(
     organizeDialogRequested,
     selectedId,
     overviewQuery,
   );
+  const resolvedOrganizeKind = resolvedOrganizeContinuation?.kind ?? null;
+  const resolvedOrganizeDiscoveryId =
+    resolvedOrganizeContinuation?.kind === "ready"
+      ? resolvedOrganizeContinuation.discoveryId
+      : null;
+  const resolvedOrganizeCanRetain =
+    resolvedOrganizeContinuation?.kind === "unavailable"
+      ? resolvedOrganizeContinuation.canRetainSession
+      : null;
+  // Adjust the retention while rendering only when the exact resolved read
+  // value changed. A successful read replaces it; a settled absence, a
+  // missing Task or lost read authority clears it; a transient read problem
+  // leaves it in place for the same selected Task. This is derived state, not
+  // an effect, so it never schedules a second render for unchanged input.
+  if (
+    resolvedOrganizeKind === "ready" &&
+    resolvedOrganizeDiscoveryId !== null &&
+    (openedOrganizeAssociation === null ||
+      openedOrganizeAssociation.runId !== selectedId ||
+      openedOrganizeAssociation.discoveryId !== resolvedOrganizeDiscoveryId)
+  ) {
+    setOpenedOrganizeAssociation({
+      runId: selectedId,
+      discoveryId: resolvedOrganizeDiscoveryId,
+    });
+  }
+  if (
+    openedOrganizeAssociation !== null &&
+    (!organizeDialogRequested ||
+      selectedId === "" ||
+      resolvedOrganizeKind === "no-association" ||
+      resolvedOrganizeKind === "missing-run" ||
+      resolvedOrganizeCanRetain === false)
+  ) {
+    setOpenedOrganizeAssociation(null);
+  }
+  const retainedOrganizeAssociation =
+    organizeDialogRequested &&
+    selectedId !== "" &&
+    openedOrganizeAssociation !== null &&
+    openedOrganizeAssociation.runId === selectedId
+      ? openedOrganizeAssociation
+      : null;
+  // A background Task-detail read failure may not unmount the already-open
+  // exact continuation: the card keeps its per-file input, selection and
+  // unknown-command reconciliation, while the same read is explained and
+  // retried inside it. Permission loss, a missing Task and a settled
+  // association change keep their existing eligibility/auth presentation.
+  const retainedOrganizeReadIssue =
+    retainedOrganizeAssociation !== null &&
+    resolvedOrganizeContinuation !== null &&
+    resolvedOrganizeContinuation.kind === "unavailable" &&
+    resolvedOrganizeContinuation.canRetainSession
+      ? {
+          title: resolvedOrganizeContinuation.title,
+          nextAction: resolvedOrganizeContinuation.nextAction,
+          category: resolvedOrganizeContinuation.category,
+          canRetry: resolvedOrganizeContinuation.canRetry,
+        }
+      : null;
+  const organizeContinuation: OrganizeContinuationState | null =
+    retainedOrganizeAssociation !== null && retainedOrganizeReadIssue !== null
+      ? {
+          kind: "ready",
+          discoveryId: retainedOrganizeAssociation.discoveryId,
+        }
+      : resolvedOrganizeContinuation;
   const organizeLayerOpen = organizeContinuation !== null;
   const organizeFallbackFocusId =
     selectedId === "" ? "mf-operations-heading" : "mf-run-detail-close";
@@ -1143,6 +1225,7 @@ export function OperationsLanding() {
         {organizeContinuation !== null && (
           <OrganizeContinuationHost
             state={organizeContinuation}
+            readIssue={retainedOrganizeReadIssue}
             fallbackFocusId={organizeFallbackFocusId}
             retrying={overviewQuery.isFetching}
             onClose={closeOrganizeContinuation}

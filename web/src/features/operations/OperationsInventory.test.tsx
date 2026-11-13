@@ -3054,12 +3054,20 @@ function hostExecutionDocument(taskId: string): Record<string, unknown> {
 
 interface OrganizeHostBackend {
   readonly calls: {
+    admissionReads: number;
     discoveryReads: number;
     intentReads: number;
     overviewReads: number;
     posts: string[];
   };
-  readonly state: { intentUnavailable: boolean; executeTaskId: string };
+  readonly state: {
+    intentUnavailable: boolean;
+    executeTaskId: string;
+    /** The next selected-Task overview poll answers 503 without mutating. */
+    overviewUnavailable: boolean;
+    /** The next Execute request's response is lost after a 503. */
+    executeResponseLost: boolean;
+  };
 }
 
 /**
@@ -3075,10 +3083,18 @@ function stubOrganizeHost(
   } = {},
 ): OrganizeHostBackend {
   const backend: OrganizeHostBackend = {
-    calls: { discoveryReads: 0, intentReads: 0, overviewReads: 0, posts: [] },
+    calls: {
+      admissionReads: 0,
+      discoveryReads: 0,
+      intentReads: 0,
+      overviewReads: 0,
+      posts: [],
+    },
     state: {
       intentUnavailable: options.intentUnavailable ?? false,
       executeTaskId: "task-001",
+      overviewUnavailable: false,
+      executeResponseLost: false,
     },
   };
   stubFetch(async (input, init) => {
@@ -3093,6 +3109,9 @@ function stubOrganizeHost(
     }
     if (url === "/api/v1/operations/runs/task-001") {
       backend.calls.overviewReads += 1;
+      if (backend.state.overviewUnavailable) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
       return jsonResponse(
         runDocument({
           filesPreparation: {
@@ -3146,10 +3165,34 @@ function stubOrganizeHost(
         `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/execute` &&
       method === "POST"
     ) {
+      if (backend.state.executeResponseLost) {
+        backend.state.executeResponseLost = false;
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
       return jsonResponse(
         hostExecutionDocument(backend.state.executeTaskId),
         202,
       );
+    }
+    if (
+      url.startsWith(
+        `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/admission`,
+      ) &&
+      method === "GET"
+    ) {
+      backend.calls.admissionReads += 1;
+      return jsonResponse({
+        outcome: "known",
+        reason: null,
+        executionId: "exec-1",
+        taskId: backend.state.executeTaskId,
+        status: "queued",
+        selectedItemIds: ["item-1"],
+        completedItemCount: 0,
+        failedItemCount: 0,
+        sideEffects: "none",
+        nextAction: "the admitted execution queues in this task",
+      });
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
@@ -3382,6 +3425,139 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     expect(backend.calls.discoveryReads).toBe(discoveryReadsForA);
     expect(backend.calls.posts).toEqual([]);
   });
+
+  it("keeps a first-entry read failure as an unavailable card until the association is read", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    backend.state.overviewUnavailable = true;
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const notice = await screen.findByRole("dialog", {
+      name: "无法继续这次整理",
+    });
+    expect(within(notice).getByText("Operations unavailable")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull();
+    expect(screen.queryByText("任务详情暂时无法读取")).toBeNull();
+    expect(backend.calls.discoveryReads).toBe(0);
+
+    backend.state.overviewUnavailable = false;
+    await user.click(
+      within(notice).getByRole("button", { name: "重新读取任务" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("keeps an opened continuation's unsaved correction through a task-detail poll failure", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(
+      await within(dialog).findByText("修正识别或作品", { exact: true }),
+    );
+    const recognition = within(dialog).getByLabelText("识别类型 One.2001.mkv");
+    await user.selectOptions(recognition, "B");
+    expect(recognition).toHaveValue("B");
+    const overviewReadsBefore = backend.calls.overviewReads;
+
+    // The existing five-second Task-detail poll answers 503 while the
+    // operator's unsaved correction is still only in this card.
+    backend.state.overviewUnavailable = true;
+    await screen.findByText("任务详情暂时无法读取", undefined, {
+      timeout: 9_000,
+    });
+    expect(backend.calls.overviewReads).toBeGreaterThan(overviewReadsBefore);
+    expect(
+      screen.getAllByRole("dialog", { name: "整理所选文件" }),
+    ).toHaveLength(1);
+    expect(recognition).toHaveValue("B");
+    expect(
+      screen.queryByRole("dialog", { name: "无法继续这次整理" }),
+    ).toBeNull();
+    // No discard prompt is produced by the background read; the draft is
+    // still present and nothing was submitted or replayed.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(backend.calls.posts).toEqual([]);
+
+    backend.state.overviewUnavailable = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "重新读取任务" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByText("任务详情暂时无法读取")).toBeNull(),
+    );
+    expect(recognition).toHaveValue("B");
+    expect(
+      screen.getAllByRole("dialog", { name: "整理所选文件" }),
+    ).toHaveLength(1);
+    expect(backend.calls.posts).toEqual([]);
+  }, 15_000);
+
+  it("keeps an unknown Execute reconciliation through a task-detail poll failure without replaying", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    backend.state.executeResponseLost = true;
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?run=task-001&dialog=organize",
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(within(dialog).getByRole("button", { name: /整批复核/ }));
+    await user.click(
+      await within(dialog).findByRole("button", { name: "确认整理 1 项" }),
+    );
+    await screen.findByText(/执行结果未知/);
+    expect(backend.calls.posts).toHaveLength(1);
+    const submittedPreview = backend.calls.posts[0];
+    expect(submittedPreview).toContain("/previews/preview-1/execute");
+
+    backend.state.overviewUnavailable = true;
+    await screen.findByText("任务详情暂时无法读取", undefined, {
+      timeout: 9_000,
+    });
+    // The unknown command identity is not cleared by the unrelated
+    // background read failure, and the card cannot be dismissed around it.
+    expect(screen.getByText(/执行结果未知/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(backend.calls.posts).toHaveLength(1);
+
+    backend.state.overviewUnavailable = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "重新读取任务" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByText("任务详情暂时无法读取")).toBeNull(),
+    );
+    expect(screen.getByText(/执行结果未知/)).toBeVisible();
+
+    // The explicit reconciliation still reads the first submission's exact
+    // preview and never submits a second Execute.
+    await user.click(
+      within(dialog).getByRole("button", { name: "核对提交结果" }),
+    );
+    await waitFor(() => expect(backend.calls.admissionReads).toBe(1));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(router.state.location.pathname).toBe("/operations");
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "task-001",
+    );
+    expect(
+      new URLSearchParams(router.history.location.search).get("dialog"),
+    ).toBeNull();
+    expect(backend.calls.posts).toEqual([submittedPreview]);
+  }, 20_000);
 
   it("protects unsaved drafts against leaving the task center without losing the card", async () => {
     const user = userEvent.setup();

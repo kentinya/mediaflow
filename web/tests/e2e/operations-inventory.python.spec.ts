@@ -4070,6 +4070,78 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     beforeNavigationPosts,
   );
 
+  // B-01: an unsaved per-file correction survives the existing five-second
+  // Task-detail poll answering 503. The open card is not replaced by the
+  // unavailable notice, and recovering the same read keeps the selection.
+  await reviewDialog.getByText("修正识别或作品", { exact: true }).click();
+  const recognition = reviewDialog.locator('select[aria-label^="识别类型 "]');
+  await expect(recognition).toBeVisible({ timeout: 15_000 });
+  await recognition.selectOption("B");
+  await expect(recognition).toHaveValue("B");
+
+  const overviewRoute = new RegExp(`/api/v1/operations/runs/${taskId}$`);
+  let failNextOverviewRead = false;
+  let failedOverviewReads = 0;
+  await page.route(overviewRoute, async (route) => {
+    if (!failNextOverviewRead) {
+      await route.continue();
+      return;
+    }
+    failNextOverviewRead = false;
+    failedOverviewReads += 1;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "unavailable" } }),
+    });
+  });
+  failNextOverviewRead = true;
+  await expect(reviewDialog.getByText("任务详情暂时无法读取")).toBeVisible({
+    timeout: 12_000,
+  });
+  expect(failedOverviewReads).toBe(1);
+  await expect(reviewDialog).toBeVisible();
+  await expect(recognition).toHaveValue("B");
+  await expect(
+    page.getByRole("dialog", { name: "无法继续这次整理" }),
+  ).toHaveCount(0);
+  // The background read produced no discard prompt, command or background
+  // replacement; the list keeps its exact reading column behind the card.
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  const listBoxFailed = await listTable.boundingBox();
+  expect(listBoxFailed).not.toBeNull();
+  expect(
+    Math.abs((listBoxFailed?.x ?? 0) - (listBoxBefore?.x ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((listBoxFailed?.width ?? 0) - (listBoxBefore?.width ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeAttached();
+  expect(api.filter((entry) => entry.method === "POST").length).toBe(
+    beforeNavigationPosts,
+  );
+
+  // Recover only the failed read; the same mounted card and its selection
+  // remain. The deliberate discard below is the operator's own choice, not a
+  // side effect of the background failure.
+  await reviewDialog.getByRole("button", { name: "重新读取任务" }).click();
+  await expect(reviewDialog.getByText("任务详情暂时无法读取")).toHaveCount(0);
+  await expect(recognition).toHaveValue("B");
+  await page.unroute(overviewRoute);
+  await reviewDialog.getByRole("button", { name: "关闭整理弹窗" }).click();
+  const discard = page.getByRole("alertdialog");
+  await expect(discard.getByText("有尚未保存的逐文件修正草稿。")).toBeVisible();
+  await discard.getByRole("button", { name: "放弃草稿并关闭" }).click();
+  await expect(reviewDialog).toHaveCount(0);
+  await continueLink.click();
+  await expect(reviewDialog).toBeVisible({ timeout: 30_000 });
+  await expect(
+    reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  expect(api.filter((entry) => entry.method === "POST").length).toBe(
+    beforeNavigationPosts,
+  );
+
   // Open/settle frames at the acceptance viewports; the page must not overflow
   // horizontally at the narrow or short size.
   mkdirSync("test-results/PATCH-20261113-3", { recursive: true });

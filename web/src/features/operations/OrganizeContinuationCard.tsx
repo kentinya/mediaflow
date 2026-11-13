@@ -44,10 +44,30 @@ export type OrganizeContinuationState =
       readonly nextAction: string | null;
       readonly category: ApiReadErrorCategory | null;
       readonly canRetry: boolean;
+      /**
+       * Whether an already-open exact association may stay mounted through
+       * this read problem. Permission loss and a missing Task keep their
+       * existing eligibility/auth presentation instead.
+       */
+      readonly canRetainSession: boolean;
     };
+
+/**
+ * A non-blocking read problem inside an already-open continuation.
+ *
+ * The operator's per-file input, selection and command reconciliation stay in
+ * the mounted dialog; only the background Task-detail projection is stale.
+ */
+export interface OrganizeContinuationReadIssue {
+  readonly title: string;
+  readonly nextAction: string | null;
+  readonly category: ApiReadErrorCategory | null;
+  readonly canRetry: boolean;
+}
 
 export interface OrganizeContinuationHostProps {
   readonly state: OrganizeContinuationState;
+  readonly readIssue: OrganizeContinuationReadIssue | null;
   /** Focus target when the invoking continue link no longer exists. */
   readonly fallbackFocusId: string;
   readonly retrying: boolean;
@@ -61,6 +81,7 @@ export interface OrganizeContinuationHostProps {
 
 export function OrganizeContinuationHost({
   state,
+  readIssue,
   fallbackFocusId,
   retrying,
   onClose,
@@ -79,6 +100,15 @@ export function OrganizeContinuationHost({
         key={state.discoveryId}
         session={{ phase: "admitted", discoveryId: state.discoveryId }}
         fallbackFocusId={fallbackFocusId}
+        taskReadNotice={
+          readIssue === null ? null : (
+            <OrganizeContinuationReadNotice
+              issue={readIssue}
+              retrying={retrying}
+              onRetry={onRetry}
+            />
+          )
+        }
         onClose={onClose}
         onHandoff={onHandoff}
       />
@@ -92,6 +122,43 @@ export function OrganizeContinuationHost({
       />
     ),
     document.body,
+  );
+}
+
+/**
+ * Explain a failed background Task-detail read without replacing the card.
+ * The retained dialog is the state that keeps the operator's unsaved work.
+ */
+function OrganizeContinuationReadNotice({
+  issue,
+  retrying,
+  onRetry,
+}: {
+  readonly issue: OrganizeContinuationReadIssue;
+  readonly retrying: boolean;
+  readonly onRetry: () => void;
+}) {
+  return (
+    <StatusBanner variant="warning" title="任务详情暂时无法读取">
+      <p role="status">
+        {issue.title}。整理卡和已输入的选择仍然保留；这次读取失败没有提交、
+        重放或修改任何整理工作。
+      </p>
+      <p>{unavailableExplanation(issue.category)}</p>
+      {issue.nextAction !== null && <p>{issue.nextAction}</p>}
+      {issue.canRetry && (
+        <div className="mf-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={retrying}
+            onClick={onRetry}
+          >
+            {retrying ? "正在重新读取..." : "重新读取任务"}
+          </Button>
+        </div>
+      )}
+    </StatusBanner>
   );
 }
 

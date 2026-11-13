@@ -24,7 +24,7 @@
  * confirmation and destructive authorization stays with the backend.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -90,6 +90,13 @@ export interface ManualOrganizeDialogProps {
    * exact run detail instead.
    */
   readonly fallbackFocusId?: string;
+  /**
+   * An optional host-read problem shown inside this same card. The in-place
+   * Task Center host uses it when its background Task-detail read fails: the
+   * mounted dialog keeps the operator's unsaved input and command state while
+   * the host explains and retries only that read.
+   */
+  readonly taskReadNotice?: ReactNode;
 }
 
 interface FileDraft {
@@ -171,6 +178,7 @@ export function ManualOrganizeDialog({
   onClose,
   onHandoff,
   fallbackFocusId = "mf-files-refresh",
+  taskReadNotice = null,
 }: ManualOrganizeDialogProps) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
@@ -2388,6 +2396,7 @@ export function ManualOrganizeDialog({
       cardClassName="mf-organize-dialog"
       footer={footer}
     >
+      {taskReadNotice}
       {discardPromptOpen ? (
         <div
           className="mf-organize-discard"
