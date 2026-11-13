@@ -3,7 +3,9 @@
 用户于 2026-11-13 明确“激活Task”，正式授权本 Task 实施；原 Task ID／Base／Goal／Scope
 保持。Developer 已在实施检查点 `fb8c35a7` 交付实现、受影响测试与文档同步。
 B 独立审查 `1c625220..68e6c347` 后于 2026-11-13 返回 FIX REQUIRED：任务详情后台
-轮询失败会卸载正在编辑的整理卡，重新读取后未保存的选择丢失。修正留在本 Task。
+轮询失败会卸载正在编辑的整理卡，重新读取后未保存的选择丢失。Developer 已在修正
+检查点 `ee0b41e4` 完成 B-01 修复、受影响测试与真实 Python 浏览器复验；当前状态为
+READY FOR B REVIEW，B 对完整 Base..Head 的独立再审与 T4 验收仍未执行。
 范围来自用户对现有行为的纠正：“在任务中心的任务详情页点击继续整理后背景改变了，
 不应该改变背景同时改变后的这个背景页应该删除的。” 不重开已接受 Slice。
 
@@ -11,7 +13,7 @@ B 独立审查 `1c625220..68e6c347` 后于 2026-11-13 返回 FIX REQUIRED：任�
 Task ID: PATCH-20261113-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 1c625220b9552bd1e75bfd351a54ddb524ff3e65
 Difficulty: High
 Test Level: T4
@@ -170,21 +172,26 @@ Slice、推送、发布、部署；本次激活不代行实施、不委派、不
 
 READY FOR B REVIEW
 
-- 实施检查点：`fb8c35a7`（Task Base `1c625220` → HEAD；本报告的 docs(task) 提交仅更新
-  本 Task 状态／结果，不含产品改动）。分支 `main`；实施前治理检查 PASS 且工作区干净。
-- 关键决定：继续意图使用 `/operations` 的准确 `run` + 闭合 `dialog=organize` 标记；
-  准备身份只从该 Task 的 `filesPreparation` 后端关联读取，URL 不携带 discovery／资源库。
-  共享 `ManualOrganizeDialog` 通过 portal 挂在任务中心最上层；运行详情保持挂载但暂停
-  自身键盘陷阱／inert，关闭只移除标记并回焦原继续入口。拒绝卡片与无关联/读取失败使用
-  同一最上层说明，不猜准备、不创建工作。正常或核对证明受理后显式清除标记、按响应
-  taskId 选择并 invalidate 概览/条目/记录，不依赖同路径导航卸载或旧页刷新。
-- 删除：`OrganizeCreationPage` 产品文件与专属测试、路由注册/import、destination 元数据、
-  `/operations/organize/new` 认证续转分支，以及 readiness 旧 recovery destination；
-  其余共享 organizer、API、查询、数据库与历史保留。原接收页场景迁入
-  `OperationsInventory.test.tsx` 宿主测试（历史只读、原计划读取失败重读、从未生成、
-  未保存离开、缺失/无关联/非法标记、A→B 不串准备、受理交接）。
+- 原实施检查点：`fb8c35a7`（Task Base `1c625220`）。B 在 `68e6c347` 审查后返回
+  FIX REQUIRED / B-01；原实现、受影响测试与文档同步的完整证据保留在该检查点及 Git
+  历史中，本次不重写。
+- 修正检查点：`ee0b41e4`（产品与测试；本报告的 docs(task) 提交只更新本 Task 状态／
+  结果，不含产品改动）。分支 `main`；修正前工作区干净，治理检查 PASS。
+- B-01 根因：后台任务详情轮询把 `filesPreparation` 投影读成 `{ok:false}` 后，
+  `resolveOrganizeContinuation` 将已打开的准确关联降级为 `unavailable`；宿主随即用
+  提示卡替换 `ManualOrganizeDialog`，其本地草稿、选择和未知命令核对状态随卸载丢失。
+- 修复：`OperationsLanding` 以准确 Task + discovery 关联作为已打开会话的保留锁存，
+  只在同一选中 Task 的非认证读取失败时继续挂载原卡；`OrganizeContinuationCard` 在该
+  卡内说明读取问题并提供同一任务的重新读取。成功读取始终覆盖锁存；关闭、切换 Task、
+  `no-association`、`not_found`、401/403 或真实结束仍按既有资格／认证边界处理。
+  共享 `ManualOrganizeDialog` 新增可选的内嵌读取提示，不改变 Files 宿主调用；没有
+  吞掉读取错误、关闭轮询、自动重试或重放任何保存／分析／Execute。
+- 新增测试：首次进入读取失败仍显示原不可用卡；已打开会话在五秒轮询 503 后保留 B
+  选择、背景与单卡，恢复读取后仍为 B 且无写请求；未知 Execute 核对跨同一次读取失败
+  保持，恢复后只按首次提交的 preview 核对一次，Execute 仍为一次。真实 Python
+  正常继续旅程加入同一 503／恢复／选择保留、列表列宽连续与显式放弃后重开断言。
 
-**实际测试结果（均在本检查点源码/构建上）**
+**本轮实际测试结果（均在 `ee0b41e4` 源码与同一生产构建上）**
 
 ```text
 python3 scripts/check_governance.py — PASS
@@ -195,29 +202,29 @@ web: npm run test -- run src/features/operations/OperationsInventory.test.tsx
   src/features/operations/RunDetailTabs.test.tsx src/routes/router.test.tsx
   src/shared/navigation/destination-model.test.ts
   src/shared/navigation/operations-return.test.ts
-  src/shared/ui/modal-card.test.tsx — 8 files / 168 tests PASS
-web: npm run typecheck / lint / format:check / build — PASS
+  src/shared/ui/modal-card.test.tsx — 8 files / 171 tests PASS
+web: npm run typecheck — PASS
+web: npm run lint — PASS
+web: npm run format:check — PASS
+web: npm run build — PASS
 web: npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
   tests/e2e/deep-link.spec.ts tests/e2e/manual-organize.spec.ts — 42 passed
 web: npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts
-  --grep 'PATCH-20261113-3|ordinary Files navigation opens the exact linked run'
-  — 2 passed（含真实 Python API／SQLite／Worker：原位打开、列表位置、Escape 关闭回焦、
-  Back/Forward、刷新/重认证、正常受理交接、结束任务只读历史；关闭按钮回焦由宿主
-  单元用例覆盖；截图见
+  tests/e2e/operations-inventory.python.spec.ts --grep 'PATCH-20261113-3'
+  — 1 passed（15.3s，真实 Python API／SQLite／Worker；新增 503 轮询、恢复读取、
+  B 选择保留、背景列宽连续与显式放弃后重开；截图见
   web/test-results/PATCH-20261113-3/）
 web: npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/manual-organize-dialog.python.spec.ts — 8 passed
-python: .venv/bin/python -m unittest tests.test_management_setup — 18 passed
+  tests/e2e/manual-organize-dialog.python.spec.ts — 8 passed（49.6s）
 ```
 
 - 未运行项／剩余风险（交 B）：按 Developer 分工未执行全仓 Python、Web 全量单测、
-  T4 共享全量门禁、wheel／源码外安装 smoke、Docker 与 B 指定的完整
-  `operations-inventory.python.spec.ts`／`operations-task-center-visual`／
-  `organize-source-history` 视觉验收。真实浏览器未单独以未保存草稿触发 popstate Back
-  （单元已覆盖 route blocker；`manual-organize-dialog` 的真实 Back 用例覆盖共享弹窗）。
-  `dialog=organize` 与旧隐藏列表条件同时存在的直达 URL 仅在单元层覆盖；B 应在完整
-  Python 旅程中复核最终候选的中间帧、三视口与键盘证据。
+  T4 共享全量门禁、wheel／源码外安装 smoke、Docker，以及 B 指定的完整
+  `operations-inventory.python.spec.ts`、`operations-task-center-visual`、
+  `organize-source-history` 与三视口视觉验收。真实浏览器 503 由 Playwright 路由
+  注入到同一真实 API 读取路径，不是后端主动故障；未在真实浏览器单独复验未知
+  Execute 跨读取失败（宿主单元用例覆盖），也未在失败窗口内提交 Save／分析／Execute。
+  B 应在完整 Base..Head 上复核中间帧、三视口、键盘与首次提交核对证据。
 
 ### B Review Result
 
