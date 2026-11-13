@@ -90,6 +90,16 @@ import {
   operationsReturnContextFromSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
+import {
+  OPERATIONS_DIALOG_KEY,
+  OPERATIONS_ORGANIZE_DIALOG,
+  readOperationsDialog,
+  withoutOperationsDialog,
+} from "../../shared/navigation/operations-organize";
+import {
+  OrganizeContinuationHost,
+  type OrganizeContinuationState,
+} from "./OrganizeContinuationCard";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   formatRunDateTime,
@@ -335,6 +345,59 @@ function hasRemovedListFilter(search: Record<string, unknown>): boolean {
   });
 }
 
+/**
+ * Resolve the one hosted organizer state from the selected Task's own backend
+ * projection.
+ *
+ * The `dialog=organize` marker names no preparation and no library: the exact
+ * discovery is read from the selected Task's durable association. A marker
+ * without a Task, a still-pending read, a failed/refused read and a Task
+ * without that exact association stay distinct states; none of them guesses a
+ * preparation or creates work.
+ */
+function resolveOrganizeContinuation(
+  requested: boolean,
+  selectedId: string,
+  query: UseQueryResult<RunOverviewRead, Error>,
+): OrganizeContinuationState | null {
+  if (!requested) return null;
+  if (selectedId === "") return { kind: "missing-run" };
+  if (query.isPending) return null;
+  if (query.isError) {
+    const category =
+      query.error instanceof ApiReadError ? query.error.category : null;
+    return {
+      kind: "unavailable",
+      title: "无法读取该任务的整理准备关联",
+      nextAction: null,
+      category,
+      canRetry: category !== "unauthorized" && category !== "forbidden",
+    };
+  }
+  const read = query.data;
+  if (read === undefined) {
+    return {
+      kind: "unavailable",
+      title: "任务详情暂时不可用",
+      nextAction: null,
+      category: null,
+      canRetry: true,
+    };
+  }
+  if (!read.ok) {
+    return {
+      kind: "unavailable",
+      title: read.failure.title,
+      nextAction: read.failure.nextAction,
+      category: null,
+      canRetry: true,
+    };
+  }
+  const preparation = read.model.filesPreparation;
+  if (preparation === null) return { kind: "no-association" };
+  return { kind: "ready", discoveryId: preparation.discoveryId };
+}
+
 /** Chinese business label of one run's operation kind. */
 function commandLabelOf(run: RunSummary): string {
   if (run.commandLabel !== null) {
@@ -430,6 +493,10 @@ export function OperationsLanding() {
   const view = readView(searchParams);
   const filters = readFilters(searchParams);
   const selectedId = readSafeSearchValue(searchParams, "run");
+  // The one closed hosted-card marker. It names no preparation: the exact
+  // discovery is read from the selected Task's own backend association below.
+  const organizeDialogRequested =
+    readOperationsDialog(searchParams) === OPERATIONS_ORGANIZE_DIALOG;
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
@@ -561,6 +628,12 @@ export function OperationsLanding() {
     ]) {
       if (searchParams[key] !== undefined)
         search[key] = searchParams[key] as RunSearchValue;
+    }
+    // A canonical hosted-card marker survives the one-time legacy filter
+    // normalization together with the exact Task it belongs to; without that
+    // Task the marker is meaningless and is dropped.
+    if (organizeDialogRequested && selectedId !== "") {
+      search["dialog"] = OPERATIONS_ORGANIZE_DIALOG;
     }
     void navigate({ to: "/operations", search, replace: true });
     // Normalize only on the transition into a hidden list condition.
@@ -731,6 +804,68 @@ export function OperationsLanding() {
 
   const filtered = isFiltered(filters);
 
+  /**
+   * Close the hosted organizer without leaving the exact task center context.
+   * Only the dialog marker is removed; list filters, cursor page, selection,
+   * detail tab/filters and scroll all stay exactly as they were.
+   */
+  const closeOrganizeContinuation = () => {
+    void navigate({
+      to: "/operations",
+      search: withoutOperationsDialog(searchParams),
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  /**
+   * One proved execution admission selects the exact returned Task in place.
+   * The hosted marker is cleared in the same navigation, and the necessary
+   * overview/items/records reads are explicitly invalidated: navigating to the
+   * same path does not unmount anything, so it cannot be relied on to refresh.
+   */
+  const handoffOrganizeContinuation = (taskId: string) => {
+    const search = listSearch();
+    if (problemRunId !== "") search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      search["problemType"] = chosenProblemType;
+    }
+    if (problemPage.cursor !== null) {
+      search["problemCursor"] = problemPage.cursor;
+      search["problemDir"] = problemPage.direction;
+    }
+    const target = taskId === "" ? selectedId : taskId;
+    if (target !== "") {
+      search["run"] = target;
+      // A different Task is a different detail object: the previous detail
+      // state (tab/item/cursors) never addresses the returned Task. The same
+      // Task keeps the operator's exact reading context.
+      if (target === selectedId) {
+        Object.assign(search, runDetailStateSearch(detailState));
+      }
+    }
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      resetScroll: false,
+    });
+    if (target !== "") {
+      void queryClient.invalidateQueries({
+        queryKey: [runOverviewQueryKey],
+        refetchType: "active",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: [runItemsQueryKey],
+        refetchType: "active",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: [runRecordsQueryKey],
+        refetchType: "active",
+      });
+    }
+  };
+
   const page: RunInventoryPage | null =
     query.data?.ok === true ? query.data.model : null;
 
@@ -744,6 +879,40 @@ export function OperationsLanding() {
   // same `执行记录` tab/filters/page instead of losing the context.
   const automationReturn = readAutomationReturnContext(searchParams);
   const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
+  // The hosted organizer never trusts a browser-supplied preparation: the
+  // exact discovery comes from this selected Task's backend projection. While
+  // that first read is pending the existing run-detail loading state remains
+  // the honest intermediate frame; a settled marker without usable association
+  // opens one bounded explanation instead of guessing work.
+  const organizeContinuation = resolveOrganizeContinuation(
+    organizeDialogRequested,
+    selectedId,
+    overviewQuery,
+  );
+  const organizeLayerOpen = organizeContinuation !== null;
+  const organizeFallbackFocusId =
+    selectedId === "" ? "mf-operations-heading" : "mf-run-detail-close";
+  // The continue link is one same-route navigation: it keeps the exact list
+  // and detail state and adds only the closed dialog marker. The background
+  // therefore stays mounted, positioned and scrolled where it was.
+  const preparationLinkSearch: Record<string, RunSearchValue> =
+    selectedId === ""
+      ? {}
+      : {
+          ...listSearch(selectedId),
+          ...(problemRunId !== "" ? { problemRun: problemRunId } : {}),
+          ...(chosenProblemType !== null && !isRecoveryView(view)
+            ? { problemType: chosenProblemType }
+            : {}),
+          ...(problemPage.cursor !== null
+            ? {
+                problemCursor: problemPage.cursor,
+                problemDir: problemPage.direction,
+              }
+            : {}),
+          ...runDetailStateSearch(detailState),
+          [OPERATIONS_DIALOG_KEY]: OPERATIONS_ORGANIZE_DIALOG,
+        };
   // The explicit header refresh re-reads the bounded landing reads (the
   // inventory and the selected run overview); it never submits or replays any
   // command and never issues the retired global Worker/resident-status reads.
@@ -961,15 +1130,28 @@ export function OperationsLanding() {
                     })
                   }
                   onSelectRun={selectRun}
-                  preparationReturnOps={operationsReturnContextFromSearch({
-                    ...listSearch(selectedId),
-                    ...runDetailStateSearch(detailState),
-                  })}
+                  preparationLinkSearch={preparationLinkSearch}
+                  // The hosted organizer is the topmost card: the run detail
+                  // keeps its content and state but must not keep its own focus
+                  // trap/inert ownership beside it.
+                  suspended={organizeLayerOpen}
                 />
               )}
             </>
           )}
         </AuthorizedReadBoundary>
+        {organizeContinuation !== null && (
+          <OrganizeContinuationHost
+            state={organizeContinuation}
+            fallbackFocusId={organizeFallbackFocusId}
+            retrying={overviewQuery.isFetching}
+            onClose={closeOrganizeContinuation}
+            onRetry={() => {
+              void overviewQuery.refetch({ cancelRefetch: false });
+            }}
+            onHandoff={handoffOrganizeContinuation}
+          />
+        )}
       </div>
     </TaskItemRecoverySessionProvider>
   );
@@ -1396,7 +1578,8 @@ function RunDetailPanel({
   onRemainingSession,
   onOpenLinkedAnalysis,
   onSelectRun,
-  preparationReturnOps,
+  preparationLinkSearch,
+  suspended,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
@@ -1414,8 +1597,14 @@ function RunDetailPanel({
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
-  /** The exact Task Center context a reopened Files preparation returns to. */
-  readonly preparationReturnOps: string;
+  /** The same-route continue search: exact Task plus the hosted marker. */
+  readonly preparationLinkSearch: Record<string, RunSearchValue>;
+  /**
+   * Whether a stacked card above owns interaction. The detail keeps its
+   * content, scroll and state, but yields the focus trap and background
+   * inertness so two cards never handle Tab/Escape at once.
+   */
+  readonly suspended: boolean;
 }) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
@@ -1459,6 +1648,7 @@ function RunDetailPanel({
   const modal = useModalLayer({
     onEscape: () => exit.beginClose(onClose),
     fallbackFocusId: "mf-operations-heading",
+    active: !suspended,
   });
 
   useEffect(() => {
@@ -1835,6 +2025,7 @@ function RunDetailPanel({
       description="该运行的流程状态、逐文件结果与操作记录。"
       closeLabel="关闭详情"
       closeDisabled={exit.closing}
+      closeButtonId="mf-run-detail-close"
       onRequestClose={() => exit.beginClose(onClose)}
       cardClassName="mf-run-detail-card"
       bodyClassName="mf-modal-body-scroll"
@@ -2027,7 +2218,7 @@ function RunDetailPanel({
                   <RunDetailFacts
                     run={run}
                     onSelectRun={onSelectRun}
-                    preparationReturnOps={preparationReturnOps}
+                    preparationLinkSearch={preparationLinkSearch}
                   />
                 }
                 actions={
@@ -2207,12 +2398,12 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
 function RunDetailFacts({
   run,
   onSelectRun,
-  preparationReturnOps,
+  preparationLinkSearch,
 }: {
   readonly run: RunSummary;
   readonly onSelectRun: (runId: string) => void;
-  /** The exact Task Center context a reopened Files preparation returns to. */
-  readonly preparationReturnOps: string;
+  /** The same-route continue search: exact Task plus the hosted marker. */
+  readonly preparationLinkSearch: Record<string, RunSearchValue>;
 }) {
   const hasDiagnostics =
     run.workerId !== null || run.configurationSnapshotId !== null;
@@ -2283,12 +2474,11 @@ function RunDetailFacts({
           <div className="mf-actions">
             <Link
               className="mf-button mf-button-secondary"
-              to="/operations/organize/new"
-              search={{
-                discoveryId: run.filesPreparation.discoveryId,
-                resourceLibraryId: run.filesPreparation.resourceLibraryId,
-                returnOps: preparationReturnOps,
-              }}
+              to="/operations"
+              search={preparationLinkSearch}
+              // Opening the card is not a list visit: the task center
+              // background stays at its exact scroll position behind it.
+              resetScroll={false}
             >
               继续整理
             </Link>

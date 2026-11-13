@@ -24,7 +24,6 @@ import {
   LegacyTaskDetailPage,
   LegacyTaskListPage,
 } from "../features/operations/LegacyTaskRoutes";
-import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
@@ -37,6 +36,7 @@ import { NotificationDetailPage } from "../features/operations/NotificationDetai
 import { NotificationEditorPage } from "../features/operations/NotificationEditorPage";
 import { DeliveryListPage } from "../features/operations/DeliveryListPage";
 import { DeliveryDetailPage } from "../features/operations/DeliveryDetailPage";
+import { readOperationsDialog } from "../shared/navigation/operations-organize";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -139,6 +139,19 @@ const resourceLibraryFilesRoute = createRoute({
 const operationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations",
+  // The task center hosts at most one closed card kind above its preserved
+  // list/detail search. An unknown `dialog` value is normalized to no marker
+  // here, so the landing never treats a tampered value as an instruction and
+  // no downstream navigation replays it. Every other key stays the ordinary
+  // bounded landing state read by the landing's own per-key grammars.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    if (!("dialog" in search)) return search;
+    const dialog = readOperationsDialog(search);
+    if (dialog !== null) return { ...search, dialog };
+    return { ...search, dialog: undefined };
+  },
   component: OperationsLanding,
 });
 
@@ -164,12 +177,6 @@ const jobDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/jobs/$jobId",
   component: LegacyJobDetailPage,
-});
-
-const organizeNewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/organize/new",
-  component: OrganizeCreationPage,
 });
 
 const organizeIntentRoute = createRoute({
@@ -305,7 +312,6 @@ const routeTree = rootRoute.addChildren([
   taskDetailRoute,
   jobListRoute,
   jobDetailRoute,
-  organizeNewRoute,
   organizeIntentRoute,
   organizeDiscoveryRoute,
   automationListRoute,

@@ -54,28 +54,31 @@ describe("retired Library routes", () => {
     },
   );
 
-  it("guides a generic creation URL to Files without starting work", async () => {
-    // Task46.3 RO-2: ResourceLibrary Files is the only normal entry for a new
-    // file-selection-based organizing request.  A generic new-organize URL
-    // therefore guides to Files, offers no independent library picker and starts
-    // nothing — it must not read a work matrix or admit any work.
-    stubJson({ error: { code: "unexpected" } }, 500);
-    authStore.setToken("route-separation-token");
-    renderApp("/ui-v2/operations/organize/new");
+  it.each([
+    "/ui-v2/operations/organize/new",
+    "/ui-v2/operations/organize/new?discoveryId=prep-1&resourceLibraryId=library",
+  ])(
+    "answers the retired Organize receiving address %s with the ordinary not-found page",
+    async (path) => {
+      // PATCH-20261113-3: the task center hosts the exact preparation in place,
+      // so the former receiving page keeps no route, alias, redirect, guidance
+      // shell or authentication-continuation destination. Its discovery id is
+      // not a credential for a surviving page either.
+      stubJson({ error: { code: "unexpected" } }, 500);
+      authStore.setToken("route-separation-token");
+      renderApp(path);
 
-    expect(
-      await screen.findByRole("heading", { name: "从资源库文件页开始整理" }),
-    ).toBeVisible();
-    expect(screen.getByRole("link", { name: "返回任务中心" })).toHaveAttribute(
-      "href",
-      "/ui-v2/operations",
-    );
-    expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
-    // A generic URL never starts work: no admission POST reached the backend.
-    for (const [input] of vi.mocked(fetch).mock.calls) {
-      expect(String(input)).not.toMatch(/files\/discoveries/);
-    }
-  });
+      expect(
+        await screen.findByRole("heading", { name: "Route not found" }),
+      ).toBeVisible();
+      expect(document.body.textContent ?? "").not.toMatch(
+        /从资源库文件页开始整理|逐文件整理准备/,
+      );
+      expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
+      // The removed address starts no read, admission, analysis or execution.
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("retired Dashboard route", () => {

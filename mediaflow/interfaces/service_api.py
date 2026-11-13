@@ -8576,7 +8576,7 @@ class MediaFlowApi:
             authorized=authorized_for("directTransfer"),
         )
         organize_permission = permission(
-            preview and execute, "/ui-v2/operations/organize/new", "Organize"
+            preview and execute, "/ui-v2/resourcelib/files", "Organize"
         )
         organize = organize_permission or self._readiness_entry(
             ready=bool(enabled_resources and enabled_media and processing),

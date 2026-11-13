@@ -84,6 +84,12 @@ export interface ManualOrganizeDialogProps {
   readonly onClose: () => void;
   /** Hand the exact durable task to the task center's existing selection mechanism. */
   readonly onHandoff: (taskId: string) => void;
+  /**
+   * Focus target when the invoking control no longer exists. The Files host
+   * keeps its refresh control; the in-place Task Center host returns to its
+   * exact run detail instead.
+   */
+  readonly fallbackFocusId?: string;
 }
 
 interface FileDraft {
@@ -164,6 +170,7 @@ export function ManualOrganizeDialog({
   session,
   onClose,
   onHandoff,
+  fallbackFocusId = "mf-files-refresh",
 }: ManualOrganizeDialogProps) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
@@ -883,7 +890,7 @@ export function ManualOrganizeDialog({
   const layer = useModalLayer({
     onEscape: attemptClose,
     escapeDisabled: () => closeLocked,
-    fallbackFocusId: "mf-files-refresh",
+    fallbackFocusId,
   });
 
   // ---- polling while a durable Worker stage still runs ----------------

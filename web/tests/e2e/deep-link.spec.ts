@@ -196,7 +196,7 @@ test("a retired Library route offers bounded recovery links and starts no work",
   expect(apiRequests).toHaveLength(0);
 });
 
-test("no supported page emits a retired Library address into the DOM", async ({
+test("no supported page emits a retired Library or preparation address", async ({
   page,
 }) => {
   await page.goto("/ui-v2/");
@@ -204,20 +204,42 @@ test("no supported page emits a retired Library address into the DOM", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 
-  // Task46.3 RO-2: a generic creation URL now guides to ResourceLibrary Files
-  // instead of offering another library picker.  Memory-only authority is
-  // re-established after the direct navigation.
-  await page.goto("/ui-v2/operations/organize/new");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  // The task center is the one supported continuation surface; it never
+  // emits a retired Library address or the removed receiving page.
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "返回任务中心" }),
-  ).toHaveAttribute("href", "/ui-v2/operations");
-  const retiredLinks = await page.locator('a[href^="/ui-v2/library"]').count();
-  expect(retiredLinks).toBe(0);
+  expect(await page.locator('a[href^="/ui-v2/library"]').count()).toBe(0);
+  expect(
+    await page.locator('a[href^="/ui-v2/operations/organize/new"]').count(),
+  ).toBe(0);
+});
+
+test("the retired preparation receiving address is an ordinary not-found", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  // The Python SPA-safe static serve still answers the deep link with
+  // index.html; the React not-found layer owns the address. Both the generic
+  // and the former discovery-shaped address keep no page, guidance shell,
+  // redirect or preparation request.
+  for (const path of [
+    "/ui-v2/operations/organize/new",
+    "/ui-v2/operations/organize/new?discoveryId=prep-1&resourceLibraryId=source",
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    expect(page.url()).toContain(path.split("?")[0]);
+    await expect(page.getByText("从资源库文件页开始整理")).toHaveCount(0);
+    await expect(page.getByText("逐文件整理准备")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Return to Explore" }),
+    ).toBeVisible();
+  }
+  await expect.poll(() => apiRequests.length, { timeout: 3_000 }).toBe(0);
 });
 
 test("an explicit route choice at the boundary replaces an earlier intention", async ({

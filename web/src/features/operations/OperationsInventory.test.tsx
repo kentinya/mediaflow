@@ -719,38 +719,16 @@ describe("Operations run inventory landing", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it("reopens the exact Files preparation from the selected run detail", async () => {
+  it("PATCH-20261113-3 continues the exact Files preparation above the preserved task center", async () => {
     const user = userEvent.setup();
-    const requested: { url: string; method: string }[] = [];
-    stubFetch(async (input, init) => {
-      const url = String(input);
-      requested.push({ url, method: init?.method ?? "GET" });
-      if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
-      ) {
-        return jsonResponse(pageDocument());
-      }
-      if (url === "/api/v1/operations/runs/task-001") {
-        return jsonResponse(
-          runDocument({
-            filesPreparation: {
-              discoveryId: "discovery-1",
-              resourceLibraryId: "source",
-              continuable: true,
-            },
-          }),
-        );
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
+    const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    // The continuable state explains only the next step; the preparation page
+    // The continuable state explains only the next step; the hosted card
     // itself carries the confirmation boundary.
     expect(
       within(detail).getByText("查看整理摘要，确认后执行。"),
@@ -759,22 +737,47 @@ describe("Operations run inventory landing", () => {
       within(detail).queryByText(/此运行由文件页的整理选择发起/),
     ).toBeNull();
     const link = await within(detail).findByRole("link", { name: "继续整理" });
-    expect(link.getAttribute("href")).toContain("discoveryId=discovery-1");
-    expect(link.getAttribute("href")).toContain("resourceLibraryId=source");
+    // The continue address is the task center itself: exact Task + closed
+    // marker, never a browser-supplied discovery or library identity.
+    expect(link.getAttribute("href")).toContain("run=task-001");
+    expect(link.getAttribute("href")).toContain("dialog=organize");
+    expect(link.getAttribute("href")).not.toContain("discoveryId");
+    expect(link.getAttribute("href")).not.toContain("resourceLibraryId");
 
     await user.click(link);
-    await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/operations/organize/new"),
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    expect(within(dialog).getAllByText("One.2001.mkv").length).toBeGreaterThan(
+      0,
     );
-    const params = new URLSearchParams(router.history.location.search);
-    expect(params.get("discoveryId")).toBe("discovery-1");
-    expect(params.get("resourceLibraryId")).toBe("source");
-    // The exact Task Center context returns to this run's detail after the
-    // preparation's own explicit confirmation.
-    const returnOps = params.get("returnOps") ?? "";
-    expect(returnOps).toContain("run=task-001");
-    // Reading/opening the preparation link submits nothing.
-    expect(requested.filter((entry) => entry.method !== "GET")).toEqual([]);
+    // The main path stays the task center: same route, exact Task, marker only.
+    expect(router.state.location.pathname).toBe("/operations");
+    const opened = new URLSearchParams(router.history.location.search);
+    expect(opened.get("run")).toBe("task-001");
+    expect(opened.get("dialog")).toBe("organize");
+    expect(opened.get("discoveryId")).toBeNull();
+    // The list and the exact run detail stay mounted behind the card.
+    expect(screen.getByRole("table")).toBe(table);
+    expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
+    // The preparation identity came from the Task's backend association.
+    expect(backend.calls.discoveryReads).toBeGreaterThan(0);
+    expect(backend.calls.posts).toEqual([]);
+
+    await user.click(within(dialog).getByRole("button", { name: /^关闭$/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    // Closing removes only the marker: the same detail stays open and focus
+    // returns to the exact continue entry that invoked the card.
+    expect(router.state.location.pathname).toBe("/operations");
+    const closed = new URLSearchParams(router.history.location.search);
+    expect(closed.get("run")).toBe("task-001");
+    expect(closed.get("dialog")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
+    expect(screen.getByRole("table")).toBe(table);
+    await waitFor(() => expect(document.activeElement).toBe(link));
+    // Opening and closing the card submits nothing.
+    expect(backend.calls.posts).toEqual([]);
   });
 
   it("removes the ended flow's duplicate preparation entries and keeps its file truth", async () => {
@@ -2865,5 +2868,588 @@ describe("Operations run inventory landing", () => {
       expect(within(second).queryByText("Movies")).toBeNull(),
     );
     expect(within(second).getByText("Media/Shows")).toBeTruthy();
+  });
+});
+
+/**
+ * PATCH-20261113-3 host fixtures: one exact admitted Files preparation whose
+ * identity the selected Task's overview publishes. The preparation/intent/
+ * summary documents are the same shared manual-operations fixture the dialog's
+ * own tests use, so the hosted card exercises the real typed query boundary.
+ */
+const HOST_DISCOVERY_ID = "discovery-1";
+const HOST_INTENT_ID = "intent-1";
+const HOST_PREVIEW_ID = "preview-1";
+
+function hostAction(): Record<string, unknown> {
+  return {
+    available: false,
+    method: "POST",
+    path: null,
+    requiresVersion: true,
+    sideEffects: "none",
+    refusal: null,
+    pendingReason: null,
+    reason: null,
+    nextAction: null,
+  };
+}
+
+function hostDiscoveryDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    journey: "discovery",
+    discoveryId: HOST_DISCOVERY_ID,
+    resourceLibraryId: "library",
+    storageId: "source",
+    configurationSnapshotId: "active-1",
+    status: "completed",
+    version: 5,
+    createdAt: "2026-01-01T00:00:00+00:00",
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    selection: {
+      scopeCount: 1,
+      scopes: [{ kind: "file", path: "Movies/One.2001.mkv" }],
+      existing: [],
+      refused: [],
+    },
+    budgets: {},
+    progress: {
+      phase: "prepared",
+      visitedEntries: 1,
+      visitedDirectories: 0,
+      pageFetches: 1,
+      primarySources: 1,
+      excludedEntries: 0,
+      unstableEntries: 0,
+      errorEntries: 0,
+      activeSeconds: 0.1,
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      findings: [],
+      reasons: [],
+      message: "the exact zero-mutation plan summary is ready",
+    },
+    primarySourceCount: 1,
+    organizeFlow: {
+      taskId: "task-001",
+      status: "running",
+      continuable: true,
+    },
+    admissionRequestId: null,
+    autoPrepare: true,
+    prepared: true,
+    previewId: HOST_PREVIEW_ID,
+    intentId: HOST_INTENT_ID,
+    frozen: true,
+    frozenAt: "2026-01-01T00:00:00+00:00",
+    pauseRequested: false,
+    cancelRequested: false,
+    nextObservationAt: null,
+    worker: {
+      ready: true,
+      condition: "ready",
+      durableState: "ready",
+      nextAction: "claim",
+    },
+    actions: {
+      pause: hostAction(),
+      resume: hostAction(),
+      cancel: hostAction(),
+      finalize: hostAction(),
+      prepare: hostAction(),
+    },
+    sources: [],
+    nextAction: "open the linked exact plan summary",
+    failure: null,
+    sideEffects: "none",
+    zeroMutation: true,
+    execution: "not_available_from_discovery",
+    ...overrides,
+  };
+}
+
+function hostPreviewDocument(): Record<string, unknown> {
+  const value = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)[
+        "organizePreviewDetail"
+      ],
+    ),
+  ) as Record<string, unknown>;
+  value["previewId"] = HOST_PREVIEW_ID;
+  value["intentId"] = HOST_INTENT_ID;
+  value["current"] = true;
+  const items = value["items"] as Record<string, unknown>[];
+  const first = items[0]!;
+  first["itemId"] = "item-1";
+  first["previewItemId"] = "pitem-1";
+  const source = first["source"] as Record<string, unknown>;
+  source["path"] = "Movies/One.2001.mkv";
+  source["filename"] = "One.2001.mkv";
+  const selection = value["selection"] as Record<string, unknown>;
+  selection["selectedItemIds"] = ["item-1"];
+  selection["unselectedItemIds"] = [];
+  value["executionCandidateItemIds"] = ["item-1"];
+  const actions = value["actions"] as Record<string, Record<string, unknown>>;
+  actions["execute"]!["path"] =
+    `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/execute`;
+  return value;
+}
+
+function hostIntentDocument(): Record<string, unknown> {
+  const value = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)[
+        "organizeIntentChoice"
+      ],
+    ),
+  ) as Record<string, unknown>;
+  value["intentId"] = HOST_INTENT_ID;
+  const items = value["items"] as Record<string, unknown>[];
+  const first = items[0]!;
+  first["itemId"] = "item-1";
+  const source = first["source"] as Record<string, unknown>;
+  source["path"] = "Movies/One.2001.mkv";
+  source["filename"] = "One.2001.mkv";
+  const actions = value["actions"] as Record<string, Record<string, unknown>>;
+  actions["choice"]!["path"] =
+    `/api/v1/operations/organize/intents/${HOST_INTENT_ID}/items/{itemId}/choice`;
+  value["latestPlan"] = {
+    previewId: HOST_PREVIEW_ID,
+    status: "previewed",
+    current: true,
+    intentVersion: 2,
+    createdAt: "2026-01-01T00:00:00+00:00",
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    truncated: false,
+  };
+  return value;
+}
+
+function hostExecutionDocument(taskId: string): Record<string, unknown> {
+  const value = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)["organizeExecution"],
+    ),
+  ) as Record<string, unknown>;
+  value["executionId"] = "exec-1";
+  value["previewId"] = HOST_PREVIEW_ID;
+  value["intentId"] = HOST_INTENT_ID;
+  value["taskId"] = taskId;
+  value["selectedItemIds"] = ["item-1"];
+  value["unselectedItemIds"] = [];
+  const actions = value["actions"] as Record<string, Record<string, unknown>>;
+  actions["detail"]!["path"] = "/api/v1/operations/organize/executions/exec-1";
+  actions["task"]!["path"] = `/api/v1/operations/tasks/${taskId}`;
+  const items = value["items"] as Record<string, unknown>[];
+  items[0]!["itemId"] = "item-1";
+  items[0]!["taskId"] = taskId;
+  items[0]!["taskItemId"] = "task-item-1";
+  return value;
+}
+
+interface OrganizeHostBackend {
+  readonly calls: {
+    discoveryReads: number;
+    intentReads: number;
+    overviewReads: number;
+    posts: string[];
+  };
+  readonly state: { intentUnavailable: boolean; executeTaskId: string };
+}
+
+/**
+ * Serve the task center and the one exact preparation association. `overview`
+ * and `discovery` override the settled durable state; every request is counted
+ * so the tests can prove what opening/continuing actually read or submitted.
+ */
+function stubOrganizeHost(
+  options: {
+    readonly overview?: Record<string, unknown>;
+    readonly discovery?: Record<string, unknown>;
+    readonly intentUnavailable?: boolean;
+  } = {},
+): OrganizeHostBackend {
+  const backend: OrganizeHostBackend = {
+    calls: { discoveryReads: 0, intentReads: 0, overviewReads: 0, posts: [] },
+    state: {
+      intentUnavailable: options.intentUnavailable ?? false,
+      executeTaskId: "task-001",
+    },
+  };
+  stubFetch(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method !== "GET") backend.calls.posts.push(url);
+    if (
+      url.startsWith("/api/v1/operations/runs?") ||
+      url === "/api/v1/operations/runs"
+    ) {
+      return jsonResponse(pageDocument());
+    }
+    if (url === "/api/v1/operations/runs/task-001") {
+      backend.calls.overviewReads += 1;
+      return jsonResponse(
+        runDocument({
+          filesPreparation: {
+            discoveryId: HOST_DISCOVERY_ID,
+            resourceLibraryId: "source",
+            continuable: true,
+          },
+          ...options.overview,
+        }),
+      );
+    }
+    if (
+      url === `/api/v1/operations/organize/discoveries/${HOST_DISCOVERY_ID}` &&
+      method === "GET"
+    ) {
+      backend.calls.discoveryReads += 1;
+      return jsonResponse(hostDiscoveryDocument(options.discovery));
+    }
+    if (
+      /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(url) &&
+      method === "POST"
+    ) {
+      return jsonResponse(hostDiscoveryDocument(options.discovery));
+    }
+    if (
+      url === `/api/v1/operations/organize/intents/${HOST_INTENT_ID}` &&
+      method === "GET"
+    ) {
+      backend.calls.intentReads += 1;
+      if (backend.state.intentUnavailable) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      return jsonResponse(hostIntentDocument());
+    }
+    if (
+      url === `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}` &&
+      method === "GET"
+    ) {
+      return jsonResponse(hostPreviewDocument());
+    }
+    if (url.startsWith("/api/v1/operations/organize/executions")) {
+      return jsonResponse({
+        items: [],
+        total: 0,
+        limit: 100,
+        truncated: false,
+      });
+    }
+    if (
+      url ===
+        `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/execute` &&
+      method === "POST"
+    ) {
+      return jsonResponse(
+        hostExecutionDocument(backend.state.executeTaskId),
+        202,
+      );
+    }
+    return jsonResponse({ error: { code: "not_found" } }, 404);
+  });
+  return backend;
+}
+
+describe("PATCH-20261113-3 task-center hosted preparation", () => {
+  it("restores the same exact preparation from the canonical direct address", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?run=task-001&tab=records&dialog=organize",
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    expect(router.state.location.pathname).toBe("/operations");
+    const search = new URLSearchParams(router.history.location.search);
+    expect(search.get("run")).toBe("task-001");
+    expect(search.get("tab")).toBe("records");
+    expect(search.get("dialog")).toBe("organize");
+    // The address carries no preparation or library identity.
+    expect(search.get("discoveryId")).toBeNull();
+    expect(search.get("resourceLibraryId")).toBeNull();
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("explains a marker without an exact Task and starts no read", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?dialog=organize");
+
+    const notice = await screen.findByRole("dialog", {
+      name: "无法继续这次整理",
+    });
+    expect(within(notice).getByText("继续整理地址缺少准确任务")).toBeVisible();
+    expect(backend.calls.overviewReads).toBe(0);
+    expect(backend.calls.discoveryReads).toBe(0);
+    await userEvent
+      .setup()
+      .click(within(notice).getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "无法继续这次整理" }),
+      ).toBeNull(),
+    );
+    expect(router.state.location.pathname).toBe("/operations");
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      null,
+    );
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("explains a Task without the exact association without guessing one", async () => {
+    const backend = stubOrganizeHost({
+      overview: { filesPreparation: null },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const notice = await screen.findByRole("dialog", {
+      name: "无法继续这次整理",
+    });
+    expect(
+      within(notice).getByText("这个任务没有关联的文件整理准备"),
+    ).toBeVisible();
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+    expect(backend.calls.discoveryReads).toBe(0);
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("drops an unknown hosted-card marker instead of replaying it", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?run=task-001&dialog=execute",
+    );
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    expect(await within(detail).findByText("流程状态")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull();
+    expect(
+      screen.queryByRole("dialog", { name: "无法继续这次整理" }),
+    ).toBeNull();
+    expect(router.state.location.search["dialog"]).toBeUndefined();
+    expect(backend.calls.discoveryReads).toBe(0);
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("reopens ended work as read-only history from the canonical address", async () => {
+    const backend = stubOrganizeHost({
+      overview: {
+        status: "completed",
+        current_stage: null,
+        filesPreparation: {
+          discoveryId: HOST_DISCOVERY_ID,
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      discovery: {
+        status: "completed",
+        organizeFlow: {
+          taskId: "task-001",
+          status: "completed",
+          continuable: false,
+        },
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    expect(await within(dialog).findByText(/本次整理工作已结束/)).toBeVisible();
+    const history = await within(dialog).findByRole("region", {
+      name: "只读原计划摘要",
+    });
+    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(dialog).queryByRole("button", { name: /确认整理/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /保存并重新分析/ }),
+    ).toBeNull();
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("distinguishes a failed original-summary read and retries it in place", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost({
+      intentUnavailable: true,
+      overview: {
+        status: "failed",
+        current_stage: null,
+        filesPreparation: {
+          discoveryId: HOST_DISCOVERY_ID,
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      discovery: {
+        status: "failed",
+        prepared: false,
+        previewId: null,
+        intentId: HOST_INTENT_ID,
+        organizeFlow: {
+          taskId: "task-001",
+          status: "failed",
+          continuable: false,
+        },
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    expect(
+      await within(dialog).findByText(/原计划摘要暂时无法读取/),
+    ).toBeVisible();
+    expect(within(dialog).queryByText(/从未生成过计划摘要/)).toBeNull();
+
+    backend.state.intentUnavailable = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "重新读取原计划摘要" }),
+    );
+    expect(
+      await within(dialog).findByRole("region", { name: "只读原计划摘要" }),
+    ).toBeVisible();
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("states plainly when ended work never generated a summary", async () => {
+    stubOrganizeHost({
+      overview: {
+        status: "failed",
+        current_stage: null,
+        filesPreparation: {
+          discoveryId: HOST_DISCOVERY_ID,
+          resourceLibraryId: "source",
+          continuable: false,
+        },
+      },
+      discovery: {
+        status: "failed",
+        prepared: false,
+        previewId: null,
+        intentId: null,
+        organizeFlow: {
+          taskId: "task-001",
+          status: "failed",
+          continuable: false,
+        },
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    expect(await within(dialog).findByText(/从未生成过计划摘要/)).toBeVisible();
+    expect(
+      within(dialog).queryByRole("region", { name: "只读原计划摘要" }),
+    ).toBeNull();
+  });
+
+  it("never carries A's preparation into another selected Task", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?run=task-001&dialog=organize",
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    expect(backend.calls.discoveryReads).toBeGreaterThan(0);
+    const discoveryReadsForA = backend.calls.discoveryReads;
+
+    // The other Task has no exact association in this stub. The host must
+    // resolve B from its own backend read and must not keep A's card, draft or
+    // preparation (the dialog is keyed by the resolved exact preparation).
+    void router.navigate({
+      to: "/operations",
+      search: { run: "task-002", dialog: "organize" },
+    });
+    const notice = await screen.findByRole("dialog", {
+      name: "无法继续这次整理",
+    });
+    expect(within(notice).getByText("Record not found")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull();
+    expect(backend.calls.discoveryReads).toBe(discoveryReadsForA);
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("protects unsaved drafts against leaving the task center without losing the card", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await user.click(
+      await within(detail).findByRole("link", { name: "继续整理" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await user.selectOptions(
+      await within(dialog).findByLabelText("识别类型 One.2001.mkv"),
+      "B",
+    );
+    // A route-changing exit (the real browser Back reaches the same blocker
+    // through its popstate path) must not silently drop the draft.
+    router.history.push("/ui-v2/resourcelib/files");
+    const prompt = await screen.findByRole("alertdialog");
+    expect(
+      within(prompt).getByText(/有尚未保存的逐文件修正草稿/),
+    ).toBeVisible();
+    await user.click(within(prompt).getByRole("button", { name: "继续编辑" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "整理所选文件" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/operations");
+    expect(
+      new URLSearchParams(router.history.location.search).get("dialog"),
+    ).toBe("organize");
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("hands a proved admission to the exact returned Task and refreshes it", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?run=task-001&dialog=organize",
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(within(dialog).getByRole("button", { name: /整批复核/ }));
+    await user.click(
+      await within(dialog).findByRole("button", {
+        name: "确认整理 1 项",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(router.state.location.pathname).toBe("/operations");
+    const search = new URLSearchParams(router.history.location.search);
+    expect(search.get("run")).toBe("task-001");
+    expect(search.get("dialog")).toBeNull();
+    expect(
+      backend.calls.posts.filter((url) => url.endsWith("/execute")),
+    ).toHaveLength(1);
+    // The exact Task's overview is explicitly re-read after the handoff; the
+    // same-route navigation alone is not relied on to refresh anything.
+    await waitFor(() =>
+      expect(backend.calls.overviewReads).toBeGreaterThanOrEqual(2),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
   });
 });

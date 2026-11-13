@@ -1467,10 +1467,15 @@ Source ownership is independent of short-lived execution leases:
 history and exact `requestId` reconciliation. Files uses the exact-request read for unknown admission;
 ordinary directory browsing has no organizing-history panel or history polling. The selected Task
 Center run read exposes optional `filesPreparation {discoveryId, resourceLibraryId, continuable}`
-from the discovery durably linked to that exact Task. Its eligible `继续整理` link opens the existing
-`/operations/organize/new` preparation with `discoveryId`, `resourceLibraryId` and validated `returnOps`.
-This read-only association carries no execution authority; the original preparation retains its
-pin/context, summary, explicit confirmation and execution readback after reload/re-authentication.
+from the discovery durably linked to that exact Task. Its eligible `继续整理` action opens the existing
+shared per-file preparation in place above the preserved `/operations` list/detail background, using the
+exact selected `run` plus the one closed `dialog=organize` marker. The browser carries no discovery or
+library identity; the preparation is resolved only from that Task's backend association. Closing removes
+the marker and restores the same list/detail context. The retired `/operations/organize/new` receiving
+page has no route, alias, redirect, guidance shell or authentication-continuation destination; its old
+addresses are ordinary not-found. This read-only association carries no execution authority; the original
+preparation retains its pin/context, summary, explicit confirmation and execution readback after
+reload/re-authentication.
 
 The backend projects the linked Task's existing flow as `organizeFlow {taskId, status, continuable}`
 for the preparation/intent/summary. These response fields add no stored state or schema.
@@ -1482,8 +1487,8 @@ The page distinguishes pending history reads, failed reads with page-local rerea
 successful read with no saved plan. Historical reads do not analyze, issue authority or execute.
 The Files entry starts deliberate new work under the existing source-history contract.
 
-Generic new-organize routes guide to Files without another picker or work. Ordinary initial summary
-confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
+The retired generic new-organize address is an ordinary not-found; ResourceLibrary Files remains the
+only new-work entry. Ordinary initial summary confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
 population and four-type lineage described above.
 
 Shell return context comes from the router's committed validated search, preserving bounded
@@ -1497,10 +1502,13 @@ Accepted [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8
 discovery/intent/plan, exact selected execution and original-request reconciliation. CURRENT
 Files-admitted Task/source ownership above remains in force; engine/schema/authority are unchanged.
 
-Files hosts the modal above its preserved background. Valid preparation/readonly deep links and
-Task Center continue links retain exact discovery/library/return context through refresh and
-re-authentication; route adaptation must not guess current Active, a newer Task or a different source.
-Reuse feature-independent ModalCardShell presentation, not library/Automation fields or commands.
+Files hosts the modal above its preserved background. The Task Center hosts the same modal above its
+own preserved list/detail background; its canonical `继续整理` address is the exact `run` plus the closed
+`dialog=organize` marker, and the preparation is resolved from that Task's backend association through
+refresh/re-authentication. No browser-supplied preparation/library identity is accepted, and the retired
+standalone receiving route is gone. Route adaptation must not guess current Active, a newer Task or a
+different source. Reuse feature-independent ModalCardShell presentation, not library/Automation fields or
+commands.
 
 The organizer owns itemId/preparation/summary-bound drafts, inclusion, active file, explicit
 save-then-reanalysis, exact-plan review, final confirmation and unknown-submission state. One

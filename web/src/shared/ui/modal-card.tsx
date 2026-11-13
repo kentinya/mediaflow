@@ -147,6 +147,13 @@ export interface ModalLayerOptions {
   readonly escapeDisabled?: () => boolean;
   /** Focus target when the invoking control no longer exists. */
   readonly fallbackFocusId?: string;
+  /**
+   * Whether this layer currently owns keyboard trapping and background
+   * inertness. A lower layer suspends itself while a stacked card above it is
+   * open, so only the topmost card handles Tab/Escape and Escape can never
+   * close two cards at once. Scroll lock stays reference-counted independently.
+   */
+  readonly active?: boolean;
 }
 
 export interface ModalLayer {
@@ -169,14 +176,20 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
   );
   const escapeRef = useRef(options.onEscape);
   const escapeDisabledRef = useRef(options.escapeDisabled);
+  const active = options.active ?? true;
+  // The unmount cleanup below reads the latest owner state instead of the
+  // value captured when the focus-return lifetime started.
+  const activeRef = useRef(active);
   useEffect(() => {
     escapeRef.current = options.onEscape;
     escapeDisabledRef.current = options.escapeDisabled;
+    activeRef.current = active;
   });
 
   useBodyScrollLock();
 
   useEffect(() => {
+    if (!active) return;
     const layer = layerRef.current;
     const focusables = () =>
       Array.from(
@@ -213,9 +226,10 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
     };
     document.addEventListener("keydown", handleKey, true);
     return () => document.removeEventListener("keydown", handleKey, true);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
+    if (!active) return;
     const layer = layerRef.current;
     const parent = layer?.parentElement;
     if (!layer || !parent) {
@@ -232,10 +246,13 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
         if (!previous[index]) sibling.removeAttribute("inert");
       });
     };
-  }, []);
+  }, [active]);
 
   useEffect(
     () => () => {
+      // A suspended lower layer must not steal focus from the stacked card
+      // that is still open when its own owner is replaced.
+      if (!activeRef.current) return;
       const invoker = invokerRef.current;
       if (invoker instanceof HTMLElement && document.contains(invoker)) {
         invoker.focus({ preventScroll: true });
@@ -265,6 +282,8 @@ export interface ModalCardShellProps {
   readonly accessibleName?: string;
   readonly description: ReactNode;
   readonly closeLabel: string;
+  /** Stable id for the shared close control when a stacked card returns focus. */
+  readonly closeButtonId?: string;
   readonly closeDisabled: boolean;
   readonly onRequestClose: () => void;
   /** `form` matches the Automation create/edit geometry; `detail` is calmer. */
@@ -291,6 +310,7 @@ export function ModalCardShell({
   accessibleName,
   description,
   closeLabel,
+  closeButtonId,
   closeDisabled,
   onRequestClose,
   size = "form",
@@ -347,6 +367,7 @@ export function ModalCardShell({
           <button
             type="button"
             className="mf-modal-close"
+            id={closeButtonId}
             aria-label={closeLabel}
             disabled={closeDisabled}
             onClick={() => {

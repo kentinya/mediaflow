@@ -2056,13 +2056,14 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     ),
   ).toHaveLength(1);
 
-  // A generic creation URL is a separate navigation with no journey origin: it
-  // guides to Files, offers no library picker, and starts no work.
+  // The retired receiving address is an ordinary not-found address: there is
+  // no guidance shell, library picker, redirect or preparation request, and
+  // visiting it creates no work.
   await page.goto(`${BASE}/ui-v2/operations/organize/new`);
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
-    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
+    page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
+  await expect(page.getByText("从资源库文件页开始整理")).toHaveCount(0);
   await expect(page.getByRole("radio", { name: "source" })).toHaveCount(0);
   // Nothing was created by visiting that address (the admitted run itself is
   // the only population change this journey made, and it predates the visit).
@@ -3924,7 +3925,7 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   expect(intercepted).toBeGreaterThan(0);
 });
 
-test("initial manual preparation remains reachable from Task Center (PATCH-20261111-5)", async ({
+test("PATCH-20261113-3 initial manual preparation remains reachable in place from Task Center", async ({
   page,
   request,
 }) => {
@@ -4014,35 +4015,158 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
   await expect(continueLink).toBeVisible();
   const continueHref = await continueLink.getAttribute("href");
   expect(continueHref).toBeTruthy();
-  expect(
-    new URL(continueHref as string, BASE).searchParams.get("discoveryId"),
-  ).toBe(discoveryId);
 
-  // Opening the durable link reopens the same per-file dialog in the stable
-  // Organize receiving route.  It is still a pure read: no admission, no
-  // analysis and no execution is posted by navigating.
+  // The continue link is the task center's own bounded address: exact Task +
+  // closed marker, with no discovery/library identity in the browser URL.
+  const continueUrl = new URL(continueHref as string, BASE);
+  expect(continueUrl.pathname).toBe("/ui-v2/operations");
+  expect(continueUrl.searchParams.get("run")).toBe(taskId);
+  expect(continueUrl.searchParams.get("dialog")).toBe("organize");
+  expect(continueUrl.searchParams.get("discoveryId")).toBeNull();
+  expect(continueUrl.searchParams.get("resourceLibraryId")).toBeNull();
+
+  // The list behind the detail stays mounted. Record its exact position so
+  // opening the continuation can be checked as a stable background, not only
+  // as a final pathname.
+  const listTable = page.getByRole("table", { name: "运行清单" });
+  const listBoxBefore = await listTable.boundingBox();
   const beforeNavigationPosts = api.filter(
     (entry) => entry.method === "POST",
   ).length;
   await continueLink.click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/organize/new\\?.*discoveryId=${discoveryId}`),
-  );
-  // This is the exact historical deep link the Task Center used to expose.
-  // PATCH-20261111-5 removes that duplicate Task-detail entry, not the route.
-  const preparationDeepLink = page.url();
   const reviewDialog = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(reviewDialog).toBeVisible({ timeout: 30_000 });
   await expect(
     reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(reviewDialog.getByText("Two.2002.mkv").first()).toBeVisible();
+
+  // The main path never leaves the task center: same route, exact Task and
+  // no independent receiving-page content or intermediate frame.
+  expect(new URL(page.url()).pathname).toBe("/ui-v2/operations");
+  const opened = new URL(page.url());
+  expect(opened.searchParams.get("run")).toBe(taskId);
+  expect(opened.searchParams.get("dialog")).toBe("organize");
+  expect(opened.searchParams.get("discoveryId")).toBeNull();
+  await expect(page.getByText("逐文件整理准备")).toHaveCount(0);
+  await expect(page.getByText("从资源库文件页开始整理")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeAttached();
+  await expect(listTable).toBeAttached();
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeAttached();
+  const listBoxOpen = await listTable.boundingBox();
+  expect(listBoxBefore).not.toBeNull();
+  expect(listBoxOpen).not.toBeNull();
+  // The list keeps its exact reading column behind the card.
+  expect(
+    Math.abs((listBoxOpen?.x ?? 0) - (listBoxBefore?.x ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((listBoxOpen?.width ?? 0) - (listBoxBefore?.width ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  const preparationAddress = page.url();
   expect(api.filter((entry) => entry.method === "POST").length).toBe(
     beforeNavigationPosts,
   );
 
-  // Confirm that same review exactly once.  The preserved Task Center origin
-  // returns to the same run detail instead of an unrelated list.
+  // Open/settle frames at the acceptance viewports; the page must not overflow
+  // horizontally at the narrow or short size.
+  mkdirSync("test-results/PATCH-20261113-3", { recursive: true });
+  await page.screenshot({
+    path: "test-results/PATCH-20261113-3/host-1440.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(reviewDialog).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: "test-results/PATCH-20261113-3/host-390.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await expect(reviewDialog).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: "test-results/PATCH-20261113-3/host-short.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Escape closes only the topmost hosted card, returns to the same detail and
+  // restores focus to the exact continue entry; reopening reads the same
+  // durable preparation again.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+  await expect(
+    page
+      .getByRole("dialog", { name: "运行详情" })
+      .getByRole("link", { name: "继续整理" }),
+  ).toBeFocused();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("link", { name: "继续整理" })
+    .click();
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
+
+  // Browser Back closes only the hosted card and Forward restores the same
+  // exact Task/marker without leaving the task center or selecting another
+  // Task.
+  await page.goBack();
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+  expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
+  await page.goForward();
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
+
+  // A real reload and re-authentication restore the same Task and live
+  // preparation in place; the browser carries no preparation identity.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page
+      .getByRole("dialog", { name: "整理所选文件" })
+      .getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  expect(new URL(page.url()).searchParams.get("discoveryId")).toBeNull();
+  expect(api.filter((entry) => entry.method === "POST").length).toBe(
+    beforeNavigationPosts,
+  );
+
+  // Confirm that same review exactly once.  The proven admission clears the
+  // hosted marker, selects the exact returned Task and refreshes its detail.
   const executePosts = () =>
     api.filter(
       (entry) =>
@@ -4056,14 +4180,23 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
         new URL(response.url()).pathname,
       ),
   );
-  await reviewDialog.getByRole("button", { name: /整批复核/ }).click();
-  await reviewDialog.getByRole("button", { name: "确认整理 1 项" }).click();
+  await page
+    .getByRole("dialog", { name: "整理所选文件" })
+    .getByRole("button", { name: /整批复核/ })
+    .click();
+  const confirm = page.getByRole("button", { name: "确认整理 1 项" });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
   expect((await executeResponse).ok()).toBeTruthy();
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
+  );
+  expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
   expect(executePosts()).toHaveLength(1);
 
   // The real Worker completes the one admitted execution under that Task.
@@ -4114,18 +4247,23 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
     completedDetail.getByRole("link", { name: "继续整理" }),
   ).toHaveCount(0);
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  mkdirSync("test-results/PATCH-20261111-5", { recursive: true });
+  mkdirSync("test-results/PATCH-20261113-3", { recursive: true });
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.screenshot({
-    path: "test-results/PATCH-20261111-5/ended-task-detail-1536.png",
+    path: "test-results/PATCH-20261113-3/ended-task-detail-1536.png",
     animations: "disabled",
   });
 
   // The removed entries were duplicate presentation, not the stable route:
-  // the exact historical deep link still reopens this same ended preparation
-  // through the real auth-recovery boundary and stays read-only.
-  await page.goto(preparationDeepLink);
+  // the exact canonical in-place address still reopens this same ended
+  // preparation through the real auth-recovery boundary and stays read-only.
+  await page.goto(preparationAddress);
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  // Re-authentication restored the same task center, exact Task and hosted
+  // marker instead of leaving for the retired receiving page.
+  expect(new URL(page.url()).pathname).toBe("/ui-v2/operations");
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
   const historyDialog = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(historyDialog).toBeVisible({ timeout: 30_000 });
   // The same dialog opens the ended work's original summary as read-only
@@ -4148,7 +4286,6 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
   await expect(
     historyDialog.getByRole("button", { name: /保存并重新分析/ }),
   ).toHaveCount(0);
-  expect(new URL(page.url()).searchParams.get("discoveryId")).toBe(discoveryId);
 
   const endedStatus = historyDialog.locator(".mf-status").first();
   const statusPadding = await endedStatus.evaluate((element) => {
@@ -4168,7 +4305,7 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
     statusPadding.clientWidth + 1,
   );
   await page.screenshot({
-    path: "test-results/PATCH-20261111-5/ended-history-1536.png",
+    path: "test-results/PATCH-20261113-3/ended-history-1536.png",
     animations: "disabled",
   });
 
@@ -4193,7 +4330,7 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
     ),
   ).toBeLessThanOrEqual(1);
   await page.screenshot({
-    path: "test-results/PATCH-20261111-5/ended-history-390.png",
+    path: "test-results/PATCH-20261113-3/ended-history-390.png",
     animations: "disabled",
   });
 
@@ -4211,7 +4348,7 @@ test("initial manual preparation remains reachable from Task Center (PATCH-20261
     shortStatus.clientWidth + 1,
   );
   await page.screenshot({
-    path: "test-results/PATCH-20261111-5/ended-history-short.png",
+    path: "test-results/PATCH-20261113-3/ended-history-short.png",
     animations: "disabled",
   });
   await page.setViewportSize({ width: 1280, height: 900 });

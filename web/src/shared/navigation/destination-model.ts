@@ -15,6 +15,11 @@ import {
   operationsReturnContextFromSearch,
 } from "./operations-return";
 import {
+  OPERATIONS_DIALOG_KEY,
+  OPERATIONS_ORGANIZE_DIALOG,
+  readOperationsDialog,
+} from "./operations-organize";
+import {
   RUN_DETAIL_ITEM_TOKEN,
   RUN_DISPOSITIONS,
   RUN_RECORD_KINDS,
@@ -127,15 +132,6 @@ const childDestinationData = [
     availability: "implemented" as const,
     description: "Task aggregate, independent TaskItems and Results.",
     dynamicPrefix: "/operations/tasks/" as const,
-  },
-  {
-    id: "operations-organize-new",
-    label: "Manual organize",
-    path: "/operations/organize/new",
-    title: "Manual organize | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Create a durable manual organize intent from one exact scope.",
   },
   {
     id: "operations-organize-intent",
@@ -966,6 +962,16 @@ export function allowlistedDestinationSearch(
       setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
     }
     setRunDetailTokens(allowed, current);
+    // The one hosted card the unified center may open above its preserved
+    // context travels through reconnection only with the exact selected Task
+    // it belongs to: the backend projection, never this marker, resolves the
+    // preparation. A dialog without a replayed run is dropped.
+    if (
+      allowed.has("run") &&
+      readOperationsDialog({ dialog: current.get("dialog") }) === "organize"
+    ) {
+      allowed.set(OPERATIONS_DIALOG_KEY, OPERATIONS_ORGANIZE_DIALOG);
+    }
     // A journey returning here re-selects the admitted run through the plain
     // `run` param; the preserved `returnOps` context itself never re-enters
     // the landing URL (the landing parses it once on entry), so it is only
@@ -1041,21 +1047,6 @@ export function allowlistedDestinationSearch(
       setJourneyOperationsContext(allowed, current);
       setRunDetailTokens(allowed, current);
     }
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
-  if (path === "/operations/organize/new") {
-    // The manual Organize entry carries only its bounded scope parameters
-    // plus the preserved task-center return context of the journey it starts.
-    // The in-context creation workspace (RO-2) additionally carries the exact
-    // admitted preparation identity so a refresh/reconnect continues the same
-    // durable record without admitting work.
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setSafe(allowed, "scopeKind", current.get("scopeKind"));
-    setSafe(allowed, "fileId", current.get("fileId"));
-    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    setSafe(allowed, "discoveryId", current.get("discoveryId"));
-    setJourneyReturnContexts(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (

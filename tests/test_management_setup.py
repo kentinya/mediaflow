@@ -174,6 +174,18 @@ class ManagementSetupTests(unittest.TestCase):
                 viewer[key]["nextAction"],
                 "contact an administrator for the required permission",
             )
+        # The manual organizing permission recovers through the ordinary Files
+        # entry; the retired independent preparation address is not a
+        # readiness destination any more.
+        self.assertFalse(viewer["organize"]["authorized"])
+        self.assertEqual(
+            viewer["organize"]["recoveryDestination"],
+            "/ui-v2/resourcelib/files",
+        )
+        self.assertNotEqual(
+            viewer["organize"]["recoveryDestination"],
+            "/ui-v2/operations/organize/new",
+        )
         for key in ("directTransfer", "scheduling", "notification"):
             self.assertTrue(admin[key]["ready"])
             self.assertTrue(admin[key]["authorized"])

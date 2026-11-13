@@ -926,15 +926,19 @@ unconfirmed summary stays reachable from Running/All after leaving, reload or re
 Ended work has no 文件整理准备 section, ending notice, `查看只读摘要` or `从文件页重新发起`
 entry. The operator reads actual flow, independent file results and inline evidence in the same
 Task detail above its preserved list; new organizing still starts from ResourceLibrary Files.
-An existing exact preparation deep link retains the original plan, failure stage and known effects
-without selection, correction, re-analysis or confirmation.
+The canonical in-place continuation address retains the original plan, failure stage and known
+effects without selection, correction, re-analysis or confirmation. It is the same `/operations`
+background with the exact selected Task and one closed hosted-card marker; the retired standalone
+receiving page has no route, alias, redirect or guidance shell.
 If no plan was generated, say so; if its history cannot be read, show the read failure and let the
 operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
 
 Only an exact preparation association with backend continuation eligibility shows 文件整理准备,
-the sentence 查看整理摘要，确认后执行。 and 继续整理. Missing associations or ineligible work
-show no empty section. Failure stages, per-file results and known effects remain independently
-readable. The shared Files/continue/historical organizer keeps horizontal space between status
+the sentence 查看整理摘要，确认后执行。 and 继续整理. The action opens the shared organizer above the
+same task center background: the list stays mounted and positioned, the detail keeps its state, and
+only the topmost card handles Tab/Escape. Missing associations or ineligible work show no empty
+section, guess no preparation and create no work. Failure stages, per-file results and known effects
+remain independently readable. The shared Files/continue/historical organizer keeps horizontal space between status
 text and its colored border; removing the ended entry does not remove that shared dialog.
 The [independent B acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
 records this presentation correction. See the
@@ -986,8 +990,9 @@ paths, fingerprints, occurrences or IDs as execution authority. In-context summa
 belongs to the admitted task and its exact preparation; no independent Preview product remains.
 Files starts the bounded task/preparation and keeps exact unknown-request reconciliation after close/
 reload/reconnect; an eligible `继续整理` in the admitted Task Center task detail reopens that same
-preparation/summary, without the former center discovery list or guessed request/library. Generic new
-URLs guide to Files without work; valid prepared-work links keep their legitimate exact context.
+preparation/summary in place above the task center background, without the former center discovery
+list or guessed request/library. The retired generic new URL is an ordinary not-found; Files remains
+the only new-work entry. The canonical prepared-work address keeps its legitimate exact context.
 Browsing/separate analysis creates no organizing task or execute intent; admission/decision Save
 does not authorize media effects. Four business blockers stay native to the admitted task.
 
@@ -1063,11 +1068,13 @@ and the Tasks/recovery journey below remain.
    the saved decision and only the same save/analyse action. An unknown analysis response is
    reconciled against the same Task before any retry. Other failures explain stage, saved state,
    known effects and the legal next action.
-7. **Exit/reopen:** closing cancels no admitted work. Task Center's eligible 继续整理 link and
-   valid preparation deep links reopen the exact preparation with its existing continue/readonly
-   boundary. Ended Task details have no preparation section or duplicate history/restart entries;
-   existing historical addresses remain read-only. Refresh/re-authentication preserves legal
-   context; ended work cannot re-execute.
+7. **Exit/reopen:** closing cancels no admitted work. Task Center's eligible 继续整理 action and
+   the canonical `run` + hosted-card address reopen the exact preparation in place with its existing
+   continue/readonly boundary; the task center background, list position and detail state stay
+   mounted. Ended Task details have no preparation section or duplicate history/restart entries;
+   the canonical historical address remains read-only. Refresh/re-authentication preserves the same
+   exact Task and marker; ended work cannot re-execute. The retired standalone receiving route is
+   an ordinary not-found.
 
 Visual/interaction reference: existing Files new-library and Automation new-task cards. The
 organizer uses one explicit local section hierarchy: the current problem/decision is primary, the

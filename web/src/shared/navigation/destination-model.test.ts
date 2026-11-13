@@ -30,7 +30,6 @@ describe("destination model", () => {
       "Task list",
       "Edit rule object",
       "Task detail",
-      "Manual organize",
       "Manual intent",
       "整理发现",
       "Automation",
@@ -98,7 +97,6 @@ describe("destination model", () => {
       ["/operations", "operations"],
       ["/operations/tasks", "operations"],
       ["/operations/tasks/task-1", "operations"],
-      ["/operations/organize/new", "operations"],
       ["/operations/organize/intent/intent-1", "operations"],
       ["/operations/notifications", "notifications"],
       ["/operations/notifications/webhooks/new", "notifications"],
@@ -596,12 +594,11 @@ describe("destination model", () => {
       // survive authentication continuation on every journey page — it is
       // never "no origin". An absent key still means exactly that.
       for (const path of [
-        "/operations/organize/new",
         "/operations/organize/intent/$intentId",
         "/resourcelib/files",
       ] as const) {
         const current =
-          path === "/operations/organize/new" || path === "/resourcelib/files"
+          path === "/resourcelib/files"
             ? "returnOps="
             : "returnOps=&returnTo=files&returnResourceLibraryId=resources";
         const allowed = allowlistedDestinationSearch(path, current);
@@ -614,12 +611,6 @@ describe("destination model", () => {
         );
       }
       // Absence stays "not Operations-originated" on the same pages.
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/organize/new",
-          "scopeKind=resourceLibrary",
-        ),
-      ).toBe("scopeKind=resourceLibrary");
       expect(
         allowlistedDestinationSearch(
           "/operations/organize/intent/$intentId",
@@ -688,27 +679,43 @@ describe("destination model", () => {
           "organizeDiscovery=",
         ),
       ).toBeNull();
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/organize/new",
-          "scopeKind=resourceLibrary&resourceLibraryId=resources&returnOps=attention%3Dtrue",
-        ),
-      ).toBe(
-        "scopeKind=resourceLibrary&resourceLibraryId=resources&returnOps=attention%3Dtrue",
-      );
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/organize/new",
-          "returnOps=token%3Dsecret",
-        ),
-      ).toBeNull();
-      // The task center replays a still-open journey context on reconnect.
+      // The retired independent Organize receiving address is no longer a
+      // destination: it has no authentication continuation and the ordinary
+      // not-found boundary owns the path.
+      expect(destinationForPath("/operations/organize/new")).toBeUndefined();
       expect(
         allowlistedDestinationSearch(
           "/operations",
           "status=failed&returnOps=status%3Dfailed",
         ),
       ).toBe("status=failed&returnOps=status%3Dfailed");
+      // The task center's one hosted card marker survives a reconnect only
+      // with the exact selected Task it belongs to; the preparation itself is
+      // always re-read from that Task's backend association.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "run=task-1&dialog=organize",
+        ),
+      ).toBe("run=task-1&dialog=organize");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "run=task-1&dialog=organize&discoveryId=guessed",
+        ),
+      ).toBe("run=task-1&dialog=organize");
+      expect(
+        allowlistedDestinationSearch("/operations", "dialog=organize"),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch("/operations", "run=task-1&dialog=create"),
+      ).toBe("run=task-1");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "run=task-1&dialog=organize&token=secret",
+        ),
+      ).toBe("run=task-1&dialog=organize");
       // An empty-but-present origin is replayed through a still-open journey
       // reconnect exactly like any other context.
       expect(allowlistedDestinationSearch("/operations", "returnOps=")).toBe(

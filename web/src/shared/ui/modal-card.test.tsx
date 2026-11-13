@@ -12,6 +12,7 @@ import {
   ModalCardShell,
   useBodyScrollLock,
   useModalCardExit,
+  useModalLayer,
   type ModalCardShellProps,
 } from "./modal-card";
 
@@ -177,6 +178,34 @@ describe("ModalCardShell close permission", () => {
   });
 });
 
+function StackedLayerHarness({
+  active,
+  onEscape,
+}: {
+  readonly active: boolean;
+  readonly onEscape: () => void;
+}) {
+  const layer = useModalLayer({ onEscape, active });
+  return (
+    <div>
+      <p>背景正文</p>
+      <ModalCardShell
+        layerRef={layer.layerRef}
+        closing={false}
+        busy={false}
+        title="下层卡片"
+        titleId="stacked-shell-title"
+        description="可被上层挂起"
+        closeLabel="关闭"
+        closeDisabled={false}
+        onRequestClose={() => undefined}
+      >
+        <p>下层正文</p>
+      </ModalCardShell>
+    </div>
+  );
+}
+
 function ExitHarness({ onClose }: { readonly onClose: () => void }) {
   const exit = useModalCardExit();
   return (
@@ -185,6 +214,31 @@ function ExitHarness({ onClose }: { readonly onClose: () => void }) {
     </button>
   );
 }
+
+describe("useModalLayer stacking", () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  it("suspends a lower layer's keyboard trap and inertness under a stacked card", () => {
+    const onEscape = vi.fn();
+    render(<StackedLayerHarness active onEscape={onEscape} />);
+    const background = screen.getByText("背景正文");
+    // The active lower layer owns its background while it is topmost.
+    expect(background.closest("[inert]")).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onEscape).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // A stacked card above it suspends that ownership, so Escape and the
+    // background are handled only once, by the topmost card.
+    render(<StackedLayerHarness active={false} onEscape={onEscape} />);
+    const suspendedBackground = screen.getByText("背景正文");
+    expect(suspendedBackground.closest("[inert]")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("useModalCardExit", () => {
   beforeEach(() => {
