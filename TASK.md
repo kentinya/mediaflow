@@ -197,6 +197,52 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-13
 两条危险操作回归；排序明确仅当前页，不提供整目录排序；列宽为页面会话状态，整页重载恢复默认；
 短窗口底栏仍需随页面纵向滚动到达（不产生文档横向溢出）。本机无屏幕阅读器实测。
 
+### Developer Fix Report — 2026-11-13 (B13-2-01 / B13-2-02)
+
+修正检查点 `a2effc4b0ed4503d230ff9b684d3d1e869793e95`；Task Base 保持
+`9811df4559d94db5b648f6152476f39035a12ae5`。分支 `main`；未推送、未部署，
+SLICE／Roadmap／Progress 未改。本报告单独提交，B 以实际报告 HEAD 复核。
+
+针对 B13-2-01（进入子目录丢失排序与列宽）：
+
+- 两页分别把当前页排序与会话列宽提升到各自页面组件，跨目录读取的加载／失败分支不再
+  卸载该状态；浏览组件仍持有 DOM 测量与指针交互，并把用户调整写回页面。两库状态互不
+  共享，选择集合与游标的原有清理规则不变。
+- 新增两页操作链用例：排序＋键盘调宽 → 首次进入现有子目录 → 读取失败后重试 →
+  返回根目录 → 下一页，逐步检查展示顺序、`aria-sort` 与实际列宽值保持。
+
+针对 B13-2-02（拖动距离与可见列边界不一致）：
+
+- 用户设置列宽后改为 `<colgroup>` 列宽加表格宽度等于五列总宽，浏览器不再把剩余宽度
+  按比例回填到名称列；默认未调整时仍为 `width:100%` 铺满。测量、拖动起点、键盘步长、
+  可见边界与 `aria-valuenow` 使用同一像素口径；普通拖动不加动画。
+- E2E 直接测量表头 `getBoundingClientRect()`：键盘右调、指针右拖和左拖后边界与播报值
+  误差不超过 1px，双击恢复默认后回到原边界；排序状态未被调宽误触。
+- 页面规范补充“用户设定宽度后表格恰为五列总宽、剩余面板空间留在表格外、默认仍铺满”。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck`：PASS。
+- `npx eslint`（7 个变更 TS/TSX 文件）：PASS；`npx prettier --check`：PASS。
+- `npm run build`：PASS；仅现有 >500 kB chunk 提醒。
+- `npm run test -- run`（Task 指定 5 个受影响文件）：**106 passed / 5 files**，
+  10.96s。
+- `npm run test:e2e -- tests/e2e/files-interactions.spec.ts
+  tests/e2e/files-read-handoff.spec.ts`：**8 passed**（含两页新增的边界与跨目录／翻页
+  保留用例，6.1s）。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/live-files.python.spec.ts`：**6 passed**；真实临时 Python／SQLite／Storage
+  用例在两页排序、调宽、勾选后打开 Gamma-Directory，并核对新目录仍保持排序与宽度。
+- 根目录 `python3 scripts/check_governance.py`：PASS；`git diff --check`：无问题。
+- 手动浏览器检查（Node 假服务、当前构建）：1536×1024 两页名称列 927→943px，
+  可见表头宽度 943px、播报 943px；390×844 下文档无横向溢出，横向滚动只在表格容器；
+  `prefers-reduced-motion: reduce` 下列表单元格 transition 为 `0s`。
+
+本轮测试命令实际执行约 1 分钟（含一次手动浏览器脚本），低于本轮总用时 30%。修正后
+没有产品用例首次失败。未执行 B 的完整验收矩阵、direct-files 两条危险操作回归或屏幕
+阅读器实测；排序仍只针对当前页，列宽为用户调整后表格精确宽度、剩余面板空间在表格外，
+整页重载恢复默认，均为本 Task 既有边界。
+
 ### B Review Result
 
 ```text
