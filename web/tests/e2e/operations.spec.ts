@@ -1108,3 +1108,92 @@ test("a retired pre-Task Job run identity stays bounded unavailable", async ({
   expect(mutating).toEqual([]);
   expect(methods.some((entry) => entry.includes("/api/v1/jobs"))).toBe(false);
 });
+
+test("PATCH-20261113-1 keeps equal-status attempts as two complete history entries", async ({
+  page,
+}) => {
+  // Two distinct durable rows may have the same status. Use the existing
+  // evidence read and its real fixture shape; no new product route is added.
+  await page.route(
+    "**/api/v1/operations/runs/task-001/items/item-001",
+    async (route) => {
+      const response = await route.fetch();
+      const document = await response.json();
+      const original = document.results[0];
+      const later = {
+        ...original,
+        result_id: "result-later-attempt",
+        created_at: "2026-08-22T12:07:00+00:00",
+      };
+      document.results = [original, later];
+      document.item.attempts = 2;
+      document.checkpoint.attempts = 2;
+      document.checkpoint.latest_result = later;
+      document.checkpoint.prior_results = [original];
+      await route.fulfill({ response, json: document });
+    },
+  );
+  await openCenterRun(page, "task-001");
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+      writes.push(request.method());
+    }
+  });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await detail.getByRole("button", { name: "查看证据" }).first().click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  const history = evidence.getByRole("list", { name: "逐次执行历史" });
+  const entries = history.locator(":scope > li");
+  await expect(entries).toHaveCount(2);
+  for (const [index, instant] of [
+    "2026-08-22T12:05:00+00:00",
+    "2026-08-22T12:07:00+00:00",
+  ].entries()) {
+    const entry = entries.nth(index);
+    await expect(
+      entry.getByText(
+        `执行记录 ${index + 1}（${localRunTime(instant)}）：已完成`,
+      ),
+    ).toBeVisible();
+    await expect(
+      entry.getByText("已完成：移动（move）", { exact: true }),
+    ).toBeVisible();
+    await expect(entry.getByText("主文件已完成；附件有警告")).toBeVisible();
+    await expect(entry.getByText(/附件效果尚未验证/)).toBeVisible();
+  }
+  expect(writes).toEqual([]);
+});
+
+test("PATCH-20261113-1 attributes different next steps within one file diagnosis", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/v1/operations/runs/task-001/items/item-002",
+    async (route) => {
+      const response = await route.fetch();
+      const document = await response.json();
+      document.checkpoint.nextAction = "inspect the pinned checkpoint";
+      await route.fulfill({ response, json: document });
+    },
+  );
+  await openCenterRun(page, "task-001");
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await detail
+    .getByRole("row")
+    .filter({ hasText: "movies/Inception (2010).mkv" })
+    .getByRole("button", { name: "查看证据" })
+    .click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await expect(evidence.getByText("服务下一步（失败记录）")).toBeVisible();
+  await expect(evidence.getByText("服务下一步（检查点）")).toBeVisible();
+  await expect(
+    evidence.getByText(
+      "inspect Provider availability and explicitly retry metadata analysis",
+    ),
+  ).toBeVisible();
+  await expect(
+    evidence.getByText("inspect the pinned checkpoint"),
+  ).toBeVisible();
+});
