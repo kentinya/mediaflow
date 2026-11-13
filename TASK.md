@@ -1,43 +1,8 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# PATCH-20261113-3 — 继续整理保持任务中心背景并删除独立接收页
 
-独立小修 `PATCH-20261113-2` 已由 B 独立验收 **PASS — 2026-11-13**，三项授权修复完成，
-无活动实施 Task。下方 `PATCH-20261113-3` 仅为用户请求的独立修复规划草案，尚未授权实施。
-生命周期依据 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
-Slice54 保持原 **PASS / CLOSED**；下一大 Slice 由 A 另选。
-
-## PATCH-20261113-2 — B PASS
-
-```text
-Task Type: STANDALONE MINOR BUG
-Parent Slice: NONE
-Difficulty / Test Level: Medium / T3
-Reviewer: B
-Decision: PASS — 2026-11-13
-Reviewed Base: 9811df4559d94db5b648f6152476f39035a12ae5
-Reviewed Head: 14da49b8489e511a8ea588a40f7a10a869522c05
-Product Checkpoint: a2effc4b0ed4503d230ff9b684d3d1e869793e95
-Next: NONE
-```
-
-[固定 B 验收](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)
-保留八项结果重评、两项原始返工与修正、实际命令／计数、首轮产物目录冲突及隔离重跑、
-截图和证据限制；[原计划、开发指导与两轮交付](https://github.com/kentinya/mediaflow/blob/14da49b8489e511a8ea588a40f7a10a869522c05/TASK.md)
-保留完整范围。
-
-文件页指定蓝色说明已移除；两页列表／网格可感知悬停、按下、焦点和选择，切视图保留
-准确条目。名称／大小仅当前页排序，列宽可拖动／键盘调节；打开目录、翻页和读取重试保留
-会话设置，整页重载恢复默认。B 验收 106 项受影响单元、71 项 Node 浏览器及 10 项真实
-Python 浏览器用例通过，静态／构建／治理与三视口检查通过。原始证据保留本机。
-
-现行浏览旅程见 [Product Experience](docs/product-experience.md#browse-feedback-selection-and-table-controls)，
-页面约定见 [Files](docs/file-page-visual-spec.md)／[MediaLibrary](docs/media-library-page-visual-spec.md)；
-[文档导航](docs/README.md) 索引此前独立修正，
-[Release](docs/release.md#current-v2-validation-boundary) 统一记录验证范围。
-文档治理只协调现行说明、固定验收和导航；SLICE／Roadmap／Progress、产品与测试均未改。
-
-## PATCH-20261113-3 — 继续整理保持任务中心背景并删除独立接收页（规划草案）
-
-**PLANNING ONLY：用户本轮只授权规划；本草案不激活实施、不授权其他角色或代理开展工作。**
+用户于 2026-11-13 明确“激活Task”，正式授权本 Task 实施；原 Task ID／Base／Goal／Scope
+保持，移除规划草案限制。当前状态为 PLANNED，待 Developer 按既定计划开始实施；
+本次激活仅更新授权，不代行实施或 B 独立验收，也不授权启动其他代理。
 范围来自用户对现有行为的纠正：“在任务中心的任务详情页点击继续整理后背景改变了，
 不应该改变背景同时改变后的这个背景页应该删除的。” 不重开已接受 Slice。
 
@@ -50,7 +15,7 @@ Task Base: 1c625220b9552bd1e75bfd351a54ddb524ff3e65
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: NOT AUTHORIZED — PLANNING DRAFT ONLY
+Development Authorization: USER AUTHORIZED ON 2026-11-13
 ```
 
 ### Goal
@@ -100,7 +65,7 @@ Task 及真实进度。全程不出现“整理所选文件／逐文件整理准
 5. **协调现行说明。** 实施交付时仅同步 Requirements／V2 Requirements、Product
    Experience、Architecture、任务中心规范及实际受影响的导航说明；写清原地弹窗、
    新 canonical 继续地址、旧接收页退出。原 Slice／B 接受身份与限制保留在 Git，
-   SLICE／Roadmap／Progress 不改。本轮规划只写 TASK，不提前改这些产品文档。
+   SLICE／Roadmap／Progress 不改。本次激活只写 TASK，不提前改这些产品文档。
 
 ### Acceptance Criteria
 
@@ -176,14 +141,20 @@ Docker 矩阵不适用，说明依据；不使用生产媒体或外部生产服�
 不重做任务详情、列表八视图、Files 整理表单或四类恢复；不新增历史准备入口、自动重试、
 跨 Task 恢复或通用失败恢复；不新增后端状态／schema／队列／权限／Provider／Storage
 操作，不重写历史 pins／结果，不改业务确认或危险授权协议。无无关模块清理、下一 Task／
-Slice、推送、发布、部署；本轮不实施、不委派、不自验收。
+Slice、推送、发布、部署；本次激活不代行实施、不委派、不自验收。
 
 ### Developer Completion Report
 
-待明确授权实施后填写：固定检查点 SHA／READY FOR B REVIEW、变更与关键决定、实际
+待 Developer 实施后填写：固定检查点 SHA／READY FOR B REVIEW、变更与关键决定、实际
 受影响测试结果／失败／风险。完整验收由 B 执行。
 
 ### B Review Result
 
 待实施候选；无 PASS／FIX REQUIRED 决定。完成后由 B 独立审查整个 Task Base..Head；
 PASS 后恢复紧凑 NO ACTIVE IMPLEMENTATION TASK 通知，不关闭或重开任何 Slice。
+
+## Prior accepted Task
+
+独立小修 `PATCH-20261113-2` 的 B PASS、精确范围与验证限制保留于
+[固定记录](https://github.com/kentinya/mediaflow/blob/24cc107a8b0c83d43e5b29673221247f8e370ce1/TASK.md#patch-20261113-2--b-pass)。
+Slice54 保持原 PASS / CLOSED，SLICE／Roadmap／Progress 不变。
