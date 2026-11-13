@@ -8,7 +8,7 @@ Authority: 用户于 2026-11-13 授权独立界面修复规划，随后明确“
 Task ID: PATCH-20261113-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 31f4b56936831699f75590f5afd49d58d630ba9c
 Difficulty: Medium
 Test Level: T3
@@ -23,9 +23,13 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-13 — 激活Task
 
 激活前治理检查 PASS；分支 `main`，HEAD `866f6670be54f6fa137f483e83b3f53dd57b434b`，
 暂存区／工作区干净。Task Base..该 HEAD 仅含本任务规划文档，无产品输入变化；保留原
-Task ID／Base／Goal／Scope、Medium／T3 及测试分工。现为活动 `PLANNED` Task，
-Developer 可按计划开始实施并转为 `IN PROGRESS`；本次激活仅更新任务文档，尚未实施。
-此前独立修复的 B PASS 指针保留在本文末尾；Slice54／Roadmap／Progress 保持原接受身份。
+Task ID／Base／Goal／Scope、Medium／T3 及测试分工。此前独立修复的 B PASS 指针保留在
+本文末尾；Slice54／Roadmap／Progress 保持原接受身份。
+
+实施前检查：治理检查 PASS；分支 `main`，实施起点 HEAD `813b7a33`（规划＋激活文档），
+暂存区／工作区干净，无预存脏文件。Developer 按 Task Base `31f4b569`..实施 HEAD
+`d3a68160` 交付，实施内容与实际结果见下方 Developer Completion Report；状态转为
+READY FOR B REVIEW，B 验收保持独立。
 
 ## Goal
 
@@ -164,8 +168,79 @@ B 原生／全量验收。只有实际完成验收后才可 PASS，按工作流�
 
 ## Developer Completion Report
 
-已获实施授权，尚未开始实施。后续按模板记录实际 checkpoint、READY FOR B REVIEW、
-变化／受影响测试结果与风险；B 验收保持独立。
+READY FOR B REVIEW
+
+- 候选 checkpoint：`d3a68160`（Task Base `31f4b569` → 本轮 HEAD；中间 `866f6670`、
+  `813b7a33` 仅为本任务规划／激活文档）。实施前治理检查 PASS；分支 `main`，工作区
+  除本任务文件外无其他改动，预存未跟踪材料未触碰。
+
+**实施内容（对应 Implementation Scope 五项）**
+
+1. 文件证据正文收敛：`RunDetailTabs.tsx` 的“处理结果”只保留一句当前结论；删除紧邻的
+   状态／效果／尝试同义复述，原始状态、尝试、效果确定性、可用操作标识并入唯一诊断
+   入口新增的“条目与恢复检查点”分组；失败记录与检查点两处“服务下一步”改为按来源
+   标注（失败记录／检查点）。来源／实际目标、识别／作品匹配、命名／分类依据
+   （现“处理依据”区）保持直接可读；条目表格的状态／目标列未动，计划目标仍在诊断内。
+2. 合并同一次执行：原“处理结果”与“处理经过”两份 Result 列表合并为一份“执行记录”，
+   每条含时间、结果、操作、完成步骤、清理、附件（AttachmentResults 原样）与异常／
+   未确认效果；按持久记录顺序标注“执行记录 N”，不按文案去重、不以下标宣称真实尝试
+   次数、不合成结果；无 Result 时保留检查点已知步骤与“该文件还没有持久执行结果。”
+   缺失说明。多次历史平铺逐条，当前风险仍在“需处理原因”，不藏入历史。
+3. 恢复与诊断收敛：`TaskItemRecoveryPanel` 新增 `hostedDiagnostics`（仅证据宿主传入）：
+   隐藏面板自身“技术诊断（状态、重试与权限）”重复壳；无四类动作、无持久摘要、无
+   关联 lineage、无已完成续作且无未决会话反馈（busy／pendingAction／message／
+   repeatLocked／submittedPreparationId）时不渲染空“审核与恢复”区域。恢复查询的加载、
+   失败、未知请求核对及全部合法操作保留；读取仍发生，会话状态不丢。嵌套／独立
+   消费者（如续作失败嵌套面板）保留自身事实与诊断；ManualOrganizeDialog `mode="decision"`
+   原交互未动。诊断入口统一为一个 `details`（检查点、计划、日志、审计按来源 h6 组织）。
+4. 记录与列表辅助文字：“操作记录”页签删除重复可见同名标题（区域 aria-label 保留）、
+   默认选项简为“全部类型／全部状态”，删除常驻“服务器分页，浏览器不合并截断结果”与
+   “正在从 MediaFlow API 读取…”教程；条目未筛选显示“共 N 条”、筛选显示
+   “匹配 N／共 M 条”，记录页未筛选“共 N 条记录 · 结果／证据／日志／审计计数”、筛选
+   “匹配 N 条记录”（不跨类型相加）；有界翻页、截断、空态／错误与重新读取保留。
+5. 交接与验证：仅改两宿主组件及其直接测试／e2e 固定断言；未改领域模型、API、查询
+   身份、后端恢复判定或命令协议；AttachmentResults 本身未改。按最终事实协调
+   `docs/task-center-page-spec.md` 与 `docs/product-experience.md` 的 CURRENT 呈现文字。
+
+**实际测试结果（Developer 分工内）**
+
+```text
+web: npm run test -- run src/features/operations/RunDetailTabs.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx
+  src/features/operations/AttachmentResults.test.tsx
+  src/features/operations/OperationsInventory.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx — 5 files / 123 tests PASS
+  （RunDetailTabs 29（含新增：多次执行历史、无 Result 检查点步骤、失败/检查点
+  服务下一步来源区分、技术历史无空审核区、诊断完整性）、TaskItemRecoveryPanel 22、
+  OperationsInventory 47、ManualOrganizeDialog 22、AttachmentResults 3）
+web: npm run test -- run run-detail-query/run-detail-state/run-detail（实体） — 共 176 PASS
+web: npm run typecheck — PASS
+web: npm run lint — PASS
+web: npm run format:check — PASS（prettier --write 后）
+web: npm run build — PASS
+web: npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts
+  — 40 passed（fake-server Node harness）
+根目录 python3 scripts/check_governance.py — PASS；git diff --check — PASS
+```
+
+新增／改写断言均保留既有权限、非重放、迁移与可达性断言；仅固定旧重复文案／层级的
+断言按新事实更新，无删除断言、重试或超时改动。
+
+**未运行项与剩余风险（交 B）**
+
+1. Python harness e2e（task-flow／operations-inventory／manual-organize-dialog 等
+   `playwright.python.config.ts` 规格）属 B 验收，Developer 未运行。已按固定文案更新
+   `operations-inventory.python.spec.ts` 的旧断言（处理依据区域、执行记录内“已验证完成”、
+   “执行记录 1（…）：成功”、诊断摘要文案、共 N 条计数、技术历史无审核区），其中：
+   未筛选记录计数仅固定 `/共 5 条记录/`（种子类型计数需 B 在真实 harness 读数后核对），
+   `:1201` 的“条目审核与恢复”区域 count 0 断言依赖该种子条目为 technical_history。
+2. “处理依据”区仅在存在已捕获计划依据时渲染；无 planEvidence 的旅程（Node fake server、
+   实体不可用夹具）不再显示该区，已由 Node e2e 与单元夹具覆盖；真实 Python 旅程
+   视觉验收由 B 执行。
+3. 嵌套／独立恢复消费者保留旧的无操作结论与自身诊断（其宿主不携带统一诊断入口）；
+   该分支的产品入口是续作失败嵌套面板，已由既有 TaskItemRecoveryPanel 单元测试覆盖。
+4. 本轮未改任何请求生命周期；打开／切换／展开／筛选／分页仍为无副作用 GET（既有
+   GET-only 测试继续通过）。
 
 ## B Review Result
 
