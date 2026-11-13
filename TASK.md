@@ -1,8 +1,9 @@
 # PATCH-20261113-3 — 继续整理保持任务中心背景并删除独立接收页
 
 用户于 2026-11-13 明确“激活Task”，正式授权本 Task 实施；原 Task ID／Base／Goal／Scope
-保持。Developer 已在实施检查点 `fb8c35a7` 完成实现、受影响测试与文档同步，
-当前状态为 READY FOR B REVIEW；B 的独立验收仍未执行。
+保持。Developer 已在实施检查点 `fb8c35a7` 交付实现、受影响测试与文档同步。
+B 独立审查 `1c625220..68e6c347` 后于 2026-11-13 返回 FIX REQUIRED：任务详情后台
+轮询失败会卸载正在编辑的整理卡，重新读取后未保存的选择丢失。修正留在本 Task。
 范围来自用户对现有行为的纠正：“在任务中心的任务详情页点击继续整理后背景改变了，
 不应该改变背景同时改变后的这个背景页应该删除的。” 不重开已接受 Slice。
 
@@ -10,7 +11,7 @@
 Task ID: PATCH-20261113-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 1c625220b9552bd1e75bfd351a54ddb524ff3e65
 Difficulty: High
 Test Level: T4
@@ -66,6 +67,28 @@ Task 及真实进度。全程不出现“整理所选文件／逐文件整理准
    Experience、Architecture、任务中心规范及实际受影响的导航说明；写清原地弹窗、
    新 canonical 继续地址、旧接收页退出。原 Slice／B 接受身份与限制保留在 Git，
    SLICE／Roadmap／Progress 不改。本次激活只写 TASK，不提前改这些产品文档。
+
+### Developer Guidance — B 本轮修正
+
+本轮只修复 B-01，不另建 Task，不扩大到任务详情或查询框架重构。
+
+1. 从资源库 Files 选中一个文件并整理，等待摘要，关闭整理卡；进入任务中心，打开该
+   Task 详情并点击“继续整理”。展开“修正识别或作品”，把识别类型从已有 A 改为下拉
+   提供的 B（原生 fixture 为 Normal Movie → TV），先不保存。让现有五秒任务详情轮询
+   的下一次 GET 返回 503，再恢复该读取。当前实现会改显示“无法继续这次整理”；点击
+   “重新读取任务”后类型回到 A。此旅程不构造新产品入口，不提交 Save／分析／Execute。
+2. 修改 `OperationsLanding.tsx` 的继续会话承载与 `OrganizeContinuationCard.tsx` 的
+   组件切换：已经从准确 Task 关联打开的整理会话，不随同任务后台概览的一次读取失败
+   被卸载／重建。读取问题在原会话内说明并允许读取恢复；原逐文件输入、选择及现有
+   命令核对状态保留。首次进入尚未取得关联时仍使用原读取失败入口；真正结束或权限
+   拒绝仍遵守现有资格与认证行为。不要通过吞掉读取错误、关闭轮询或重放命令修复。
+3. 在现有宿主单元用例和 `operations-inventory.python.spec.ts` 正常继续旅程中加入上述
+   场景：选 B → 轮询失败 → 恢复读取 → 仍为 B，整理卡和原任务中心背景连续保留，
+   不弹放弃提示、不发送写请求。沿同一入口验证已有在途／未知提交核对不会被这次
+   背景读取失败清除；继续核对首次提交的方案，不重发 Execute。复用现有测试与假服务。
+4. 运行新增／直接受影响测试及静态检查，提交同 Task 的修正检查点并交 B；不承担 B 的
+   全仓门禁。按用户本轮要求，各轮测试用时小于该轮总用时的 50%，实际结果与未运行
+   项如实记录。B 对修正后的完整 Base..Head 再审并执行剩余 T4 验收，不降低原验收范围。
 
 ### Acceptance Criteria
 
@@ -198,8 +221,48 @@ python: .venv/bin/python -m unittest tests.test_management_setup — 18 passed
 
 ### B Review Result
 
-待实施候选；无 PASS／FIX REQUIRED 决定。完成后由 B 独立审查整个 Task Base..Head；
-PASS 后恢复紧凑 NO ACTIVE IMPLEMENTATION TASK 通知，不关闭或重开任何 Slice。
+```text
+Reviewed Base: 1c625220b9552bd1e75bfd351a54ddb524ff3e65
+Reviewed Head: 68e6c3478bf1935ab9879dd68a1f9dd8822497c5
+Product Checkpoint: fb8c35a7f639fd88bb10bc806e370509e0cfd7c2
+Reviewer: B
+Decision: FIX REQUIRED — 2026-11-13
+Task blockers: B-01 / P1 — 后台任务详情轮询失败丢失整理卡未保存选择
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+**交付结果重评。** 本 Task 是独立 bug，Parent Slice 为 NONE；Slice54 仍为原 PASS / CLOSED，
+其合同／Roadmap／Progress 无变更。审查覆盖完整 Base..Head 的 22 个变更文件，包括
+旧页删除、路由／认证／导航、继续宿主、公共弹窗、readiness 地址、测试和旅程文档。
+原“继续整理不换背景、删除独立接收页”主行为已实现；B 从已有 Files → Task 详情 →
+继续整理入口运行原生 Python 浏览器用例，原地打开／关闭回焦、Back／Forward、刷新／
+重认证、准确受理交接及结束历史只读路径通过。旧接收页文件／注册／专属导航已删除。
+尚未完成全部 T4／三视口过程验收，不将 Developer 报告或已有截图当作 B 全部验收。
+
+**B-01。** 用户在整理卡内改选类型 B，未保存；五秒后台概览 GET 503 后原整理组件消失，
+点击“重新读取任务”重开时选择恢复成持久值 A，没有经过明确放弃。原因是
+`resolveOrganizeContinuation` 将后台概览读取失败变为 unavailable，Host 随即用提示
+组件替换 `ManualOrganizeDialog`，其本地草稿随卸载丢失。这是本次 `fb8c35a7` 引入的
+宿主生命周期问题，命中原 Task 的输入／失败恢复要求；无需扩展任务范围。
+
+**B 实际验证。** `web/`，使用工作区现有生产构建及隔离 Python／SQLite／临时媒体根：
+
+```sh
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'PATCH-20261113-3'
+```
+
+原候选用例 1 passed（11.8s）。在同一用例实际点击继续入口后追加后台读取 503／恢复
+与输入保留断言：初次清空下拉选择的重现失败；再以页面实际提供的合法 TV（B）选择
+复核亦失败（两次各 18.9s）：期望 B，实得 A，错误期间整理卡数量为 0。截图人工查看
+确认卡片被替换、恢复后原选择丢失。临时复现插入已恢复为候选原文，未提交产品或测试
+改动；日志、复现片段、截图与 trace 保存在本机
+`.git/validation-evidence/68e6c347/patch-20261113-3-b/`。三次产品浏览器测试报告用时合计约 50s，
+少于本轮总用时的 50%。治理与差异检查 PASS。
+
+已证实 P1 后按流程先返修，未继续全仓 Python／Web／Node E2E、完整原生矩阵及 wheel／
+安装门禁，本轮未重新构建。这些仍由 B 在修正候选上负责，不交回 Developer，也不记为
+已通过。无新增引擎／schema／权限变更，无广域 Docker 执行路径变更；无推送／部署。
 
 ## Prior accepted Task
 
