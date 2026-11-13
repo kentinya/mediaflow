@@ -1,8 +1,8 @@
 # PATCH-20261113-3 — 继续整理保持任务中心背景并删除独立接收页
 
 用户于 2026-11-13 明确“激活Task”，正式授权本 Task 实施；原 Task ID／Base／Goal／Scope
-保持，移除规划草案限制。当前状态为 PLANNED，待 Developer 按既定计划开始实施；
-本次激活仅更新授权，不代行实施或 B 独立验收，也不授权启动其他代理。
+保持。Developer 已在实施检查点 `fb8c35a7` 完成实现、受影响测试与文档同步，
+当前状态为 READY FOR B REVIEW；B 的独立验收仍未执行。
 范围来自用户对现有行为的纠正：“在任务中心的任务详情页点击继续整理后背景改变了，
 不应该改变背景同时改变后的这个背景页应该删除的。” 不重开已接受 Slice。
 
@@ -10,7 +10,7 @@
 Task ID: PATCH-20261113-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 1c625220b9552bd1e75bfd351a54ddb524ff3e65
 Difficulty: High
 Test Level: T4
@@ -145,8 +145,56 @@ Slice、推送、发布、部署；本次激活不代行实施、不委派、不
 
 ### Developer Completion Report
 
-待 Developer 实施后填写：固定检查点 SHA／READY FOR B REVIEW、变更与关键决定、实际
-受影响测试结果／失败／风险。完整验收由 B 执行。
+READY FOR B REVIEW
+
+- 实施检查点：`fb8c35a7`（Task Base `1c625220` → HEAD；本报告的 docs(task) 提交仅更新
+  本 Task 状态／结果，不含产品改动）。分支 `main`；实施前治理检查 PASS 且工作区干净。
+- 关键决定：继续意图使用 `/operations` 的准确 `run` + 闭合 `dialog=organize` 标记；
+  准备身份只从该 Task 的 `filesPreparation` 后端关联读取，URL 不携带 discovery／资源库。
+  共享 `ManualOrganizeDialog` 通过 portal 挂在任务中心最上层；运行详情保持挂载但暂停
+  自身键盘陷阱／inert，关闭只移除标记并回焦原继续入口。拒绝卡片与无关联/读取失败使用
+  同一最上层说明，不猜准备、不创建工作。正常或核对证明受理后显式清除标记、按响应
+  taskId 选择并 invalidate 概览/条目/记录，不依赖同路径导航卸载或旧页刷新。
+- 删除：`OrganizeCreationPage` 产品文件与专属测试、路由注册/import、destination 元数据、
+  `/operations/organize/new` 认证续转分支，以及 readiness 旧 recovery destination；
+  其余共享 organizer、API、查询、数据库与历史保留。原接收页场景迁入
+  `OperationsInventory.test.tsx` 宿主测试（历史只读、原计划读取失败重读、从未生成、
+  未保存离开、缺失/无关联/非法标记、A→B 不串准备、受理交接）。
+
+**实际测试结果（均在本检查点源码/构建上）**
+
+```text
+python3 scripts/check_governance.py — PASS
+git diff --check — PASS
+web: npm run test -- run src/features/operations/OperationsInventory.test.tsx
+  src/features/operations/OperationsRouter.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/RunDetailTabs.test.tsx src/routes/router.test.tsx
+  src/shared/navigation/destination-model.test.ts
+  src/shared/navigation/operations-return.test.ts
+  src/shared/ui/modal-card.test.tsx — 8 files / 168 tests PASS
+web: npm run typecheck / lint / format:check / build — PASS
+web: npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
+  tests/e2e/deep-link.spec.ts tests/e2e/manual-organize.spec.ts — 42 passed
+web: npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts
+  --grep 'PATCH-20261113-3|ordinary Files navigation opens the exact linked run'
+  — 2 passed（含真实 Python API／SQLite／Worker：原位打开、列表位置、Escape 关闭回焦、
+  Back/Forward、刷新/重认证、正常受理交接、结束任务只读历史；关闭按钮回焦由宿主
+  单元用例覆盖；截图见
+  web/test-results/PATCH-20261113-3/）
+web: npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts — 8 passed
+python: .venv/bin/python -m unittest tests.test_management_setup — 18 passed
+```
+
+- 未运行项／剩余风险（交 B）：按 Developer 分工未执行全仓 Python、Web 全量单测、
+  T4 共享全量门禁、wheel／源码外安装 smoke、Docker 与 B 指定的完整
+  `operations-inventory.python.spec.ts`／`operations-task-center-visual`／
+  `organize-source-history` 视觉验收。真实浏览器未单独以未保存草稿触发 popstate Back
+  （单元已覆盖 route blocker；`manual-organize-dialog` 的真实 Back 用例覆盖共享弹窗）。
+  `dialog=organize` 与旧隐藏列表条件同时存在的直达 URL 仅在单元层覆盖；B 应在完整
+  Python 旅程中复核最终候选的中间帧、三视口与键盘证据。
 
 ### B Review Result
 
