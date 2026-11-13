@@ -1,16 +1,17 @@
 # PATCH-20261114-1 — 整理来源路径、规则重跑与弹窗体验修复
 
 用户于 2026-11-14 明确“激活Task”，正式授权本独立 Task 实施；原 Task ID、Base、
-Goal 与 Scope 保持，移除规划草案限制。当前状态 READY FOR B REVIEW，候选 checkpoint
-`02ee5fcce7b27ece83f323ddb43beb5ec587c394`；Developer 已完成实现与受影响检查，等待 B 独立验收。本次激活只更新授权，
-不代行产品实现或 B 独立验收，不授权启动其他代理、推送或部署。范围为本会话原五项
+Goal 与 Scope 保持，移除规划草案限制。B 已独立复核候选 checkpoint
+`02ee5fcce7b27ece83f323ddb43beb5ec587c394`，结论 FIX REQUIRED：逐项切换过渡与决定区
+视觉层级尚未完成，具体修正指导见下方 B review result。修正留在同一 Task，
+不授权启动其他代理、推送或部署。范围为本会话原五项
 问题与随后确认的冒号路径拒绝问题。
 
 ```text
 Task ID: PATCH-20261114-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6bf8f58b8283bc891c4b768208d343d2d52600f2
 Difficulty: High
 Test Level: T4
@@ -302,9 +303,73 @@ npm run test:e2e -- --config=playwright.python.config.ts
 
 ## B review result
 
-待独立审查完整 Task Base..candidate 和上述验收后填写 PASS／FIX REQUIRED、实际结果、
-阻塞与下一步。修正留同一 Task；PASS 后恢复精简 NO ACTIVE IMPLEMENTATION TASK，
-不关闭 Slice 或更新大型 Slice 账本。
+### Decision — FIX REQUIRED (2026-11-14)
+
+- Reviewer：B；分支 `main`；复核前工作区／暂存区干净，治理检查 PASS。
+- 完整审查范围：`6bf8f58b8283bc891c4b768208d343d2d52600f2` ..
+  `a109a525ac389feb2d6baed96657614b69708dfe`（26 个变更文件）。产品实现为
+  `02ee5fcce7b27ece83f323ddb43beb5ec587c394`；之后仅 TASK.md 交接报告变化。
+- Slice54 仍 PASS / CLOSED。本独立 Task 的路径与规则修复已有通过证据，弹窗的两项
+  必需体验结果仍未完成；按 workflow §6 在这些阻塞修复后继续 T4 验收。
+
+### 阻塞及 Developer 修正指导
+
+1. **逐文件翻页仍是直接替换，没有本次承诺的局部过渡。**
+   实际旅程：Files → source → Dialog → 选择两个文件 → 批量整理 → 等待真实 Worker
+   完成分析 → 第 1 / 2 个 → 下一项。标题、文件名和候选直接变为第 2 项；在本轮新生产
+   构建上，等待浏览器连续两帧后仍无任何过渡动画，页头保持同一 DOM 节点。
+   `styles.css:10046` 的动画只在元素进入时启动；现有元素仅更新内容，上一项／下一项
+   及同文件决定→等待的替换没有重新触发它。逐项↔整批切换会启动动画，覆盖不完整。
+
+   **开发指导：** 在同一 mounted organizer 内，把局部过渡连接到实际当前文件或展示
+   阶段的变化。保留逐项表单、草稿和请求身份；处理正文替换、回顶和焦点的先后，形成
+   连贯切换。沿现有入口实际观察下一项／上一项、保存→等待→新方案和逐项↔整批；
+   相同状态的轮询保持静止，reduced-motion 立即显示可操作内容。复用现有原生测试与
+   浏览器观察，不新增业务状态或专门的测试工具。
+
+2. **决定区的去套框样式被覆盖，实际仍有三层卡片。**
+   同一旅程在“选择正确的作品”时，仍是“当前状态”外框、决定区内框、候选卡三层。
+   1440×900、390×844 和 1280×600 均可见。`styles.css:9982` 新规则与 `:10064`
+   原规则优先级相同，后者覆盖前者。实际决定区仍为 `1px` 边框、`13px 14px` 内边距、
+   `rgb(248, 250, 255)` 背景，未实现本 Task 的减少嵌套层级。
+
+   **开发指导：** 在 organizer 局部整理两条规则的顺序或作用范围，让决定表单自然属于
+   “当前状态”，候选仍各自可选；保持共享 Task Center 表单的既有样式。用三视口实际
+   截图核对候选、保存动作、方案的层级与间距。准备页顺带将“不会声称已完整遍历”这类
+   开发自述改成直接的阶段说明，如“正在检查所选范围”。
+
+### B 实测与证据
+
+耐久本机证据：`.git/validation-evidence/a109a525/patch-20261114-1-b/`。
+本轮使用真实现有 Files 入口、现有 harness Worker 推进入口和生产构建，所有媒体均为
+隔离临时 fixture。未访问用户媒体或生产服务。
+
+| 检查 | 本轮实际结果／原始记录 |
+|---|---|
+| Python 受影响回归及消费者白名单 | 264 tests PASS，14.619s；`python-focused.log`。命令为本 Task Developer Python 起始计划的 7 个模块加精确白名单用例；未执行全仓 discover。 |
+| 原样用户路径确认移动 | 1 test PASS，0.090s；`exact-user-path-correct-fixture.log` 与 `exact-user-path.py`。复用现有 API→Worker 用例，在内存去掉样本额外的 `电影/`，并把 fixture 的电影路径识别规则改为匹配原样目录；全部移动／内容／身份断言保留。 |
+| Rules／organizer／recovery Web 回归 | 4 files / 87 tests PASS，18.79s；`web-focused.log`。命令：`npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx src/features/rules/RulesEditPage.test.tsx src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx`，cwd `web/`。 |
+| 新生产构建 | `npm run build` PASS；`build.log`；产物 `index-BLjnVQLZ.css`、`index-BsmW6_M_.js`。保留构建体积提示。 |
+| Files Node 原失败所在文件 | `npm run test:e2e -- tests/e2e/library-file-detail.spec.ts`，6 PASS，2.1s；`node-library-file.log`。 |
+| 年份搜索 Python 原两项 | `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/metadata-search-year.python.spec.ts --output=../.git/validation-evidence/a109a525/patch-20261114-1-b/python-year-artifacts`，2 PASS，5.8s；`python-metadata-year-isolated.log`。 |
+| 默认 Node 归属 | `npm run test:e2e -- --list`，274 tests / 20 files，无 `python.spec`；`node-list.log`。 |
+| 原生视觉 | `preparation-1440.png`、`fresh-item2-1440.png`、`item2-390.png`、`item2-1280x600.png`、`analysis-wait-1440.png`；直接查看截图。390px 页宽／内容宽均为 390px。翻页事件和实际决定区样式见 `fresh-build-visual.json`；分区与保存事件见 `transition-events.json`。 |
+| 治理／报告检查 | `python3 scripts/check_governance.py`、`git diff --check` PASS。 |
+
+实际探测偏差均保留：第一次仅去掉 `电影/` 的路径对照在识别阶段 blocked，原因是 fixture
+原规则要求 `/电影/`；调整发布的 fixture 规则匹配原样路径后通过，不归为产品失败。
+原生刷新后的两次探测因内存 token 已清除／再次整页导航而超时，随后重新从 Files 选择
+另两个 fixture 文件完成新构建复现，不据此认定恢复缺陷。Node 与 Python 首次并行共用
+默认 `test-results`，Python 1 PASS / 1 FAIL 于 trace 文件被清理；单独使用上表产物目录
+重跑 2 PASS，初次日志仍保留。未改变任何断言或产品代码。
+
+本轮自动化测试进程累计约 50 秒；计入原生交互和上述两次超时仍少于本轮总用时的 50%。
+未执行完整 Python／Web／Node、全部真实 organizer 恢复旅程、质量全门禁及 wheel／源码外
+安装验收；本次为已证实阻塞后的提前 FIX REQUIRED，尚不具备 PASS 条件。
+
+Developer 按以上两项修正后提交同一 Task 的新 checkpoint，并运行受影响检查；
+B 继续复核完整原 Base..新 Head、原生中间帧和所需 T4 门禁。保留原 Base、其余验收与
+已通过实现；不重开 Slice，不规划额外 Task。
 
 ## Prior accepted Task
 
