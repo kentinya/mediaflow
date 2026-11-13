@@ -1,10 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# PATCH-20261114-1 — 整理来源路径、规则重跑与弹窗体验修复
 
-## PATCH-20261114-1 — 规划草案，未授权实施
-
-用户授权：将本会话原五项问题与随后确认的冒号路径拒绝问题，规划为一个独立修复
-Task。本轮只规划；下列 PLANNED 不授权实现、启动其他角色／代理、推送或部署。
-实施授权后再移除本 no-active 通知，保持本 Task ID、Base、Goal 与 Scope。
+用户于 2026-11-14 明确“激活Task”，正式授权本独立 Task 实施；原 Task ID、Base、
+Goal 与 Scope 保持，移除规划草案限制。当前状态 PLANNED，待 Developer 按计划开始
+实施。本次激活只更新授权，不代行产品实现或 B 独立验收，不授权启动其他代理、推送
+或部署。范围为本会话原五项问题与随后确认的冒号路径拒绝问题。
 
 ```text
 Task ID: PATCH-20261114-1
@@ -15,7 +14,7 @@ Task Base: 6bf8f58b8283bc891c4b768208d343d2d52600f2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-14
 ```
 
 权威：[Development Workflow](docs/development-workflow.md) §3.1、§5–8；
@@ -26,6 +25,10 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
 规划前：仓库 `/Users/songzhidong/mediaflow`，分支 `main`，HEAD 为上述 Task Base；
 工作区与暂存区干净、仓库／Git 可写，`python3 scripts/check_governance.py` PASS。
 实施前重新记录实际 HEAD／预存变更并运行治理检查，不静默重设 Base。
+
+激活前：分支 `main`，HEAD `f3f1928b96f8d24d92e39475ad01c4731240e33d`；
+工作区与暂存区干净、仓库／Git 可写，治理检查 PASS。本次仅修改 TASK.md 的授权与
+交接说明，原计划、验收、测试分工和已关闭 Slice 均保持。
 
 ## Goal and complete journey
 
@@ -67,7 +70,7 @@ V1 Requirements 的人工整理／策略测试章节是业务基础，当前入�
 Perfect World Movie: Nine Tribulations Incinerate the Heavens (2026) [tmdbid=1598732]/Perfect World Movie: Nine Tribulations Incinerate the Heavens.2026.2160p.WEB-DL.SDR.42.0Mbps.H.265.Dolby Digital Plus.mkv
 ```
 
-本轮只用该字符串做校验复现，没有访问真实路径；去冒号对照只证明校验根因，
+规划调查只用该字符串做校验复现，没有访问真实路径；去冒号对照只证明校验根因，
 不代表完整 API／Worker 执行已通过，完整证明属于本 Task。
 
 ## Implementation steps
@@ -207,7 +210,7 @@ Task Center 详情／全站主题／规则清单，不恢复旧接收页、Pause
 
 ## Developer completion report
 
-待实施授权和完成后填写：完整候选 SHA、READY FOR B REVIEW；变更／关键决定、实际
+待 Developer 实施完成后填写：完整候选 SHA、READY FOR B REVIEW；变更／关键决定、实际
 受影响检查结果／已知限制和剩余工作。B 独立验收未进行，不自批 PASS。
 
 ## B review result
