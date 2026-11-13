@@ -1,14 +1,6 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-## Planning-only draft — PATCH-20261113-1
-
-本次用户仅授权规划；下列 `PLANNED` 是独立修复草案，不激活实施、不授权其他代理、
-代码修改、推送或部署。实施获授权后，B 再复核基线及范围，将本草案转为活动 Task；
-基线变化不得静默重定。此前独立修复的 B PASS 指针保留在本文末尾。
-
 # Task PATCH-20261113-1 — 任务详情与记录表达去重
 
-Authority: 用户于 2026-11-13 授权的独立界面修复规划，承接本轮只读调查；生命周期遵循
+Authority: 用户于 2026-11-13 授权独立界面修复规划，随后明确“激活Task”，授权按本计划实施；生命周期遵循
 [Development Workflow](docs/development-workflow.md)。本任务不属于 Slice54，也不重新打开
 已接受 Slice。B／Developer 分别阅读对应[角色经验](AGENTS.md#testing-and-roles)。
 
@@ -21,13 +13,19 @@ Task Base: 31f4b56936831699f75590f5afd49d58d630ba9c
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-13 — 激活Task
 ```
 
 规划前 `python3 scripts/check_governance.py` PASS。工作区 `/Users/songzhidong/mediaflow`，
 分支 `main`，HEAD 为上述 Task Base；暂存区／工作区干净，工作区和 Git 可写。
 只读调查覆盖源码、测试及 CURRENT 契约，未运行浏览器验收、未读取用户运行数据库、
 私有配置或媒体。此次规划只改 `TASK.md`，不改产品／Slice／Roadmap／Progress。
+
+激活前治理检查 PASS；分支 `main`，HEAD `866f6670be54f6fa137f483e83b3f53dd57b434b`，
+暂存区／工作区干净。Task Base..该 HEAD 仅含本任务规划文档，无产品输入变化；保留原
+Task ID／Base／Goal／Scope、Medium／T3 及测试分工。现为活动 `PLANNED` Task，
+Developer 可按计划开始实施并转为 `IN PROGRESS`；本次激活仅更新任务文档，尚未实施。
+此前独立修复的 B PASS 指针保留在本文末尾；Slice54／Roadmap／Progress 保持原接受身份。
 
 ## Goal
 
@@ -111,7 +109,7 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
 
 测试分工遵循[工作流 §6](docs/development-workflow.md#6-test-levels)。T3 依据是记录、诊断和
 共享恢复组件的呈现整合；命令／权限／持久化／调度行为冻结。若实施需要改变这些边界，
-先交 B 重评范围和 Test Level，不以本草案授权该变更。不要求 Developer 跑全仓全量。
+先交 B 重评范围和 Test Level，不以本 Task 授权该变更。不要求 Developer 跑全仓全量。
 
 ### Developer — affected tests
 
@@ -162,16 +160,16 @@ B 原生／全量验收。只有实际完成验收后才可 PASS，按工作流�
 - 不改五态 Task、四类待处理归属、执行／恢复许可、取消、固定快照、请求核对、调度、
   版本／围栏、Storage、附件恢复、成功／未知效果非重放；不添加通用技术失败重试。
 - 不重构整套组件／数据层，不读写生产配置或媒体，不修改 SLICE／Roadmap／Progress，
-  不启动实施或其他代理，不推送／发布／部署。
+  不启动其他代理，不推送／发布／部署。
 
 ## Developer Completion Report
 
-未实施；等待用户实施授权。后续按模板记录实际 checkpoint、READY FOR B REVIEW、
+已获实施授权，尚未开始实施。后续按模板记录实际 checkpoint、READY FOR B REVIEW、
 变化／受影响测试结果与风险；B 验收保持独立。
 
 ## B Review Result
 
-尚未产生实现候选或验收结论；本稿只完成规划，不构成产品 PASS。
+尚未产生实现候选或验收结论；Task 已激活，不构成产品 PASS。
 
 ---
 
