@@ -1160,6 +1160,13 @@ remain separate. Waiting/ignored/uncertain items do not become successes. Detail
 plan/step/result/checkpoint and bounded linked logs/audit; result truth does not depend on logs.
 The existing secret-free result-package service remains export authority.
 
+The duplicate Organize execution Web page, route, destination registration and exclusive query
+wrapper are removed. Existing Task detail/evidence remains the result surface; former execution-page
+links use the exact returned or durably linked Task identity. The backend execution objects, APIs,
+history and admission reconciliation remain, including the execution-list read used to prevent
+duplicate confirmation. Old Web execution URLs use ordinary not-found/auth handling without a
+compatibility resolver.
+
 The Task Center renders one selected file's evidence below its row on the current server page,
 or before the table as an independent card when that row is absent or the list is unavailable.
 Both positions reuse the same exact run/item query and recovery components. Unsaved decision

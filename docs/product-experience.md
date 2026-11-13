@@ -1058,6 +1058,11 @@ does not redesign progress/results/recovery.
 
 ## Tasks, results and per-item recovery
 
+整理结果沿用现有任务详情及逐文件证据；独立“整理执行情况”页面与“查看关联执行结果”
+入口已删除。同一任务的恢复确认后留在原详情刷新；计划历史、整理意图及运行一次中
+原先前往该页的入口改为打开准确关联的任务详情。旧执行页地址使用普通未找到／认证
+边界，不提供兼容跳转；后台执行记录、核对及历史读取保持。
+
 Use All/Running/Attention/Ended plus Recognition/Metadata/Classification/Conflict over the same
 backend-authorized organizing population, before counts/paging/options/detail. Ordinary-file,
 notification and separate analysis-only work stay outside; no center new-task picker/global Worker/
