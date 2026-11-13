@@ -71,7 +71,24 @@ passed separately, including all three failed cases; the combined run remains a 
 Its logs/traces and final runs remain local at
 `.git/validation-evidence/11407882/patch-2-b/`.
 
-Both corrections used temporary SQLite/Local media and fake Providers. Their T3 acceptance adds
+The [Task evidence and record deduplication](https://github.com/kentinya/mediaflow/blob/e8d7d33ff2a3d421cabbab952e15bcfc1a78ca19/TASK.md#patch-20261113-1--b-pass)
+passed independent B T3 review on 2026-11-13, from Base
+`31f4b56936831699f75590f5afd49d58d630ba9c` through reviewed Head
+`5e809ac85a700762379950b8b076d27e58d66fa4`; product correction
+`ce09e116c82db577611443e0141aa5ba25409190`. File evidence keeps one current conclusion,
+one history entry per Result and one technical disclosure; identical failure/checkpoint next
+steps appear once, distinct values retain their source. Four-type recovery and record/export access
+remain. Acceptance passed 123 affected unit tests, 42 distinct Node browser cases and 56 real-Python
+browser cases on fresh per-spec instances, plus Web quality/build and three-viewport review.
+The Node first run had 41 passes and one B-authored stale-label assertion failure; after correcting
+that assertion, both added cases passed. The native mixed-task unknown-effect fixture returns
+inconsistent Result fields and shows the same unavailable boundary at Base and candidate;
+unverified-effect presentation was checked with the existing Node case. Equal-status history and
+different-next-step cases use fake responses through existing reads. Original failures, exact
+commands and limits remain in the fixed report; raw evidence stays local at
+`.git/validation-evidence/b9d9fc03/patch-20261113-1-b/`.
+
+These three corrections used temporary SQLite/Local media and fake Providers. Their T3 acceptance adds
 no full-repository, wheel, Docker or production-service validation; earlier Slice acceptance
 identities and release status remain unchanged. Subsequent documentation-only reconciliation
 preserves the tested executable inputs. Local evidence paths are not GitHub downloads.
