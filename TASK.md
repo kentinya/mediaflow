@@ -2,8 +2,8 @@
 
 用户于 2026-11-13 明确“激活Task”，现将已提交规划转为正式、已授权实施的独立修复
 Task。保留原 Task ID／Base／Goal／Scope／Medium／T3，不重设基线或扩大范围。
-激活检查点记录为 `PLANNED`；Developer 实施后已完成检查点及报告，当前状态见上方
-`READY FOR B REVIEW`。本激活记录不授权推送、部署、其他角色工作或另起代理。此前 PASS
+激活检查点记录为 `PLANNED`；Developer 已交付候选，B 于 2026-11-13 独立复核后
+返回 `FIX REQUIRED`，修正与复核继续留在同一 Task。此前 PASS
 记录保留在本文末尾。
 
 Authority: 用户本轮三项问题、“规划一版独立修复Task”及“激活Task”；
@@ -13,7 +13,7 @@ Authority: 用户本轮三项问题、“规划一版独立修复Task”及“�
 Task ID: PATCH-20261113-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 9811df4559d94db5b648f6152476f39035a12ae5
 Difficulty: Medium
 Test Level: T3
@@ -199,8 +199,83 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-13
 
 ### B Review Result
 
-尚未提交候选、未验收。Task 已激活授权实施，不是产品通过。PASS 后按 workflow 记录精确
-Base..Head 与真实结果，恢复简洁 `NO ACTIVE IMPLEMENTATION TASK`，不关闭任何 Slice。
+```text
+Reviewer: B
+Reviewed Base: 9811df4559d94db5b648f6152476f39035a12ae5
+Reviewed Head: 159d15095a6c92a9c9db9fdd0a532dd4e7c466a0
+Product Checkpoint: 31466c1d600f850f06cf26c2c42f62b1ba555ebf
+Decision: FIX REQUIRED — 2026-11-13
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 已审查完整 Base..Head 的 14 个文件，包含实现、两份规范、测试及规划／交接提交。
+本轮前分支 `main`，HEAD 如上，工作区干净，治理检查 PASS。Slice54 已接受的规则弹窗
+三项结果不在本独立修复范围内，保持原关闭；SLICE／Roadmap／Progress 不改。
+
+**结果核对：** 指定蓝色说明已从两处渲染移除；列表悬停、网格选中／Space 切换及
+当前页排序／重置入口已有实际交付。B 使用新构建从现有登录、侧栏、文件夹和表头入口
+核验，媒体库网格保留所选项，Space 可取消；390px 文档宽度为 390px，无整页横向溢出，
+reduced-motion 网格 transition 为 0s。列宽调整与跨目录保留尚未完成，阻塞如下。
+
+#### B13-2-01 — P1：进入子目录就丢失排序与列宽
+
+实际旅程：文件页根目录 → 点击名称升序 → 按方向左键调宽 → 点击已有 Movies 文件夹；
+子目录显示后排序变回服务端默认，列宽样式清空。媒体库通过侧栏进入 → 名称升序 →
+按方向右键调宽 → 点击已有 Breaking Bad 文件夹，同样丢失。文件页调宽值 911 变回 927；
+媒体库 943 变回 927，两页 `aria-sort` 均从 ascending 变为 null。
+
+原因：新状态位于 `FileBrowseView`／`MediaBrowseView` 内；首次进入未缓存目录时，
+页面先展示读取分支并卸载浏览组件，随后新组件重新初始化 sort 和 widths。不能用
+同一目录内的列表／网格切换测试证明跨目录保留。问题由产品提交 `31466c1d` 引入，
+不满足本 Task 第 4 步和页面规范承诺的同页切目录／翻页保持。
+
+开发指导：
+
+1. 将排序、用户列宽状态放到各自主页面中跨目录读取保持挂载的位置，再传给浏览组件；
+   DOM 测量和指针交互留在实际表格侧。沿用普通 React 会话状态，无需持久化或新偏好系统。
+2. 保持两种库各自独立；切目录／翻页保留呈现设置，选择集合继续采用原有清理规则。
+3. 在现有两页浏览用例增加“排序＋调宽 → 首次进入现有子目录 → 返回 → 下一页”的
+   操作链，检查显示顺序和真实列边界仍保持；现有读取失败后重试也沿用该会话设置。
+
+#### B13-2-02 — P1：拖动距离与可见列边界不一致
+
+实际旅程：1536×1024 文件页 → 打开 Movies → 把名称列右边界向左拖 240px 并松手。
+名称列实际从 927px 变为约 849.11px，只缩短约 77.89px，而手柄播报 687px。
+这会让用户拖到想要的位置后仍看到列边界偏离鼠标，继续调节时又以不一致的宽度为起点。
+不是像素风格问题，是“调整列宽”未准确控制可见宽度。
+
+原因：共享 hook 只写各列 CSS 宽度和 table 的 minWidth，表格仍为 `width:100%`；
+列宽合计小于容器时，浏览器重新分配剩余空间，实际宽度偏离控制器状态。现有浏览器
+测试只检查 `aria-valuenow` 变化，未检查真正的列边界。问题同样由 `31466c1d` 引入。
+
+开发指导：
+
+1. 统一列宽状态与实际表格几何：用户调整后采用能落实这些列宽的 table／col 布局，
+   明确剩余空间归属；保留默认铺满和内部横滚，选择列不随剩余空间被拉宽。
+2. 测量值、拖动起点、可见边界、键盘步长及 `aria-valuenow` 使用同一实际宽度口径。
+   普通拖动不加动画，不增加独立校正服务或轮询。
+3. 现有交互用例测量表头 `getBoundingClientRect()`：向左／右拖、键盘调整后，边界
+   跟随预期变化（允许取整误差），并继续验证恢复默认、窄屏横滚及未误触排序。
+
+**实际验证与证据：**
+
+- cwd `web/`：`npm run build` PASS（保留现有 >500 kB chunk 提醒）；
+  `npm run typecheck` PASS；计划指定 5 个受影响单元文件 **104 tests PASS**，
+  单元耗时 10.26s，保留 jsdom `Window.scrollTo` 未实现输出。
+- B 实际浏览按上述已有入口复现两项阻塞，记录几何、排序状态及截图；另实际核对
+  悬停、网格选择、Space、390px 与 reduced-motion。浏览仅使用 Node 假服务的现有数据。
+- 本机证据 `.git/validation-evidence/159d1509/patch-20261113-2-b/`：
+  `resource-retention.json`、`media-retention.json`、`resource-resize.json`、`feedback.json`、
+  对应截图、`unit.log`／`typecheck.log`。这是本机证据，不声明为远程 CI。
+- 初次浏览脚本导入 Playwright 失败，改用现有包的 createRequire 后进入页面；一次在
+  Dune 目录等候表格超时，其结果未用于产品结论。媒体库复现改用现有验收入口 Breaking Bad。
+- 已确认阻塞，依 workflow 提前返回；未运行本轮完整 lint／format、Node 文件页回归、
+  Python 原生／直接文件操作验收及完整视觉矩阵，修正后由 B 完成。测试／浏览探测用时
+  小于本轮总用时 50%；代码与差异审查、结果核对和开发指导为本轮主要工作。
+
+以上两项修正完成后 Developer 运行失败用例和受影响检查，交新的连贯候选；B 再独立
+审查原 Base..新 Head 并完成剩余验收，不另建 Task，不改原接受范围。
 
 ---
 
