@@ -2783,6 +2783,15 @@ function RunEvidenceSection({
             checkpoint.blockerKind !== null ||
             checkpoint.effectCertainty === "attempted_unverified" ||
             checkpoint.uncertainEffects.length > 0;
+          // The checkpoint projects the same durable failure's next action.
+          // Keep one row only when the two sources agree; otherwise each
+          // source stays visibly attributed to its own record.
+          const sharedNextAction =
+            failure !== null &&
+            checkpoint.nextAction !== null &&
+            failure.nextAction === checkpoint.nextAction
+              ? failure.nextAction
+              : null;
           return (
             <>
               <section className="mf-run-evidence-block" aria-label="处理结果">
@@ -3017,17 +3026,28 @@ function RunEvidenceSection({
                         <dt>已知影响</dt>
                         <dd>{failure.sideEffects}</dd>
                       </div>
-                      <div>
-                        <dt>服务下一步（失败记录）</dt>
-                        <dd>{failure.nextAction}</dd>
-                      </div>
                     </>
                   )}
-                  {checkpoint.nextAction !== null && (
+                  {sharedNextAction !== null ? (
                     <div>
-                      <dt>服务下一步（检查点）</dt>
-                      <dd>{checkpoint.nextAction}</dd>
+                      <dt>服务下一步（失败记录与检查点一致）</dt>
+                      <dd>{sharedNextAction}</dd>
                     </div>
+                  ) : (
+                    <>
+                      {failure !== null && (
+                        <div>
+                          <dt>服务下一步（失败记录）</dt>
+                          <dd>{failure.nextAction}</dd>
+                        </div>
+                      )}
+                      {checkpoint.nextAction !== null && (
+                        <div>
+                          <dt>服务下一步（检查点）</dt>
+                          <dd>{checkpoint.nextAction}</dd>
+                        </div>
+                      )}
+                    </>
                   )}
                 </dl>
                 <h6>

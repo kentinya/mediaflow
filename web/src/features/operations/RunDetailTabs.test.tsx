@@ -1327,59 +1327,138 @@ describe("selected-run detail tabs", () => {
   });
 
   it("keeps failure-record and checkpoint next steps distinguishable in the one diagnostics entry", async () => {
-    const failed = manualExecutionEvidenceDocument({
-      item: itemRow({
-        status: "failed",
-        failure: {
-          category: "storage_failure",
-          message: "the destination write did not commit",
-          durableState: "destination unchanged",
-          sideEffects: "none",
-          retrySafe: true,
-          nextAction: "verify the destination storage",
-        },
-      }),
+    const failedItem = itemRow({
+      status: "failed",
+      failure: {
+        category: "storage_failure",
+        message: "the destination write did not commit",
+        durableState: "destination unchanged",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "verify the destination storage",
+      },
     });
-    (failed.checkpoint as { nextAction: string | null }).nextAction =
-      "check the pinned snapshot before continuing";
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
-        return jsonResponse(overviewDocument());
-      }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
-        return jsonResponse(failed);
-      }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
-        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
-      }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
-        return jsonResponse(recordsPageDocument());
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    const renderFailedEvidence = async (
+      document: ReturnType<typeof manualExecutionEvidenceDocument>,
+    ) => {
+      stubFetch(async (input) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+          return jsonResponse(document);
+        }
+        return stubDetailJourneyResponse(url);
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations?run=task-001&item=item-1");
+      const detail = await screen.findByRole("dialog", { name: "运行详情" });
+      const evidence = await findInlineEvidence(detail);
+      await within(evidence).findByText("文件证据：a.mkv");
+      return evidence;
+    };
 
-    const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const evidence = await findInlineEvidence(detail);
-    await within(evidence).findByText("文件证据：a.mkv");
+    const different = manualExecutionEvidenceDocument({ item: failedItem });
+    (different.checkpoint as { nextAction: string | null }).nextAction =
+      "check the pinned snapshot before continuing";
+    const differentEvidence = await renderFailedEvidence(different);
     // The current conclusion, its central reason and the raw checkpoint stay
     // in their own levels of the same file evidence.
-    expect(within(evidence).getByText("处理失败")).toBeVisible();
-    expect(within(evidence).getByText("存储操作未完成。")).toBeVisible();
+    expect(within(differentEvidence).getByText("处理失败")).toBeVisible();
+    expect(
+      within(differentEvidence).getByText("存储操作未完成。"),
+    ).toBeVisible();
     await userEvent
       .setup()
-      .click(within(evidence).getByText(/技术诊断（检查点、计划、日志与审计/));
+      .click(
+        within(differentEvidence).getByText(
+          /技术诊断（检查点、计划、日志与审计/,
+        ),
+      );
     // Same-kind fields from different sources stay distinguishable instead
     // of collapsing into one ambiguous 服务下一步.
-    expect(within(evidence).getByText("服务下一步（失败记录）")).toBeVisible();
-    expect(within(evidence).getByText("服务下一步（检查点）")).toBeVisible();
     expect(
-      within(evidence).getByText("verify the destination storage"),
+      within(differentEvidence).getByText("服务下一步（失败记录）"),
     ).toBeVisible();
     expect(
-      within(evidence).getByText("check the pinned snapshot before continuing"),
+      within(differentEvidence).getByText("服务下一步（检查点）"),
+    ).toBeVisible();
+    expect(
+      within(differentEvidence).getByText("verify the destination storage"),
+    ).toBeVisible();
+    expect(
+      within(differentEvidence).getByText(
+        "check the pinned snapshot before continuing",
+      ),
+    ).toBeVisible();
+
+    cleanup();
+    // The checkpoint's next action is the same durable failure's projection:
+    // an identical value is one fact, not two next steps.
+    const shared = manualExecutionEvidenceDocument({ item: failedItem });
+    (shared.checkpoint as { nextAction: string | null }).nextAction =
+      "verify the destination storage";
+    const sharedEvidence = await renderFailedEvidence(shared);
+    await userEvent
+      .setup()
+      .click(
+        within(sharedEvidence).getByText(/技术诊断（检查点、计划、日志与审计/),
+      );
+    expect(
+      within(sharedEvidence).getByText("服务下一步（失败记录与检查点一致）"),
+    ).toBeVisible();
+    expect(
+      within(sharedEvidence).queryByText("服务下一步（失败记录）"),
+    ).toBeNull();
+    expect(
+      within(sharedEvidence).queryByText("服务下一步（检查点）"),
+    ).toBeNull();
+    expect(
+      within(sharedEvidence).getAllByText("verify the destination storage"),
+    ).toHaveLength(1);
+
+    cleanup();
+    // Only the item's failure carries guidance: keep its exact source label.
+    const failureOnly = manualExecutionEvidenceDocument({ item: failedItem });
+    const failureOnlyEvidence = await renderFailedEvidence(failureOnly);
+    await userEvent
+      .setup()
+      .click(
+        within(failureOnlyEvidence).getByText(
+          /技术诊断（检查点、计划、日志与审计/,
+        ),
+      );
+    expect(
+      within(failureOnlyEvidence).getByText("服务下一步（失败记录）"),
+    ).toBeVisible();
+    expect(
+      within(failureOnlyEvidence).queryByText("服务下一步（检查点）"),
+    ).toBeNull();
+    expect(
+      within(failureOnlyEvidence).getByText("verify the destination storage"),
+    ).toBeVisible();
+
+    cleanup();
+    // Only the checkpoint carries guidance: do not borrow the failure label.
+    const checkpointOnly = manualExecutionEvidenceDocument({
+      item: itemRow({ status: "failed" }),
+    });
+    (checkpointOnly.checkpoint as { nextAction: string | null }).nextAction =
+      "inspect the exact checkpoint";
+    const checkpointOnlyEvidence = await renderFailedEvidence(checkpointOnly);
+    await userEvent
+      .setup()
+      .click(
+        within(checkpointOnlyEvidence).getByText(
+          /技术诊断（检查点、计划、日志与审计/,
+        ),
+      );
+    expect(
+      within(checkpointOnlyEvidence).queryByText("服务下一步（失败记录）"),
+    ).toBeNull();
+    expect(
+      within(checkpointOnlyEvidence).getByText("服务下一步（检查点）"),
+    ).toBeVisible();
+    expect(
+      within(checkpointOnlyEvidence).getByText("inspect the exact checkpoint"),
     ).toBeVisible();
   });
 
