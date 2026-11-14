@@ -11,7 +11,7 @@ Goal 与 Scope 保持，移除规划草案限制。B 已独立复核候选 check
 Task ID: PATCH-20261114-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6bf8f58b8283bc891c4b768208d343d2d52600f2
 Difficulty: High
 Test Level: T4
@@ -213,38 +213,32 @@ Task Center 详情／全站主题／规则清单，不恢复旧接收页、Pause
 ## Developer completion report
 
 ```text
-Candidate: 02ee5fcce7b27ece83f323ddb43beb5ec587c394
+Candidate: 779e8e1af958822d056ebf1dc62df16666f21d92
 Status: READY FOR B REVIEW
-Scope: Task Base 6bf8f58b..02ee5fcce7b27ece83f323ddb43beb5ec587c394
+Scope: Task Base 6bf8f58b8283bc891c4b768208d343d2d52600f2..779e8e1af958822d056ebf1dc62df16666f21d92
 ```
 
-完整候选 SHA：`02ee5fcce7b27ece83f323ddb43beb5ec587c394`（本轮实现 commit）。
-开发分支 `main`，Task Base `6bf8f58b8283bc891c4b768208d343d2d52600f2`；开始与结束时
-工作区除本轮变更外干净，未推送、未发布、未部署。
+完整候选 SHA：`779e8e1af958822d056ebf1dc62df16666f21d92`（本轮修正 commit）。
+开发分支 `main`，Task Base `6bf8f58b8283bc891c4b768208d343d2d52600f2`；开始工作区与
+暂存区干净，结束时除本轮变更外干净，未推送、未发布、未部署。上轮候选
+`02ee5fcc..a109a525` 的实现、路径与规则证据保留；本轮只修复 B 指出的两项弹窗阻塞。
 
 ### 变更与关键决定
 
-1. **来源冒号**：新增共享判断 `domain/storage.py:has_absolute_or_uri_prefix`，只拒绝
-   盘符（`C:`/`C:/`/`C:...`）和 URI scheme 后接分隔符（`smb://`、`file:/`），
-   普通名称中的冒号原位保留。应用到 Files 准入 `bounded_path`、Preview 相对路径、
-   Task scope、恢复准入、Scanner、Storage browser 及 OpenList/S3 逻辑路径校验；
-   绝对路径、反斜杠、UNC、NUL、空/点/父段、字节/段数预算、符号链接和根约束保持。
-   未改前端绕过任何后端校验，也未改源名称。
-2. **Rules 单项重跑**：共用面板只保留一个当前结果位置；主按钮重复检查与结果内
-   “用当前输入重新运行此项”都原位替换同一结果，不增长结果组；loading、成功、
-   不匹配/失败、输入拒绝、迟到结果过期仍按当前性与提交身份处理。
-3. **准备页**：主文案改为真实阶段的中文状态；queued/running/analyzing/waiting_stability
-   不再声称“已完整遍历”；只显示非零计数，取消空原因区与 0/0 翻页；Worker 不可用、
-   读取失败均区分已受理/未受理并给出合法下一步；英文 `nextAction`/progress message/
-   Worker 原话收进“准备诊断”。
-4. **逐项/整批复核**：去除“当前文件的合法决定”第二层标题，原生决定表单成为
-   “当前状态”内容；有方案时只保留一条完整“来源 → 目标”，不再在上方重复来源路径或
-   操作；成功保存通知在原生决定状态已说明时不再重复；长名称/路径仍完整可查。
-5. **过渡**：切换逐项/整批或当前文件时只把该弹窗正文滚回顶部，轮询同一摘要不跳位；
-   阶段内容使用 140ms 局部淡入，`prefers-reduced-motion: reduce` 下关闭。
-6. **已知失败测试**：Task 调度只读消费者允许集合加入 `application/task_item_recovery.py`
-   并说明；Files 名称表头改用稳定 `data-column-width` + 列名/调整控件断言；默认
-   Playwright 配置补排除 `metadata-search-year.python.spec.ts`，Node `--list` 无 Python-only spec。
+1. **逐项过渡按真实变化重启。** `ManualOrganizeDialog` 新增稳定的
+   `.mf-organize-stage` 内容边界；当前文件、逐项／整批阶段、准备阶段、精确方案身份或
+   已保存分析状态变化时，布局 effect 在同一 mounted organizer 上重启 140ms 局部淡入。
+   相同阶段轮询的 key 不变，不重启动画、不回顶。动画仅改 opacity／transform，不延迟
+   可操作性；`prefers-reduced-motion` 下为 `animation: none`。
+2. **回顶、替换与焦点顺序。** 当前文件或阶段变化时先回正文顶部，再在同一内容边界恢复
+   焦点（仅当被替换控件已把焦点丢到 body），然后播放淡入；页脚翻页按钮与草稿、选择、
+   原提交身份保持挂载。逐项↔整批、保存后等待、新方案到达均沿用同一局部边界。
+3. **决定区去套框。** 将“当前状态”内的原生决定表单规则移到共享决定卡规则之后，并用
+   `.mf-organize-dialog-body .mf-organize-section-primary` 限定作用域；实际计算样式为
+   0 边框、0 内边距、透明背景、0 外边距，候选仍各自 1px 卡片，共享 Task Center 表单
+   选择器不受影响。
+4. **准备页文案。** queued／running 的进度说明改为“正在检查所选范围；下面的计数是当前
+   已完成的真实进度。”，删除“不会声称已完整遍历”这类开发自述。
 
 ### 实际检查结果
 
@@ -252,53 +246,49 @@ Scope: Task Base 6bf8f58b..02ee5fcce7b27ece83f323ddb43beb5ec587c394
 
 ```text
 python3 scripts/check_governance.py                                          PASS
-.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_storage_browser tests.test_local_storage tests.test_task_scope tests.test_processing_recovery_admission
-                                                                             291 passed
-.venv/bin/python -m unittest tests.test_task_scheduling.TransitionBoundaryTests.test_only_the_named_production_files_wire_the_kernel
-                                                                             1 passed
-.venv/bin/ruff check mediaflow tests scripts                                PASS
-.venv/bin/ruff format --check mediaflow tests scripts                       356 files formatted
-.venv/bin/python -m compileall -q mediaflow tests scripts                   PASS
 git diff --check                                                             PASS
+.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest \
+  tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution \
+  tests.test_storage_browser tests.test_local_storage                        263 passed, 14.627s
+.venv/bin/python -m unittest tests.test_task_scheduling.TransitionBoundaryTests.test_only_the_named_production_files_wire_the_kernel
+                                                                             1 passed, 0.048s
 ```
 
-新增/更新的关键证明：`test_a_colon_named_scope_reaches_one_real_confirmed_move` 用原样
-两层冒号样本走真实 Python/SQLite/Local/synthetic Provider 的 Files 准入、discovery、
-Preview、显式确认和 Worker 执行，源路径逐字保留且最终移动成功；目录与“目录+文件”
-混选另行验证 2 项精确计划与零变更；URI/盘符/UNC/NUL/点段拒绝覆盖仍在。Preview、
-Task scope、恢复准入、Storage browser 均有冒号保留与非法前缀拒绝用例。
+本轮未修改 Python 生产或测试文件，故未新增 ruff 对象；上述既有 Python 受影响套件仍复跑。
 
 `web/`：
 
 ```text
-npm run test -- run <RulesObjectTestPanel, RulesEditPage, ManualOrganizeDialog,
-  TaskItemRecoveryPanel, StorageFilesPage, modal-card>
-                                                                             6 files / 161 passed
-npm run typecheck / lint / format:check / build                              PASS
-npm run test:e2e -- tests/e2e/library-file-detail.spec.ts rules-identity.spec.ts
-  manual-organize.spec.ts storage-management.spec.ts automation-presentation.spec.ts
-                                                                             55 passed
-npm run test:e2e -- --list                                                   Node list 0 个 python spec
-npm run test:e2e -- --config=playwright.python.config.ts
+npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx src/features/rules/RulesEditPage.test.tsx \
+  src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx \
+  src/features/library/StorageFilesPage.test.tsx                             5 files / 150 passed, 26.11s
+npm run typecheck / lint / format:check                                      PASS
+npm run build                                                                PASS
+  dist/assets/index-gnk0teDC.css, dist/assets/index-YHsFO1BF.js；保留既有 500kB 体积提示
+npm run test:e2e -- tests/e2e/library-file-detail.spec.ts rules-identity.spec.ts manual-organize.spec.ts
+                                                                             23 passed, 11.7s
+npm run test:e2e -- --list                                                   274 tests / 20 files, 0 个 python.spec
+npm run test:e2e -- --config=playwright.python.config.ts \
   tests/e2e/manual-organize-dialog.python.spec.ts tests/e2e/metadata-search-year.python.spec.ts
-                                                                             10 passed
+                                                                             10 passed, 58.2s
 ```
 
-实际三视口截图（1440×900、390×844、1280×600）与流程中间帧查看：准备页、逐项决定、
-保存后等待、新方案、整批复核；无横向溢出，长路径换行可查，底栏动作可达；实测
-逐项→整批正文 `scrollTop` 446→0，轮询同一摘要不回顶；reduced-motion 下阶段
-`animation-name` 为 `none`。截图位于 `/tmp/mediaflow-shots*`，仅本机开发证据，
-不作为 B 的耐久证据。
+真实入口的原生断言：十项旅程第 1 项实际计算决定区为 `border 0px / padding 0px /
+background rgba(0,0,0,0)`，候选为 `border 1px`；点击“下一项”后同一
+`.mf-organize-stage` 节点仍连接，且 `animationstart(mf-organize-stage-in)` 实际发生。
+临时原生查看（同一 Files→Dialog 入口，生产构建，隔离 fixture；非耐久证据）：
+1440×900、390×844、1280×600 的决定区无横向溢出，决定表单已直接属于“当前状态”；保存后
+“零变更分析正在等待”为一次局部淡入（fade 计数 1）；新方案与整批复核可继续；reduced-motion
+下 stage 的 `animation-name` 为 `none`、`opacity` 为 1。截图在
+`/tmp/mediaflow-verify/`，仅本机开发证据。相同阶段轮询不重启动画由稳定的 stage key 与
+effect 相等时直接返回保证。
 
 ### 已知限制与剩余工作
 
-- 全量 T4/全仓回归、精确 wheel/源码外安装与 B 的独立验收未由 Developer 执行，按流程
-  由 B 在候选 `02ee5fcce7b27ece83f323ddb43beb5ec587c394` 上完成。
-- 冒号链路用真实 Local Storage 验证；未对生产 SMB/OpenList/S3 远程适配器做外部环境
-  验证（按 Task 约束不访问真实服务）。
-- 任意后端失败文本仍以原始英文作为“失败说明/诊断”证据保留，主结论与下一步已中文化；
-  未新增后端错误翻译层。
-- 过渡使用直接正文 `scrollTop=0` 与 CSS 淡入，不增加滚动动画或动效设置。
+- 全量 T4、精确 wheel／源码外安装、完整 Node／Web／Python 全仓门禁仍由 B 在候选
+  `779e8e1af958822d056ebf1dc62df16666f21d92` 上执行。
+- 动画重启由浏览器 `animationstart` 与临时截图核对；未新增专用动效测试工具。
+- 开发截图位于 `/tmp`，不作为耐久证据；B 需在自己的证据目录复核三视口与中间帧。
 - 本报告不声明 PASS；B 独立审查完整 Base..candidate 后才能给出结论。
 
 ## B review result
