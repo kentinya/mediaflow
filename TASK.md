@@ -1,12 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261114-2 — 文件浏览工具栏与表头呈现修复
 
-Next Action: 用户审阅下方独立修复规划草案；尚未授权实施。
+Next Action: Developer 按本 Task 开始实施，完成受影响测试后提交 READY FOR B REVIEW。
 
-## Planning-only draft — PATCH-20261114-2
-
-以下是用户于 2026-11-14 授权“规划一个独立修复 Task”的 B 计划，**仅规划，不授权实施**。
-后续明确授权实施时才移除本 no-active notice 并启用本 Task；ID／Base／目标／边界保留。
-本轮只更新本文件，不改产品代码、现行产品文档、SLICE、Roadmap 或 Progress。
+用户于 2026-11-14 在规划检查点 `d3d984a50d3364d06f9e763a1231d4299b5a1e9b`
+后明确“激活 Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
+保持；激活检查点仅更新本文件，不改产品代码、现行产品文档、SLICE、Roadmap 或 Progress。
 
 ```text
 Task ID: PATCH-20261114-2
@@ -17,7 +15,7 @@ Task Base: 4107c299d8f99b817fcd3cbdffa274de1f5598ea
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED ON 2026-11-14
 ```
 
 ### Goal and authority
@@ -39,6 +37,10 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
 规划前 tracked／untracked 工作区均无变更，TASK 与 Git 可写；治理预检 PASS。
 未读运行数据库、私有配置、凭据或用户媒体。调查依据为用户截图、代码及约定，
 尚未启动浏览器验收；截图中的大空白对应名称列默认吸收剩余宽度，不能误判为丢列。
+
+激活前 HEAD 为上述规划检查点，分支 `main`，工作区无变更；治理检查 PASS。
+Task Base 仍为原始产品基线，不因纯规划／激活提交重新设定。当前状态 PLANNED 表示
+已授权、等待 Developer 开始；实际实施时更新为 IN PROGRESS，B 独立审查保持。
 
 ### Observed behavior and cause
 
@@ -160,11 +162,11 @@ npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/files-read-ha
 排序算法、选择生命周期和精确路径身份；不持久化偏好、不增加列显隐／密度／主题。
 不重设计库卡片、全站 Shell、文件内容行／网格整体、库配置弹窗、整理／任务／常规文件
 命令；不改 API／后端／领域／依赖／权限／Active／schema／Storage／执行协议。
-不重开 Slice、不改治理规则，不 push、发布或部署，不自行启动实现或委派其他角色。
+不重开 Slice、不改治理规则，不 push、发布或部署；实施仅限本 Task，不自行委派其他角色。
 
 ### Developer completion report
 
-尚未实施。授权后交接：完整候选 SHA、READY FOR B REVIEW、实际变更与关键决定、
+已授权，尚未实施。Developer 交接：完整候选 SHA、READY FOR B REVIEW、实际变更与关键决定、
 受影响测试命令／结果及剩余风险；B 独立验收尚待执行。
 
 ### B review result
