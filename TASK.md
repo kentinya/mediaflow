@@ -1,13 +1,11 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: 已按用户要求规划下列独立修复草案；等待实施授权。本轮不实施。
+Next Action: Developer 按本 Task 开始实施，完成受影响测试后提交 READY FOR B REVIEW。
 
-## Planning draft — PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
-
-**仅规划草案，不是活动实施 Task。** 用户先要求只读调查通知页，随后明确要求
-“规划一个独立修复Task”。本次仅授权规划；后续明确授权实施时，移除本通知并将下列
-元数据提升为活动 Task，保留同一 ID／Base／Goal／Scope。不得因本草案自动开始实施、
-委派、推送或部署。
+用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
+后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
+保持；本激活检查点仅更新本文件，不改产品代码、现行产品文档、SLICE、Roadmap 或 Progress。
+不包含委派、推送或部署授权。
 
 Authority: 用户授权的现有通知页体验纠正；遵循
 [Development Workflow](docs/development-workflow.md) §3.1、§5–8。B 规划并独立验收，
@@ -22,12 +20,16 @@ Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: NOT AUTHORIZED — PLANNING ONLY
+Development Authorization: USER AUTHORIZED ON 2026-11-14
 ```
 
 规划前分支 `main`，HEAD 为上述 Base，工作区及暂存区干净、工作区／Git 可写；
 `python3 scripts/check_governance.py` PASS。本轮仅改 `TASK.md`，保留此前独立修复的
 接受指针。若实施授权前出现独立产品变化，先由 B 重新核对兼容性和边界，不静默重设 Base。
+
+激活前分支 `main`，HEAD 为上述规划检查点，工作区与暂存区干净；治理检查 PASS。
+Base..规划检查点仅有 `TASK.md` 规划变更，没有独立产品变化；保留原始 Task Base。
+当前 PLANNED 表示已授权、待 Developer 开始；实施开始时转为 IN PROGRESS。
 
 ### Goal and observed gap
 
@@ -130,7 +132,7 @@ Development Authorization: NOT AUTHORIZED — PLANNING ONLY
 ### Required Tests
 
 遵循 [测试分工](docs/development-workflow.md#6-test-levels)。下列未来命令是实施／验收计划，
-本规划轮未执行产品测试。新脚本及必要新测试只服务本 Task，不建设通用新测试平台。
+规划／激活轮未执行产品测试。新脚本及必要新测试只服务本 Task，不建设通用新测试平台。
 
 **Developer — new / changed / directly affected**
 
@@ -205,7 +207,7 @@ git diff --check
 
 ### B Review Result
 
-尚未评审。B 在实施授权和候选提交后记录固定 Base..Head、实际接受结果和
+尚未评审。B 在候选提交后记录固定 Base..Head、实际接受结果和
 PASS／FIX REQUIRED；修正在本 Task 内。PASS 后恢复 NO ACTIVE IMPLEMENTATION TASK
 及简短接受指针，不改变 Slice54 或大 Slice 关闭台账。
 
