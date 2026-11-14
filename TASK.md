@@ -213,12 +213,12 @@ Task Center 详情／全站主题／规则清单，不恢复旧接收页、Pause
 ## Developer completion report
 
 ```text
-Candidate: 779e8e1af958822d056ebf1dc62df16666f21d92
+Candidate: ecf2956f9c177010de73e473cebf331fc2a05416
 Status: READY FOR B REVIEW
-Scope: Task Base 6bf8f58b8283bc891c4b768208d343d2d52600f2..779e8e1af958822d056ebf1dc62df16666f21d92
+Scope: Task Base 6bf8f58b8283bc891c4b768208d343d2d52600f2..ecf2956f9c177010de73e473cebf331fc2a05416
 ```
 
-完整候选 SHA：`779e8e1af958822d056ebf1dc62df16666f21d92`（本轮修正 commit）。
+完整候选 SHA：`ecf2956f9c177010de73e473cebf331fc2a05416`（本轮实现与焦点断言 commit；`779e8e1a` 为过渡／层级修复，`527e6e3c` 为中间报告提交）。
 开发分支 `main`，Task Base `6bf8f58b8283bc891c4b768208d343d2d52600f2`；开始工作区与
 暂存区干净，结束时除本轮变更外干净，未推送、未发布、未部署。上轮候选
 `02ee5fcc..a109a525` 的实现、路径与规则证据保留；本轮只修复 B 指出的两项弹窗阻塞。
@@ -275,7 +275,9 @@ npm run test:e2e -- --config=playwright.python.config.ts \
 
 真实入口的原生断言：十项旅程第 1 项实际计算决定区为 `border 0px / padding 0px /
 background rgba(0,0,0,0)`，候选为 `border 1px`；点击“下一项”后同一
-`.mf-organize-stage` 节点仍连接，且 `animationstart(mf-organize-stage-in)` 实际发生。
+`.mf-organize-stage` 节点仍连接，且 `animationstart(mf-organize-stage-in)` 实际发生；
+保存原生决定后，被替换按钮不再持有焦点，实际 `document.activeElement` 为该同一 stage
+边界（`aria-label="整理内容"`）。
 临时原生查看（同一 Files→Dialog 入口，生产构建，隔离 fixture；非耐久证据）：
 1440×900、390×844、1280×600 的决定区无横向溢出，决定表单已直接属于“当前状态”；保存后
 “零变更分析正在等待”为一次局部淡入（fade 计数 1）；新方案与整批复核可继续；reduced-motion
@@ -286,8 +288,8 @@ effect 相等时直接返回保证。
 ### 已知限制与剩余工作
 
 - 全量 T4、精确 wheel／源码外安装、完整 Node／Web／Python 全仓门禁仍由 B 在候选
-  `779e8e1af958822d056ebf1dc62df16666f21d92` 上执行。
-- 动画重启由浏览器 `animationstart` 与临时截图核对；未新增专用动效测试工具。
+  `ecf2956f9c177010de73e473cebf331fc2a05416` 上执行。
+- 动画重启、同一 stage 节点与保存后焦点均由真实 Python／浏览器旅程断言；三视口与中间帧由临时截图核对，未新增专用动效测试工具。
 - 开发截图位于 `/tmp`，不作为耐久证据；B 需在自己的证据目录复核三视口与中间帧。
 - 本报告不声明 PASS；B 独立审查完整 Base..candidate 后才能给出结论。
 
