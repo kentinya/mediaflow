@@ -1,68 +1,85 @@
 /**
- * V2 Webhook definition create form.
+ * V2 Webhook definition create card.
  *
- * The form composes the existing managed configuration object route: the
- * bounded document is stored inside the exact open successor Draft at its
- * advertised optimistic version. Only canonical Webhook fields are submitted;
- * the server's canonical validator rejects unknown fields, literal secrets,
- * unsafe schemes and credential-bearing endpoint components, so the client
- * mirrors those bounds for friction-free input but never becomes the
- * authority. A created definition stays a Draft until checked activation.
+ * The card opens over the Notification definition list. It composes the
+ * existing managed configuration object route: the bounded document is stored
+ * inside the exact open successor Draft at its advertised optimistic version.
+ * Only canonical Webhook fields are submitted; the server's canonical
+ * validator rejects unknown fields, literal secrets, unsafe schemes and
+ * credential-bearing endpoint components, so the client mirrors those bounds
+ * for friction-free input but never becomes the authority.
+ *
+ * No editable Draft means no fillable form: the card explains the exact next
+ * action and never lets pointer or keyboard reach an invalid submission.
  */
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { createWebhookDefinition } from "../../shared/api/api-client";
+import {
+  createNotificationSuccessorDraft,
+  createWebhookDefinition,
+} from "../../shared/api/api-client";
 import {
   notificationListQueryKey,
   notificationListQueryOptions,
 } from "./notification-query";
-import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { useAuthorizedReadAuthorityRecovery } from "../../shared/auth/AuthorizedReadBoundary";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import {
+  buildWebhookObject,
+  notificationEventLabel,
+  notificationReasonLabel,
+  sameWebhookForm,
+  webhookFormIssueFor,
+  webhookFormIssues,
+  type WebhookFormValues,
+  isUnknownCommandResult,
+  unknownCommandMessage,
+} from "./notification-presentation";
+import {
+  NotificationCard,
+  NotificationCardStatus,
+  NotificationDiscardPrompt,
+  useLastSuccessfulRead,
+  useNotificationCardGuard,
+} from "./notification-card";
 
-const SECRET_ENV_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const INITIAL_FORM: WebhookFormValues = {
+  url: "",
+  secretEnv: "",
+  events: [],
+  enabled: true,
+  timeoutSeconds: "10",
+  maxAttempts: "5",
+  baseRetrySeconds: "5",
+  maxRetrySeconds: "300",
+};
 
-function unsafeUrlReason(value: string): string | null {
-  if (!value.startsWith("https://")) {
-    return "the endpoint must be an HTTPS URL";
-  }
-  try {
-    const parsed = new URL(value);
-    if (parsed.username || parsed.password) {
-      return "the endpoint must not include userinfo credentials";
-    }
-    if (parsed.search) {
-      return "the endpoint must not include a query string";
-    }
-    if (parsed.hash) {
-      return "the endpoint must not include a fragment";
-    }
-    return null;
-  } catch {
-    return "the endpoint must be a valid HTTPS URL";
-  }
-}
+const ALL_FORM_FIELDS = [
+  "url",
+  "secretEnv",
+  "events",
+  "timeoutSeconds",
+  "maxAttempts",
+  "baseRetrySeconds",
+  "maxRetrySeconds",
+] as const;
 
 export function NotificationNewPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [webhookId, setWebhookId] = useState("");
-  const [url, setUrl] = useState("");
-  const [secretEnv, setSecretEnv] = useState("");
-  const [events, setEvents] = useState<readonly string[]>([]);
-  const [enabled, setEnabled] = useState(true);
-  const [timeoutSeconds, setTimeoutSeconds] = useState("10");
-  const [maxAttempts, setMaxAttempts] = useState("5");
-  const [baseRetrySeconds, setBaseRetrySeconds] = useState("5");
-  const [maxRetrySeconds, setMaxRetrySeconds] = useState("300");
+  const [form, setForm] = useState<WebhookFormValues>(INITIAL_FORM);
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const [showIssues, setShowIssues] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const query = useQuery(notificationListQueryOptions(token));
+  useAuthorizedReadAuthorityRecovery(query);
 
   const createMutation = useMutation({
     mutationFn: (input: {
@@ -77,296 +94,530 @@ export function NotificationNewPage() {
       }),
     retry: false,
     onMutate: () => setError(null),
+    onSuccess: (result, input) => {
+      if (result.ok) {
+        void queryClient.invalidateQueries({
+          queryKey: [notificationListQueryKey],
+        });
+        const createdId = result.model.id;
+        // The bound model is the exact created identity; the known result is
+        // delivered to the detail card even if its follow-up read is slow.
+        guard.guardNavigation(() =>
+          navigate({
+            to: "/operations/notifications/webhooks/$webhookId",
+            params: { webhookId: createdId },
+            state: {
+              notificationCreateOutcome: {
+                webhookId: createdId,
+                revisionId: input.revisionId,
+                version: result.model.version,
+              },
+            } as never,
+          }),
+        );
+        return;
+      }
+      if (isUnknownCommandResult(result.status, result.code)) {
+        setError(unknownCommandMessage("Webhook 定义可能已经保存到草稿"));
+        return;
+      }
+      setShowIssues(true);
+      setError(
+        result.status === 409
+          ? "定义没有写入：草稿在你编辑期间已经变化。重新读取草稿后再提交；服务端保留了胜出的版本。"
+          : `定义没有写入（${result.code}）。修正表单后重试；系统没有自动重试。`,
+      );
+    },
+  });
+
+  const draftMutation = useMutation({
+    mutationFn: (activeRevisionId: string) =>
+      createNotificationSuccessorDraft(token, { activeRevisionId }),
+    retry: false,
+    onMutate: () => setError(null),
     onSuccess: (result) => {
       if (result.ok) {
         void queryClient.invalidateQueries({
           queryKey: [notificationListQueryKey],
         });
-        // The bound model is the exact created identity; it never falls back
-        // to a local value when the response carries no created definition.
-        void navigate({
-          to: "/operations/notifications/webhooks/$webhookId",
-          params: { webhookId: result.model.id },
-        });
+        return;
+      }
+      if (isUnknownCommandResult(result.status, result.code)) {
+        setError(unknownCommandMessage("后继草稿可能已经创建"));
         return;
       }
       setError(
         result.status === 409
-          ? "The Draft changed before the definition was stored. Reload and apply the change again; the winning revision was preserved."
-          : `Creating the Webhook definition was rejected (${result.code}). Correct the form and try again; nothing is retried automatically.`,
+          ? "后继草稿没有创建：已生效配置在读取后已经变化。重新读取后重试。"
+          : `后继草稿没有创建（${result.code}）。重新读取后再试。`,
       );
     },
   });
 
-  const formIssues: string[] = [];
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(webhookId)) {
-    formIssues.push("the identifier must be 1-64 URI-safe characters");
-  }
-  const urlProblem = unsafeUrlReason(url.trim());
-  if (urlProblem !== null) {
-    formIssues.push(urlProblem);
-  }
-  if (!SECRET_ENV_PATTERN.test(secretEnv)) {
-    formIssues.push(
-      "the secret reference must be a valid environment variable name",
-    );
-  }
-  if (events.length === 0) {
-    formIssues.push("select at least one supported event");
-  }
-  const timeout = Number(timeoutSeconds);
-  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 120) {
-    formIssues.push("the timeout must be between 0.1 and 120 seconds");
-  }
-  const attempts = Number(maxAttempts);
-  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 20) {
-    formIssues.push("max attempts must be between 1 and 20");
-  }
-  const baseRetry = Number(baseRetrySeconds);
-  const maxRetry = Number(maxRetrySeconds);
-  if (
-    !Number.isFinite(baseRetry) ||
-    baseRetry <= 0 ||
-    baseRetry > 86400 ||
-    !Number.isFinite(maxRetry) ||
-    maxRetry <= 0 ||
-    maxRetry > 86400 ||
-    maxRetry < baseRetry
-  ) {
-    formIssues.push(
-      "the retry bounds must be positive seconds and the maximum at least the base",
-    );
-  }
+  const closeCard = () => {
+    void navigate({ to: "/operations/notifications" });
+  };
+  const dirty =
+    webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
+  const busy = createMutation.isPending || draftMutation.isPending;
+  const guard = useNotificationCardGuard({
+    busy,
+    dirty,
+    onClose: closeCard,
+    onDiscard: () => {
+      setWebhookId("");
+      setForm(INITIAL_FORM);
+      setTouched(new Set());
+      setShowIssues(false);
+      setError(null);
+    },
+    firstFieldId: "notification-new-id",
+    fallbackFocusId: "notification-definitions-background",
+  });
+
+  const issues = webhookFormIssues(form);
+  const fieldIssue = (field: string): string | null =>
+    showIssues || touched.has(field)
+      ? webhookFormIssueFor(issues, field as (typeof ALL_FORM_FIELDS)[number])
+      : null;
+  const markTouched = (field: string) =>
+    setTouched((previous) => new Set(previous).add(field));
+
+  const livePage = query.data?.ok === true ? query.data.model : null;
+  const page = useLastSuccessfulRead(livePage);
+  const readDegraded = livePage === null && page !== null;
+  const create = page?.actions.create ?? null;
+  const draft = page?.draftState ?? null;
+  const draftReady =
+    page !== null &&
+    draft !== null &&
+    draft.present &&
+    create?.available === true;
+
+  const title = "新建 Webhook";
+  const titleId = "notification-new-title";
 
   return (
-    <AuthorizedReadBoundary
-      query={query}
-      unavailableTitle="Notification definitions unavailable"
+    <NotificationCard
+      layerRef={guard.layerRef}
+      closing={guard.closing}
+      busy={busy}
+      title={title}
+      titleId={titleId}
+      description="保存到打开的草稿；检查并发布后才会生效。"
+      closeDisabled={busy}
+      onRequestClose={guard.attemptClose}
+      size="form"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={guard.attemptClose}
+          >
+            关闭
+          </Button>
+          {draftReady && (
+            <Button type="submit" form="notification-new-form" disabled={busy}>
+              {createMutation.isPending ? "正在保存到草稿…" : "保存到草稿"}
+            </Button>
+          )}
+        </>
+      }
     >
-      {({ data, isFetching, refresh }) => {
-        if (data === undefined) {
-          return (
-            <StatusBanner variant="info" title="Loading definitions">
-              <p>Reading the open successor Draft state.</p>
-            </StatusBanner>
-          );
-        }
-        if (!data.ok) {
-          return (
-            <StatusBanner variant="error" title={data.failure.title}>
-              <p>{data.failure.nextAction}</p>
-              <div className="mf-actions">
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/notifications"
-                >
-                  Back to Notifications
-                </Link>
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-              </div>
-            </StatusBanner>
-          );
-        }
-        const page = data.model;
-        const create = page.actions.create;
-        const draft = page.draftState;
-        const draftReady = draft.present && create.available;
-        const buildObject = (): Record<string, unknown> => ({
-          id: webhookId.trim(),
-          url: url.trim(),
-          secretEnv: secretEnv.trim(),
-          events: [...events],
-          enabled,
-          timeoutSeconds: timeout,
-          maxAttempts: attempts,
-          baseRetrySeconds: baseRetry,
-          maxRetrySeconds: maxRetry,
-        });
-        return (
-          <div className="mf-dashboard">
-            <header className="mf-dashboard-head">
-              <div>
-                <h2>New Webhook definition</h2>
-                <p className="mf-dashboard-meta">
-                  The definition is stored inside the open successor Draft and
-                  stays a Draft until checked activation. Only the
-                  deployment-owned secret reference is stored — never a secret
-                  value.
-                </p>
-              </div>
-              <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-            </header>
-            {!draftReady && (
-              <StatusBanner variant="info" title="No editable Draft">
-                <p>
-                  {create.reason ??
-                    "an open successor Draft is required to add a Webhook definition"}
-                </p>
-                <div className="mf-actions">
-                  <Link
-                    className="mf-button mf-button-secondary"
-                    to="/operations/notifications"
-                  >
-                    Back to Notifications
-                  </Link>
-                </div>
-              </StatusBanner>
-            )}
-            <section className="mf-count-section">
-              <h3>Bounded Webhook form</h3>
-              <p className="mf-label">
-                <label htmlFor="notification-new-id">Identifier</label>
-              </p>
-              <input
-                id="notification-new-id"
-                value={webhookId}
-                onChange={(event) => setWebhookId(event.target.value)}
-                maxLength={64}
-              />
-              <p className="mf-label">
-                <label htmlFor="notification-new-url">HTTPS endpoint</label>
-              </p>
-              <input
-                id="notification-new-url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                maxLength={2048}
-                placeholder="https://example.invalid/hooks/mediaflow"
-              />
-              <p className="mf-label">
-                <label htmlFor="notification-new-secret">
-                  Secret environment reference
-                </label>
-              </p>
-              <input
-                id="notification-new-secret"
-                value={secretEnv}
-                onChange={(event) => setSecretEnv(event.target.value)}
-                maxLength={128}
-                placeholder="MEDIAFLOW_WEBHOOK_SECRET"
-              />
-              <fieldset>
-                <legend>Supported events</legend>
-                {page.supportedEvents.map((event) => (
-                  <label key={event} style={{ display: "block" }}>
-                    <input
-                      type="checkbox"
-                      checked={events.includes(event)}
-                      aria-label={`Event ${event}`}
-                      onChange={(changeEvent) => {
-                        if (changeEvent.target.checked) {
-                          setEvents([...events, event]);
-                        } else {
-                          setEvents(events.filter((item) => item !== event));
-                        }
-                      }}
-                    />{" "}
-                    {event}
-                  </label>
-                ))}
-              </fieldset>
-              <p className="mf-label">
-                <label htmlFor="notification-new-enabled">Enabled</label>
-              </p>
-              <select
-                id="notification-new-enabled"
-                value={enabled ? "yes" : "no"}
-                onChange={(event) => setEnabled(event.target.value === "yes")}
-              >
-                <option value="yes">enabled</option>
-                <option value="no">disabled</option>
-              </select>
-              <p className="mf-label">
-                <label htmlFor="notification-new-timeout">
-                  Timeout seconds (0.1–120)
-                </label>
-              </p>
-              <input
-                id="notification-new-timeout"
-                value={timeoutSeconds}
-                onChange={(event) => setTimeoutSeconds(event.target.value)}
-                inputMode="decimal"
-              />
-              <p className="mf-label">
-                <label htmlFor="notification-new-attempts">
-                  Max attempts (1–20)
-                </label>
-              </p>
-              <input
-                id="notification-new-attempts"
-                value={maxAttempts}
-                onChange={(event) => setMaxAttempts(event.target.value)}
-                inputMode="numeric"
-              />
-              <p className="mf-label">
-                <label htmlFor="notification-new-base-retry">
-                  Base retry seconds
-                </label>
-              </p>
-              <input
-                id="notification-new-base-retry"
-                value={baseRetrySeconds}
-                onChange={(event) => setBaseRetrySeconds(event.target.value)}
-                inputMode="decimal"
-              />
-              <p className="mf-label">
-                <label htmlFor="notification-new-max-retry">
-                  Max retry seconds
-                </label>
-              </p>
-              <input
-                id="notification-new-max-retry"
-                value={maxRetrySeconds}
-                onChange={(event) => setMaxRetrySeconds(event.target.value)}
-                inputMode="decimal"
-              />
-            </section>
-            <div className="mf-actions">
-              <Button
-                type="button"
-                disabled={
-                  !draftReady ||
-                  formIssues.length > 0 ||
-                  createMutation.isPending
-                }
-                onClick={() => {
-                  if (draft.revisionId !== null) {
-                    createMutation.mutate({
-                      revisionId: draft.revisionId,
-                      expectedVersion: draft.revisionVersion ?? 0,
-                      object: buildObject(),
-                    });
-                  }
-                }}
-              >
-                {createMutation.isPending
-                  ? "Creating definition…"
-                  : "Create definition in Draft"}
-              </Button>
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/notifications"
-              >
-                Back to Notifications
-              </Link>
-            </div>
-            {formIssues.length > 0 && (
-              <StatusBanner variant="info" title="Form incomplete">
-                <ul>
-                  {formIssues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              </StatusBanner>
-            )}
-            {error !== null && (
-              <StatusBanner variant="error" title="Definition not created">
-                <p>{error}</p>
-              </StatusBanner>
-            )}
+      {guard.discardPromptOpen && (
+        <NotificationDiscardPrompt
+          mode={guard.promptMode}
+          onContinue={guard.cancelDiscard}
+          onDiscard={guard.commitDiscard}
+        />
+      )}
+      {query.isError && page === null && (
+        <NotificationCardStatus variant="error" title="草稿状态读取失败">
+          <p>没有读取到打开的草稿，因此不能安全创建定义。</p>
+          <div className="mf-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+            >
+              {query.isFetching ? "正在重试…" : "重试读取"}
+            </Button>
           </div>
-        );
-      }}
-    </AuthorizedReadBoundary>
+        </NotificationCardStatus>
+      )}
+      {query.data === undefined && !query.isError && (
+        <NotificationCardStatus title="正在读取草稿状态">
+          <p>读取精确的已生效配置和打开的草稿。</p>
+        </NotificationCardStatus>
+      )}
+      {query.data !== undefined && query.data.ok === false && page === null && (
+        <NotificationCardStatus
+          variant="error"
+          title={query.data.failure.title}
+        >
+          <p>{query.data.failure.nextAction}</p>
+          <div className="mf-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+            >
+              {query.isFetching ? "正在重试…" : "重试读取"}
+            </Button>
+          </div>
+        </NotificationCardStatus>
+      )}
+      {page !== null && !draftReady && (
+        <div className="mf-notification-card-scroll">
+          <StatusBanner variant="info" title="当前不能新建 Webhook">
+            <p>
+              {notificationReasonLabel(
+                create?.reason ?? draft?.reason ?? null,
+                "需要先创建并打开一个草稿，才能保存 Webhook 定义。",
+              )}
+            </p>
+            <p>
+              这是有意的只读状态：没有可编辑草稿时不会渲染可填写的表单，也不会提交任何内容。
+            </p>
+          </StatusBanner>
+          <div className="mf-notification-actions">
+            {draft !== null &&
+              !draft.present &&
+              page.actions.createDraft.available &&
+              page.activeConfiguration !== null && (
+                <Button
+                  type="button"
+                  disabled={draftMutation.isPending}
+                  onClick={() =>
+                    draftMutation.mutate(
+                      page.activeConfiguration?.revisionId ?? "",
+                    )
+                  }
+                >
+                  {draftMutation.isPending
+                    ? "正在创建后继草稿…"
+                    : "创建后继草稿"}
+                </Button>
+              )}
+            <Button type="button" variant="secondary" onClick={closeCard}>
+              返回通知列表
+            </Button>
+          </div>
+          {!page.actions.createDraft.available &&
+            page.actions.createDraft.reason !== null && (
+              <p className="mf-notification-inline-reason">
+                {page.actions.createDraft.reason}
+              </p>
+            )}
+          {error !== null && (
+            <StatusBanner variant="error" title="操作没有完成">
+              <p>{error}</p>
+            </StatusBanner>
+          )}
+        </div>
+      )}
+      {draftReady && draft !== null && (
+        <form
+          id="notification-new-form"
+          className="mf-notification-card-scroll"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (busy || readDegraded) return;
+            setShowIssues(true);
+            setTouched(new Set(ALL_FORM_FIELDS));
+            if (issues.length > 0 && webhookId.trim().length === 0) {
+              setError("请补全标有说明的字段后再保存。");
+              return;
+            }
+            if (issues.length > 0) {
+              setError("请修正标有说明的字段后再保存。");
+              return;
+            }
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(webhookId.trim())) {
+              setError("标识符必须是以字母或数字开头的 1–64 个 URI 安全字符。");
+              return;
+            }
+            if (draft.revisionId === null || draft.revisionVersion === null) {
+              setError("当前草稿缺少精确版本，不能安全保存。重新读取后再试。");
+              return;
+            }
+            setError(null);
+            createMutation.mutate({
+              revisionId: draft.revisionId,
+              expectedVersion: draft.revisionVersion,
+              object: buildWebhookObject(webhookId.trim(), form),
+            });
+          }}
+        >
+          {readDegraded && (
+            <StatusBanner variant="warning" title="最新读取失败">
+              <p>
+                显示的是上次成功读取的草稿状态，已知命令结果仍然有效。恢复读取后再提交新的内容。
+              </p>
+              <div className="mf-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void query.refetch()}
+                  disabled={query.isFetching}
+                >
+                  {query.isFetching ? "正在重试…" : "重试读取"}
+                </Button>
+              </div>
+            </StatusBanner>
+          )}
+          <StatusBanner variant="info" title="先保存，再检查并发布">
+            <p>
+              定义会写入草稿版本 {draft.revisionVersion ?? "未知"}
+              。已生效配置在明确发布前保持不变。
+            </p>
+          </StatusBanner>
+          {error !== null && (
+            <StatusBanner variant="error" title="定义没有创建">
+              <p>{error}</p>
+            </StatusBanner>
+          )}
+
+          <section className="mf-notification-form-section">
+            <h3>基本设置</h3>
+            <div className="mf-notification-form-grid">
+              <div className="mf-notification-field">
+                <label htmlFor="notification-new-id">标识符</label>
+                <input
+                  id="notification-new-id"
+                  value={webhookId}
+                  maxLength={64}
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  aria-invalid={
+                    (showIssues || touched.has("id")) &&
+                    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(webhookId.trim())
+                  }
+                  onChange={(event) => {
+                    setWebhookId(event.target.value);
+                    markTouched("id");
+                  }}
+                  onBlur={() => markTouched("id")}
+                />
+                <p className="mf-notification-field-help">
+                  1–64 个字母、数字、点、下划线或连字符；创建后不能修改。
+                </p>
+                {(showIssues || touched.has("id")) &&
+                  !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(
+                    webhookId.trim(),
+                  ) && (
+                    <p className="mf-notification-field-error">
+                      标识符必须是以字母或数字开头的 1–64 个 URI 安全字符。
+                    </p>
+                  )}
+              </div>
+              <div className="mf-notification-field mf-notification-field-full">
+                <label htmlFor="notification-new-url">HTTPS 接收地址</label>
+                <input
+                  id="notification-new-url"
+                  value={form.url}
+                  maxLength={2048}
+                  inputMode="url"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder="https://example.invalid/hooks/mediaflow"
+                  aria-invalid={fieldIssue("url") !== null}
+                  aria-describedby="notification-new-url-help"
+                  onChange={(event) => {
+                    setForm({ ...form, url: event.target.value });
+                    markTouched("url");
+                  }}
+                  onBlur={() => markTouched("url")}
+                />
+                <p
+                  className="mf-notification-field-help"
+                  id="notification-new-url-help"
+                >
+                  只接受 HTTPS；不能包含用户名、密码、查询字符串或片段。
+                </p>
+                {fieldIssue("url") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("url")}
+                  </p>
+                )}
+              </div>
+              <div className="mf-notification-field mf-notification-field-full">
+                <label htmlFor="notification-new-secret">
+                  密钥环境变量引用
+                </label>
+                <input
+                  id="notification-new-secret"
+                  value={form.secretEnv}
+                  maxLength={128}
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder="MEDIAFLOW_WEBHOOK_SECRET"
+                  aria-invalid={fieldIssue("secretEnv") !== null}
+                  onChange={(event) => {
+                    setForm({ ...form, secretEnv: event.target.value });
+                    markTouched("secretEnv");
+                  }}
+                  onBlur={() => markTouched("secretEnv")}
+                />
+                <p className="mf-notification-field-help">
+                  部署环境提供这个变量的值；页面只保存变量名，从不读取或显示密钥值。
+                </p>
+                {fieldIssue("secretEnv") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("secretEnv")}
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="mf-notification-form-section">
+            <h3>事件与启用</h3>
+            <div className="mf-notification-form-grid">
+              <fieldset className="mf-notification-field mf-notification-field-full">
+                <legend>订阅事件</legend>
+                <div className="mf-notification-event-options">
+                  {page.supportedEvents.map((event) => (
+                    <label key={event} className="mf-notification-check">
+                      <input
+                        type="checkbox"
+                        checked={form.events.includes(event)}
+                        onChange={(changeEvent) => {
+                          const events = changeEvent.target.checked
+                            ? [...form.events, event]
+                            : form.events.filter((item) => item !== event);
+                          setForm({ ...form, events });
+                          markTouched("events");
+                        }}
+                      />
+                      <span>{notificationEventLabel(event)}</span>
+                      <code>{event}</code>
+                    </label>
+                  ))}
+                </div>
+                {fieldIssue("events") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("events")}
+                  </p>
+                )}
+              </fieldset>
+              <label className="mf-notification-switch">
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(event) =>
+                    setForm({ ...form, enabled: event.target.checked })
+                  }
+                />
+                <span>
+                  <strong>启用这个 Webhook</strong>
+                  <small>
+                    发布后才会使用；草稿内修改不影响当前已生效配置。
+                  </small>
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <section className="mf-notification-form-section">
+            <h3>超时与重试</h3>
+            <div className="mf-notification-form-grid">
+              <div className="mf-notification-field">
+                <label htmlFor="notification-new-timeout">请求超时（秒）</label>
+                <input
+                  id="notification-new-timeout"
+                  value={form.timeoutSeconds}
+                  inputMode="decimal"
+                  aria-invalid={fieldIssue("timeoutSeconds") !== null}
+                  onChange={(event) => {
+                    setForm({ ...form, timeoutSeconds: event.target.value });
+                    markTouched("timeoutSeconds");
+                  }}
+                />
+                <p className="mf-notification-field-help">0.1–120 秒。</p>
+                {fieldIssue("timeoutSeconds") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("timeoutSeconds")}
+                  </p>
+                )}
+              </div>
+              <div className="mf-notification-field">
+                <label htmlFor="notification-new-attempts">最大尝试次数</label>
+                <input
+                  id="notification-new-attempts"
+                  value={form.maxAttempts}
+                  inputMode="numeric"
+                  aria-invalid={fieldIssue("maxAttempts") !== null}
+                  onChange={(event) => {
+                    setForm({ ...form, maxAttempts: event.target.value });
+                    markTouched("maxAttempts");
+                  }}
+                />
+                <p className="mf-notification-field-help">1–20 次。</p>
+                {fieldIssue("maxAttempts") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("maxAttempts")}
+                  </p>
+                )}
+              </div>
+              <div className="mf-notification-field">
+                <label htmlFor="notification-new-base-retry">
+                  基础重试间隔（秒）
+                </label>
+                <input
+                  id="notification-new-base-retry"
+                  value={form.baseRetrySeconds}
+                  inputMode="decimal"
+                  aria-invalid={fieldIssue("baseRetrySeconds") !== null}
+                  onChange={(event) => {
+                    setForm({
+                      ...form,
+                      baseRetrySeconds: event.target.value,
+                    });
+                    markTouched("baseRetrySeconds");
+                  }}
+                />
+                {fieldIssue("baseRetrySeconds") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("baseRetrySeconds")}
+                  </p>
+                )}
+              </div>
+              <div className="mf-notification-field">
+                <label htmlFor="notification-new-max-retry">
+                  最大重试间隔（秒）
+                </label>
+                <input
+                  id="notification-new-max-retry"
+                  value={form.maxRetrySeconds}
+                  inputMode="decimal"
+                  aria-invalid={fieldIssue("maxRetrySeconds") !== null}
+                  onChange={(event) => {
+                    setForm({
+                      ...form,
+                      maxRetrySeconds: event.target.value,
+                    });
+                    markTouched("maxRetrySeconds");
+                  }}
+                />
+                {fieldIssue("maxRetrySeconds") !== null && (
+                  <p className="mf-notification-field-error">
+                    {fieldIssue("maxRetrySeconds")}
+                  </p>
+                )}
+              </div>
+            </div>
+            <p className="mf-notification-field-help">
+              暂时失败会按有界退避重试；其他 4xx
+              会进入死信。测试请求不会创建投递。
+            </p>
+          </section>
+        </form>
+      )}
+    </NotificationCard>
   );
 }

@@ -187,6 +187,9 @@ export function AppShell({ children }: AppShellProps) {
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
   const searchIsFiles =
     pathname === "/resourcelib/files" || pathname === "/medialib/files";
+  const isNotificationSurface =
+    pathname === "/operations/notifications" ||
+    pathname.startsWith("/operations/notifications/");
   const searchIsStorage = pathname === "/storage";
   // The task center's eight views have no shared keyword search: its All view
   // owns only the creation-time range, and the other views own their own
@@ -339,6 +342,7 @@ export function AppShell({ children }: AppShellProps) {
             {destination !== undefined &&
             destination.id !== "operations" &&
             !isAutomationListSurface(pathname) &&
+            !isNotificationSurface &&
             !isRulesSurface &&
             !searchIsExplore ? (
               <p className="mf-page-context">{destination.label}</p>

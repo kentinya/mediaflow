@@ -48,8 +48,22 @@ async function openNotifications(page: Page) {
     .click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/notifications$/);
   await expect(
-    page.getByRole("heading", { name: "Notifications", exact: true }),
+    page.getByRole("heading", { name: "通知", exact: true }),
   ).toBeVisible();
+}
+
+async function closeCard(page: Page) {
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  const discard = page.getByRole("alertdialog", {
+    name: /未保存|操作仍在进行/,
+  });
+  if ((await discard.count()) > 0) {
+    await discard.getByRole("button", { name: "放弃并离开" }).click();
+  }
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 }
 
 async function notificationsEvidence(page: Page) {
@@ -74,20 +88,30 @@ test("the Operations landing links the Notification workspace with the exact Act
 }) => {
   await connect(page);
   await openNotifications(page);
-  await expect(page.getByText(new RegExp(ACTIVE_REVISION))).toBeVisible();
+  await expect(
+    page.getByText("已生效修订 · 版本 3", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(WEBHOOK_ID)).toBeVisible();
-  await expect(page.getByText("Active", { exact: true })).toBeVisible();
+  await expect(page.getByText("已生效", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "New Webhook definition" }),
+    page.getByText("密钥引用：已就绪", { exact: true }),
   ).toBeVisible();
+  // No open Draft: the create entry is explicitly unavailable and does not
+  // lead to a fillable form.
   await expect(
-    page.getByRole("link", { name: "Open deliveries" }),
-  ).toBeVisible();
-  // The definition card links the exact durable detail route.
-  await page.getByRole("link", { name: "Open definition" }).click();
+    page.getByRole("button", { name: "新建 Webhook（不可用）" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("link", { name: "查看投递记录" })).toBeVisible();
+  // The definition card links the exact durable detail route and opens the
+  // coordinated card over the still-visible list.
+  await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "通知", exact: true }),
+  ).toBeVisible();
 });
 
 test("the signed test sends exactly one bound request and never touches deliveries", async ({
@@ -95,15 +119,15 @@ test("the signed test sends exactly one bound request and never touches deliveri
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "Open definition" }).click();
+  await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await expect(
-    page.getByText("MEDIAFLOW_WEBHOOK_SECRET: SET").first(),
+    page.getByText("密钥引用：已就绪", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Test this exact revision" }).click();
-  await expect(page.getByText(/Test succeeded/)).toBeVisible();
+  await page.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(page.getByText(/测试成功/)).toBeVisible();
   await expect(
     page.getByText(/no further action required/i).first(),
   ).toBeVisible();
@@ -134,40 +158,48 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
   await connect(page);
   await openNotifications(page);
   // Start the successor Draft from the workspace, then open the editor.
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await expect(
-    page.getByText(/revision notification-draft-rev-e2e-001/),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Open definition" }).click();
+  await page.getByRole("button", { name: "创建后继草稿" }).click();
+  await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
+  await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
-  await page.getByRole("link", { name: "Open Draft editor" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "编辑草稿" })
+    .click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}$`),
   );
   await expect(
-    page.getByText(/Draft revision notification-draft-rev-e2e-001/),
+    page.getByRole("heading", { name: "编辑 Webhook ops-webhook" }),
   ).toBeVisible();
 
-  // The bounded form is really stored inside the open Draft at its exact
-  // optimistic version before validation and activation.
-  await page.getByRole("button", { name: "Save into Draft" }).click();
-  await expect(page.getByText(/version 5/)).toBeVisible();
+  // Saving is only meaningful for actual input; the unsaved form is separate
+  // from the durable saved Draft.
+  await page
+    .getByLabel("HTTPS 接收地址")
+    .fill("https://example.invalid/hooks/edited");
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  await expect(page.getByText(/已保存到草稿版本 5/)).toBeVisible();
 
-  await page.getByRole("button", { name: "Validate Draft" }).click();
+  await page.getByRole("button", { name: "检查草稿", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Draft validated" }),
+    page.getByRole("heading", { name: "草稿检查通过" }),
   ).toBeVisible();
 
   // Checked activation requires the explicit confirmation checkbox.
-  const activate = page.getByRole("button", { name: "Activate checked Draft" });
+  const activate = page.getByRole("button", {
+    name: "发布已检查草稿",
+    exact: true,
+  });
   await expect(activate).toBeDisabled();
-  await page.getByLabel("Confirm checked activation").check();
+  await page.getByLabel("我确认把当前已检查的草稿发布为新的已生效配置").check();
   await activate.click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
+  await expect(page.getByText(/草稿已发布为已生效配置/)).toBeVisible();
 
   const evidence = await notificationsEvidence(page);
   const saves = evidence.items.filter(
@@ -193,34 +225,30 @@ test("an authorized operator creates a Webhook definition inside the open Draft"
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await expect(
-    page.getByText(/revision notification-draft-rev-e2e-001/),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "New Webhook definition" }).click();
+  await page.getByRole("button", { name: "创建后继草稿" }).click();
+  await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
+  await page.getByRole("link", { name: "新建 Webhook" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/webhooks\/new$/,
   );
   // The canonical deployment-owned secret reference is accepted; no secret
   // value is ever requested or stored.
-  await page.getByLabel("Identifier").fill("created-webhook");
+  await page.getByLabel("标识符").fill("created-webhook");
   await page
-    .getByLabel("HTTPS endpoint")
+    .getByLabel("HTTPS 接收地址")
     .fill("https://example.invalid/hooks/created");
-  await page
-    .getByLabel("Secret environment reference")
-    .fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByLabel("Event task.completed").check();
-  await page
-    .getByRole("button", { name: "Create definition in Draft" })
-    .click();
+  await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
+  await page.getByRole("checkbox", { name: /task\.completed/ }).check();
+  await page.getByRole("button", { name: "保存到草稿" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/webhooks\/created-webhook$/,
   );
   await expect(
     page.getByRole("heading", { name: "Webhook created-webhook" }),
   ).toBeVisible();
-  await expect(page.getByText(/Draft only/).first()).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("仅草稿", { exact: true }),
+  ).toBeVisible();
 
   const evidence = await notificationsEvidence(page);
   const creates = evidence.items.filter(
@@ -240,24 +268,30 @@ test("an authorized operator copies a definition and toggles it inside the Draft
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await page.getByRole("link", { name: "Open definition" }).click();
+  await page.getByRole("button", { name: "创建后继草稿" }).click();
+  await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
-  await page.getByRole("button", { name: "Copy into Draft" }).click();
+  await page.getByRole("button", { name: "复制到草稿" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/webhooks\/ops-webhook-copy$/,
   );
   await expect(
     page.getByRole("heading", { name: "Webhook ops-webhook-copy" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Enable in Draft" }).click();
+  const refreshed = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response
+        .url()
+        .endsWith("/operations/notifications/webhooks/ops-webhook-copy"),
+  );
+  await page.getByRole("button", { name: "在草稿中启用" }).click();
   // The page refreshes to the durable Draft truth before the next exact
   // optimistic mutation, so the disable submits the refetched version fence.
-  await expect(page.getByText(/version 6/)).toBeVisible();
-  await page.getByRole("button", { name: "Disable in Draft" }).click();
-  await expect(page.getByText(/version 7/)).toBeVisible();
+  await refreshed;
+  await page.getByRole("button", { name: "在草稿中停用" }).click();
 
   const evidence = await notificationsEvidence(page);
   for (const kind of ["copy", "enable", "disable"]) {
@@ -299,46 +333,38 @@ test("a wrong-object success document never renders as a completed mutation", as
   await openNotifications(page);
   // The Draft is staged before the definition detail is ever read, so the
   // journey reads the exact durable Draft state without a stale cache.
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await page.getByRole("link", { name: "Open definition" }).first().click();
-  await page.getByRole("button", { name: "Test this exact revision" }).click();
-  await expect(page.getByText(/The test was rejected/)).toBeVisible();
-  await expect(page.getByText(/Test succeeded/)).toHaveCount(0);
+  await page.getByRole("button", { name: "创建后继草稿" }).click();
+  await page.getByRole("link", { name: "查看定义" }).first().click();
+  await page.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(page.getByText(/测试结果未知/)).toBeVisible();
+  await expect(page.getByText(/测试成功/)).toHaveCount(0);
+  await closeCard(page);
 
   // The create success document answers for another revision: the journey
   // stays on the form and never opens a definition as created.
-  await page.getByRole("link", { name: "Back to Notifications" }).click();
-  await page.getByRole("link", { name: "New Webhook definition" }).click();
-  await page.getByLabel("Identifier").fill("created-webhook");
+  await page.getByRole("link", { name: "新建 Webhook" }).click();
+  await page.getByLabel("标识符").fill("created-webhook");
   await page
-    .getByLabel("HTTPS endpoint")
+    .getByLabel("HTTPS 接收地址")
     .fill("https://example.invalid/hooks/created");
-  await page
-    .getByLabel("Secret environment reference")
-    .fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByLabel("Event task.completed").check();
-  await page
-    .getByRole("button", { name: "Create definition in Draft" })
-    .click();
-  await expect(
-    page.getByText(/Creating the Webhook definition was rejected/),
-  ).toBeVisible();
+  await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
+  await page.getByRole("checkbox", { name: /task\.completed/ }).check();
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  await expect(page.getByText(/命令结果未知/)).toBeVisible();
   await expect(page).toHaveURL(/\/webhooks\/new$/);
   await expect(
     page.getByRole("heading", { name: "Webhook created-webhook" }),
   ).toHaveCount(0);
+  await closeCard(page);
 
   // The copy success document answers for an unrelated definition: the
-  // detail page refreshes to the durable Draft truth, submits the exact
-  // optimistic fence once, and stays on the reviewed source identity.
-  await page.getByRole("link", { name: "Back to Notifications" }).click();
-  await page.getByRole("link", { name: "Open definition" }).first().click();
-  await page.getByRole("button", { name: "Refresh" }).click();
+  // detail page stays on the reviewed source identity. A stale optimistic
+  // fence is also never rendered as success.
+  await page.getByRole("link", { name: "查看定义" }).first().click();
+  await page.getByRole("button", { name: "复制到草稿" }).click();
   await expect(
-    page.getByRole("button", { name: "Copy into Draft" }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "Copy into Draft" }).click();
-  await expect(page.getByText(/The copy action was rejected/)).toBeVisible();
+    page.getByText(/命令结果未知|草稿在动作执行前已经变化/),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
   ).toBeVisible();
@@ -347,19 +373,16 @@ test("a wrong-object success document never renders as a completed mutation", as
       name: "Webhook operations-webhook-copy-malicious",
     }),
   ).toHaveCount(0);
+  await closeCard(page);
 
-  await page.getByRole("link", { name: "Open deliveries" }).click();
-  await page.getByRole("link", { name: "Open delivery" }).first().click();
-  await page.getByLabel("Confirm dead-letter requeue").check();
-  await page
-    .getByRole("button", { name: "Requeue dead-letter delivery" })
-    .click();
-  await expect(
-    page.getByText(/The recovery action was rejected/),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "查看投递记录" }).click();
+  await page.getByRole("link", { name: "查看投递" }).first().click();
+  await page.getByLabel("我确认重新入队这条精确的死信投递").check();
+  await page.getByRole("button", { name: "重新入队死信投递" }).click();
+  await expect(page.getByText(/命令结果未知/)).toBeVisible();
   // The delivery itself stays on its truthful dead-letter state.
   await expect(
-    page.locator("dl").getByText("dead-letter", { exact: true }),
+    page.getByRole("dialog").getByText("死信", { exact: true }),
   ).toBeVisible();
 });
 
@@ -372,18 +395,23 @@ test("a split-identity activation success document never renders as success", as
   await page.request.post("/__test__/reset-notifications?hostile=1");
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await page.getByRole("link", { name: "Open definition" }).click();
-  await page.getByRole("link", { name: "Open Draft editor" }).click();
+  await page.getByRole("button", { name: "创建后继草稿" }).click();
+  await page.getByRole("link", { name: "查看定义" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "编辑草稿" })
+    .click();
   // The checked activation is only offered for a validated Draft: validate
   // the freshly staged successor Draft first.
-  await page.getByRole("button", { name: "Validate Draft" }).click();
+  await page.getByRole("button", { name: "检查草稿", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Draft validated" }),
+    page.getByRole("heading", { name: "草稿检查通过" }),
   ).toBeVisible();
-  await page.getByLabel("Confirm checked activation").check();
-  await page.getByRole("button", { name: "Activate checked Draft" }).click();
-  await expect(page.getByText(/Activation was rejected/)).toBeVisible();
+  await page.getByLabel("我确认把当前已检查的草稿发布为新的已生效配置").check();
+  await page
+    .getByRole("button", { name: "发布已检查草稿", exact: true })
+    .click();
+  await expect(page.getByText(/命令结果未知/)).toBeVisible();
   // The rejected activation is never replayed and nothing was activated.
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}$`),
@@ -399,38 +427,45 @@ test("a split-identity activation success document never renders as success", as
   });
 });
 
-test("the delivery list filters dead letters and the detail page requeues with explicit confirmation", async ({
+test("the delivery list filters dead letters and the detail card requeues with explicit confirmation", async ({
   page,
 }) => {
-  // The dead-letter filter lives at its own durable deep link (its retired
-  // Dashboard entry closed with Task 51.1); entering through the supported
-  // boundary continuation drives the same recovery journey below.
+  // The dead-letter filter lives at its own durable deep link; entering
+  // through the supported boundary continuation drives the same recovery.
   await connectOn(
     page,
     "/ui-v2/operations/notifications/deliveries?status=dead-letter",
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
-    page.getByRole("heading", { name: "Notification deliveries" }),
+    page.getByRole("heading", { name: "通知投递记录" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Dead letter" }).first(),
+    page.getByRole("listitem").filter({ hasText: "死信" }).first(),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Open delivery" }).first().click();
+  await page.getByRole("link", { name: "查看投递" }).first().click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/deliveries/${DELIVERY_ID}$`),
+    new RegExp(
+      `/ui-v2/operations/notifications/deliveries/${DELIVERY_ID}(\\?status=dead-letter)?$`,
+    ),
   );
-  await expect(page.getByText(/at-least-once/).first()).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("接收端返回 HTTP 400", { exact: true }),
+  ).toBeVisible();
 
   // Recovery requires the explicit confirmation checkbox.
   const requeue = page.getByRole("button", {
-    name: "Requeue dead-letter delivery",
+    name: "重新入队死信投递",
   });
   await expect(requeue).toBeDisabled();
-  await page.getByLabel("Confirm dead-letter requeue").check();
+  await page.getByLabel("我确认重新入队这条精确的死信投递").check();
   await requeue.click();
-  await expect(page.getByText("pending", { exact: true })).toBeVisible();
+  await expect(page.getByText(/重新入队已完成/)).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("待投递", { exact: true }).first(),
+  ).toBeVisible();
 
   const evidence = await notificationsEvidence(page);
   const recoveries = evidence.items.filter(
@@ -445,6 +480,13 @@ test("the delivery list filters dead letters and the detail page requeues with e
   expect(JSON.stringify(evidence.items)).not.toMatch(
     /Bearer |X-MediaFlow-Signature|MEDIAFLOW_WEBHOOK_SECRET|sha256=/i,
   );
+
+  // Closing the card returns to the same filtered list state.
+  await closeCard(page);
+  await expect(page).toHaveURL(/status=dead-letter/);
+  await expect(page.getByRole("combobox", { name: "投递状态" })).toHaveValue(
+    "dead-letter",
+  );
 });
 
 test("a stale recovery is rejected once and never replayed automatically", async ({
@@ -452,16 +494,15 @@ test("a stale recovery is rejected once and never replayed automatically", async
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "Open deliveries" }).click();
-  await page.getByRole("link", { name: "Open delivery" }).first().click();
-  await page.getByLabel("Confirm dead-letter requeue").check();
-  // Force the stale rejection by racing the fake state: the first recovery
-  // click submits once and the page refreshes to durable truth.
-  await page
-    .getByRole("button", { name: "Requeue dead-letter delivery" })
-    .click();
+  await page.getByRole("link", { name: "查看投递记录" }).click();
+  await page.getByRole("link", { name: "查看投递" }).first().click();
+  await page.getByLabel("我确认重新入队这条精确的死信投递").check();
+  await page.getByRole("button", { name: "重新入队死信投递" }).click();
   await expect(
-    page.getByText(/Recovery not applied|pending/).first(),
+    page
+      .getByRole("dialog")
+      .getByText(/恢复命令已完成|恢复没有应用|待投递/)
+      .first(),
   ).toBeVisible({ timeout: 10_000 });
 
   const evidence = await notificationsEvidence(page);
@@ -495,7 +536,7 @@ test("an unauthenticated deep entry continues to the exact Notification route on
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
-    page.getByRole("heading", { name: "Notification deliveries" }),
+    page.getByRole("heading", { name: "通知投递记录" }),
   ).toBeVisible();
   // The refresh keeps memory-only semantics: no token in any store.
   const storage = await page.evaluate(() => ({
@@ -513,20 +554,21 @@ test("keyboard-only operators can reach the workspace, filter deliveries and rec
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "Open deliveries" }).focus();
+  await page.getByRole("link", { name: "查看投递记录" }).focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/deliveries/,
   );
-  await page.getByRole("link", { name: "Open delivery" }).first().focus();
+  await page.getByRole("link", { name: "查看投递" }).first().focus();
   await page.keyboard.press("Enter");
-  await page.getByLabel("Confirm dead-letter requeue").focus();
+  await page.getByLabel("我确认重新入队这条精确的死信投递").focus();
   await page.keyboard.press("Space");
-  await page
-    .getByRole("button", { name: "Requeue dead-letter delivery" })
-    .focus();
+  await page.getByRole("button", { name: "重新入队死信投递" }).focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByText(/Recovery not applied|pending/).first(),
+    page
+      .getByRole("dialog")
+      .getByText(/恢复命令已完成|恢复没有应用|待投递/)
+      .first(),
   ).toBeVisible({ timeout: 10_000 });
 });

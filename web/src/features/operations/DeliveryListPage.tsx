@@ -1,11 +1,13 @@
 /**
- * V2 Notification delivery list.
+ * V2 Notification delivery workspace.
  *
- * The page composes the existing durable delivery listing with the shared
- * backend status filter and directional cursors. Statuses, attempts, response
- * categories and due times are shown; delivery bodies, signed headers, secret
- * values and raw exceptions never appear because the API never publishes
- * them. Recovery always happens on the exact delivery detail page.
+ * The durable delivery list is the background of the delivery-detail card.
+ * Its status filter lives in the route search and its cursor stays in this
+ * mounted page, so opening one delivery and closing it returns to the same
+ * filter, page, scroll position and focus. Statuses, attempts, response
+ * categories and due times are shown in operator language; delivery bodies,
+ * signed headers, secret values and raw exceptions are never published by the
+ * API and never appear here.
  */
 
 import { useState } from "react";
@@ -13,18 +15,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { notificationDeliveriesQueryOptions } from "./notification-query";
-import { NOTIFICATION_DELIVERY_STATUSES } from "../../entities/operations/notification";
+import {
+  NOTIFICATION_DELIVERY_STATUSES,
+  type NotificationDeliveryStatus,
+} from "../../entities/operations/notification";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-
-const STATUS_LABELS: Readonly<Record<string, string>> = {
-  pending: "Pending",
-  delivering: "Delivering",
-  retry: "Retry scheduled",
-  delivered: "Delivered",
-  "dead-letter": "Dead letter",
-};
+import {
+  deliveryStatusLabel,
+  failureCategoryLabel,
+  formatNotificationTime,
+  notificationEventLabel,
+} from "./notification-presentation";
 
 function readSafeSearchValue(
   search: Record<string, unknown>,
@@ -34,7 +37,9 @@ function readSafeSearchValue(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function deliveriesSearch(status: string): Record<string, string> | undefined {
+function deliveriesSearch(
+  status: NotificationDeliveryStatus | "all",
+): Record<string, string> | undefined {
   return status === "all" ? undefined : { status };
 }
 
@@ -45,14 +50,13 @@ export function DeliveryListPage() {
   const rawStatus = readSafeSearchValue(searchParams, "status");
   // An unknown status filter is read as "all": the backend rejects arbitrary
   // status tokens, so the UI never sends one.
-  const statusFilter =
+  const statusFilter: NotificationDeliveryStatus | "all" =
     rawStatus !== null &&
     (NOTIFICATION_DELIVERY_STATUSES as readonly string[]).includes(rawStatus)
-      ? rawStatus
+      ? (rawStatus as NotificationDeliveryStatus)
       : "all";
   const effectiveStatus = statusFilter === "all" ? null : statusFilter;
   const [cursor, setCursor] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const query = useQuery(
     notificationDeliveriesQueryOptions(token, effectiveStatus, cursor),
@@ -61,13 +65,13 @@ export function DeliveryListPage() {
   return (
     <AuthorizedReadBoundary
       query={query}
-      unavailableTitle="Notification deliveries unavailable"
+      unavailableTitle="通知投递记录暂时不可用"
     >
       {({ data, isFetching, refresh }) => {
         if (data === undefined) {
           return (
-            <StatusBanner variant="info" title="Loading deliveries">
-              <p>Reading the durable Notification delivery state.</p>
+            <StatusBanner variant="info" title="正在读取投递记录">
+              <p>读取持久的通知投递状态。</p>
             </StatusBanner>
           );
         }
@@ -80,130 +84,197 @@ export function DeliveryListPage() {
                   className="mf-button mf-button-secondary"
                   to="/operations/notifications"
                 >
-                  Back to Notifications
+                  返回通知
                 </Link>
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                <RefreshControl
+                  onRefresh={refresh}
+                  refreshing={isFetching}
+                  label="刷新"
+                  refreshingLabel="刷新中…"
+                />
               </div>
             </StatusBanner>
           );
         }
         const page = data.model;
         return (
-          <div className="mf-dashboard">
-            <header className="mf-dashboard-head">
+          <div
+            className="mf-notifications-page"
+            id="notification-deliveries-background"
+            tabIndex={-1}
+          >
+            <header className="mf-notifications-head">
               <div>
-                <h2>Notification deliveries</h2>
-                <p className="mf-dashboard-meta">
-                  Durable per-delivery outcomes. Each delivery keeps its own
-                  state, attempts and recovery eligibility.
+                <h2>通知投递记录</h2>
+                <p>
+                  每条投递独立保存状态、尝试次数和恢复资格。打开一条记录不会改变任何媒体结果。
                 </p>
               </div>
-              <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+              <RefreshControl
+                onRefresh={refresh}
+                refreshing={isFetching}
+                label="刷新"
+                refreshingLabel="刷新中…"
+              />
             </header>
-            <div className="mf-actions">
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/notifications"
-              >
-                Back to Notifications
-              </Link>
-            </div>
-            <section className="mf-count-section">
-              <div className="mf-actions">
-                <label htmlFor="delivery-status-filter">Filter by status</label>
-                <select
-                  id="delivery-status-filter"
-                  value={statusFilter}
-                  onChange={(event) => {
-                    setCursor(null);
-                    setError(null);
-                    void navigate({
-                      to: "/operations/notifications/deliveries",
-                      search: deliveriesSearch(event.target.value),
-                    });
-                  }}
+
+            <div className="mf-notification-toolbar">
+              <div className="mf-notification-toolbar-primary">
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/notifications"
                 >
-                  <option value="all">All statuses</option>
-                  {NOTIFICATION_DELIVERY_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {STATUS_LABELS[status] ?? status}
-                    </option>
-                  ))}
-                </select>
+                  返回通知
+                </Link>
+                <label
+                  className="mf-notification-filter"
+                  htmlFor="delivery-status-filter"
+                >
+                  投递状态
+                  <select
+                    id="delivery-status-filter"
+                    value={statusFilter}
+                    onChange={(event) => {
+                      setCursor(null);
+                      void navigate({
+                        to: "/operations/notifications/deliveries",
+                        search: deliveriesSearch(
+                          event.target.value as
+                            NotificationDeliveryStatus | "all",
+                        ),
+                      });
+                    }}
+                  >
+                    <option value="all">全部状态</option>
+                    {NOTIFICATION_DELIVERY_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {deliveryStatusLabel(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
+            </div>
+
+            <section className="mf-notification-list-section">
+              <h3>投递</h3>
               {page.items.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  No deliveries match this filter. Deliveries are created by
-                  events; testing a Webhook never creates one.
-                </p>
+                <div className="mf-notification-empty">
+                  <p>当前筛选下没有投递记录。</p>
+                  <p>
+                    投递由通知事件产生；测试 Webhook
+                    只发送一次签名请求，不会创建投递记录。
+                  </p>
+                </div>
               ) : (
-                <ul className="mf-failure-list">
+                <ul className="mf-notification-cards">
                   {page.items.map((item) => (
-                    <li key={item.deliveryId}>
-                      <div>
-                        <strong>{item.eventType}</strong>{" "}
-                        <span className="mf-status-badge">
-                          {STATUS_LABELS[item.status] ?? item.status}
+                    <li
+                      className="mf-notification-list-card"
+                      key={item.deliveryId}
+                      tabIndex={-1}
+                      id={`notification-delivery-${item.deliveryId}`}
+                    >
+                      <div className="mf-notification-card-head">
+                        <div>
+                          <strong className="mf-notification-webhook-name">
+                            {notificationEventLabel(item.eventType)}
+                          </strong>
+                          <span
+                            className={
+                              item.status === "dead-letter"
+                                ? "mf-notification-badge mf-notification-badge-danger"
+                                : item.status === "delivered"
+                                  ? "mf-notification-badge mf-notification-badge-active"
+                                  : "mf-notification-badge"
+                            }
+                          >
+                            {deliveryStatusLabel(item.status)}
+                          </span>
+                          {item.attempts > 0 && (
+                            <span className="mf-notification-badge">
+                              尝试 {item.attempts} 次
+                            </span>
+                          )}
+                        </div>
+                        <span className="mf-notification-secret-state">
+                          {formatNotificationTime(item.updatedAt)}
                         </span>
-                        {item.attempts > 0 && (
-                          <span className="mf-status-badge">
-                            attempts: {item.attempts}
+                      </div>
+                      <p className="mf-notification-events">
+                        <span className="mf-notification-event">
+                          {notificationEventLabel(item.eventType)}
+                        </span>
+                        {item.responseStatus !== null && (
+                          <span className="mf-notification-event">
+                            HTTP {item.responseStatus}
                           </span>
                         )}
-                      </div>
-                      <div className="mf-failure-meta">
-                        updated {item.updatedAt}
-                        {item.responseStatus !== null
-                          ? ` · last response HTTP ${item.responseStatus}`
-                          : ""}
-                        {item.failureCategory !== null
-                          ? ` · ${item.failureCategory}`
-                          : ""}{" "}
-                        · next attempt {item.nextAttemptAt}
-                      </div>
-                      <div className="mf-actions">
+                        {failureCategoryLabel(item.failureCategory) !==
+                          null && (
+                          <span className="mf-notification-event mf-notification-event-danger">
+                            {failureCategoryLabel(item.failureCategory)}
+                          </span>
+                        )}
+                      </p>
+                      <div className="mf-notification-actions">
                         <Link
                           className="mf-button mf-button-secondary"
                           to="/operations/notifications/deliveries/$deliveryId"
                           params={{ deliveryId: item.deliveryId }}
+                          search={(previous) => ({
+                            ...previous,
+                            ...(statusFilter === "all"
+                              ? {}
+                              : { status: statusFilter }),
+                          })}
                         >
-                          Open delivery
+                          查看投递
                         </Link>
                       </div>
+                      <details className="mf-notification-diagnostics">
+                        <summary>诊断信息</summary>
+                        <dl>
+                          <dt>投递标识</dt>
+                          <dd>{item.deliveryId}</dd>
+                          <dt>Webhook</dt>
+                          <dd>{item.webhookId}</dd>
+                          <dt>事件标识</dt>
+                          <dd>
+                            {item.eventType}（{item.eventId}）
+                          </dd>
+                          <dt>上次更新</dt>
+                          <dd>{item.updatedAt}</dd>
+                          <dt>下次自动尝试</dt>
+                          <dd>{item.nextAttemptAt}</dd>
+                          <dt>失败类别</dt>
+                          <dd>{item.failureCategory ?? "无"}</dd>
+                        </dl>
+                      </details>
                     </li>
                   ))}
                 </ul>
               )}
             </section>
-            <div className="mf-actions">
+
+            <div className="mf-notification-pagination">
               <button
                 type="button"
                 className="mf-button mf-button-secondary"
                 disabled={page.previousCursor === null || isFetching}
-                onClick={() => {
-                  setError(null);
-                  setCursor(page.previousCursor);
-                }}
+                onClick={() => setCursor(page.previousCursor)}
               >
-                Previous page
+                上一页
               </button>
               <button
                 type="button"
                 className="mf-button mf-button-secondary"
                 disabled={page.nextCursor === null || isFetching}
-                onClick={() => {
-                  setError(null);
-                  setCursor(page.nextCursor);
-                }}
+                onClick={() => setCursor(page.nextCursor)}
               >
-                Next page
+                下一页
               </button>
             </div>
-            {error !== null && (
-              <StatusBanner variant="error" title="Page not changed">
-                <p>{error}</p>
-              </StatusBanner>
-            )}
           </div>
         );
       }}

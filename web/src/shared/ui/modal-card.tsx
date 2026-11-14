@@ -254,7 +254,11 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
       // that is still open when its own owner is replaced.
       if (!activeRef.current) return;
       const invoker = invokerRef.current;
-      if (invoker instanceof HTMLElement && document.contains(invoker)) {
+      if (
+        invoker instanceof HTMLElement &&
+        invoker !== document.body &&
+        document.contains(invoker)
+      ) {
         invoker.focus({ preventScroll: true });
         return;
       }

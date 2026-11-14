@@ -1,20 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+import { notificationDraftQueryKey } from "./notification-query";
 
 /**
- * Component/router proof for the V2 Notification journey.
+ * Component/router proof for the V2 Notification journey after
+ * PATCH-20261114-3.
  *
  * Every document mirrors the exact operator projection the real Python API
  * returns (proved by tests/test_v2_notification_operations.py). The assertions
  * prove the operator journey and its safety properties: Active/Draft
- * distinction, backend-authoritative availability, exactly one signed test
- * request per explicit action, exact recovery methods/bodies with explicit
- * confirmation, no automatic mutation replay after stale rejections, no
- * authority material in any request, and no executable control for a state the
- * backend does not advertise.
+ * distinction, Chinese presentation, backend-authoritative availability,
+ * exactly one signed test request per explicit action, exact recovery
+ * methods/bodies with explicit confirmation, no automatic mutation replay
+ * after stale rejections, no authority material in any request, unsaved-input
+ * separation and no executable control for a state the backend does not
+ * advertise.
  */
 
 const TOKEN = "notification-token";
@@ -35,9 +38,10 @@ interface Call {
   readonly body: unknown;
 }
 
-function recordingFetch(respond: (call: Call) => Response | undefined): {
-  calls: Call[];
-} {
+function recordingFetch(
+  respond: (call: Call) => Response | Promise<Response> | undefined = () =>
+    undefined,
+): { calls: Call[] } {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -51,9 +55,24 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
             : null,
       };
       calls.push(call);
-      const response = respond(call);
+      const response = await respond(call);
       if (response !== undefined) {
         return response;
+      }
+      // The Notification list is the persistent background of every card, so
+      // every journey reads it. A default healthy page keeps tests focused on
+      // the card under test; individual tests override their own reads.
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/notifications/webhooks"
+      ) {
+        return jsonResponse(listPayload());
+      }
+      if (
+        call.method === "GET" &&
+        call.url.startsWith("/api/v1/notifications?")
+      ) {
+        return jsonResponse(deliveriesPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }),
@@ -225,12 +244,16 @@ function definitionPayload(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const id = (overrides.id as string | undefined) ?? WEBHOOK_ID;
+  const draftOverrides =
+    (overrides.draftState as Record<string, unknown> | undefined) ?? {};
+  const draftRevision =
+    draftOverrides.present === false ? null : DRAFT_REVISION;
   return {
     ...webhookDocument({ id }),
     definitionState: "active",
     activeConfiguration: activeConfiguration(),
     draftState: draftState(),
-    actions: definitionActions(DRAFT_REVISION, id),
+    actions: definitionActions(draftRevision, id),
     ...overrides,
   };
 }
@@ -366,6 +389,19 @@ function deliveryListItem(
   };
 }
 
+function deliveriesPayload(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    limit: 20,
+    status: "dead-letter",
+    previous_cursor: null,
+    next_cursor: null,
+    items: [deliveryListItem()],
+    ...overrides,
+  };
+}
+
 function deliveryDetailPayload(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -411,26 +447,29 @@ async function connect(): Promise<void> {
   authStore.setToken(TOKEN);
 }
 
+async function dialog(): Promise<HTMLElement> {
+  return screen.findByRole("dialog");
+}
+
 describe("NotificationListPage", () => {
-  it("renders the Active definition and links the deliveries surface", async () => {
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
-        return jsonResponse(listPayload());
-      }
-      return undefined;
-    });
+  it("presents the Active definition, readable events and the deliveries surface", async () => {
+    recordingFetch();
     await connect();
     renderApp("/ui-v2/operations/notifications");
-    expect(await screen.findByText("Webhook definitions")).toBeVisible();
+    expect(await screen.findByText("Webhook 定义")).toBeVisible();
     expect(screen.getByText("ops-webhook")).toBeVisible();
-    expect(screen.getByText("Active")).toBeVisible();
+    expect(screen.getByText("已生效")).toBeVisible();
+    expect(screen.getByText("已启用")).toBeVisible();
+    expect(screen.getByText("密钥引用：已就绪")).toBeVisible();
     expect(
-      screen.getByText(/secret readiness: MEDIAFLOW_WEBHOOK_SECRET: SET/),
+      screen.getByText("https://example.invalid/hooks/mediaflow"),
     ).toBeVisible();
-    expect(screen.getByText("Open deliveries")).toBeVisible();
+    expect(screen.getByText("任务完成")).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看投递记录" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "新建 Webhook" })).toBeVisible();
   });
 
-  it("renders a Draft-only definition without labelling it Active", async () => {
+  it("renders a Draft-only definition without presenting it as Active", async () => {
     recordingFetch((call) => {
       if (call.url === "/api/v1/operations/notifications/webhooks") {
         return jsonResponse(
@@ -449,12 +488,15 @@ describe("NotificationListPage", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications");
-    expect(await screen.findByText("draft-only-webhook")).toBeVisible();
-    expect(screen.getByText("Draft only")).toBeVisible();
-    expect(screen.queryByText("Active")).toBeNull();
+    const name = await screen.findByText("draft-only-webhook");
+    const card = name.closest("li");
+    expect(card).not.toBeNull();
+    const view = within(card as HTMLElement);
+    expect(view.getByText("仅草稿")).toBeVisible();
+    expect(view.queryByText("已生效")).toBeNull();
   });
 
-  it("renders no create control and the truthful reason when unavailable", async () => {
+  it("does not offer a creatable link without a Draft and explains the next step", async () => {
     recordingFetch((call) => {
       if (call.url === "/api/v1/operations/notifications/webhooks") {
         return jsonResponse(
@@ -472,15 +514,14 @@ describe("NotificationListPage", () => {
                 nextAction: "start a successor Draft",
               },
               createDraft: {
-                available: false,
-                reason:
-                  "the connected API principal cannot create a successor Draft",
+                available: true,
+                reason: null,
                 method: "POST",
-                path: null,
+                path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
                 requiresConfirmation: false,
                 sideEffects: "none",
                 durableOutcome: "a successor Draft is stored",
-                nextAction: "ask for the manage configuration permission",
+                nextAction: "create the successor Draft",
               },
             },
           }),
@@ -490,9 +531,12 @@ describe("NotificationListPage", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications");
+    expect(await screen.findByText(/后继草稿才能继续/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "新建 Webhook" })).toBeNull();
     expect(
-      await screen.findByText(/an open successor Draft is required/),
-    ).toBeVisible();
+      screen.getByRole("button", { name: "新建 Webhook（不可用）" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "创建后继草稿" })).toBeEnabled();
   });
 
   it("fails closed on a malformed page without rendering a control", async () => {
@@ -509,8 +553,109 @@ describe("NotificationListPage", () => {
   });
 });
 
-describe("NotificationDetailPage signed test", () => {
-  it("sends exactly one bound test request and never a digest", async () => {
+describe("NotificationNewPage", () => {
+  it("does not render a fillable form without an editable Draft", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/notifications/webhooks") {
+        return jsonResponse(
+          listPayload({
+            draftState: draftState({
+              present: false,
+              reason: "no open successor Draft exists",
+              revisionId: null,
+              revisionVersion: null,
+              revisionStatus: null,
+              baseActiveRevisionId: null,
+              updatedAt: null,
+              validatedAt: null,
+              validationErrors: [],
+            }),
+            actions: {
+              create: {
+                available: false,
+                reason:
+                  "an open successor Draft is required to add a Webhook definition",
+                method: "POST",
+                path: null,
+                requiresConfirmation: false,
+                sideEffects: "none",
+                durableOutcome: "the definition is stored in the Draft",
+                nextAction: "start a successor Draft",
+              },
+              createDraft: {
+                available: true,
+                reason: null,
+                method: "POST",
+                path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+                requiresConfirmation: false,
+                sideEffects: "none",
+                durableOutcome: "a successor Draft is stored",
+                nextAction: "create the successor Draft",
+              },
+            },
+          }),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/webhooks/new");
+    const view = within(await dialog());
+    expect(await view.findByText("当前不能新建 Webhook")).toBeVisible();
+    expect(view.queryByLabelText("标识符")).toBeNull();
+    expect(view.queryByRole("button", { name: "保存到草稿" })).toBeNull();
+    expect(view.getByRole("button", { name: "创建后继草稿" })).toBeEnabled();
+  });
+});
+
+describe("NotificationNewPage", () => {
+  it("keeps the form and reports an unknown create result without replaying", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+      ) {
+        throw new Error("network lost");
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      "/ui-v2/operations/notifications/webhooks/new",
+    );
+    const view = within(await dialog());
+    await userEvent.type(
+      await view.findByLabelText("标识符"),
+      "created-webhook",
+    );
+    await userEvent.type(
+      view.getByLabelText("HTTPS 接收地址"),
+      "https://example.invalid/hooks/created",
+    );
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getByRole("checkbox", { name: /任务完成/ }));
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/命令结果未知/)).toBeVisible();
+    expect(view.getByLabelText("标识符")).toHaveValue("created-webhook");
+    expect(router.state.location.pathname).toBe(
+      "/operations/notifications/webhooks/new",
+    );
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url ===
+            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("NotificationDetailPage", () => {
+  it("opens the definition card over the list and sends one bound test request", async () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
@@ -543,13 +688,13 @@ describe("NotificationDetailPage signed test", () => {
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
-    const button = await screen.findByRole("button", {
-      name: "Test this exact revision",
-    });
-    await userEvent.click(button);
-    await waitFor(() => {
-      expect(screen.getByText(/Test succeeded/)).toBeVisible();
-    });
+    const card = await dialog();
+    const view = within(card);
+    expect(await view.findByText("密钥引用：已就绪")).toBeVisible();
+    await userEvent.click(
+      await view.findByRole("button", { name: "发送签名测试" }),
+    );
+    expect(await view.findByText(/测试成功/)).toBeVisible();
     const testCalls = calls.filter(
       (call) => call.method === "POST" && call.url.endsWith("/test"),
     );
@@ -559,7 +704,6 @@ describe("NotificationDetailPage signed test", () => {
       expectedVersion: 3,
     });
     expect(JSON.stringify(testCalls[0].body)).not.toMatch(/digest/i);
-    // No delivery was created, nothing else mutated.
     expect(
       calls.filter(
         (call) => call.method !== "GET" && !call.url.endsWith("/test"),
@@ -567,7 +711,7 @@ describe("NotificationDetailPage signed test", () => {
     ).toHaveLength(0);
   });
 
-  it("shows the stale-rejection recovery without replaying the request", async () => {
+  it("shows the stale-test recovery without replaying the request", async () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
@@ -592,178 +736,110 @@ describe("NotificationDetailPage signed test", () => {
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
-    const button = await screen.findByRole("button", {
-      name: "Test this exact revision",
-    });
-    await userEvent.click(button);
-    expect(await screen.findByText(/no test request was sent/)).toBeVisible();
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByRole("button", { name: "发送签名测试" }),
+    );
+    expect(await view.findByText(/没有发送测试请求/)).toBeVisible();
     expect(
       calls.filter(
         (call) => call.method === "POST" && call.url.endsWith("/test"),
       ),
     ).toHaveLength(1);
   });
-});
 
-describe("NotificationEditorPage checked activation", () => {
-  function respondDraft(
-    calls: Call[],
-    overrides: {
-      saveStatus?: number;
-      activateStatus?: number;
-    } = {},
-  ) {
-    return (call: Call): Response | undefined => {
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
-        return jsonResponse(draftDocumentPayload());
-      }
+  it("does not render a misbound test outcome as success", async () => {
+    recordingFetch((call) => {
       if (
-        call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
-        if (overrides.saveStatus === 409) {
-          return jsonResponse(
-            { error: { code: "configuration_version_conflict" } },
-            409,
-          );
-        }
-        // The real managed save stores the successor Draft version.
         return jsonResponse({
-          revisionId: DRAFT_REVISION,
-          version: 5,
-          status: "draft",
-          webhook: webhookDocument(),
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
         });
       }
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/activate-draft`)) {
-        if (overrides.activateStatus === 409) {
-          return jsonResponse(
-            { error: { code: "notification_activation_out_of_scope" } },
-            409,
-          );
-        }
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
         return jsonResponse({
-          // The managed activation preserves the reviewed Draft revision
-          // identity (same id, same version) as the new Active identity.
-          activatedRevisionId: DRAFT_REVISION,
-          activatedVersion: 4,
-          revisionSequence: 3,
-          publishedFromRevisionId: DRAFT_REVISION,
-          publishedFromVersion: 4,
-          activeConfiguration: {
-            revisionId: DRAFT_REVISION,
-            version: 4,
-            revisionSequence: 3,
+          testId: "test-9",
+          webhook: { id: "another-webhook" },
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
             status: "active",
           },
-          webhook: webhookDocument(),
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "the Webhook endpoint returned HTTP 204",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "no further action required",
         });
       }
-      void calls;
       return undefined;
-    };
-  }
-
-  it("saves the bounded form with the exact optimistic version", async () => {
-    const { calls } = recordingFetch((call) => respondDraft(calls)(call));
+    });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
-    const save = await screen.findByRole("button", { name: "Save into Draft" });
-    await userEvent.click(save);
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) =>
-            call.method === "PUT" &&
-            call.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
-        ),
-      ).toBe(true);
-    });
-    const saveCall = calls.find((call) => call.method === "PUT");
-    expect(saveCall?.body).toMatchObject({
-      expectedVersion: 4,
-      object: { id: WEBHOOK_ID },
-    });
-    expect(JSON.stringify(saveCall?.body)).not.toMatch(/secretValue|Bearer /i);
-  });
-
-  it("requires the explicit confirmation checkbox before activation", async () => {
-    const { calls } = recordingFetch((call) =>
-      respondDraft(calls, { activateStatus: 409 })(call),
-    );
-    await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
-    const activate = await screen.findByRole("button", {
-      name: "Activate checked Draft",
-    });
-    expect(activate).toBeDisabled();
-    const checkbox = screen.getByLabelText("Confirm checked activation");
-    await userEvent.click(checkbox);
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    const view = within(await dialog());
     await userEvent.click(
-      screen.getByRole("button", { name: "Activate checked Draft" }),
+      await view.findByRole("button", { name: "发送签名测试" }),
     );
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) =>
-            call.method === "POST" && call.url.endsWith("/activate-draft"),
-        ),
-      ).toBe(true);
-    });
-    const activationCall = calls.find((call) =>
-      call.url.endsWith("/activate-draft"),
-    );
-    expect(activationCall?.body).toMatchObject({
-      expectedRevisionId: DRAFT_REVISION,
-      expectedVersion: 4,
-    });
-    expect(JSON.stringify(activationCall?.body)).not.toMatch(/digest/i);
+    expect(await view.findByText(/测试结果未知/)).toBeVisible();
+    expect(view.queryByText(/测试成功/)).toBeNull();
   });
 
-  it("does not replay a stale activation and offers the bounded recovery", async () => {
-    const { calls } = recordingFetch((call) =>
-      respondDraft(calls, { activateStatus: 409 })(call),
-    );
-    await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
-    const checkbox = await screen.findByLabelText("Confirm checked activation");
-    await userEvent.click(checkbox);
-    await userEvent.click(
-      screen.getByRole("button", { name: "Activate checked Draft" }),
-    );
-    expect(await screen.findByText(/Activation was rejected/)).toBeVisible();
-    expect(
-      calls.filter((call) => call.url.endsWith("/activate-draft")),
-    ).toHaveLength(1);
-  });
-});
-
-describe("NotificationNewPage create journey", () => {
-  it("submits the canonical create body bound to the exact Draft version", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
-        return jsonResponse(listPayload());
-      }
+  it("keeps the list inert and closes a clean card with Escape", async () => {
+    recordingFetch((call) => {
       if (
-        call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({
-          revisionId: DRAFT_REVISION,
-          version: 5,
-          status: "draft",
-          webhook: { id: "created-webhook" },
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
         });
       }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      `/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`,
+    );
+    const view = within(await dialog());
+    await waitFor(() => {
+      expect(
+        document
+          .getElementById("notification-definitions-background")
+          ?.closest("[inert]"),
+      ).not.toBeNull();
+    });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/operations/notifications");
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement?.id).toBe(
+        "notification-definitions-background",
+      );
+    });
+    void view;
+  });
+
+  it("does not offer an executable editor when no Draft is open", async () => {
+    recordingFetch((call) => {
       if (
-        call.url === "/api/v1/operations/notifications/webhooks/created-webhook"
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({
           webhook: definitionPayload({
-            id: "created-webhook",
-            definitionState: "draft-only",
-            secretReadiness: [],
+            draftState: draftState({
+              present: false,
+              reason: "no open successor Draft",
+              revisionId: null,
+              revisionVersion: null,
+              revisionStatus: null,
+            }),
           }),
           activeConfiguration: activeConfiguration(),
         });
@@ -771,79 +847,25 @@ describe("NotificationNewPage create journey", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/webhooks/new");
-    // The canonical deployment-owned secret reference is accepted by the
-    // form; the server-side canonical validator remains the authority.
-    await userEvent.type(
-      await screen.findByLabelText("Identifier"),
-      "created-webhook",
-    );
-    await userEvent.type(
-      screen.getByLabelText("HTTPS endpoint"),
-      "https://example.invalid/hooks/created",
-    );
-    await userEvent.type(
-      screen.getByLabelText("Secret environment reference"),
-      "MEDIAFLOW_WEBHOOK_SECRET",
-    );
-    await userEvent.click(screen.getByLabelText("Event task.completed"));
-    const create = screen.getByRole("button", {
-      name: "Create definition in Draft",
-    });
-    expect(create).toBeEnabled();
-    await userEvent.click(create);
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) =>
-            call.method === "POST" &&
-            call.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
-        ),
-      ).toBe(true);
-    });
-    const createCall = calls.find(
-      (call) =>
-        call.method === "POST" &&
-        call.url ===
-          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
-    );
-    expect(createCall?.body).toMatchObject({
-      expectedVersion: 4,
-      object: {
-        id: "created-webhook",
-        url: "https://example.invalid/hooks/created",
-        secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
-        events: ["task.completed"],
-        enabled: true,
-        timeoutSeconds: 10,
-        maxAttempts: 5,
-        baseRetrySeconds: 5,
-        maxRetrySeconds: 300,
-      },
-    });
-    expect(JSON.stringify(createCall?.body)).not.toMatch(
-      /secretValue|Bearer |password/i,
-    );
-    // The created Draft-only definition is opened as the exact successor.
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    const view = within(await dialog());
     expect(
-      await screen.findByRole("heading", { name: "Webhook created-webhook" }),
-    ).toBeVisible();
+      await view.findByRole("button", { name: "编辑草稿（不可用）" }),
+    ).toBeDisabled();
+    expect(view.getByRole("button", { name: "创建后继草稿" })).toBeEnabled();
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
   });
-});
 
-describe("NotificationDetailPage draft actions", () => {
   it("submits copy, enable and disable with the exact optimistic version", async () => {
-    // The fake Draft advances one optimistic version per stored mutation and
-    // every definition read serves the current exact fence, mirroring the
-    // real managed revision semantics.
     let draftVersion = 4;
     const { calls } = recordingFetch((call) => {
       if (
         call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({
-          webhook: definitionPayload(),
+          webhook: definitionPayload({
+            draftState: draftState({ revisionVersion: draftVersion }),
+          }),
           activeConfiguration: activeConfiguration(),
         });
       }
@@ -871,7 +893,6 @@ describe("NotificationDetailPage draft actions", () => {
           webhook: definitionPayload({
             id: "ops-webhook-copy",
             definitionState: "draft-only",
-            secretReadiness: [],
             draftState: draftState({ revisionVersion: draftVersion }),
           }),
           activeConfiguration: activeConfiguration(),
@@ -905,28 +926,30 @@ describe("NotificationDetailPage draft actions", () => {
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    let view = within(await dialog());
     await userEvent.click(
-      await screen.findByRole("button", { name: "Copy into Draft" }),
-    );
-    expect(
-      await screen.findByRole("heading", { name: "Webhook ops-webhook-copy" }),
-    ).toBeVisible();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Enable in Draft" }),
+      await view.findByRole("button", { name: "复制到草稿" }),
     );
     await waitFor(() => {
       expect(
-        calls.some((call) => call.url.endsWith("/ops-webhook-copy/enable")),
-      ).toBe(true);
+        screen.getByRole("heading", { name: "Webhook ops-webhook-copy" }),
+      ).toBeVisible();
     });
-    await userEvent.click(
-      screen.getByRole("button", { name: "Disable in Draft" }),
-    );
+    view = within(await dialog());
+    await userEvent.click(view.getByRole("button", { name: "在草稿中启用" }));
     await waitFor(() => {
       expect(
-        calls.some((call) => call.url.endsWith("/ops-webhook-copy/disable")),
-      ).toBe(true);
+        calls.filter(
+          (call) =>
+            call.method === "GET" &&
+            call.url ===
+              "/api/v1/operations/notifications/webhooks/ops-webhook-copy",
+        ).length,
+      ).toBeGreaterThanOrEqual(2);
     });
+    await userEvent.click(
+      within(await dialog()).getByRole("button", { name: "在草稿中停用" }),
+    );
     const enableCall = calls.find((call) =>
       call.url.endsWith("/ops-webhook-copy/enable"),
     );
@@ -939,139 +962,6 @@ describe("NotificationDetailPage draft actions", () => {
     expect(JSON.stringify([enableCall?.body, disableCall?.body])).not.toMatch(
       /digest|Bearer /i,
     );
-  });
-
-  it("does not render a misbound test outcome as success", async () => {
-    recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
-        return jsonResponse({
-          webhook: definitionPayload(),
-          activeConfiguration: activeConfiguration(),
-        });
-      }
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
-        // A success document about another Webhook: never rendered.
-        return jsonResponse({
-          testId: "test-9",
-          webhook: { id: "another-webhook" },
-          revision: {
-            revisionId: ACTIVE_REVISION,
-            version: 3,
-            status: "active",
-          },
-          outcome: "success",
-          category: "http_204",
-          responseStatus: 204,
-          message: "the Webhook endpoint returned HTTP 204",
-          durableState: "no_delivery_created_no_configuration_change",
-          sideEffects: "none",
-          retrySafe: true,
-          nextAction: "no further action required",
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Test this exact revision" }),
-    );
-    expect(await screen.findByText(/The test was rejected/)).toBeVisible();
-    expect(screen.queryByText(/Test succeeded/)).toBeNull();
-  });
-});
-
-describe("Notification definition mutation binding", () => {
-  it("does not render a wrong-revision create response as success", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
-        return jsonResponse(listPayload());
-      }
-      if (
-        call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
-      ) {
-        // A success document about another revision (the immutable Active
-        // configuration instead of the submitted Draft) never renders as this
-        // create's outcome and never navigates to a definition.
-        return jsonResponse({
-          revisionId: ACTIVE_REVISION,
-          version: 5,
-          status: "draft",
-          webhook: { id: "created-webhook", enabled: false },
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp("/ui-v2/operations/notifications/webhooks/new");
-    await userEvent.type(
-      await screen.findByLabelText("Identifier"),
-      "created-webhook",
-    );
-    await userEvent.type(
-      screen.getByLabelText("HTTPS endpoint"),
-      "https://example.invalid/hooks/created",
-    );
-    await userEvent.type(
-      screen.getByLabelText("Secret environment reference"),
-      "MEDIAFLOW_WEBHOOK_SECRET",
-    );
-    await userEvent.click(screen.getByLabelText("Event task.completed"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Create definition in Draft" }),
-    );
-    expect(
-      await screen.findByText(/Creating the Webhook definition was rejected/),
-    ).toBeVisible();
-    // No false success: the create journey stays on the form and never opens
-    // any definition, and the rejected mutation is never replayed.
-    expect(
-      await screen.findByRole("heading", { name: "New Webhook definition" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "Webhook created-webhook" }),
-    ).toBeNull();
-    expect(
-      calls.filter(
-        (call) =>
-          call.method === "POST" &&
-          call.url ===
-            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("does not render a save response without the saved definition as success", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
-        return jsonResponse(draftDocumentPayload());
-      }
-      if (
-        call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
-      ) {
-        // A missing definition document is malformed evidence, never a
-        // completed save.
-        return jsonResponse({
-          revisionId: DRAFT_REVISION,
-          version: 5,
-          status: "draft",
-        });
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Save into Draft" }),
-    );
-    expect(
-      await screen.findByText(/Saving the Draft was rejected/),
-    ).toBeVisible();
-    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   });
 
   it("does not render a wrong-object copy response as success", async () => {
@@ -1088,12 +978,6 @@ describe("Notification definition mutation binding", () => {
         call.url ===
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
-        expect(call.body).toMatchObject({
-          expectedVersion: 4,
-          newId: "ops-webhook-copy",
-        });
-        // A same-prefix identity is not the exact requested copy; the
-        // journey must never navigate to it as the copied identity.
         return jsonResponse({
           revisionId: DRAFT_REVISION,
           version: 5,
@@ -1105,17 +989,15 @@ describe("Notification definition mutation binding", () => {
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    const view = within(await dialog());
     await userEvent.click(
-      await screen.findByRole("button", { name: "Copy into Draft" }),
+      await view.findByRole("button", { name: "复制到草稿" }),
     );
+    expect(await view.findByText(/命令结果未知/)).toBeVisible();
     expect(
-      await screen.findByText(/The copy action was rejected/),
+      view.getByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
     ).toBeVisible();
-    // No false success: the detail page stays on the reviewed source.
-    expect(
-      await screen.findByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
-    ).toBeVisible();
-    expect(screen.queryByText(/Webhook ops-webhook-copy-malicious/)).toBeNull();
+    expect(view.queryByText(/ops-webhook-copy-malicious/)).toBeNull();
     expect(calls.filter((call) => call.url.endsWith("/copy"))).toHaveLength(1);
   });
 
@@ -1130,8 +1012,6 @@ describe("Notification definition mutation binding", () => {
         });
       }
       if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/enable`)) {
-        // An enable success document claiming a disabled definition is
-        // contradictory evidence, never this toggle's outcome.
         return jsonResponse({
           revisionId: DRAFT_REVISION,
           version: 5,
@@ -1143,78 +1023,520 @@ describe("Notification definition mutation binding", () => {
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    const view = within(await dialog());
     await userEvent.click(
-      await screen.findByRole("button", { name: "Enable in Draft" }),
+      await view.findByRole("button", { name: "在草稿中启用" }),
     );
-    expect(
-      await screen.findByText(/The enable action was rejected/),
-    ).toBeVisible();
+    expect(await view.findByText(/命令结果未知/)).toBeVisible();
     expect(calls.filter((call) => call.url.endsWith("/enable"))).toHaveLength(
       1,
     );
   });
+});
 
-  it("does not render a split-identity activation as success", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
-        return jsonResponse(draftDocumentPayload());
-      }
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/activate-draft`)) {
-        // The activated identity differs from the exact reviewed Draft
-        // identity the mutation was bound to: never rendered as success.
-        return jsonResponse({
-          activatedRevisionId: ACTIVE_REVISION,
-          activatedVersion: 5,
-          revisionSequence: 3,
-          publishedFromRevisionId: DRAFT_REVISION,
-          publishedFromVersion: 4,
-          activeConfiguration: {
-            revisionId: ACTIVE_REVISION,
-            version: 5,
+describe("NotificationEditorPage", () => {
+  function editorResponder(
+    state: {
+      version?: number;
+      url?: string;
+      draftStatus?: string;
+      failReadsAfter?: number;
+    } = {},
+  ) {
+    let version = state.version ?? 4;
+    let url = state.url ?? "https://example.invalid/hooks/mediaflow";
+    let draftStatus = state.draftStatus ?? "validated";
+    let reads = 0;
+    return {
+      calls: [] as Call[],
+      responder(call: Call): Response | undefined {
+        if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+          reads += 1;
+          if (
+            state.failReadsAfter !== undefined &&
+            reads > state.failReadsAfter
+          ) {
+            return jsonResponse({ error: { code: "unavailable" } }, 500);
+          }
+          return jsonResponse(
+            draftDocumentPayload({
+              draft: {
+                revisionId: DRAFT_REVISION,
+                revisionVersion: version,
+                revisionStatus: draftStatus,
+                baseActiveRevisionId: ACTIVE_REVISION,
+                updatedAt: "2026-09-12T00:00:00+00:00",
+                validatedAt: "2026-09-12T00:01:00+00:00",
+                validationErrors: [],
+                webhook: webhookDocument({ url }),
+              },
+            }),
+          );
+        }
+        if (
+          call.url ===
+          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+        ) {
+          version += 1;
+          draftStatus = "draft";
+          const body = call.body as {
+            object?: { url?: string };
+          };
+          url = body.object?.url ?? url;
+          return jsonResponse({
+            revisionId: DRAFT_REVISION,
+            version,
+            status: "draft",
+            webhook: webhookDocument({ url }),
+          });
+        }
+        if (call.url.endsWith(`/revisions/${DRAFT_REVISION}/validate`)) {
+          draftStatus = "validated";
+          return jsonResponse({
+            revisionId: DRAFT_REVISION,
+            version,
+            status: "validated",
+            validationErrors: [],
+          });
+        }
+        if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
+          return jsonResponse({
+            testId: "test-1",
+            webhook: { id: WEBHOOK_ID },
+            revision: {
+              revisionId: DRAFT_REVISION,
+              version,
+              status: draftStatus,
+            },
+            outcome: "success",
+            category: "http_204",
+            responseStatus: 204,
+            message: "the Webhook endpoint returned HTTP 204",
+            durableState: "no_delivery_created_no_configuration_change",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "no further action required",
+          });
+        }
+        if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/activate-draft`)) {
+          return jsonResponse({
+            activatedRevisionId: DRAFT_REVISION,
+            activatedVersion: version,
             revisionSequence: 3,
-            status: "active",
-          },
-          webhook: webhookDocument(),
-        });
+            publishedFromRevisionId: DRAFT_REVISION,
+            publishedFromVersion: version,
+            activeConfiguration: {
+              revisionId: DRAFT_REVISION,
+              version,
+              revisionSequence: 3,
+              status: "active",
+            },
+            webhook: webhookDocument({ url }),
+          });
+        }
+        return undefined;
+      },
+    };
+  }
+
+  it("saves the bounded form with the exact optimistic version", async () => {
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => state.responder(call));
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://example.invalid/hooks/edited");
+    const save = view.getByRole("button", { name: "保存到草稿" });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url ===
+              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
+        ),
+      ).toBe(true);
+    });
+    const saveCall = calls.find((call) => call.method === "PUT");
+    expect(saveCall?.body).toMatchObject({
+      expectedVersion: 4,
+      object: {
+        id: WEBHOOK_ID,
+        url: "https://example.invalid/hooks/edited",
+      },
+    });
+    expect(JSON.stringify(saveCall?.body)).not.toMatch(/secretValue|Bearer /i);
+    expect(await view.findByText(/已保存到草稿版本 5/)).toBeVisible();
+  });
+
+  it("sends a test only for the saved revision and invalidates it on input change", async () => {
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => state.responder(call));
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const test = await view.findByRole("button", { name: "发送签名测试" });
+    expect(test).toBeEnabled();
+    await userEvent.click(test);
+    expect(await view.findByText(/测试成功/)).toBeVisible();
+    const urlInput = view.getByLabelText("HTTPS 接收地址");
+    await userEvent.type(urlInput, "x");
+    expect(view.queryByText(/测试成功/)).toBeNull();
+    expect(view.getByRole("button", { name: "发送签名测试" })).toBeDisabled();
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/test"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reports an unknown signed-test result without claiming it failed or replaying it", async () => {
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
+        throw new Error("network lost");
+      }
+      return state.responder(call);
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByRole("button", { name: "发送签名测试" }),
+    );
+    expect(await view.findByText(/测试结果未知/)).toBeVisible();
+    expect(view.queryByText(/测试成功/)).toBeNull();
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/test"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not let a late test response overwrite newer input", async () => {
+    let resolveTest!: (response: Response) => void;
+    const testResponse = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    const state = editorResponder();
+    recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
+        return testResponse;
+      }
+      return state.responder(call);
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByRole("button", { name: "发送签名测试" }),
+    );
+    await userEvent.type(view.getByLabelText("HTTPS 接收地址"), "x");
+    resolveTest(
+      jsonResponse({
+        testId: "test-late",
+        webhook: { id: WEBHOOK_ID },
+        revision: {
+          revisionId: DRAFT_REVISION,
+          version: 4,
+          status: "validated",
+        },
+        outcome: "success",
+        category: "http_204",
+        responseStatus: 204,
+        message: "the Webhook endpoint returned HTTP 204",
+        durableState: "no_delivery_created_no_configuration_change",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "no further action required",
+      }),
+    );
+    await waitFor(() => {
+      expect(view.queryByText(/测试成功/)).toBeNull();
+    });
+  });
+
+  it("requires the explicit confirmation checkbox before activation", async () => {
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => state.responder(call));
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const activate = await view.findByRole("button", {
+      name: "发布已检查草稿",
+    });
+    expect(activate).toBeDisabled();
+    await userEvent.click(
+      view.getByLabelText("我确认把当前已检查的草稿发布为新的已生效配置"),
+    );
+    await userEvent.click(activate);
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "POST" && call.url.endsWith("/activate-draft"),
+        ),
+      ).toBe(true);
+    });
+    const activationCall = calls.find((call) =>
+      call.url.endsWith("/activate-draft"),
+    );
+    expect(activationCall?.body).toMatchObject({
+      expectedRevisionId: DRAFT_REVISION,
+      expectedVersion: 4,
+    });
+    expect(JSON.stringify(activationCall?.body)).not.toMatch(/digest/i);
+  });
+
+  it("does not replay a stale activation and keeps the input correctable", async () => {
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => {
+      if (call.url.endsWith("/activate-draft")) {
+        return jsonResponse(
+          { error: { code: "notification_activation_out_of_scope" } },
+          409,
+        );
+      }
+      return state.responder(call);
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByLabelText(
+        "我确认把当前已检查的草稿发布为新的已生效配置",
+      ),
+    );
+    await userEvent.click(view.getByRole("button", { name: "发布已检查草稿" }));
+    expect(await view.findByText(/发布没有执行/)).toBeVisible();
+    expect(
+      calls.filter((call) => call.url.endsWith("/activate-draft")),
+    ).toHaveLength(1);
+  });
+
+  it("holds a remote Draft change instead of silently rebinding local input", async () => {
+    let serverVersion = 4;
+    let serverUrl = "https://example.invalid/hooks/mediaflow";
+    recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+        return jsonResponse(
+          draftDocumentPayload({
+            draft: {
+              revisionId: DRAFT_REVISION,
+              revisionVersion: serverVersion,
+              revisionStatus: "validated",
+              baseActiveRevisionId: ACTIVE_REVISION,
+              updatedAt: "2026-09-12T00:00:00+00:00",
+              validatedAt: "2026-09-12T00:01:00+00:00",
+              validationErrors: [],
+              webhook: webhookDocument({ url: serverUrl }),
+            },
+          }),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    const { queryClient } = renderApp(
+      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://local.invalid/kept");
+    serverVersion = 5;
+    serverUrl = "https://server.invalid/new";
+    await queryClient.invalidateQueries({
+      queryKey: [notificationDraftQueryKey, WEBHOOK_ID],
+    });
+    expect(await view.findByText(/草稿已在其他位置更新/)).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://local.invalid/kept",
+    );
+    await userEvent.click(view.getByRole("button", { name: "采用服务端值" }));
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://server.invalid/new",
+    );
+    expect(view.queryByText(/草稿已在其他位置更新/)).toBeNull();
+  });
+
+  it("keeps the known save result when the follow-up read fails", async () => {
+    const state = editorResponder({ failReadsAfter: 1 });
+    recordingFetch((call) => state.responder(call));
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://example.invalid/hooks/edited");
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/已保存到草稿版本 5/)).toBeVisible();
+    expect(await view.findByText("最新读取失败")).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/edited",
+    );
+  });
+
+  it("offers continue/discard on unsaved close and discards only explicitly", async () => {
+    const state = editorResponder();
+    recordingFetch((call) => state.responder(call));
+    await connect();
+    const { router } = renderApp(
+      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://example.invalid/hooks/kept");
+    await userEvent.click(view.getByRole("button", { name: "关闭通知卡片" }));
+    const prompt = await view.findByRole("alertdialog");
+    expect(within(prompt).getByText("有未保存的修改")).toBeVisible();
+    await userEvent.click(
+      within(prompt).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/kept",
+    );
+    await waitFor(() => {
+      expect(document.activeElement?.id).toBe("notification-edit-url");
+    });
+    await userEvent.click(view.getByRole("button", { name: "关闭通知卡片" }));
+    const secondPrompt = await view.findByRole("alertdialog");
+    await userEvent.click(
+      within(secondPrompt).getByRole("button", { name: "放弃并离开" }),
+    );
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/operations/notifications");
+    });
+  });
+
+  it("does not render a fillable form when no Draft can be edited", async () => {
+    recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+        return jsonResponse(
+          draftDocumentPayload({
+            draft: null,
+            actions: {
+              createDraft: {
+                available: false,
+                reason: "the connected API principal cannot create a Draft",
+                method: "POST",
+                path: null,
+                requiresConfirmation: false,
+                sideEffects: "none",
+                durableOutcome: "a successor Draft is stored",
+                nextAction: "ask for permission",
+              },
+              save: {
+                available: false,
+                reason: "an open successor Draft is required",
+                method: "PUT",
+                path: null,
+                requiresConfirmation: false,
+                sideEffects: "none",
+                durableOutcome: "stored",
+                nextAction: "start a Draft",
+              },
+              validate: {
+                available: false,
+                reason: "an open successor Draft is required",
+                method: "POST",
+                path: null,
+                requiresConfirmation: false,
+                sideEffects: "none",
+                durableOutcome: "validated",
+                nextAction: "start a Draft",
+              },
+              activate: {
+                available: false,
+                reason: "an open successor Draft is required",
+                method: "POST",
+                path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+                requiresConfirmation: true,
+                sideEffects: "none",
+                durableOutcome: "active",
+                nextAction: "start a Draft",
+              },
+              test: action({ available: false, reason: "permission" }),
+            },
+          }),
+        );
       }
       return undefined;
     });
     await connect();
     renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
-    await userEvent.click(
-      await screen.findByLabelText("Confirm checked activation"),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Activate checked Draft" }),
-    );
-    expect(await screen.findByText(/Activation was rejected/)).toBeVisible();
-    // The rejected activation is never replayed.
-    expect(
-      calls.filter((call) => call.url.endsWith("/activate-draft")),
-    ).toHaveLength(1);
+    const view = within(await dialog());
+    expect(await view.findByText(/当前没有渲染可填写的表单/)).toBeVisible();
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
+    expect(view.getByRole("button", { name: "创建后继草稿" })).toBeDisabled();
   });
 });
 
 describe("DeliveryListPage", () => {
-  it("renders the durable delivery statuses and filter", async () => {
+  it("renders readable statuses, attempts and failure summaries", async () => {
     recordingFetch((call) => {
       if (call.url.startsWith("/api/v1/notifications?")) {
-        return jsonResponse({
-          limit: 20,
-          status: "dead-letter",
-          previous_cursor: null,
-          next_cursor: null,
-          items: [deliveryListItem()],
-        });
+        return jsonResponse(deliveriesPayload());
       }
       return undefined;
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries?status=dead-letter");
-    const badges = await screen.findAllByText("Dead letter");
-    expect(badges.length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("attempts: 3")).toBeVisible();
-    expect(screen.getByText(/last response HTTP 400/)).toBeVisible();
+    expect(await screen.findByText("通知投递记录")).toBeVisible();
+    const card = screen
+      .getByText("任务完成", { selector: ".mf-notification-webhook-name" })
+      .closest("li");
+    expect(card).not.toBeNull();
+    const view = within(card as HTMLElement);
+    expect(view.getByText("死信")).toBeVisible();
+    expect(view.getByText("尝试 3 次")).toBeVisible();
+    expect(view.getByText("接收端返回 HTTP 400")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "投递状态" })).toHaveValue(
+      "dead-letter",
+    );
+  });
+
+  it("opens a filtered delivery and returns to the same filter", async () => {
+    recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/notifications?")) {
+        return jsonResponse(deliveriesPayload());
+      }
+      if (
+        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
+      ) {
+        return jsonResponse(deliveryDetailPayload());
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      "/ui-v2/operations/notifications/deliveries?status=dead-letter",
+    );
+    await userEvent.click(
+      await screen.findByRole("link", { name: "查看投递" }),
+    );
+    const view = within(await dialog());
+    expect(view.getByText("投递 delivery-1")).toBeVisible();
+    expect(router.state.location.search).toMatchObject({
+      status: "dead-letter",
+    });
+    await userEvent.click(view.getByRole("link", { name: "返回投递列表" }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(
+        "/operations/notifications/deliveries",
+      );
+    });
+    expect(router.state.location.search).toMatchObject({
+      status: "dead-letter",
+    });
+    expect(screen.getByRole("combobox", { name: "投递状态" })).toHaveValue(
+      "dead-letter",
+    );
   });
 });
 
@@ -1247,11 +1569,14 @@ describe("DeliveryDetailPage recovery", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
-    const button = await screen.findByRole("button", {
-      name: "Requeue dead-letter delivery",
+    const view = within(await dialog());
+    const button = await view.findByRole("button", {
+      name: "重新入队死信投递",
     });
     expect(button).toBeDisabled();
-    await userEvent.click(screen.getByLabelText("Confirm dead-letter requeue"));
+    await userEvent.click(
+      view.getByLabelText("我确认重新入队这条精确的死信投递"),
+    );
     await userEvent.click(button);
     await waitFor(() => {
       expect(
@@ -1269,9 +1594,40 @@ describe("DeliveryDetailPage recovery", () => {
       expectedStatus: "dead-letter",
       expectedUpdatedAt: "2026-09-12T00:05:00+00:00",
     });
+    expect(await view.findByText(/重新入队已完成/)).toBeVisible();
   });
 
-  it("does not replay a stale recovery and offers refresh instead", async () => {
+  it("reports an unknown recovery result without replaying it", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
+      ) {
+        return jsonResponse(deliveryDetailPayload());
+      }
+      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+        throw new Error("network lost");
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByLabelText("我确认重新入队这条精确的死信投递"),
+    );
+    await userEvent.click(
+      view.getByRole("button", { name: "重新入队死信投递" }),
+    );
+    expect(await view.findByText(/命令结果未知/)).toBeVisible();
+    expect(view.getByText("死信", { exact: true })).toBeVisible();
+    expect(
+      calls.filter(
+        (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not replay a stale recovery and offers the exact refresh", async () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
@@ -1288,18 +1644,63 @@ describe("DeliveryDetailPage recovery", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    const view = within(await dialog());
     await userEvent.click(
-      await screen.findByLabelText("Confirm dead-letter requeue"),
+      await view.findByLabelText("我确认重新入队这条精确的死信投递"),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Requeue dead-letter delivery" }),
+      view.getByRole("button", { name: "重新入队死信投递" }),
     );
-    expect(await screen.findByText(/no recovery was applied/)).toBeVisible();
+    expect(await view.findByText(/没有应用恢复/)).toBeVisible();
     expect(
       calls.filter(
         (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
       ),
     ).toHaveLength(1);
+  });
+
+  it("keeps the known recovery result when the follow-up read fails", async () => {
+    let reads = 0;
+    recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
+      ) {
+        reads += 1;
+        if (reads > 1) {
+          return jsonResponse({ error: { code: "unavailable" } }, 500);
+        }
+        return jsonResponse(deliveryDetailPayload());
+      }
+      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+        return jsonResponse({
+          action: "requeue-dead-letter",
+          outcome: "success",
+          deliveryId: "delivery-1",
+          previousStatus: "dead-letter",
+          status: "pending",
+          attempts: 0,
+          durableState: "dead_letter_requeued_same_identity",
+          sideEffects: "delivery_queue_state_only_no_new_row_no_media_change",
+          retrySafe: true,
+          atLeastOnce: "receivers must tolerate duplicates",
+          duplicateImplication: "duplicates",
+          nextAction: "refresh this delivery",
+          delivery: deliveryDetailPayload({ status: "pending" }),
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    const view = within(await dialog());
+    await userEvent.click(
+      await view.findByLabelText("我确认重新入队这条精确的死信投递"),
+    );
+    await userEvent.click(
+      view.getByRole("button", { name: "重新入队死信投递" }),
+    );
+    expect(await view.findByText(/重新入队已完成/)).toBeVisible();
+    expect(await view.findByText("最新读取失败")).toBeVisible();
   });
 
   it("renders no recovery control when the backend advertises none", async () => {
@@ -1310,6 +1711,7 @@ describe("DeliveryDetailPage recovery", () => {
         return jsonResponse(
           deliveryDetailPayload({
             status: "delivered",
+            deliveredAt: "2026-09-12T00:04:00+00:00",
             recovery: {
               availableActions: [],
               reason: "The delivery already completed successfully.",
@@ -1323,10 +1725,9 @@ describe("DeliveryDetailPage recovery", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
-    expect(
-      await screen.findByText("No manual recovery advertised"),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Requeue/ })).toBeNull();
+    const view = within(await dialog());
+    expect(await view.findByText("没有可用的人工恢复")).toBeVisible();
+    expect(view.queryByRole("button", { name: /重新入队/ })).toBeNull();
   });
 
   it("fails closed on a malformed delivery document", async () => {
@@ -1334,39 +1735,16 @@ describe("DeliveryDetailPage recovery", () => {
       if (
         call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
       ) {
-        return jsonResponse(
-          deliveryDetailPayload({
-            status: "exploded",
-          }),
-        );
+        return jsonResponse(deliveryDetailPayload({ status: "exploded" }));
       }
       return undefined;
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
-    expect(await screen.findByText(/could not be understood/)).toBeVisible();
+    const view = within(await dialog());
+    expect(await view.findByText("投递读取失败")).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
-  });
-
-  it("fails closed when a requeue transport contradicts a delivered status", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
-        return jsonResponse(
-          deliveryDetailPayload({
-            status: "delivered",
-            deliveredAt: "2026-09-12T00:04:00+00:00",
-          }),
-        );
-      }
-      return undefined;
-    });
-    await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
-    expect(await screen.findByText(/could not be understood/)).toBeVisible();
-    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: /Requeue/ })).toBeNull();
+    expect(view.queryByRole("button", { name: /重新入队/ })).toBeNull();
   });
 
   it("fails closed when a recovery transport names another delivery", async () => {
@@ -1395,7 +1773,8 @@ describe("DeliveryDetailPage recovery", () => {
     });
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
-    expect(await screen.findByText(/could not be understood/)).toBeVisible();
+    const view = within(await dialog());
+    expect(await view.findByText("投递读取失败")).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 });

@@ -234,39 +234,67 @@ const automationRunOnceRoute = createRoute({
   component: AutomationRunOncePage,
 });
 
+/**
+ * The Notification list is the persistent background of every Notification
+ * card. Nested card routes keep that list mounted, so opening a definition,
+ * editor or delivery preserves its filter, page, scroll and focus and the
+ * browser back journey returns to the same inventory.
+ */
+function NotificationDefinitionsWorkspace() {
+  return (
+    <div className="mf-notifications-workspace">
+      <div className="mf-notifications-background">
+        <NotificationListPage />
+      </div>
+      <Outlet />
+    </div>
+  );
+}
+
+function NotificationDeliveriesWorkspace() {
+  return (
+    <div className="mf-notifications-workspace">
+      <div className="mf-notifications-background">
+        <DeliveryListPage />
+      </div>
+      <Outlet />
+    </div>
+  );
+}
+
 const notificationListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/notifications",
-  component: NotificationListPage,
+  component: NotificationDefinitionsWorkspace,
 });
 
 const notificationNewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/notifications/webhooks/new",
+  getParentRoute: () => notificationListRoute,
+  path: "webhooks/new",
   component: NotificationNewPage,
 });
 
 const notificationDefinitionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/notifications/webhooks/$webhookId",
+  getParentRoute: () => notificationListRoute,
+  path: "webhooks/$webhookId",
   component: NotificationDetailPage,
 });
 
 const notificationEditorRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/notifications/editor/$webhookId",
+  getParentRoute: () => notificationListRoute,
+  path: "editor/$webhookId",
   component: NotificationEditorPage,
 });
 
 const deliveryListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/notifications/deliveries",
-  component: DeliveryListPage,
+  component: NotificationDeliveriesWorkspace,
 });
 
 const deliveryDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/notifications/deliveries/$deliveryId",
+  getParentRoute: () => deliveryListRoute,
+  path: "$deliveryId",
   component: DeliveryDetailPage,
 });
 
@@ -320,12 +348,12 @@ const routeTree = rootRoute.addChildren([
   automationLifecycleNewRoute,
   automationOccurrencesRoute,
   automationRunOnceRoute,
-  notificationListRoute,
-  notificationNewRoute,
-  notificationDefinitionRoute,
-  notificationEditorRoute,
-  deliveryListRoute,
-  deliveryDetailRoute,
+  notificationListRoute.addChildren([
+    notificationNewRoute,
+    notificationDefinitionRoute,
+    notificationEditorRoute,
+  ]),
+  deliveryListRoute.addChildren([deliveryDetailRoute]),
   reviewRoute,
   configurationRoute,
   storageManagementRoute,

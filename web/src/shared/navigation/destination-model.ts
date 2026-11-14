@@ -214,7 +214,7 @@ const childDestinationData = [
     id: "operations-notifications",
     label: "Notifications",
     path: "/operations/notifications",
-    title: "Notifications | MediaFlow",
+    title: "通知 | MediaFlow",
     availability: "implemented" as const,
     description:
       "Webhook Definitions, signed endpoint tests and durable deliveries.",
@@ -223,7 +223,7 @@ const childDestinationData = [
     id: "operations-notification-new",
     label: "Create Webhook definition",
     path: "/operations/notifications/webhooks/new",
-    title: "Create Webhook definition | MediaFlow",
+    title: "新建 Webhook | MediaFlow",
     availability: "implemented" as const,
     description: "Bounded successor-Draft form for one Webhook definition.",
   },
@@ -231,7 +231,7 @@ const childDestinationData = [
     id: "operations-notification-definition",
     label: "Webhook definition",
     path: "/operations/notifications/webhooks/$webhookId",
-    title: "Webhook definition | MediaFlow",
+    title: "Webhook 定义 | MediaFlow",
     availability: "implemented" as const,
     description:
       "Active and Draft identity, secret readiness, signed test and actions.",
@@ -241,7 +241,7 @@ const childDestinationData = [
     id: "operations-notification-editor",
     label: "Webhook Draft editor",
     path: "/operations/notifications/editor/$webhookId",
-    title: "Webhook Draft editor | MediaFlow",
+    title: "编辑 Webhook 草稿 | MediaFlow",
     availability: "implemented" as const,
     description:
       "Bounded Draft form, explicit validation and checked activation.",
@@ -251,7 +251,7 @@ const childDestinationData = [
     id: "operations-notification-deliveries",
     label: "Notification deliveries",
     path: "/operations/notifications/deliveries",
-    title: "Notification deliveries | MediaFlow",
+    title: "通知投递记录 | MediaFlow",
     availability: "implemented" as const,
     description: "Bounded delivery list with status filter and paging.",
   },
@@ -259,7 +259,7 @@ const childDestinationData = [
     id: "operations-notification-delivery-detail",
     label: "Notification delivery detail",
     path: "/operations/notifications/deliveries/$deliveryId",
-    title: "Notification delivery detail | MediaFlow",
+    title: "投递详情 | MediaFlow",
     availability: "implemented" as const,
     description:
       "Exact delivery state, lease evidence and eligible recovery actions.",
