@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: B 在固定候选 `9329b1205cb3339fed7d73f3ec07f9f563793e02` 独立审查并执行 T4 验收。
+Next Action: Developer 在本 Task 内修复下述两项 B 阻塞，运行失败场景及直接受影响测试，再提交 READY FOR B REVIEW；B 对修正候选完成剩余 T4 验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,7 +15,7 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
 Implementation Head: 83a104eeef60300ab67f7c5df7a45d0f02a2b971
 Evidence Head: 9329b1205cb3339fed7d73f3ec07f9f563793e02
@@ -273,11 +273,102 @@ Webhook 身份集合不变且只有所选 URL 变成已编辑值；不相关配�
 并发／响应丢失和多卡片直接深链旅程。共享 `useModalLayer` 的 body 焦点回退改动已由
 modal／Shell 测试覆盖，B 仍应核对其直接消费者。
 
-### B Review Result
+### B Review Result — FIX REQUIRED（2026-11-14）
 
-尚未评审。B 在候选提交后记录固定 Base..Head、实际接受结果和
-PASS／FIX REQUIRED；修正在本 Task 内。PASS 后恢复 NO ACTIVE IMPLEMENTATION TASK
-及简短接受指针，不改变 Slice54 或大 Slice 关闭台账。
+固定审查范围：`51480dc318837e4f1e4f9c60c17b8e708abb6409`..
+`fd4856d1193ff9b8a76e5a4835a5eccc7ae8a7de`，共 18 个变更文件；产品实现
+`83a104eeef60300ab67f7c5df7a45d0f02a2b971`，原生证明脚本在证据提交
+`9329b1205cb3339fed7d73f3ec07f9f563793e02`。
+已核对 `9329b120..fd4856d1` 仅改本文件，执行输入相同。分支 `main`，审查起始工作区／
+暂存区干净，治理检查 PASS，工作区与 Git 可写。本次仅更新本 Task，不改产品实现。
+
+**交付核对。** 六页已接入两张列表背景和统一卡片，中文状态、分组表单及较宽输入控件
+已交付。B 独立从现有通知入口完成真实 Python API／临时 SQLite 旅程：只读浏览无配置写入
+或测试发送；显式测试恰好发送一次；保存、检查、发布使 Active 版本 1→2，只改变所选
+Webhook 地址；一条死信恢复为 pending，返回仍保留死信筛选，Tasks／Jobs 数量不变。
+独立查看桌面卡片、390px 编辑和恢复后截图，确认标题、输入和固定底栏的呈现改善。
+这些结果不代替下面两项未完成的恢复／效果要求，也不表示完整视觉矩阵或 T4 已通过。
+
+**阻塞 1：版本冲突后，用户没有保留输入并重新读取的入口。**
+
+真实操作：管理员甲乙分别从通知列表打开同一 Webhook 草稿；甲输入地址 A，乙输入
+地址 B 并保存；甲点击“保存到草稿”，收到真实 HTTP 409。甲仍看到 A，但页面只说
+“重新读取草稿后再提交”，卡片没有重新读取／刷新按钮，也没有“采用服务端值／保留
+本地输入”的选择。甲再次保存仍收到 409；关闭卡片需要放弃输入。正常编辑旅程无法继续。
+
+原因定位：`NotificationEditorPage.tsx` 保存失败分支（约第 285–297 行）只设置提示，
+正常已加载卡片没有读取入口；现有 refetch 按钮仅出现在读取错误状态。查询不随窗口焦点
+刷新，背景列表在卡片打开时不可操作；背景列表刷新也不读取该草稿。远端选择逻辑存在，
+但用户无法通过这条失败旅程触发它。现有 `NotificationRouter.test.tsx` 的远端更新用例
+直接调用 queryClient 失效查询，绕过了缺失的用户动作，不能证明此旅程可完成。
+Base 原编辑页有常规 RefreshControl，本次卡片改造移除了正常读取入口。
+本项阻塞 Implementation Scope 5 及并发／可修正输入验收。
+
+**阻塞 2：死信恢复后，接收效果被显示成“尚未收到”。**
+
+真实操作：用户从投递记录筛选死信，打开已有 HTTP 400 响应的一条记录，确认并点击
+“重新入队死信投递”。命令成功后同一记录变为 pending，主内容的“已知接收效果”却说
+“接收端尚未收到本投递”。此前的 HTTP 400 已证明发生过一次请求／响应；重新入队只说明
+会再安排尝试，不能证明接收端从未收到或未处理。用户据此判断是否可能重复发送会被误导。
+
+原因定位：新增 `notification-presentation.ts` 第 344–351 行只按 pending 状态生成
+“尚未收到”的断言；`DeliveryDetailPage.tsx` 第 341 行把它作为主结论。恢复后尝试计数
+重置为 0 也不能证明没有历史请求。Base 主内容显示服务端影响说明，本次新增中文映射
+强化成了没有证据支持的结论。本项阻塞投递结果／已知效果准确性验收；不要求改变后端
+恢复协议或新增历史 schema。
+
+### Developer Guidance — 本 Task 内修正
+
+1. **恢复可操作的读取旅程。** 在卡片中提供可见、键盘可达的现有对象读取动作，连接
+   对应查询；优先修好上述编辑 409 旅程，并检查此次同样移除常规读取入口的定义、新建和
+   投递详情，确保现有“重新读取”提示均有对应操作。读取本身不提交任何命令。
+   甲的本地输入与旧基线须保留；读到乙的新版本后，复用已实现的明确选择，采用服务端值
+   或保留本地输入，再由用户保存。不要用关闭重开／硬刷新丢输入来完成恢复。
+2. **纠正接收效果表述。** pending 说明等待下一次尝试；不据此断言接收端从未收到。
+   复用现有读回及命令结果表达已知事实和可能重复发送，保证主内容与恢复结果一致。
+   同一处状态映射里的死信原因也应按现有真实失败原因说明，不能把所有死信说成次数用尽
+   （现有 HTTP 4xx 可直接进入死信）。此处只改呈现，不改投递计数、Worker 或恢复协议。
+3. **按实际用户动作补回归。** 编辑用例从甲本地修改、乙保存、甲 409 开始，通过卡片
+   读取按钮走完两种选择；保留本地输入后保存成功并核对新版本与提交值，采用服务端值
+   则核对表单与旧证据失效。不要再用测试内部 queryClient 调用代替用户读取入口。
+   投递用例从真实 HTTP 400 死信确认恢复到 pending，核对主结论不再声称从未收到；
+   恢复仅一次、原身份及返回筛选保持。先跑这些失败场景、新改和直接受影响测试；
+   B 接手完整 T4，不把全量回归交给 Developer。
+
+修正后仍需由 B 核对原四个交互问题、完整失败／未知／权限及视觉矩阵，并运行适用全量
+门禁后才可 PASS。ID／Base／目标／非目标／Difficulty／T4 均保持；Slice54 为已关闭参考，
+不是父 Slice，SLICE／Roadmap／Progress 原接受事实保持。
+
+### B Actual Validation
+
+以下均为 B 本轮实际执行，测试使用新生产资产和隔离数据；没有生产接收端或用户媒体：
+
+```sh
+# cwd web
+npm run build
+# PASS；index-TDkfNVo5.js / index-CT0fyh28.css；保留构建的 chunk 大小提示
+
+# cwd repository
+.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts .git/validation-evidence/patch-20261114-3/b-native
+# PASS：只读／一次测试／精确草稿发布／单条恢复／返回筛选旅程
+
+.venv/bin/python .git/validation-evidence/patch-20261114-3/b-review/reproduce.py
+# 复现完成：真实第二写者导致甲连续两次 409；卡片读取按钮 0、远端选择 0，输入 A 保留；
+# 同一 HTTP 400 死信恢复后 pending，仍显示“接收端尚未收到”；显式测试请求 0。
+```
+
+证据保留于 `.git/validation-evidence/patch-20261114-3/b-native/` 和 `b-review/`，
+后者含独立复现代码、JSON、冲突与恢复后截图。复现复用已交付脚本的临时 API 装配，
+两个浏览器窗口分别通过 Connect、通知列表、查看定义、编辑草稿操作；未调用猜测入口、
+未从浏览器注入查询状态、未修改生产代码。此脚本的“复现完成”表示问题被观察到，不是
+产品验收通过。
+
+本轮未运行全量 Python／Web／Node E2E、wheel／源码外安装、真实权限／丢响应矩阵及
+1440×700／完整键盘／动效矩阵；按流程 §6 已证明阻塞后提前 FIX REQUIRED，剩余验收
+保留给修正候选，不视为 Developer 缺少全量报告。Docker 广域发布矩阵因本 Task 未改
+容器／部署路径不适用。构建和两项浏览执行合计少于 1 分钟，独立代码／文档审查与结果
+核对超过 10 分钟，测试时间低于本轮总时间 50%；未通过重复测试填充时间。
+`python3 scripts/check_governance.py`、`git diff --check` 均 PASS；本地 B 检查点仅含本文件。
 
 ## Latest accepted Task — PATCH-20261114-2
 
