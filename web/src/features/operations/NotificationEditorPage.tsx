@@ -96,6 +96,7 @@ export function NotificationEditorPage() {
   const [confirmActivate, setConfirmActivate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [savePermissionDenied, setSavePermissionDenied] = useState(false);
   const [validationNotice, setValidationNotice] = useState<{
     readonly context: string;
     readonly message: string;
@@ -126,6 +127,9 @@ export function NotificationEditorPage() {
   const serverValues =
     draft === null ? null : webhookFormFromDocument(draft.webhook);
   const currentForm = form ?? (serverValues !== null ? serverValues : null);
+  const saveAvailable = loadedDraft?.actions.save.available === true;
+  const readOnlyDraft =
+    draft !== null && (!saveAvailable || savePermissionDenied);
   const displayedContext =
     baseline === null ? "" : `${baseline.revisionId}:${baseline.version}`;
   const dirty =
@@ -262,6 +266,21 @@ export function NotificationEditorPage() {
   ]);
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 
+  // A fresh successful read is the authority for whether saving is available
+  // again. A failed read leaves the 403 state in place so the card cannot
+  // present an executable form that the server just denied.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (savePermissionDenied && loadedDraft?.actions.save.available === true) {
+      setSavePermissionDenied(false);
+    }
+  }, [
+    draftQuery.dataUpdatedAt,
+    loadedDraft?.actions.save.available,
+    savePermissionDenied,
+  ]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const draftMutation = useMutation({
     mutationFn: (activeRevisionId: string) =>
       createNotificationSuccessorDraft(token, { activeRevisionId }),
@@ -307,7 +326,10 @@ export function NotificationEditorPage() {
         object: input.object,
       }),
     retry: false,
-    onMutate: () => setError(null),
+    onMutate: () => {
+      setError(null);
+      setSavedNotice(null);
+    },
     onSuccess: (result, input) => {
       if (result.ok) {
         const saved = {
@@ -316,11 +338,16 @@ export function NotificationEditorPage() {
           status: "draft",
           values: input.values,
         };
+        const local = formRef.current;
+        const editedDuringSave =
+          local !== null && !sameWebhookForm(local, input.values);
         setBaseline(saved);
-        setForm(input.values);
         setRemote(null);
+        if (!editedDuringSave) setForm(input.values);
         setSavedNotice(
-          `已保存到草稿版本 ${result.model.version}；尚未生效。检查并发布后，已生效配置才会改变。`,
+          editedDuringSave
+            ? `已保存提交时的内容到草稿版本 ${result.model.version}；保存请求处理期间你继续输入的内容仍保留为未保存修改，尚未写入草稿。明确再次保存后才会写入新版本。`
+            : `已保存到草稿版本 ${result.model.version}；尚未生效。检查并发布后，已生效配置才会改变。`,
         );
         clearEvidence();
         void queryClient.invalidateQueries({
@@ -333,6 +360,17 @@ export function NotificationEditorPage() {
       }
       if (isUnknownCommandResult(result.status, result.code)) {
         setError(unknownCommandMessage("草稿可能已经保存"));
+        return;
+      }
+      if (result.status === 403) {
+        setShowIssues(false);
+        setSavePermissionDenied(true);
+        setError(
+          "保存没有执行（403）：当前账号没有保存这个草稿的权限。读取最新草稿以核对服务端提供的动作；如果仍无权限，请联系具备配置管理权限的管理员。系统没有自动重试。",
+        );
+        void queryClient.invalidateQueries({
+          queryKey: [notificationDraftQueryKey],
+        });
         return;
       }
       setShowIssues(true);
@@ -567,7 +605,11 @@ export function NotificationEditorPage() {
     confirmActivate;
 
   const title =
-    draft === null ? "编辑 Webhook 定义" : `编辑 Webhook ${draft.webhook.id}`;
+    draft === null
+      ? "编辑 Webhook 定义"
+      : readOnlyDraft
+        ? `查看 Webhook ${draft.webhook.id}`
+        : `编辑 Webhook ${draft.webhook.id}`;
   const titleId = "notification-edit-title";
   const retainedLocalInput =
     draft === null && currentForm !== null && baseline !== null;
@@ -590,6 +632,8 @@ export function NotificationEditorPage() {
     draft === null ||
     baseline === null ||
     currentForm === null ||
+    readOnlyDraft ||
+    !saveAvailable ||
     !dirty ||
     issues.length > 0;
 
@@ -605,7 +649,9 @@ export function NotificationEditorPage() {
           ? "当前没有打开的草稿；你尚未保存的输入仍保留在此卡片中，不会写入服务端。"
           : draft === null
             ? "没有打开的草稿包含这个 Webhook 定义。"
-            : "修改只写入打开的草稿；已生效配置在明确发布前保持不变。"
+            : readOnlyDraft
+              ? "当前账号只能查看这个草稿，不能保存修改、检查或发布。"
+              : "修改只写入打开的草稿；已生效配置在明确发布前保持不变。"
       }
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
@@ -620,7 +666,7 @@ export function NotificationEditorPage() {
           >
             关闭
           </Button>
-          {draft !== null && (
+          {draft !== null && !readOnlyDraft && saveAvailable && (
             <Button
               type="submit"
               form="notification-edit-form"
@@ -729,7 +775,121 @@ export function NotificationEditorPage() {
           )}
         </div>
       )}
-      {currentForm !== null && baseline !== null && (
+      {readOnlyDraft && serverValues !== null && draft !== null && (
+        <div className="mf-notification-card-scroll">
+          {readDegraded && (
+            <StatusBanner variant="warning" title="最新读取失败">
+              <p>
+                显示的是上次成功读取的草稿版本 {draft.revisionVersion}
+                。恢复读取后再核对当前权限和草稿内容。
+              </p>
+              <div className="mf-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void draftQuery.refetch()}
+                  disabled={draftQuery.isFetching}
+                >
+                  {draftQuery.isFetching ? "正在重试…" : "重试读取"}
+                </Button>
+              </div>
+            </StatusBanner>
+          )}
+          <StatusBanner variant="warning" title="只能查看这个草稿">
+            <p>
+              {notificationReasonLabel(
+                loadedDraft?.actions.save.reason ?? null,
+                "当前账号没有保存这个草稿的权限。",
+              )}
+            </p>
+            <p>
+              你仍可查看下列持久草稿内容。要修改、检查或发布，请联系具备配置管理权限的管理员；此页面不会写入草稿、发送测试或发布配置。
+            </p>
+            <div className="mf-notification-actions">
+              <Button
+                type="button"
+                onClick={() =>
+                  void navigate({
+                    to: "/operations/notifications/webhooks/$webhookId",
+                    params: { webhookId },
+                  })
+                }
+              >
+                查看定义
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={guard.attemptClose}
+              >
+                返回通知列表
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || draftQuery.isFetching}
+                onClick={() => void draftQuery.refetch()}
+              >
+                {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+              </Button>
+            </div>
+          </StatusBanner>
+          {error !== null && (
+            <StatusBanner variant="error" title="草稿操作没有完成">
+              <p>{error}</p>
+            </StatusBanner>
+          )}
+          <div className="mf-notification-detail-badges">
+            <span className="mf-notification-badge">
+              只读草稿 · 版本 {draft.revisionVersion}
+            </span>
+            <span className="mf-notification-badge">
+              {draft.revisionStatus === "validated" ? "已检查" : "草稿"}
+            </span>
+            <span className="mf-notification-badge">已生效配置不变</span>
+          </div>
+          <section className="mf-notification-form-section">
+            <h3>草稿内容（只读）</h3>
+            <dl className="mf-notification-facts">
+              <dt>HTTPS 接收地址</dt>
+              <dd className="mf-notification-endpoint">{serverValues.url}</dd>
+              <dt>密钥环境变量引用</dt>
+              <dd>{serverValues.secretEnv}</dd>
+              <dt>订阅事件</dt>
+              <dd>
+                {serverValues.events.map((event) => (
+                  <span className="mf-notification-event" key={event}>
+                    {notificationEventLabel(event)}
+                  </span>
+                ))}
+              </dd>
+              <dt>启用状态</dt>
+              <dd>{serverValues.enabled ? "已启用" : "已停用"}</dd>
+              <dt>超时与重试</dt>
+              <dd>
+                超时 {serverValues.timeoutSeconds} 秒 · 最多尝试{" "}
+                {serverValues.maxAttempts} 次 · 重试{" "}
+                {serverValues.baseRetrySeconds}–{serverValues.maxRetrySeconds}{" "}
+                秒
+              </dd>
+            </dl>
+            <details className="mf-notification-diagnostics">
+              <summary>诊断信息</summary>
+              <dl>
+                <dt>Webhook 标识</dt>
+                <dd>{draft.webhook.id}</dd>
+                <dt>草稿修订</dt>
+                <dd>{draft.revisionId}</dd>
+                <dt>草稿版本</dt>
+                <dd>{draft.revisionVersion}</dd>
+                <dt>事件标识</dt>
+                <dd>{serverValues.events.join(", ")}</dd>
+              </dl>
+            </details>
+          </section>
+        </div>
+      )}
+      {!readOnlyDraft && currentForm !== null && baseline !== null && (
         <form
           id="notification-edit-form"
           ref={formScrollRef}

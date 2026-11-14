@@ -368,6 +368,54 @@ function draftDocumentPayload(
   };
 }
 
+function deniedDraftActions(): Record<string, unknown> {
+  const reason =
+    "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)";
+  return {
+    createDraft: {
+      available: false,
+      reason,
+      method: "POST",
+      path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+      requiresConfirmation: false,
+      sideEffects: "none",
+      durableOutcome: "a successor Draft is stored",
+      nextAction: "ask for permission",
+    },
+    save: {
+      available: false,
+      reason,
+      method: "PUT",
+      path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
+      requiresConfirmation: false,
+      sideEffects: "none",
+      durableOutcome: "the bounded definition form is stored",
+      nextAction: "ask for permission",
+    },
+    validate: {
+      available: false,
+      reason,
+      method: "POST",
+      path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/validate`,
+      requiresConfirmation: false,
+      sideEffects: "none",
+      durableOutcome: "the open Draft is validated",
+      nextAction: "ask for permission",
+    },
+    activate: {
+      available: false,
+      reason,
+      method: "POST",
+      path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+      requiresConfirmation: true,
+      sideEffects: "none",
+      durableOutcome: "the reviewed Draft becomes Active",
+      nextAction: "ask for permission",
+    },
+    test: action({ available: false, reason }),
+  };
+}
+
 function deliveryListItem(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -1210,6 +1258,169 @@ describe("NotificationEditorPage", () => {
     });
     expect(JSON.stringify(saveCall?.body)).not.toMatch(/secretValue|Bearer /i);
     expect(await view.findByText(/已保存到草稿版本 5/)).toBeVisible();
+  });
+
+  it("preserves input typed while a save response is in flight and requires a second explicit save", async () => {
+    const state = editorResponder();
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const { calls } = recordingFetch((call) => {
+      if (call.method === "PUT") {
+        const response = state.responder(call);
+        if (response === undefined) throw new Error("missing save response");
+        return saveGate.then(() => response);
+      }
+      return state.responder(call);
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://example.invalid/hooks/submitted-a");
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    await waitFor(() => {
+      expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+    });
+
+    const typedDuringSave = "https://example.invalid/hooks/typed-during-save";
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, typedDuringSave);
+    expect(urlInput).toHaveValue(typedDuringSave);
+    releaseSave();
+
+    expect(
+      await view.findByText(
+        /已保存提交时的内容到草稿版本 5；保存请求处理期间你继续输入的内容仍保留为未保存修改/,
+      ),
+    ).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(typedDuringSave);
+    expect(view.getByText("有未保存修改", { exact: true })).toBeVisible();
+    expect(view.queryByText("当前输入与已保存草稿一致")).toBeNull();
+    expect(view.getByRole("button", { name: "检查草稿" })).toBeDisabled();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+
+    const draftReads = () =>
+      calls.filter(
+        (call) => call.method === "GET" && call.url.endsWith("/draft"),
+      ).length;
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: "读取最新草稿" })).toBeEnabled();
+    });
+    const readsBefore = draftReads();
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
+    await waitFor(() => expect(draftReads()).toBe(readsBefore + 1));
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(typedDuringSave);
+    expect(view.getByText("有未保存修改", { exact: true })).toBeVisible();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/已保存到草稿版本 6/)).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(typedDuringSave);
+    const saves = calls.filter((call) => call.method === "PUT");
+    expect(saves).toHaveLength(2);
+    expect(saves[0].body).toMatchObject({
+      expectedVersion: 4,
+      object: { url: "https://example.invalid/hooks/submitted-a" },
+    });
+    expect(saves[1].body).toMatchObject({
+      expectedVersion: 5,
+      object: { url: typedDuringSave },
+    });
+  });
+
+  it("shows a read-only deep link without a fillable form, save or test request", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "GET" &&
+        call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)
+      ) {
+        return jsonResponse(
+          draftDocumentPayload({ actions: deniedDraftActions() }),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
+    const view = within(await dialog());
+    expect(
+      await view.findByRole("heading", {
+        name: `查看 Webhook ${WEBHOOK_ID}`,
+      }),
+    ).toBeVisible();
+    expect(
+      await view.findByText("当前账号没有所需的 Webhook 配置管理权限。"),
+    ).toBeVisible();
+    expect(view.getByText("只能查看这个草稿")).toBeVisible();
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
+    expect(view.queryByRole("button", { name: "保存到草稿" })).toBeNull();
+    expect(view.queryByRole("button", { name: "检查草稿" })).toBeNull();
+    expect(view.queryByRole("button", { name: "发送签名测试" })).toBeNull();
+    expect(
+      view.getByText("https://example.invalid/hooks/mediaflow"),
+    ).toBeVisible();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+
+    await userEvent.click(view.getByRole("button", { name: "查看定义" }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(
+        `/operations/notifications/webhooks/${WEBHOOK_ID}`,
+      );
+    });
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+  });
+
+  it("turns a real save 403 into the permission reason and removes the form", async () => {
+    let denied = false;
+    const state = editorResponder();
+    const { calls } = recordingFetch((call) => {
+      if (call.method === "PUT") {
+        denied = true;
+        return jsonResponse({ error: { code: "permission_denied" } }, 403);
+      }
+      if (
+        denied &&
+        call.method === "GET" &&
+        call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)
+      ) {
+        return jsonResponse(
+          draftDocumentPayload({ actions: deniedDraftActions() }),
+        );
+      }
+      return state.responder(call);
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(
+      urlInput,
+      "https://example.invalid/hooks/no-permission",
+    );
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+
+    expect(
+      await view.findByText(
+        /保存没有执行（403）：当前账号没有保存这个草稿的权限/,
+      ),
+    ).toBeVisible();
+    expect(view.queryByText(/表单或草稿版本已过期/)).toBeNull();
+    expect(await view.findByText("只能查看这个草稿")).toBeVisible();
+    expect(
+      view.getByText("当前账号没有所需的 Webhook 配置管理权限。"),
+    ).toBeVisible();
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
+    expect(view.queryByRole("button", { name: "保存到草稿" })).toBeNull();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
   });
 
   it("sends a test only for the saved revision and invalidates it on input change", async () => {

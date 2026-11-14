@@ -46,6 +46,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "notification-proof-throwaway-token"
+VIEWER_TOKEN = "notification-proof-viewer-token"
 WEBHOOK_ID = "proof-webhook"
 SECRET_ENV = "MEDIAFLOW_WEBHOOK_PROOF_SECRET"
 SECRET_VALUE = "notification-proof-secret-value"
@@ -175,11 +176,12 @@ def start_api(root: Path):
     repository = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
 
     admin = ResolvedApiPrincipal(TOKEN, TOKEN, frozenset(ApiPermission))
+    viewer = ResolvedApiPrincipal(VIEWER_TOKEN, VIEWER_TOKEN, frozenset({ApiPermission.READ}))
     transport = RecordingTransport(204)
     api = MediaFlowApi(
         repository,
         None,
-        principals=(admin,),
+        principals=(admin, viewer),
         configuration_service=configuration,
         bootstrap_document=document,
         webhook_transport=transport,
@@ -255,6 +257,7 @@ import { chromium, expect } from '@playwright/test';
 
 const base = process.env.MF_PROOF_BASE;
 const token = process.env.MF_PROOF_TOKEN;
+const webhookId = process.env.MF_PROOF_WEBHOOK_ID;
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -288,6 +291,7 @@ try {
     .getByRole('button', { name: '关闭', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+
   console.log(JSON.stringify({ readOnly: true }));
 } finally {
   await browser.close();
@@ -301,6 +305,7 @@ import path from 'node:path';
 
 const base = process.env.MF_PROOF_BASE;
 const token = process.env.MF_PROOF_TOKEN;
+const viewerToken = process.env.MF_PROOF_VIEWER_TOKEN;
 const secret = process.env.MF_PROOF_SECRET;
 const artifacts = process.env.MF_PROOF_ARTIFACTS;
 const deliveryId = process.env.MF_PROOF_DELIVERY_ID;
@@ -366,6 +371,55 @@ try {
   await expect(
     page.getByRole('dialog').getByRole('heading', { name: `编辑 Webhook ${webhookId}` }),
   ).toBeVisible();
+
+  // The same existing editor deep link, opened as a READ principal after
+  // re-authentication, must not offer a fillable form, save or signed test.
+  const draftBeforeViewer = await api(
+    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+  );
+  const viewerPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  try {
+    await viewerPage.goto(
+      base + `/ui-v2/operations/notifications/editor/${webhookId}`,
+    );
+    await viewerPage.getByLabel('API token').fill(viewerToken);
+    await viewerPage.getByRole('button', { name: 'Connect' }).click();
+    const viewerDialog = viewerPage.getByRole('dialog');
+    await expect(viewerDialog).toBeVisible();
+    await expect(
+      viewerDialog.getByRole('heading', { name: `查看 Webhook ${webhookId}` }),
+    ).toBeVisible();
+    await expect(
+      viewerDialog.getByText('当前账号没有所需的 Webhook 配置管理权限。', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    if ((await viewerDialog.getByRole('button', { name: '保存到草稿' }).count()) > 0) {
+      throw new Error('the READ principal received an executable save control');
+    }
+    if ((await viewerDialog.getByLabel('HTTPS 接收地址').count()) > 0) {
+      throw new Error('the READ principal received a fillable editor form');
+    }
+    if ((await viewerDialog.getByRole('button', { name: '发送签名测试' }).count()) > 0) {
+      throw new Error('the READ principal received a signed-test control');
+    }
+    await viewerDialog.getByRole('button', { name: '查看定义' }).click();
+    await expect(
+      viewerPage.getByRole('dialog').getByRole('heading', { name: `Webhook ${webhookId}` }),
+    ).toBeVisible();
+  } finally {
+    await viewerPage.close();
+  }
+  const draftAfterViewer = await api(
+    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+  );
+  if (
+    draftAfterViewer.draft?.revisionId !== draftBeforeViewer.draft?.revisionId ||
+    draftAfterViewer.draft?.revisionVersion !==
+      draftBeforeViewer.draft?.revisionVersion
+  ) {
+    throw new Error('the READ principal deep link changed the open Draft');
+  }
 
   await page.getByLabel('HTTPS 接收地址').fill('https://example.invalid/hooks/proof-edited');
 
@@ -488,6 +542,8 @@ try {
     screenshots,
     deliveryId,
     crossPublishedReadPreserved: true,
+    readOnlyDeepLink: true,
+    readOnlyDraftVersionUnchanged: true,
     tokenStored: false,
     secretRendered: false,
   }));
@@ -497,7 +553,7 @@ try {
 """
 
 
-def run_browser(code: str, state: dict, artifacts: Path) -> dict:
+def run_browser(code: str, state: dict, artifacts: Path, token: str = TOKEN) -> dict:
     node = shutil.which("node")
     if node is None:
         raise RuntimeError("node is required for the browser proof")
@@ -507,7 +563,8 @@ def run_browser(code: str, state: dict, artifacts: Path) -> dict:
         env={
             **os.environ,
             "MF_PROOF_BASE": state["base"],
-            "MF_PROOF_TOKEN": TOKEN,
+            "MF_PROOF_TOKEN": token,
+            "MF_PROOF_VIEWER_TOKEN": VIEWER_TOKEN,
             "MF_PROOF_SECRET": SECRET_VALUE,
             "MF_PROOF_ARTIFACTS": str(artifacts),
             "MF_PROOF_DELIVERY_ID": state["delivery_id"],
@@ -573,7 +630,7 @@ def main() -> int:
         before_delivery_rows = len(state["delivery_repository"].list_deliveries(limit=100))
         before_delivery_status = delivery_status(state["delivery_repository"], state["delivery_id"])
 
-        run_browser(READ_ONLY_BROWSER, state, artifacts)
+        run_browser(READ_ONLY_BROWSER, state, artifacts, token=VIEWER_TOKEN)
         read_only_version = state["configuration"].active().version
         read_only_transport = len(state["transport"].requests)
         read_only_delivery_rows = len(state["delivery_repository"].list_deliveries(limit=100))
@@ -637,6 +694,11 @@ def main() -> int:
             "activeVersionAfter": after_version,
             "webhookTransportRequests": after_transport - before_transport,
             "readOnlyNavigationWrote": False,
+            "readOnlyPrincipal": "READ",
+            "readOnlyDeepLink": bool(browser_evidence.get("readOnlyDeepLink")),
+            "readOnlyDraftVersionUnchanged": bool(
+                browser_evidence.get("readOnlyDraftVersionUnchanged")
+            ),
             "crossPublishedReadPreserved": bool(
                 browser_evidence.get("crossPublishedReadPreserved")
             ),
