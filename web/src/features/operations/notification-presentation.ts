@@ -337,14 +337,24 @@ export function canonicalWebhookForm(
   };
 }
 
-/** A bounded Chinese statement of what the durable delivery state proves. */
+/**
+ * A bounded Chinese statement of what the durable delivery state proves.
+ *
+ * A queue state is not delivery evidence: ``pending`` (including a requeued
+ * dead letter) only proves that no new confirmed outcome exists. It never
+ * proves that the receiver was not reached earlier, so the wording keeps that
+ * history explicitly unknown. A dead letter names the recorded failure
+ * category instead of assuming every dead letter exhausted its attempts
+ * (an HTTP 4xx can enter the terminal state directly).
+ */
 export function knownNotificationEffects(
   status: string,
   leaseState: string,
+  failureCategory: string | null = null,
 ): string {
   switch (status) {
     case "pending":
-      return "接收端尚未收到本投递；等待 Notification Worker 领取后发送。";
+      return "当前没有已确认的发送结果；等待 Notification Worker 领取后发送。此前是否已有请求到达接收端，不能仅由当前状态证明。";
     case "delivering":
       return leaseState === "expired"
         ? "投递租约已过期，接收端是否处理未知；原尝试可能已经到达接收端。"
@@ -354,7 +364,7 @@ export function knownNotificationEffects(
     case "delivered":
       return "接收端已确认成功；不会自动再次发送。";
     case "dead-letter":
-      return "配置的尝试次数已经用尽，接收端没有确认成功。恢复会把同一投递再次发送，接收端需要容忍重复。";
+      return `没有确认成功：${failureCategoryLabel(failureCategory) ?? "未记录可确认的失败类别"}。投递已进入死信；恢复会以相同身份再次发送，接收端需要容忍重复，此前请求是否已被处理未知。`;
     default:
       return "当前状态没有提供可确认的接收效果。";
   }

@@ -297,13 +297,27 @@ export function DeliveryDetailPage() {
             <span className="mf-notification-badge">
               {notificationEventLabel(delivery.eventType)}
             </span>
+            {!readDegraded && (
+              <span className="mf-notification-read-action">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy || query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  {query.isFetching ? "正在读取…" : "读取最新投递"}
+                </Button>
+              </span>
+            )}
           </div>
 
           <section className="mf-notification-form-section">
             <h3>结论与已知影响</h3>
             <p className="mf-notification-conclusion">
               {failureCategoryLabel(delivery.failureCategory) ??
-                deliveryStatusLabel(delivery.status)}
+                (delivery.status === "pending"
+                  ? "待投递 · 等待下一次尝试"
+                  : deliveryStatusLabel(delivery.status))}
             </p>
             <p className="mf-notification-field-help">
               {nextStepForStatus(delivery.status)}
@@ -338,7 +352,11 @@ export function DeliveryDetailPage() {
               </dd>
               <dt>已知接收效果</dt>
               <dd>
-                {knownNotificationEffects(delivery.status, model.lease.state)}
+                {knownNotificationEffects(
+                  delivery.status,
+                  model.lease.state,
+                  delivery.failureCategory,
+                )}
               </dd>
             </dl>
             <details className="mf-notification-diagnostics">

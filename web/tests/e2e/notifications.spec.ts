@@ -124,7 +124,14 @@ test("the signed test sends exactly one bound request and never touches deliveri
     new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await expect(
-    page.getByText("密钥引用：已就绪", { exact: true }),
+    page.getByRole("dialog").getByText("密钥引用：已就绪", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "读取最新定义" })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByText("密钥引用：已就绪", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "发送签名测试" }).click();
   await expect(page.getByText(/测试成功/)).toBeVisible();
@@ -231,6 +238,9 @@ test("an authorized operator creates a Webhook definition inside the open Draft"
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/webhooks\/new$/,
   );
+  await expect(
+    page.getByRole("button", { name: "读取最新草稿状态" }),
+  ).toBeVisible();
   // The canonical deployment-owned secret reference is accepted; no secret
   // value is ever requested or stored.
   await page.getByLabel("标识符").fill("created-webhook");
@@ -465,6 +475,17 @@ test("the delivery list filters dead letters and the detail card requeues with e
   await expect(page.getByText(/重新入队已完成/)).toBeVisible();
   await expect(
     page.getByRole("dialog").getByText("待投递", { exact: true }).first(),
+  ).toBeVisible();
+  // The requeue only proves a new pending attempt. It never proves that the
+  // earlier HTTP 400 request was never received or processed.
+  await expect(
+    page.getByRole("dialog").getByText(/当前没有已确认的发送结果/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText(/接收端尚未收到/),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "读取最新投递" }),
   ).toBeVisible();
 
   const evidence = await notificationsEvidence(page);

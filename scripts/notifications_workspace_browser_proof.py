@@ -265,12 +265,22 @@ try {
   await expect(page.getByRole('dialog')).toBeVisible();
   await page
     .getByRole('dialog')
+    .getByRole('button', { name: '读取最新定义', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page
+    .getByRole('dialog')
     .getByRole('button', { name: '关闭', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('link', { name: '查看投递记录' }).click();
   await expect(page.getByRole('heading', { name: '通知投递记录', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '查看投递' }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '读取最新投递', exact: true })
+    .click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page
     .getByRole('dialog')
@@ -343,6 +353,8 @@ try {
   screenshots.push(await shot(page, 'editor-card-390'));
   await page.getByRole('button', { name: '保存到草稿', exact: true }).click();
   await expect(page.getByText(/已保存到草稿版本/)).toBeVisible();
+  await page.getByRole('button', { name: '读取最新草稿' }).click();
+  await expect(page.getByText(/已保存到草稿版本/)).toBeVisible();
   await page.getByRole('button', { name: '检查草稿', exact: true }).click();
   await expect(page.getByRole('heading', { name: '草稿检查通过' })).toBeVisible();
   await page
@@ -370,6 +382,13 @@ try {
   await deliveryDialog.getByLabel('我确认重新入队这条精确的死信投递').check();
   await deliveryDialog.getByRole('button', { name: '重新入队死信投递' }).click();
   await expect(deliveryDialog.getByText(/重新入队已完成/)).toBeVisible();
+  await expect(deliveryDialog.getByText('待投递', { exact: true }).first()).toBeVisible();
+  await expect(deliveryDialog.getByText(/当前没有已确认的发送结果/)).toBeVisible();
+  if ((await deliveryDialog.getByText(/接收端尚未收到/).count()) > 0) {
+    throw new Error('the requeued delivery still claims the receiver was never reached');
+  }
+  await deliveryDialog.getByRole('button', { name: '读取最新投递' }).click();
+  await expect(deliveryDialog.getByText(/当前没有已确认的发送结果/)).toBeVisible();
   await deliveryDialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(page.getByRole('combobox', { name: '投递状态' })).toHaveValue('dead-letter');

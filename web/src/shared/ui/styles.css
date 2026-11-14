@@ -10610,6 +10610,15 @@ tr[aria-selected="true"] {
   flex-wrap: wrap;
 }
 
+.mf-notification-read-action {
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.mf-notification-read-action .mf-button {
+  margin: 0;
+}
+
 .mf-notification-conclusion {
   margin: 0;
   color: #14223c;
@@ -10867,6 +10876,10 @@ tr[aria-selected="true"] {
   .mf-notification-card-head {
     flex-direction: column;
     gap: 6px;
+  }
+
+  .mf-notification-read-action {
+    margin-left: 0;
   }
 
   .mf-notification-toolbar-primary > .mf-button,

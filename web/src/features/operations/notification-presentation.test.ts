@@ -61,14 +61,37 @@ describe("notification presentation helpers", () => {
   });
 
   it("states the durable known receive effect without promising delivery", () => {
+    expect(knownNotificationEffects("pending", "not_leased")).toMatch(
+      /没有已确认的发送结果/,
+    );
+    expect(knownNotificationEffects("pending", "not_leased")).not.toMatch(
+      /尚未收到/,
+    );
     expect(knownNotificationEffects("delivered", "not_leased")).toMatch(
       /不会自动再次发送/,
     );
     expect(knownNotificationEffects("delivering", "expired")).toMatch(
       /是否处理未知/,
     );
+  });
+
+  it("names the recorded dead-letter reason instead of assuming exhausted attempts", () => {
+    const rejected = knownNotificationEffects(
+      "dead-letter",
+      "not_leased",
+      "http_400",
+    );
+    expect(rejected).toMatch(/接收端返回 HTTP 400/);
+    expect(rejected).toMatch(/容忍重复/);
+    expect(rejected).not.toMatch(/尝试次数已经用尽/);
+    expect(
+      knownNotificationEffects("dead-letter", "not_leased", "transport"),
+    ).toMatch(/网络传输失败/);
+    expect(
+      knownNotificationEffects("dead-letter", "not_leased", "configuration"),
+    ).toMatch(/通知配置缺失或不可用/);
     expect(knownNotificationEffects("dead-letter", "not_leased")).toMatch(
-      /容忍重复/,
+      /未记录可确认的失败类别/,
     );
   });
 

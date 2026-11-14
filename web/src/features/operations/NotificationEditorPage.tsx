@@ -636,6 +636,14 @@ export function NotificationEditorPage() {
             <Button type="button" variant="secondary" onClick={closeCard}>
               返回通知列表
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy || draftQuery.isFetching}
+              onClick={() => void draftQuery.refetch()}
+            >
+              {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+            </Button>
           </div>
           {error !== null && (
             <StatusBanner variant="error" title="操作没有完成">
@@ -701,6 +709,18 @@ export function NotificationEditorPage() {
               </span>
             )}
             <span className="mf-notification-badge">已生效配置不变</span>
+            {!readDegraded && (
+              <span className="mf-notification-read-action">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy || draftQuery.isFetching}
+                  onClick={() => void draftQuery.refetch()}
+                >
+                  {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+                </Button>
+              </span>
+            )}
           </div>
 
           {savedNotice !== null && (

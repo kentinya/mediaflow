@@ -3,7 +3,6 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
-import { notificationDraftQueryKey } from "./notification-query";
 
 /**
  * Component/router proof for the V2 Notification journey after
@@ -443,6 +442,28 @@ function deliveryDetailPayload(
   };
 }
 
+/** The real API's document after a dead letter was requeued to pending. */
+function pendingDeliveryDetailPayload(): Record<string, unknown> {
+  return deliveryDetailPayload({
+    status: "pending",
+    attempts: 0,
+    nextAttemptAt: "2026-09-12T00:06:00+00:00",
+    updatedAt: "2026-09-12T00:05:30+00:00",
+    deliveredAt: null,
+    failureCategory: null,
+    responseStatus: null,
+    knownEffects: "No outbound request for this delivery has completed.",
+    nextAction:
+      "No manual action required; the notification worker will claim this delivery when it is due.",
+    recovery: {
+      availableActions: [],
+      reason: "This delivery is pending automatic delivery.",
+      actions: [],
+    },
+    actions: {},
+  });
+}
+
 async function connect(): Promise<void> {
   authStore.setToken(TOKEN);
 }
@@ -555,7 +576,7 @@ describe("NotificationListPage", () => {
 
 describe("NotificationNewPage", () => {
   it("does not render a fillable form without an editable Draft", async () => {
-    recordingFetch((call) => {
+    const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/operations/notifications/webhooks") {
         return jsonResponse(
           listPayload({
@@ -605,6 +626,24 @@ describe("NotificationNewPage", () => {
     expect(view.queryByLabelText("标识符")).toBeNull();
     expect(view.queryByRole("button", { name: "保存到草稿" })).toBeNull();
     expect(view.getByRole("button", { name: "创建后继草稿" })).toBeEnabled();
+    const read = view.getByRole("button", { name: "读取最新草稿状态" });
+    expect(read).toBeEnabled();
+    const readsBefore = calls.filter(
+      (call) =>
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/notifications/webhooks",
+    ).length;
+    await userEvent.click(read);
+    await waitFor(() => {
+      expect(
+        calls.filter(
+          (call) =>
+            call.method === "GET" &&
+            call.url === "/api/v1/operations/notifications/webhooks",
+        ).length,
+      ).toBe(readsBefore + 1);
+    });
+    expect(view.queryByLabelText("标识符")).toBeNull();
   });
 });
 
@@ -1318,50 +1357,163 @@ describe("NotificationEditorPage", () => {
     ).toHaveLength(1);
   });
 
-  it("holds a remote Draft change instead of silently rebinding local input", async () => {
-    let serverVersion = 4;
-    let serverUrl = "https://example.invalid/hooks/mediaflow";
-    recordingFetch((call) => {
-      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
-        return jsonResponse(
-          draftDocumentPayload({
-            draft: {
-              revisionId: DRAFT_REVISION,
-              revisionVersion: serverVersion,
-              revisionStatus: "validated",
-              baseActiveRevisionId: ACTIVE_REVISION,
-              updatedAt: "2026-09-12T00:00:00+00:00",
-              validatedAt: "2026-09-12T00:01:00+00:00",
-              validationErrors: [],
-              webhook: webhookDocument({ url: serverUrl }),
-            },
-          }),
-        );
-      }
-      return undefined;
-    });
+  function draftConflictSession() {
+    let version = 4;
+    let url = "https://example.invalid/hooks/mediaflow";
+    let status = "validated";
+    return {
+      remoteWrite(nextUrl: string) {
+        version += 1;
+        url = nextUrl;
+        status = "draft";
+      },
+      responder(call: Call): Response | undefined {
+        if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+          return jsonResponse(
+            draftDocumentPayload({
+              draft: {
+                revisionId: DRAFT_REVISION,
+                revisionVersion: version,
+                revisionStatus: status,
+                baseActiveRevisionId: ACTIVE_REVISION,
+                updatedAt: "2026-09-12T00:00:00+00:00",
+                validatedAt:
+                  status === "validated" ? "2026-09-12T00:01:00+00:00" : null,
+                validationErrors: [],
+                webhook: webhookDocument({ url }),
+              },
+            }),
+          );
+        }
+        if (
+          call.url ===
+          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+        ) {
+          const body = call.body as {
+            expectedVersion?: number;
+            object?: { url?: string };
+          };
+          if (body.expectedVersion !== version) {
+            return jsonResponse(
+              { error: { code: "configuration_version_conflict" } },
+              409,
+            );
+          }
+          version += 1;
+          url = body.object?.url ?? url;
+          status = "draft";
+          return jsonResponse({
+            revisionId: DRAFT_REVISION,
+            version,
+            status,
+            webhook: webhookDocument({ url }),
+          });
+        }
+        if (call.url.endsWith(`/revisions/${DRAFT_REVISION}/validate`)) {
+          status = "validated";
+          return jsonResponse({
+            revisionId: DRAFT_REVISION,
+            version,
+            status,
+            validationErrors: [],
+          });
+        }
+        return undefined;
+      },
+    };
+  }
+
+  it("recovers from a real 409 through the card read control and keeps local input", async () => {
+    const session = draftConflictSession();
+    const { calls } = recordingFetch((call) => session.responder(call));
     await connect();
-    const { queryClient } = renderApp(
-      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
-    );
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
-    await userEvent.type(urlInput, "https://local.invalid/kept");
-    serverVersion = 5;
-    serverUrl = "https://server.invalid/new";
-    await queryClient.invalidateQueries({
-      queryKey: [notificationDraftQueryKey, WEBHOOK_ID],
-    });
+    await userEvent.type(urlInput, "https://example.invalid/hooks/admin-a");
+
+    // A second writer saves a newer Draft version before this card submits.
+    session.remoteWrite("https://example.invalid/hooks/admin-b");
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(
+      await view.findByText(/保存没有应用：草稿在你编辑期间已经变化/),
+    ).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/admin-a",
+    );
+    const failedSaves = calls.filter((call) => call.method === "PUT");
+    expect(failedSaves).toHaveLength(1);
+
+    const draftReads = () =>
+      calls.filter(
+        (call) => call.method === "GET" && call.url.endsWith("/draft"),
+      ).length;
+    const readsBefore = draftReads();
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
     expect(await view.findByText(/草稿已在其他位置更新/)).toBeVisible();
     expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
-      "https://local.invalid/kept",
+      "https://example.invalid/hooks/admin-a",
     );
-    await userEvent.click(view.getByRole("button", { name: "采用服务端值" }));
-    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
-      "https://server.invalid/new",
+    expect(draftReads()).toBe(readsBefore + 1);
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+
+    await userEvent.click(
+      view.getByRole("button", { name: "保留本地输入并重新保存" }),
     );
     expect(view.queryByText(/草稿已在其他位置更新/)).toBeNull();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/admin-a",
+    );
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/已保存到草稿版本 6/)).toBeVisible();
+
+    const saves = calls.filter((call) => call.method === "PUT");
+    expect(saves).toHaveLength(2);
+    expect(saves[1].body).toMatchObject({
+      expectedVersion: 5,
+      object: { url: "https://example.invalid/hooks/admin-a" },
+    });
+    expect(JSON.stringify(saves[1].body)).not.toMatch(/Bearer |digest/i);
+  });
+
+  it("adopts the server Draft after a 409 and invalidates the old evidence", async () => {
+    const session = draftConflictSession();
+    const { calls } = recordingFetch((call) => session.responder(call));
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.click(view.getByRole("button", { name: "检查草稿" }));
+    expect(await view.findByText("草稿检查通过")).toBeVisible();
+    const confirmBox = view.getByLabelText(
+      "我确认把当前已检查的草稿发布为新的已生效配置",
+    );
+    await userEvent.click(confirmBox);
+    expect(confirmBox).toBeChecked();
+
+    const urlInput = view.getByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, "https://example.invalid/hooks/admin-a");
+    session.remoteWrite("https://example.invalid/hooks/admin-b");
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(
+      await view.findByText(/保存没有应用：草稿在你编辑期间已经变化/),
+    ).toBeVisible();
+
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
+    expect(await view.findByText(/草稿已在其他位置更新/)).toBeVisible();
+    await userEvent.click(view.getByRole("button", { name: "采用服务端值" }));
+    expect(view.queryByText(/草稿已在其他位置更新/)).toBeNull();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/admin-b",
+    );
+    expect(view.queryByText("草稿检查通过")).toBeNull();
+    expect(
+      view.getByLabelText("我确认把当前已检查的草稿发布为新的已生效配置"),
+    ).not.toBeChecked();
+    expect(view.getByRole("button", { name: "保存到草稿" })).toBeDisabled();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   });
 
   it("keeps the known save result when the follow-up read fails", async () => {
@@ -1415,7 +1567,7 @@ describe("NotificationEditorPage", () => {
   });
 
   it("does not render a fillable form when no Draft can be edited", async () => {
-    recordingFetch((call) => {
+    const { calls } = recordingFetch((call) => {
       if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
         return jsonResponse(
           draftDocumentPayload({
@@ -1474,6 +1626,20 @@ describe("NotificationEditorPage", () => {
     expect(await view.findByText(/当前没有渲染可填写的表单/)).toBeVisible();
     expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
     expect(view.getByRole("button", { name: "创建后继草稿" })).toBeDisabled();
+    const read = view.getByRole("button", { name: "读取最新草稿" });
+    expect(read).toBeEnabled();
+    const readsBefore = calls.filter(
+      (call) => call.method === "GET" && call.url.endsWith("/draft"),
+    ).length;
+    await userEvent.click(read);
+    await waitFor(() => {
+      expect(
+        calls.filter(
+          (call) => call.method === "GET" && call.url.endsWith("/draft"),
+        ).length,
+      ).toBe(readsBefore + 1);
+    });
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
   });
 });
 
@@ -1541,14 +1707,18 @@ describe("DeliveryListPage", () => {
 });
 
 describe("DeliveryDetailPage recovery", () => {
-  it("requires explicit confirmation and submits the exact observed fence", async () => {
+  it("recovers a real HTTP 400 dead letter to pending without claiming the receiver was never reached", async () => {
+    let recovered = false;
     const { calls } = recordingFetch((call) => {
       if (
         call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
       ) {
-        return jsonResponse(deliveryDetailPayload());
+        return jsonResponse(
+          recovered ? pendingDeliveryDetailPayload() : deliveryDetailPayload(),
+        );
       }
       if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+        recovered = true;
         return jsonResponse({
           action: "requeue-dead-letter",
           outcome: "success",
@@ -1562,7 +1732,7 @@ describe("DeliveryDetailPage recovery", () => {
           atLeastOnce: "receivers must tolerate duplicates",
           duplicateImplication: "duplicates",
           nextAction: "refresh this delivery",
-          delivery: deliveryDetailPayload({ status: "pending" }),
+          delivery: pendingDeliveryDetailPayload(),
         });
       }
       return undefined;
@@ -1570,6 +1740,10 @@ describe("DeliveryDetailPage recovery", () => {
     await connect();
     renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
+    expect(
+      await view.findByText("接收端返回 HTTP 400", { exact: true }),
+    ).toBeVisible();
+    expect(view.getByText(/没有确认成功：接收端返回 HTTP 400/)).toBeVisible();
     const button = await view.findByRole("button", {
       name: "重新入队死信投递",
     });
@@ -1595,6 +1769,16 @@ describe("DeliveryDetailPage recovery", () => {
       expectedUpdatedAt: "2026-09-12T00:05:00+00:00",
     });
     expect(await view.findByText(/重新入队已完成/)).toBeVisible();
+    expect(await view.findByText(/当前没有已确认的发送结果/)).toBeVisible();
+    expect(view.queryByText(/接收端尚未收到/)).toBeNull();
+    expect(
+      view.getByText("待投递 · 等待下一次尝试", { exact: true }),
+    ).toBeVisible();
+    expect(
+      calls.filter(
+        (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+      ),
+    ).toHaveLength(1);
   });
 
   it("reports an unknown recovery result without replaying it", async () => {

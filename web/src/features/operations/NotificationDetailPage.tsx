@@ -435,6 +435,18 @@ export function NotificationDetailPage() {
                 定义无效
               </span>
             )}
+            {!readDegraded && (
+              <span className="mf-notification-read-action">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy || query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  {query.isFetching ? "正在读取…" : "读取最新定义"}
+                </Button>
+              </span>
+            )}
           </div>
 
           {!document.structuralValid && document.validationError !== null && (

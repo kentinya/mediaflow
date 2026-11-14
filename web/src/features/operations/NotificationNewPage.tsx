@@ -30,6 +30,7 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import {
   buildWebhookObject,
+  draftStatusLabel,
   notificationEventLabel,
   notificationReasonLabel,
   sameWebhookForm,
@@ -306,6 +307,14 @@ export function NotificationNewPage() {
             <Button type="button" variant="secondary" onClick={closeCard}>
               返回通知列表
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy || query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              {query.isFetching ? "正在读取…" : "读取最新草稿状态"}
+            </Button>
           </div>
           {!page.actions.createDraft.available &&
             page.actions.createDraft.reason !== null && (
@@ -369,6 +378,25 @@ export function NotificationNewPage() {
                 </Button>
               </div>
             </StatusBanner>
+          )}
+          {!readDegraded && (
+            <div className="mf-notification-state-strip">
+              <span className="mf-notification-badge">
+                打开的草稿 · 版本 {draft.revisionVersion ?? "未知"} ·{" "}
+                {draftStatusLabel(draft.revisionStatus)}
+              </span>
+              <span className="mf-notification-badge">已生效配置不变</span>
+              <span className="mf-notification-read-action">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy || query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  {query.isFetching ? "正在读取…" : "读取最新草稿状态"}
+                </Button>
+              </span>
+            </div>
           )}
           <StatusBanner variant="info" title="先保存，再检查并发布">
             <p>
