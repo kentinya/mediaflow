@@ -241,6 +241,19 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     ).toHaveCount(1);
     await card.getByRole("radio", { name: /候选 2/ }).check();
     await saveNativeDecision(page, card);
+    if (index === 1) {
+      // The replaced save control must not drop keyboard focus onto the inert
+      // Files background: the same stage boundary takes it back.
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            Boolean(
+              document.activeElement?.classList.contains("mf-organize-stage"),
+            ),
+          ),
+        )
+        .toBe(true);
+    }
 
     await driveDiscovery(request, true);
     await expect(card.getByText("纳入本次整理").first()).toBeVisible({
