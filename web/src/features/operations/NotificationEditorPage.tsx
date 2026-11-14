@@ -548,7 +548,11 @@ export function NotificationEditorPage() {
 
   const updateForm = (patch: Partial<WebhookFormValues>) => {
     if (currentForm === null) return;
-    setForm({ ...currentForm, ...patch });
+    const next = { ...currentForm, ...patch };
+    // Keep the latest operator input available synchronously so a save result
+    // that arrives before the next effect cannot restore the submitted value.
+    formRef.current = next;
+    setForm(next);
     setError(null);
     setSavedNotice(null);
     clearEvidence();
