@@ -1,7 +1,8 @@
-# Task PATCH-20261114-2 — 文件浏览工具栏与表头呈现修复
+# NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: B 独立审查候选 `6a358085d1fc622c0257c545d83be41539d38620`；Developer
-已完成实施与受影响测试，无 PASS／FIX REQUIRED 结论。
+Next Action: 独立修复已完成；本检查点记录 B 验收，后续保留简短结果指针。
+
+## Accepted Task PATCH-20261114-2 — 文件浏览工具栏与表头呈现修复
 
 用户于 2026-11-14 在规划检查点 `d3d984a50d3364d06f9e763a1231d4299b5a1e9b`
 后明确“激活 Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -11,7 +12,7 @@ Next Action: B 独立审查候选 `6a358085d1fc622c0257c545d83be41539d38620`；D
 Task ID: PATCH-20261114-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 4107c299d8f99b817fcd3cbdffa274de1f5598ea
 Difficulty: Medium
 Test Level: T3
@@ -41,7 +42,7 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-14
 
 激活前 HEAD 为上述规划检查点，分支 `main`，工作区无变更；治理检查 PASS。
 Task Base 仍为原始产品基线，不因纯规划／激活提交重新设定。实施后候选状态为
-READY FOR B REVIEW；B 独立审查保持。
+PASS；B 已独立审查完整 Task Base..交接 Head。
 
 ### Observed behavior and cause
 
@@ -94,22 +95,22 @@ READY FOR B REVIEW；B 独立审查保持。
 
 ### Acceptance criteria
 
-- [ ] 两页非空列表和网格都有紧凑、可读的当前页排序状态及显示设置入口；默认态不再
+- [x] 两页非空列表和网格都有紧凑、可读的当前页排序状态及显示设置入口；默认态不再
   单独占一行陈列恢复按钮，不显示“服务端”实现术语，不以新增大段提示替代旧行。
-- [ ] 名称／大小排序方向和作用域明确，未激活提示不抢视线；菜单恢复入口可发现，
+- [x] 名称／大小排序方向和作用域明确，未激活提示不抢视线；菜单恢复入口可发现，
   默认禁用、可执行时启用；顺序／列宽分别恢复，网格列宽动作不冒充可用。
-- [ ] 菜单鼠标与纯键盘均可完成，Escape／外点关闭、焦点和视口边缘定位正确；不被
+- [x] 菜单鼠标与纯键盘均可完成，Escape／外点关闭、焦点和视口边缘定位正确；不被
   表格滚动区裁切，不抢文件右键菜单，不让恢复动作触发刷新或文件命令。
-- [ ] 四列调宽可发现且可操作，hover／focus／拖动有清楚反馈；双击恢复不排序。
+- [x] 四列调宽可发现且可操作，hover／focus／拖动有清楚反馈；双击恢复不排序。
   用户设定列宽与可见边界一致，剩余空白不被偷偷分摊回列内。
-- [ ] 名称／大小排序算法、目录大小未知、等值精确路径稳定排序和前后空白身份保留；
+- [x] 名称／大小排序算法、目录大小未知、等值精确路径稳定排序和前后空白身份保留；
   列表／网格选择、计数、精确命令对象以及切目录／翻页／刷新／失败重试的会话保持通过。
-- [ ] `1536×1024`、`2048×1024`、`390×844`、`1280×600` 下，路径／操作／数据层级
+- [x] `1536×1024`、`2048×1024`、`390×844`、`1280×600` 下，路径／操作／数据层级
   协调；长名、长路径、时间和选中态可读，溢出限于原有有界区域，不产生整页横向溢出。
   检查稳定画面、菜单开关、调宽过程及 reduced-motion，不仅凭 DOM／固定 CSS 数值验收。
-- [ ] 慢读取、真实空／无匹配、读取错误与恢复正确，快速切目录／视图不串状态，
+- [x] 慢读取、真实空／无匹配、读取错误与恢复正确，快速切目录／视图不串状态，
   整页重载恢复默认；纯排序／调宽／菜单无额外目录读取、工作创建、配置发布或媒体变更。
-- [ ] 现行呈现说明与实际交付一致，既有接受身份及安全边界保持；所有必需验收有实际
+- [x] 现行呈现说明与实际交付一致，既有接受身份及安全边界保持；所有必需验收有实际
   结果，未运行／失败／跳过如实交接，不删除断言或加重试掩盖问题。
 
 ### Required tests
@@ -228,9 +229,69 @@ npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/files-read-ha
 
 ### B review result
 
-候选 `6a358085d1fc622c0257c545d83be41539d38620` 已提交 READY FOR B REVIEW；B 独立验收
-尚未执行，无 PASS／FIX REQUIRED 结论。独立 Task 经实际验收 PASS 后按 workflow §3.1
-恢复简短 no-active notice，保留精确 reviewed Base..Head 和结果指针；不宣布 Slice 关闭。
+#### PATCH-20261114-2 — B PASS
+
+```text
+Reviewer: B
+Date: 2026-11-14
+Task Base: 4107c299d8f99b817fcd3cbdffa274de1f5598ea
+Implementation Head: 6a358085d1fc622c0257c545d83be41539d38620
+Reviewed Handoff Head: a98403804f23a47d4bac771def3fc5f07234fcde
+Decision: PASS
+Task blockers: NONE
+Authorized bug acceptance complete: YES
+Next: NO ACTIVE IMPLEMENTATION TASK
+```
+
+**审查范围与交付结果。** B 独立阅读完整 Base..交接 Head 的 15 文件改动；实现 Head 后
+仅有 TASK 交接文字，执行输入未变。两页共用工具栏状态／菜单、表头／图标、调宽反馈、
+11 个 Web 文件及 3 份呈现文档均在授权范围，排序算法、选择身份和页面级设置沿用原实现。
+未改后端、Active、权限、schema、Storage、依赖或执行协议。独立修复全部验收已满足，
+无下一 Task；Slice54 保持原 PASS / CLOSED，SLICE／Roadmap／Progress 未变。
+
+**实际用户旅程。** 从已有文件页选库，打开真实 `Live` 目录→名称排序→调宽→选择
+`Gamma-Directory`→切换网格／列表，选择和设置一致。打开该实际目录时让本次目录请求
+发生网络中断，页面显示原读取错误且不残留显示菜单；点击已有 `Refresh` 恢复到真实
+`child.txt`，原排序／列宽仍在。恢复顺序保留列宽，恢复列宽保留顺序。经现有侧栏进入
+媒体库，实际 `Live` 目录慢读取、长名称／前导空白、菜单与拖动通过；拖动的声明宽度
+与可见边界均为 863px。两页补验 Space／Enter、方向键、Home／End、Tab、Escape、外点和
+回焦；纯菜单／排序／调宽零额外目录读取，补充旅程实际 API 请求全为 GET。
+
+**视觉。** 分别构建原 Base 和候选，用同一隔离 Node 假服务数据做两页四视口前后对照；
+查看稳定画面、默认／自定义、菜单及真实临时库截图。独立重置行移除，淡色表头连贯，
+菜单未被滚动区裁切，四视口无整页横向溢出。真实长名称、读取中间态／错误／恢复、
+拖动状态和 390px 浏览可用。实际开启 reduced-motion 后操作正常，排序提示与调宽提示
+的 transition duration 均为 0s；全页重载并正常重认证后，两种恢复项回到默认禁用。
+
+**B 执行结果**（以下 npm／npx 命令 cwd 为 `web/`，完整参数同上方 Required tests）：
+
+| 命令／范围 | 实际结果 |
+|---|---|
+| 5 个受影响 Vitest 文件 | 5 文件／112 项 PASS |
+| `npm run typecheck`、`npm run lint` | PASS |
+| 11 个改动 Web 文件 `npx prettier --check` | PASS |
+| `npm run build` | PASS，299 modules；产物 SHA-256 已留存 |
+| 4 个指定 Node E2E 文件，独立 `--output` | 71 项 PASS |
+| `playwright.python.config.ts` 的 `live-files.python.spec.ts` | 6 项 PASS，真实临时 API／SQLite／Local 根 |
+| 两页四视口、键盘与真实目录补充旅程 | PASS，截图／观测 JSON／请求记录已留存 |
+| 治理、完整 Base..Head whitespace 和改动文档链接核对 | PASS |
+
+上述自动化／静态命令含原失败及重跑的累计耗时约 130 秒；浏览器补充核对为短操作，
+本轮主要用于完整代码／文档审查和结果核对，测试耗时低于本轮总耗时的 50%。
+没有为完成比例人为等待或补跑无关套件。
+
+**原失败和验证限制。** B 首轮并行启动 Node／Python E2E 时，两者使用默认
+`web/test-results`，Node 在完成用例后关闭浏览器／归档 trace 遭遇 ENOENT，结果
+70 PASS／1 归档失败。保留 `node-e2e.log`；Python 6 项通过，随后 Node 使用独立
+`--output` 完整重跑 71 项通过，未修改断言、超时或重试设置。Vitest 有 jsdom 既有
+`scrollTo` 未实现提示；构建保留大 bundle 提示，均非本次失败。收尾首次将 PASS 留在活动
+Task 格式下时，治理检查拒绝；已按 §3.1 改为无活动实施 Task 的验收记录格式，复查通过。
+全仓库全量、wheel、Docker
+及生产环境未运行：本 T3 未改对应运行／包装路径，按原测试计划不适用，未宣称远程 CI。
+
+本机证据：`.git/validation-evidence/6a358085d1fc622c0257c545d83be41539d38620/patch-20261114-2-b/`，
+包含所有命令日志、`build-sha256.json`、`visual-review.json`、`requests.json`、原 Base 构建
+和前后截图。证据目录被忽略，不进入产品提交。当前收尾只记 Task 结果，未 push／部署。
 
 ## Latest accepted Task — PATCH-20261114-1
 
