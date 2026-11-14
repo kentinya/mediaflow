@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 在本 Task 内修复“其他管理员发布后读取会丢本地输入”的阻塞，运行该旅程及直接受影响测试，再交 B 完成剩余 T4 验收。
+Next Action: B 在固定候选 `ed8b7f4f2872c14488544fbfdc8164ba150ab752` 上复核跨发布读取保留、后继草稿保留输入保存及剩余 T4 验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,10 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
-Implementation Head: 93996b687e4b39cba612141b6dfc804aecac0292
-Evidence Head: 93996b687e4b39cba612141b6dfc804aecac0292
+Implementation Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
+Evidence Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -430,6 +430,91 @@ strict-mode 匹配失败；仅将该定位限定到 dialog 后重跑完成，首
 打包／安装、完整权限／丢响应／视觉矩阵；这些仍由 B 在修正候选验收，不转交 Developer。
 本轮构建及浏览执行累计少于 1 分钟，其余为代码／文档审查、截图和结果核对、开发指导；
 测试耗时低于本轮总时间 50%。没有改产品代码，没有推送或部署。
+
+### Developer Completion Report — FIX ROUND 2（2026-11-14）
+
+Status READY FOR B REVIEW。实现提交 `ed8b7f4f2872c14488544fbfdc8164ba150ab752`；
+本报告提交仅改 `TASK.md`。Task Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、API／领域／
+持久化协议、SLICE、Roadmap 或 Progress，未推送、发布或部署。
+
+修复：
+
+- 读取到“没有打开的草稿”且存在未保存本地输入时，不再清除表单和原始基线。卡片保留
+  输入，显示“草稿已不再打开，本地输入已保留”、原草稿版本、已生效配置可能已变化，
+  并提供显式“创建后继草稿”和“放弃本地输入”。读取只发 GET；旧保存提示、检查／测试
+  证据和发布确认失效。该状态隐藏保存、检查、测试和发布段，按 Enter 也不能沿用旧修订
+  提交。创建后继草稿后，新修订作为显式选择出现；只有“保留本地输入并重新保存”才把后续
+  保存绑定到新 revision／version，“采用服务端值”才替换本地输入。卡片正文回到顶部，
+  说明与选择不会被旧滚动位置遮住。
+- 读取到不同草稿修订且存在本地输入时同样保留输入，显示“读取到另一个草稿修订”的采用／
+  保留选择，不静默替换。同修订版本变化的并发选择保持原行为。无草稿且无本地输入时仍显示
+  原“没有可编辑草稿”说明，不渲染可填写表单。
+- 原生浏览证明增加真实第二写者：通过真实 Python API 保存、检查并发布浏览器正在编辑的
+  同一草稿；浏览器点击既有“读取最新草稿”后本地输入保留，再通过既有“创建后继草稿”、
+  “保留本地输入并重新保存”完成保存／检查／发布，最终 Active 只包含浏览器保留的地址。
+  证据记录 `crossPublishedReadPreserved: true` 和
+  `finalActiveWebhookUrl: https://example.invalid/hooks/proof-edited`。
+
+新增或加强的定向回归（均通过既有按钮完成，不调用内部 `queryClient`）：
+
+- 乙发布后甲读取：本地地址保留、GET 增加、零 PUT、零 successor、零测试；创建后继草稿后
+  明确保留本地输入，保存请求绑定新修订 `revision-draft-2`、版本 `1` 和本地地址。
+- 读取到乙已创建的另一草稿修订：本地输入保留，明确采用服务端值后才替换，且没有写请求。
+- 乙发布后读取、关闭提示继续编辑、再显式放弃：输入移除并回到无草稿说明，零写请求。
+
+验证（Developer 实际执行）：
+
+```sh
+cd web
+npm run test -- run src/entities/operations/notification.test.ts \
+  src/features/operations/notification-presentation.test.ts \
+  src/features/operations/NotificationRouter.test.tsx \
+  src/routes/router.test.tsx src/shared/ui/modal-card.test.tsx \
+  src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+# 7 files, 177 tests passed
+
+npm run typecheck && npm run lint && npm run format:check
+# PASS
+
+npm run build
+# PASS；index-R_L0IApw.js / index-B0R4k6Jb.css；保留既有 chunk 体积提示
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts \
+  --output=test-results/patch-20261114-3-developer-fix-node-r4
+# 12 passed
+```
+
+真实 Python 原生证明：
+
+```sh
+.venv/bin/python scripts/notifications_workspace_browser_proof.py \
+  --artifacts .git/validation-evidence/patch-20261114-3/developer-fix-r2/native-r3
+.venv/bin/ruff check scripts/notifications_workspace_browser_proof.py
+.venv/bin/ruff format --check scripts/notifications_workspace_browser_proof.py
+python3 scripts/check_governance.py
+git diff --check
+```
+
+结果：PASS。只读浏览未改变 Active、未发送测试、未创建投递；显式签名测试恰 1 次
+transport 请求；第二写者发布后浏览器读取仍保留本地输入；后继草稿由既有 UI 动作创建，
+保留输入后保存／检查／发布，最终 Active 地址为浏览器保留值；只有所选 Webhook 改变，
+兄弟身份集合、无关配置区段、Tasks／Jobs 行数不变；一条死信恢复为 pending。证据目录
+（未提交）：`.git/validation-evidence/patch-20261114-3/developer-fix-r2/native-r3/`，
+含 `evidence.json` 和保留输入、快照与投递截图。
+
+保留的首次失败：新增第二写者浏览器步骤后首次原生证明因背景列表与卡片存在同名
+“创建后继草稿”触发 Playwright strict-mode 重复匹配，限定到 `dialog` 后通过，不是产品
+失败。首次把正文滚动写为 `scrollTo` 的 7 文件定向测试有 2 个新增用例在 jsdom 报
+`formScrollRef.current.scrollTo is not a function`，改为设置 `scrollTop` 后重跑全通过；
+该失败记录保留。首张保留输入截图因旧滚动位置未显示说明，已增加回到卡片正文顶部并重新
+截图核对。
+
+未运行／交 B：真实双浏览器第二写者 409、权限边界、迟到响应／切换对象、1440×700 与
+390px 完整视觉／键盘矩阵、T4 全量 Python／Web／Node E2E、wheel／Docker 适用门禁。
+原生证明的“第二写者”使用真实 Python API 同进程写入，不是两个独立浏览器；B 仍需按原
+计划复核。定向 Vitest、Node E2E、原生证明与静态检查累计约半分钟，实现、差异审查与证据
+核对占主要时间，测试时间低于本轮总时间 30%。
 
 ## Latest accepted Task — PATCH-20261114-2
 
