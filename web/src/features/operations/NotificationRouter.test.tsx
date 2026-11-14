@@ -1516,6 +1516,305 @@ describe("NotificationEditorPage", () => {
     expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   });
 
+  function draftLifecycleSession() {
+    let draft: {
+      revisionId: string;
+      version: number;
+      status: string;
+      url: string;
+    } | null = {
+      revisionId: DRAFT_REVISION,
+      version: 4,
+      status: "validated",
+      url: "https://example.invalid/hooks/mediaflow",
+    };
+    let activeRevisionId = ACTIVE_REVISION;
+    let activeVersion = 3;
+    let activeUrl = "https://example.invalid/hooks/mediaflow";
+
+    const activeConfiguration = () => ({
+      revisionId: activeRevisionId,
+      version: activeVersion,
+      revisionSequence: 2,
+      status: "active",
+    });
+
+    const actions = () => {
+      const revisionId = draft?.revisionId ?? null;
+      const noDraftReason =
+        "an open successor Draft is required to edit this Webhook definition";
+      return {
+        createDraft: {
+          available: true,
+          reason: null,
+          method: "POST",
+          path: `/api/v1/configuration/revisions/${activeRevisionId}/successor`,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome:
+            "a successor Draft seeded from the immutable Active configuration is stored",
+          nextAction:
+            "create the successor Draft, then edit this Webhook definition inside it",
+        },
+        save: {
+          available: revisionId !== null,
+          reason: revisionId === null ? noDraftReason : null,
+          method: "PUT",
+          path:
+            revisionId === null
+              ? null
+              : `/api/v1/configuration/revisions/${revisionId}/objects/webhooks/${WEBHOOK_ID}`,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome:
+            "the bounded definition form is stored in the open successor Draft",
+          nextAction: "save the bounded form, then validate and activate",
+        },
+        validate: {
+          available: revisionId !== null,
+          reason: revisionId === null ? noDraftReason : null,
+          method: "POST",
+          path:
+            revisionId === null
+              ? null
+              : `/api/v1/configuration/revisions/${revisionId}/validate`,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome:
+            "the open Draft is validated without any runtime effect",
+          nextAction: "validate the Draft, then review the validation evidence",
+        },
+        activate: {
+          available: revisionId !== null,
+          reason: revisionId === null ? noDraftReason : null,
+          method: "POST",
+          path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+          requiresConfirmation: true,
+          sideEffects: "none",
+          durableOutcome:
+            "the exact reviewed Webhook-only Draft change becomes Active",
+          nextAction: "activate the reviewed Draft after validating it",
+        },
+        test: action(
+          revisionId === null
+            ? { available: false, reason: noDraftReason }
+            : {},
+          WEBHOOK_ID,
+        ),
+      };
+    };
+
+    return {
+      publish(url: string) {
+        draft = null;
+        activeRevisionId = DRAFT_REVISION;
+        activeVersion = 5;
+        activeUrl = url;
+      },
+      replaceOpenDraft(revisionId: string, version: number, url: string) {
+        draft = { revisionId, version, status: "draft", url };
+      },
+      responder(call: Call): Response | undefined {
+        if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+          if (draft === null) {
+            return jsonResponse(
+              draftDocumentPayload({
+                activeConfiguration: activeConfiguration(),
+                webhook: webhookDocument({ url: activeUrl }),
+                draft: null,
+                actions: actions(),
+              }),
+            );
+          }
+          return jsonResponse(
+            draftDocumentPayload({
+              activeConfiguration: activeConfiguration(),
+              webhook: webhookDocument({ url: activeUrl }),
+              draft: {
+                revisionId: draft.revisionId,
+                revisionVersion: draft.version,
+                revisionStatus: draft.status,
+                baseActiveRevisionId: activeRevisionId,
+                updatedAt: "2026-09-12T00:00:00+00:00",
+                validatedAt:
+                  draft.status === "validated"
+                    ? "2026-09-12T00:01:00+00:00"
+                    : null,
+                validationErrors: [],
+                webhook: webhookDocument({ url: draft.url }),
+              },
+              actions: actions(),
+            }),
+          );
+        }
+        if (
+          call.url ===
+          `/api/v1/configuration/revisions/${activeRevisionId}/successor`
+        ) {
+          draft = {
+            revisionId: "revision-draft-2",
+            version: 1,
+            status: "draft",
+            url: activeUrl,
+          };
+          return jsonResponse(
+            { revisionId: draft.revisionId, created: true },
+            201,
+          );
+        }
+        if (
+          draft !== null &&
+          call.url ===
+            `/api/v1/configuration/revisions/${draft.revisionId}/objects/webhooks/${WEBHOOK_ID}`
+        ) {
+          const body = call.body as {
+            expectedVersion?: number;
+            object?: { url?: string };
+          };
+          if (body.expectedVersion !== draft.version) {
+            return jsonResponse(
+              { error: { code: "configuration_version_conflict" } },
+              409,
+            );
+          }
+          draft = {
+            ...draft,
+            version: draft.version + 1,
+            status: "draft",
+            url: body.object?.url ?? draft.url,
+          };
+          return jsonResponse({
+            revisionId: draft.revisionId,
+            version: draft.version,
+            status: draft.status,
+            webhook: webhookDocument({ url: draft.url }),
+          });
+        }
+        return undefined;
+      },
+    };
+  }
+
+  it("preserves unsaved input after another administrator publishes the Draft and saves it in a new successor", async () => {
+    const session = draftLifecycleSession();
+    const { calls } = recordingFetch((call) => session.responder(call));
+    const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
+    const publishedUrl = "https://example.invalid/hooks/published-by-b";
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, unsavedUrl);
+
+    session.publish(publishedUrl);
+    const readsBefore = calls.filter(
+      (call) => call.method === "GET" && call.url.endsWith("/draft"),
+    ).length;
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
+    expect(
+      await view.findByText("草稿已不再打开，本地输入已保留"),
+    ).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(unsavedUrl);
+    expect(
+      calls.filter(
+        (call) => call.method === "GET" && call.url.endsWith("/draft"),
+      ),
+    ).toHaveLength(readsBefore + 1);
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/successor"),
+      ),
+    ).toHaveLength(0);
+
+    await userEvent.click(view.getByRole("button", { name: "创建后继草稿" }));
+    expect(await view.findByText("读取到另一个草稿修订")).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(unsavedUrl);
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/successor"),
+      ),
+    ).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+
+    await userEvent.click(
+      view.getByRole("button", { name: "保留本地输入并重新保存" }),
+    );
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/已保存到草稿版本 2/)).toBeVisible();
+    const saves = calls.filter((call) => call.method === "PUT");
+    expect(saves).toHaveLength(1);
+    expect(saves[0].url).toBe(
+      "/api/v1/configuration/revisions/revision-draft-2/objects/webhooks/ops-webhook",
+    );
+    expect(saves[0].body).toMatchObject({
+      expectedVersion: 1,
+      object: { url: unsavedUrl },
+    });
+  });
+
+  it("holds local input when a read opens a different Draft revision and adopts only on choice", async () => {
+    const session = draftLifecycleSession();
+    const { calls } = recordingFetch((call) => session.responder(call));
+    const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
+    const serverUrl = "https://example.invalid/hooks/server-revision";
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, unsavedUrl);
+
+    session.replaceOpenDraft("revision-draft-2", 2, serverUrl);
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
+    expect(await view.findByText("读取到另一个草稿修订")).toBeVisible();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(unsavedUrl);
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+
+    await userEvent.click(view.getByRole("button", { name: "采用服务端值" }));
+    expect(view.queryByText("读取到另一个草稿修订")).toBeNull();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(serverUrl);
+    expect(view.getByRole("button", { name: "保存到草稿" })).toBeDisabled();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+  });
+
+  it("discards retained local input only through the explicit discard action", async () => {
+    const session = draftLifecycleSession();
+    const { calls } = recordingFetch((call) => session.responder(call));
+    const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, unsavedUrl);
+
+    session.publish("https://example.invalid/hooks/published-by-b");
+    await userEvent.click(view.getByRole("button", { name: "读取最新草稿" }));
+    expect(
+      await view.findByText("草稿已不再打开，本地输入已保留"),
+    ).toBeVisible();
+
+    await userEvent.click(view.getByRole("button", { name: "关闭通知卡片" }));
+    const prompt = await view.findByRole("alertdialog");
+    expect(within(prompt).getByText("有未保存的修改")).toBeVisible();
+    await userEvent.click(
+      within(prompt).getByRole("button", { name: "继续编辑" }),
+    );
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(unsavedUrl);
+
+    await userEvent.click(view.getByRole("button", { name: "放弃本地输入" }));
+    expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
+    expect(await view.findByText(/当前没有渲染可填写的表单/)).toBeVisible();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/successor"),
+      ),
+    ).toHaveLength(0);
+  });
+
   it("keeps the known save result when the follow-up read fails", async () => {
     const state = editorResponder({ failReadsAfter: 1 });
     recordingFetch((call) => state.responder(call));

@@ -64,6 +64,11 @@ interface SavedDraft {
   readonly values: WebhookFormValues;
 }
 
+interface RemoteDraft extends SavedDraft {
+  /** Whether the same revision moved or a different Draft revision was read. */
+  readonly kind: "updated" | "revision";
+}
+
 const ALL_FORM_FIELDS = [
   "url",
   "secretEnv",
@@ -85,7 +90,7 @@ export function NotificationEditorPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<WebhookFormValues | null>(null);
   const [baseline, setBaseline] = useState<SavedDraft | null>(null);
-  const [remote, setRemote] = useState<SavedDraft | null>(null);
+  const [remote, setRemote] = useState<RemoteDraft | null>(null);
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const [showIssues, setShowIssues] = useState(false);
   const [confirmActivate, setConfirmActivate] = useState(false);
@@ -102,6 +107,7 @@ export function NotificationEditorPage() {
 
   const formRef = useRef(form);
   const baselineRef = useRef(baseline);
+  const formScrollRef = useRef<HTMLFormElement | null>(null);
   useEffect(() => {
     formRef.current = form;
   }, [form]);
@@ -143,19 +149,62 @@ export function NotificationEditorPage() {
   // Reconcile the durable Draft into the local saved baseline. A version or
   // status move with no local edits is adopted directly. A move while local
   // input exists is held as an explicit remote choice; the old input is never
-  // silently paired with the new version.
+  // silently paired with the new version. Losing the open Draft (another
+  // administrator published it) and reading a different Draft revision must
+  // preserve unsaved input instead of clearing or replacing it.
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (loadedDraft === null || loadedDraft.draft === null) {
+    if (loadedDraft === null) return;
+    const server = loadedDraft.draft;
+    const previous = baselineRef.current;
+    const local = formRef.current;
+    const hasLocalEdits =
+      previous !== null &&
+      local !== null &&
+      !sameWebhookForm(local, previous.values);
+
+    if (server === null) {
+      setRemote(null);
+      if (hasLocalEdits) {
+        // The read proves there is no open Draft, but the operator still owns
+        // input made against the old revision. Keep both local input and its
+        // original baseline; never bind them to an unread successor Draft.
+        setSavedNotice(null);
+        clearEvidence();
+        return;
+      }
       setBaseline(null);
       setForm(null);
-      setRemote(null);
       return;
     }
-    const server = loadedDraft.draft;
+
     const values = webhookFormFromDocument(server.webhook);
-    const previous = baselineRef.current;
-    if (previous === null || previous.revisionId !== server.revisionId) {
+    if (previous === null) {
+      setBaseline({
+        revisionId: server.revisionId,
+        version: server.revisionVersion,
+        status: server.revisionStatus,
+        values,
+      });
+      setForm(values);
+      setRemote(null);
+      setSavedNotice(null);
+      clearEvidence();
+      return;
+    }
+    if (previous.revisionId !== server.revisionId) {
+      if (hasLocalEdits) {
+        setSavedNotice(null);
+        clearEvidence();
+        setRemote({
+          revisionId: server.revisionId,
+          version: server.revisionVersion,
+          status: server.revisionStatus,
+          values,
+          kind: "revision",
+        });
+        return;
+      }
       setBaseline({
         revisionId: server.revisionId,
         version: server.revisionVersion,
@@ -179,9 +228,6 @@ export function NotificationEditorPage() {
     ) {
       return;
     }
-    const local = formRef.current;
-    const hasLocalEdits =
-      local !== null && !sameWebhookForm(local, previous.values);
     if (!hasLocalEdits) {
       const versionChanged = previous.version !== server.revisionVersion;
       setBaseline({
@@ -207,6 +253,7 @@ export function NotificationEditorPage() {
       version: server.revisionVersion,
       status: server.revisionStatus,
       values,
+      kind: "updated",
     });
   }, [
     loadedDraft?.draft?.revisionId,
@@ -493,6 +540,19 @@ export function NotificationEditorPage() {
     clearEvidence();
   };
 
+  const discardRetainedLocalInput = () => {
+    // Explicit choice after the open Draft disappeared: discard only the card
+    // input. Nothing is written; the background list and Active stay as read.
+    setForm(null);
+    setBaseline(null);
+    setRemote(null);
+    setTouched(new Set());
+    setShowIssues(false);
+    setError(null);
+    setSavedNotice(null);
+    clearEvidence();
+  };
+
   const canTest =
     canUseSavedVersion && loadedDraft?.actions.test.available === true;
   const canValidate =
@@ -509,10 +569,25 @@ export function NotificationEditorPage() {
   const title =
     draft === null ? "编辑 Webhook 定义" : `编辑 Webhook ${draft.webhook.id}`;
   const titleId = "notification-edit-title";
+  const retainedLocalInput =
+    draft === null && currentForm !== null && baseline !== null;
+  const baselineIsOpenDraft =
+    draft !== null &&
+    baseline !== null &&
+    draft.revisionId === baseline.revisionId;
+
+  useEffect(() => {
+    // The retained-input explanation and its explicit choices grow above the
+    // existing form. Bring the card body back to its top so the operator sees
+    // why the read changed state and what happens next.
+    const element = formScrollRef.current;
+    if (retainedLocalInput && element !== null) element.scrollTop = 0;
+  }, [retainedLocalInput]);
   const saveDisabled =
     busy ||
     readDegraded ||
     remote !== null ||
+    draft === null ||
     baseline === null ||
     currentForm === null ||
     !dirty ||
@@ -526,9 +601,11 @@ export function NotificationEditorPage() {
       title={title}
       titleId={titleId}
       description={
-        draft === null
-          ? "没有打开的草稿包含这个 Webhook 定义。"
-          : "修改只写入打开的草稿；已生效配置在明确发布前保持不变。"
+        retainedLocalInput
+          ? "当前没有打开的草稿；你尚未保存的输入仍保留在此卡片中，不会写入服务端。"
+          : draft === null
+            ? "没有打开的草稿包含这个 Webhook 定义。"
+            : "修改只写入打开的草稿；已生效配置在明确发布前保持不变。"
       }
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
@@ -603,7 +680,7 @@ export function NotificationEditorPage() {
             </div>
           </NotificationCardStatus>
         )}
-      {loadedDraft !== null && draft === null && (
+      {loadedDraft !== null && draft === null && !retainedLocalInput && (
         <div className="mf-notification-card-scroll">
           <StatusBanner variant="info" title="没有可编辑的草稿">
             <p>
@@ -652,13 +729,22 @@ export function NotificationEditorPage() {
           )}
         </div>
       )}
-      {draft !== null && currentForm !== null && baseline !== null && (
+      {currentForm !== null && baseline !== null && (
         <form
           id="notification-edit-form"
+          ref={formScrollRef}
           className="mf-notification-card-scroll"
           onSubmit={(event) => {
             event.preventDefault();
-            if (busy || readDegraded) return;
+            if (
+              busy ||
+              readDegraded ||
+              draft === null ||
+              remote !== null ||
+              !dirty
+            ) {
+              return;
+            }
             setShowIssues(true);
             setTouched(new Set(ALL_FORM_FIELDS));
             if (issues.length > 0) {
@@ -693,22 +779,89 @@ export function NotificationEditorPage() {
               </div>
             </StatusBanner>
           )}
+          {retainedLocalInput && (
+            <StatusBanner
+              variant="warning"
+              title="草稿已不再打开，本地输入已保留"
+            >
+              <p>
+                读取显示这份打开的草稿已经不存在，通常表示另一位管理员已经保存并发布。
+                你尚未保存的输入仍显示在下方；系统没有写入服务端，也没有把本地输入静默绑定到新的草稿修订。
+              </p>
+              <p>
+                已生效配置可能已经变化。创建后继草稿后，再明确选择保留本地输入或采用服务端值；也可以直接放弃本地输入。
+              </p>
+              <div className="mf-actions">
+                <Button
+                  type="button"
+                  disabled={!loadedDraft?.actions.createDraft.available || busy}
+                  onClick={() => {
+                    if (loadedDraft?.activeConfiguration != null) {
+                      draftMutation.mutate(
+                        loadedDraft.activeConfiguration.revisionId,
+                      );
+                    }
+                  }}
+                >
+                  {draftMutation.isPending
+                    ? "正在创建后继草稿…"
+                    : "创建后继草稿"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={discardRetainedLocalInput}
+                >
+                  放弃本地输入
+                </Button>
+              </div>
+            </StatusBanner>
+          )}
           <div className="mf-notification-state-strip">
-            <span className="mf-notification-badge">
-              已保存草稿 · 版本 {baseline.version} ·{" "}
-              {baseline.status === "validated" ? "已检查" : "草稿"}
-            </span>
-            {dirty && (
-              <span className="mf-notification-badge mf-notification-badge-warn">
-                有未保存修改
-              </span>
+            {retainedLocalInput ? (
+              <>
+                <span className="mf-notification-badge">
+                  原草稿 · 版本 {baseline.version} · 已不再打开
+                </span>
+                <span className="mf-notification-badge mf-notification-badge-warn">
+                  本地未保存输入已保留
+                </span>
+                <span className="mf-notification-badge mf-notification-badge-warn">
+                  已生效配置可能已变化
+                </span>
+              </>
+            ) : baselineIsOpenDraft ? (
+              <>
+                <span className="mf-notification-badge">
+                  已保存草稿 · 版本 {baseline.version} ·{" "}
+                  {baseline.status === "validated" ? "已检查" : "草稿"}
+                </span>
+                {dirty && (
+                  <span className="mf-notification-badge mf-notification-badge-warn">
+                    有未保存修改
+                  </span>
+                )}
+                {clean && (
+                  <span className="mf-notification-badge mf-notification-badge-active">
+                    当前输入与已保存草稿一致
+                  </span>
+                )}
+                <span className="mf-notification-badge">已生效配置不变</span>
+              </>
+            ) : (
+              <>
+                <span className="mf-notification-badge">
+                  原草稿 · 版本 {baseline.version}
+                </span>
+                <span className="mf-notification-badge mf-notification-badge-warn">
+                  读取到新的草稿修订
+                </span>
+                <span className="mf-notification-badge mf-notification-badge-warn">
+                  未写入服务端
+                </span>
+              </>
             )}
-            {clean && (
-              <span className="mf-notification-badge mf-notification-badge-active">
-                当前输入与已保存草稿一致
-              </span>
-            )}
-            <span className="mf-notification-badge">已生效配置不变</span>
             {!readDegraded && (
               <span className="mf-notification-read-action">
                 <Button
@@ -729,10 +882,19 @@ export function NotificationEditorPage() {
             </StatusBanner>
           )}
           {remote !== null && (
-            <StatusBanner variant="warning" title="草稿已在其他位置更新">
+            <StatusBanner
+              variant="warning"
+              title={
+                remote.kind === "revision"
+                  ? "读取到另一个草稿修订"
+                  : "草稿已在其他位置更新"
+              }
+            >
               <p>
-                耐久草稿现在是版本 {remote.version}
-                。你还有未保存的输入；系统没有把本地输入静默绑定到新版本。
+                {remote.kind === "revision"
+                  ? `打开的是另一个草稿修订（版本 ${remote.version}）。`
+                  : `耐久草稿现在是版本 ${remote.version}。`}
+                你还有未保存的输入；系统没有把本地输入静默绑定到新版本。
               </p>
               <div className="mf-actions">
                 <Button type="button" variant="secondary" onClick={adoptRemote}>
@@ -744,7 +906,7 @@ export function NotificationEditorPage() {
               </div>
             </StatusBanner>
           )}
-          {dirty && remote === null && (
+          {dirty && remote === null && !retainedLocalInput && (
             <StatusBanner variant="info" title="有未保存的修改">
               <p>
                 测试、检查和发布只针对已保存的草稿版本。先保存当前输入，或明确放弃修改后再操作已保存版本。
@@ -756,7 +918,7 @@ export function NotificationEditorPage() {
               <p>{error}</p>
             </StatusBanner>
           )}
-          {draft.validationErrors.length > 0 && (
+          {draft !== null && draft.validationErrors.length > 0 && (
             <StatusBanner variant="error" title="草稿检查发现">
               <ul>
                 {draft.validationErrors.map((item) => (
@@ -951,131 +1113,137 @@ export function NotificationEditorPage() {
             </div>
           </section>
 
-          <section className="mf-notification-form-section">
-            <h3>检查与签名测试</h3>
-            <p className="mf-notification-field-help">
-              检查和测试只针对已保存的草稿版本，两者都不会发布配置。
-            </p>
-            {!canUseSavedVersion && (
-              <p className="mf-notification-inline-reason">
-                {remote !== null
-                  ? "先处理上面的并发变更。"
-                  : "有未保存的修改：先保存，或放弃修改后再操作已保存版本。"}
-              </p>
-            )}
-            <div className="mf-notification-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!canValidate || busy}
-                title={notificationReasonLabel(
-                  loadedDraft?.actions.validate.reason ?? null,
-                  "当前不能检查草稿",
-                )}
-                onClick={() => {
-                  if (baseline !== null) {
-                    validateMutation.mutate({
-                      context: displayedContext,
-                      revisionId: baseline.revisionId,
-                    });
-                  }
-                }}
-              >
-                {validateMutation.isPending ? "正在检查…" : "检查草稿"}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!canTest || busy}
-                title={notificationReasonLabel(
-                  loadedDraft?.actions.test.reason ?? null,
-                  "当前不能发送签名测试",
-                )}
-                onClick={() => {
-                  if (baseline !== null) {
-                    testMutation.mutate({
-                      context: displayedContext,
-                      expectedRevisionId: baseline.revisionId,
-                      expectedVersion: baseline.version,
-                    });
-                  }
-                }}
-              >
-                {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
-              </Button>
-            </div>
-            <p className="mf-notification-field-help">
-              发送签名测试会向接收端发送一次带签名的请求；不会创建投递，也不会自动重试。
-            </p>
-            {validationNotice !== null &&
-              validationNotice.context === displayedContext && (
-                <StatusBanner variant="success" title="草稿检查通过">
-                  <p>{validationNotice.message}</p>
-                </StatusBanner>
-              )}
-            {testResult !== null &&
-              testResult.context === displayedContext &&
-              canUseSavedVersion && (
-                <StatusBanner variant="info" title="签名测试结果">
-                  <p>{testResult.message}</p>
-                  <p>
-                    结论只对发送时的已保存版本有效；输入或版本变化后需要重新测试。
+          {draft !== null && (
+            <>
+              <section className="mf-notification-form-section">
+                <h3>检查与签名测试</h3>
+                <p className="mf-notification-field-help">
+                  检查和测试只针对已保存的草稿版本，两者都不会发布配置。
+                </p>
+                {!canUseSavedVersion && (
+                  <p className="mf-notification-inline-reason">
+                    {remote !== null
+                      ? "先处理上面的并发变更。"
+                      : "有未保存的修改：先保存，或放弃修改后再操作已保存版本。"}
                   </p>
-                </StatusBanner>
-              )}
-          </section>
-
-          <section className="mf-notification-form-section">
-            <h3>发布已检查草稿</h3>
-            <p className="mf-notification-field-help">
-              {loadedDraft?.actions.activate.available
-                ? "发布只在草稿的唯一变更就是这个已检查的 Webhook 定义时成功。任何兄弟定义或无关配置变化都会拒绝发布，并保留已生效配置和草稿。"
-                : `当前不能发布：${notificationReasonLabel(
-                    loadedDraft?.actions.activate.reason ?? null,
-                    "服务端未提供发布动作。",
-                  )}`}
-            </p>
-            {dirty && (
-              <p className="mf-notification-inline-reason">
-                有未保存的修改，发布确认已失效。先保存并重新检查。
-              </p>
-            )}
-            {loadedDraft?.actions.activate.available && (
-              <div className="mf-notification-actions">
-                <label className="mf-notification-check">
-                  <input
-                    type="checkbox"
-                    checked={confirmActivate}
-                    disabled={!canUseSavedVersion || busy}
-                    onChange={(event) => {
-                      setConfirmActivate(event.target.checked);
-                      if (!event.target.checked) {
-                        setError(null);
+                )}
+                <div className="mf-notification-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!canValidate || busy}
+                    title={notificationReasonLabel(
+                      loadedDraft?.actions.validate.reason ?? null,
+                      "当前不能检查草稿",
+                    )}
+                    onClick={() => {
+                      if (baseline !== null) {
+                        validateMutation.mutate({
+                          context: displayedContext,
+                          revisionId: baseline.revisionId,
+                        });
                       }
                     }}
-                  />
-                  <span>我确认把当前已检查的草稿发布为新的已生效配置</span>
-                </label>
-                <Button
-                  type="button"
-                  disabled={!canActivate || busy}
-                  onClick={() => {
-                    if (baseline !== null) {
-                      activateMutation.mutate({
-                        context: displayedContext,
-                        expectedRevisionId: baseline.revisionId,
-                        expectedVersion: baseline.version,
-                      });
-                    }
-                  }}
-                >
-                  {activateMutation.isPending
-                    ? "正在发布草稿…"
-                    : "发布已检查草稿"}
-                </Button>
-              </div>
-            )}
-          </section>
+                  >
+                    {validateMutation.isPending ? "正在检查…" : "检查草稿"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!canTest || busy}
+                    title={notificationReasonLabel(
+                      loadedDraft?.actions.test.reason ?? null,
+                      "当前不能发送签名测试",
+                    )}
+                    onClick={() => {
+                      if (baseline !== null) {
+                        testMutation.mutate({
+                          context: displayedContext,
+                          expectedRevisionId: baseline.revisionId,
+                          expectedVersion: baseline.version,
+                        });
+                      }
+                    }}
+                  >
+                    {testMutation.isPending
+                      ? "正在发送签名测试…"
+                      : "发送签名测试"}
+                  </Button>
+                </div>
+                <p className="mf-notification-field-help">
+                  发送签名测试会向接收端发送一次带签名的请求；不会创建投递，也不会自动重试。
+                </p>
+                {validationNotice !== null &&
+                  validationNotice.context === displayedContext && (
+                    <StatusBanner variant="success" title="草稿检查通过">
+                      <p>{validationNotice.message}</p>
+                    </StatusBanner>
+                  )}
+                {testResult !== null &&
+                  testResult.context === displayedContext &&
+                  canUseSavedVersion && (
+                    <StatusBanner variant="info" title="签名测试结果">
+                      <p>{testResult.message}</p>
+                      <p>
+                        结论只对发送时的已保存版本有效；输入或版本变化后需要重新测试。
+                      </p>
+                    </StatusBanner>
+                  )}
+              </section>
+
+              <section className="mf-notification-form-section">
+                <h3>发布已检查草稿</h3>
+                <p className="mf-notification-field-help">
+                  {loadedDraft?.actions.activate.available
+                    ? "发布只在草稿的唯一变更就是这个已检查的 Webhook 定义时成功。任何兄弟定义或无关配置变化都会拒绝发布，并保留已生效配置和草稿。"
+                    : `当前不能发布：${notificationReasonLabel(
+                        loadedDraft?.actions.activate.reason ?? null,
+                        "服务端未提供发布动作。",
+                      )}`}
+                </p>
+                {dirty && (
+                  <p className="mf-notification-inline-reason">
+                    有未保存的修改，发布确认已失效。先保存并重新检查。
+                  </p>
+                )}
+                {loadedDraft?.actions.activate.available && (
+                  <div className="mf-notification-actions">
+                    <label className="mf-notification-check">
+                      <input
+                        type="checkbox"
+                        checked={confirmActivate}
+                        disabled={!canUseSavedVersion || busy}
+                        onChange={(event) => {
+                          setConfirmActivate(event.target.checked);
+                          if (!event.target.checked) {
+                            setError(null);
+                          }
+                        }}
+                      />
+                      <span>我确认把当前已检查的草稿发布为新的已生效配置</span>
+                    </label>
+                    <Button
+                      type="button"
+                      disabled={!canActivate || busy}
+                      onClick={() => {
+                        if (baseline !== null) {
+                          activateMutation.mutate({
+                            context: displayedContext,
+                            expectedRevisionId: baseline.revisionId,
+                            expectedVersion: baseline.version,
+                          });
+                        }
+                      }}
+                    >
+                      {activateMutation.isPending
+                        ? "正在发布草稿…"
+                        : "发布已检查草稿"}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
         </form>
       )}
     </NotificationCard>

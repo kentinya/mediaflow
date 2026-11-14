@@ -51,6 +51,7 @@ SECRET_ENV = "MEDIAFLOW_WEBHOOK_PROOF_SECRET"
 SECRET_VALUE = "notification-proof-secret-value"
 DRAFT_WEBHOOK_URL = "https://example.invalid/hooks/proof"
 EDITED_WEBHOOK_URL = "https://example.invalid/hooks/proof-edited"
+PUBLISHED_ELSEWHERE_WEBHOOK_URL = "https://example.invalid/hooks/published-by-b"
 DELIVERY_EVENT_ID = "proof-task-completed"
 
 
@@ -304,6 +305,7 @@ const secret = process.env.MF_PROOF_SECRET;
 const artifacts = process.env.MF_PROOF_ARTIFACTS;
 const deliveryId = process.env.MF_PROOF_DELIVERY_ID;
 const webhookId = process.env.MF_PROOF_WEBHOOK_ID;
+const publishedElsewhereUrl = process.env.MF_PROOF_PUBLISHED_URL;
 
 async function shot(page, name) {
   // Let the shared card enter animation settle so the review image shows the
@@ -312,6 +314,23 @@ async function shot(page, name) {
   const target = path.join(artifacts, `${name}.png`);
   await page.screenshot({ path: target, fullPage: false });
   return path.basename(target);
+}
+
+async function api(route, init = {}) {
+  const response = await fetch(base + route, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `real API ${init.method ?? 'GET'} ${route} -> ${response.status}: ${await response.text()}`,
+    );
+  }
+  return response.json();
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -349,19 +368,79 @@ try {
   ).toBeVisible();
 
   await page.getByLabel('HTTPS 接收地址').fill('https://example.invalid/hooks/proof-edited');
+
+  // A real second administrator writes the same open Draft through the real
+  // Python API: save, validate and publish. The browser still holds local,
+  // unsaved input against the now-published revision.
+  const draftDocument = await api(
+    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+  );
+  const openDraft = draftDocument.draft;
+  if (!openDraft) throw new Error('the successor Draft was not open');
+  const webhook = openDraft.webhook;
+  await api(
+    `/api/v1/configuration/revisions/${openDraft.revisionId}/objects/webhooks/${webhookId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        expectedVersion: openDraft.revisionVersion,
+        object: {
+          id: webhook.id,
+          url: publishedElsewhereUrl,
+          secretEnv: webhook.secretEnv,
+          events: webhook.events,
+          enabled: webhook.enabled,
+          timeoutSeconds: webhook.timeoutSeconds,
+          maxAttempts: webhook.maxAttempts,
+          baseRetrySeconds: webhook.baseRetrySeconds,
+          maxRetrySeconds: webhook.maxRetrySeconds,
+        },
+      }),
+    },
+  );
+  const validated = await api(
+    `/api/v1/configuration/revisions/${openDraft.revisionId}/validate`,
+    { method: 'POST', body: '{}' },
+  );
+  await api(`/api/v1/operations/notifications/webhooks/${webhookId}/activate-draft`, {
+    method: 'POST',
+    body: JSON.stringify({
+      expectedRevisionId: openDraft.revisionId,
+      expectedVersion: validated.version,
+    }),
+  });
+
+  await dialog.getByRole('button', { name: '读取最新草稿' }).click();
+  await expect(page.getByText('草稿已不再打开，本地输入已保留')).toBeVisible();
+  await expect(page.getByLabel('HTTPS 接收地址')).toHaveValue(
+    'https://example.invalid/hooks/proof-edited',
+  );
+  screenshots.push(await shot(page, 'editor-published-elsewhere-retained'));
+
+  await dialog
+    .getByRole('button', { name: '创建后继草稿', exact: true })
+    .click();
+  await expect(page.getByText('读取到另一个草稿修订')).toBeVisible();
+  await expect(page.getByLabel('HTTPS 接收地址')).toHaveValue(
+    'https://example.invalid/hooks/proof-edited',
+  );
+  await dialog
+    .getByRole('button', { name: '保留本地输入并重新保存' })
+    .click();
+
   await page.setViewportSize({ width: 390, height: 844 });
   screenshots.push(await shot(page, 'editor-card-390'));
-  await page.getByRole('button', { name: '保存到草稿', exact: true }).click();
+  await dialog.getByRole('button', { name: '保存到草稿', exact: true }).click();
   await expect(page.getByText(/已保存到草稿版本/)).toBeVisible();
-  await page.getByRole('button', { name: '读取最新草稿' }).click();
+  await dialog.getByRole('button', { name: '读取最新草稿' }).click();
   await expect(page.getByText(/已保存到草稿版本/)).toBeVisible();
-  await page.getByRole('button', { name: '检查草稿', exact: true }).click();
+  await dialog.getByRole('button', { name: '检查草稿', exact: true }).click();
   await expect(page.getByRole('heading', { name: '草稿检查通过' })).toBeVisible();
-  await page
+  await dialog
     .getByLabel('我确认把当前已检查的草稿发布为新的已生效配置')
     .check();
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole('button', { name: '发布已检查草稿', exact: true }).click();
+  await dialog.getByRole('button', { name: '发布已检查草稿', exact: true }).click();
   await expect(page.getByText(/草稿已发布为已生效配置/)).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -408,6 +487,7 @@ try {
   console.log(JSON.stringify({
     screenshots,
     deliveryId,
+    crossPublishedReadPreserved: true,
     tokenStored: false,
     secretRendered: false,
   }));
@@ -432,6 +512,7 @@ def run_browser(code: str, state: dict, artifacts: Path) -> dict:
             "MF_PROOF_ARTIFACTS": str(artifacts),
             "MF_PROOF_DELIVERY_ID": state["delivery_id"],
             "MF_PROOF_WEBHOOK_ID": WEBHOOK_ID,
+            "MF_PROOF_PUBLISHED_URL": PUBLISHED_ELSEWHERE_WEBHOOK_URL,
         },
         capture_output=True,
         text=True,
@@ -556,6 +637,10 @@ def main() -> int:
             "activeVersionAfter": after_version,
             "webhookTransportRequests": after_transport - before_transport,
             "readOnlyNavigationWrote": False,
+            "crossPublishedReadPreserved": bool(
+                browser_evidence.get("crossPublishedReadPreserved")
+            ),
+            "finalActiveWebhookUrl": edited["url"],
             "deliveryStatusAfter": status,
             "durableDeliveryRows": len(deliveries),
             "deliveryId": state["delivery_id"],
