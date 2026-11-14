@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 按本 Task 开始实施，完成受影响测试后提交 READY FOR B REVIEW。
+Next Action: B 在固定候选 `9329b1205cb3339fed7d73f3ec07f9f563793e02` 独立审查并执行 T4 验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,8 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
+Implementation Head: 83a104eeef60300ab67f7c5df7a45d0f02a2b971
+Evidence Head: 9329b1205cb3339fed7d73f3ec07f9f563793e02
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -202,8 +204,74 @@ git diff --check
 
 ### Developer Completion Report
 
-尚未实施。后续按工作流提交连贯 checkpoint，记录 READY FOR B REVIEW、实际改动、
-受影响测试及已知风险；全量与独立接受仍由 B 负责。
+已实施并冻结候选，状态 READY FOR B REVIEW（2026-11-14）。本 TASK 报告提交仅含文档；实现提交
+`83a104eeef60300ab67f7c5df7a45d0f02a2b971`，证据提交
+`9329b1205cb3339fed7d73f3ec07f9f563793e02`；Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、
+API／领域／持久化协议、SLICE、Roadmap 或 Progress，也未推送、发布或部署。
+
+实际改动：
+
+- 六页统一为通知专属页面和公共 `ModalCardShell` 卡片：定义列表与投递列表作为持久
+  背景，添加／定义详情／编辑／投递详情作为背景上的卡片；列表筛选、分页、滚动和焦点
+  在卡片往返中保留。新增必要嵌套路由，直接进入／刷新／重新认证仍打开同一卡片。
+- 列表、定义、草稿、投递改用中文状态、事件、动作、单位和失败摘要；长地址、长名称、
+  原始事件／修订／版本／租约／响应证据放入可展开诊断。密钥值、payload、签名头、
+原始异常不进入界面。
+- 添加／编辑表单按基本设置、事件与启用、超时与重试分组；无可编辑草稿时不渲染可填写
+  表单，提供创建后继草稿或准确权限／草稿解释；空表单只在触碰或提交后显示行内错误。
+- 草稿编辑区分已保存草稿、未保存修改、已检查、已发布；测试／检查／发布绑定精确已保存
+  版本，输入、状态或版本变化使旧证据和发布确认失效，迟到响应不覆盖新上下文。远端版本
+  变化提供采用服务端值／保留本地输入再保存的明确选择，不静默重绑。
+- 关闭、Escape、遮罩、浏览器后退共用继续编辑／明确放弃决定；在途命令阻止重复提交和
+  冲突退出，硬刷新／卸载有未保存或在途保护；成功命令后的已知结果在读回失败时保留。
+- 传输丢失、5xx 和不可解析的 2xx 命令结果标为“结果未知”，提示可能已执行并只依据
+  持久读回核对，不自动重发、不误报未发布／未投递。测试未知额外提示先核对接收端。
+- 投递恢复保留精确交付身份与观察到的状态／时间 fence、显式确认和至少一次提示；只恢复
+  所选记录，返回原投递筛选。公共 modal 对 body 的焦点回退修正为按声明 fallback 聚焦，
+  通知背景 wrapper 保持 `inert`。
+
+验证（Developer 实际执行）：
+
+```sh
+python3 scripts/check_governance.py
+# PASS
+
+cd web
+npm run test -- run src/entities/operations/notification.test.ts   src/features/operations/notification-presentation.test.ts   src/features/operations/NotificationRouter.test.tsx   src/routes/router.test.tsx src/shared/ui/modal-card.test.tsx   src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+# 7 files, 172 tests passed
+
+npm run typecheck && npm run lint && npm run format:check && npm run build
+# PASS；生产资产已重建
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts   --output=test-results/patch-20261114-3-developer-node
+# 12 passed
+```
+
+真实 Python 原生证明（新生产资产、真实 API、临时 SQLite／根、可记录假 Webhook
+transport）：
+
+```sh
+.venv/bin/python scripts/notifications_workspace_browser_proof.py   --artifacts .git/validation-evidence/patch-20261114-3/developer-native
+.venv/bin/ruff check scripts/notifications_workspace_browser_proof.py
+.venv/bin/ruff format --check scripts/notifications_workspace_browser_proof.py
+git diff --check
+```
+
+结果：PASS。Read-only 列表／详情／投递浏览未改变 Active、未发送测试、未创建投递；
+显式签名测试恰好 1 次 transport 请求；Draft 保存／检查／发布后 Active 版本 1→2，
+Webhook 身份集合不变且只有所选 URL 变成已编辑值；不相关配置区段未变；投递保持 1 行，
+单条恢复后 dead-letter→pending；Tasks／Jobs 行数未变。证据目录（未提交）：
+`.git/validation-evidence/patch-20261114-3/developer-native/`，含 `evidence.json` 和
+桌面／390px 截图。
+
+未运行／交由 B：T4 全量 Python／Web／Node E2E、共享全量门禁、真实第二写者 409 与
+权限边界、真实 API 下的迟到响应／切换对象、1440×700 窗口矩阵、wheel／Docker 适用门禁
+（本 Task 未改容器／部署路径）。Developer 未将定向结果冒充全量通过。
+
+已知风险：原生证明只覆盖一个 Active Webhook 与一条死信投递；B 需补真实权限、第二写者、
+并发／响应丢失和多卡片直接深链旅程。共享 `useModalLayer` 的 body 焦点回退改动已由
+modal／Shell 测试覆盖，B 仍应核对其直接消费者。
 
 ### B Review Result
 
