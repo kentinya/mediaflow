@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 在同一 Task 修正新建保存／发布期间仍可编辑、成功跳转丢失新输入的问题，并协调已失败的通知主页面过渡断言；固定候选后交 B 继续验收。
+Next Action: B 在固定候选复核新建保存／发布成功后离开时不再接受新输入，并确认通知主页面过渡断言已按当前中文标题和读取标识协调；随后继续本轮剩余 T4 门禁。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,10 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
-Implementation Head: 42fbe6c4bafbf880a99c59fd743b71090dc8bb1e
-Evidence Head: 42fbe6c4bafbf880a99c59fd743b71090dc8bb1e
+Implementation Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
+Evidence Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -616,6 +616,83 @@ exit 130／KeyboardInterrupt，尚未完成全量，不记 PASS。原日志保�
 键盘矩阵留待修正候选，未冒充通过。Docker 广域矩阵不适用：未改容器或部署路径。
 本轮测试按并行执行的实际经过时间计，低于总审查时间 50%；本次只改 TASK.md，
 无推送、发布或部署。治理检查与 `git diff --check` 在审查检查点前 PASS。
+
+### Developer Completion Report — FIX ROUND 4（2026-11-15）
+
+Status READY FOR B REVIEW。实现提交
+`4edb1526cc418ab5bbeb0ca96323f0584d0b5091`；本报告提交仅改 `TASK.md`。Task Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、公共 modal、
+API／领域／持久化协议、SLICE、Roadmap 或 Progress，未推送、发布或部署。
+
+修复：
+
+- 新建并保存到草稿现在在请求在途时禁用整张可编辑表单：标识符、HTTPS 地址、密钥引用、
+  订阅事件、启用开关、超时、尝试次数及两个重试间隔。成功仍只按真实结果进入新定义详情，
+  失败后恢复可编辑并保留原输入；底部按钮忙碌状态与既有退出保护不变。
+- 发布已检查草稿同样在请求在途时禁用全部可编辑字段；成功仍进入已生效定义详情，失败
+  恢复编辑并保留原值。没有新增自动保存、自动重试、协议字段或本地草稿。
+- 编辑卡片普通“保存到草稿”未加字段锁，继续保留上轮已通过的“处理期间可继续输入、
+  成功后标为未保存修改”的行为；既有回归仍通过。
+- `web/tests/e2e/page-transition.spec.ts` 的通知目的地改用当前标题“通知”，等待标识改用
+  “正在读取通知定义”；九页顺序、单次过渡、Shell 几何、溢出和等待态断言未改。
+
+验证（Developer 实际执行）：
+
+```sh
+cd web
+npm run test -- run src/entities/operations/notification.test.ts \
+  src/features/operations/notification-presentation.test.ts \
+  src/features/operations/NotificationRouter.test.tsx \
+  src/routes/router.test.tsx src/shared/ui/modal-card.test.tsx \
+  src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+# 7 files, 183 tests passed
+
+npm run typecheck && npm run lint && npm run format:check
+# PASS
+
+npm run build
+# PASS；index-C9lHThdg.js / index-B0R4k6Jb.css；保留既有 chunk 体积提示
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts \
+  tests/e2e/page-transition.spec.ts \
+  --output=test-results/patch-20261114-3-developer-fix-r4
+# 22 passed（通知 12、页面过渡 10），49.0 秒
+```
+
+新增／修改的定向回归覆盖：延迟真实新建成功响应期间标识符、地址、密钥引用、事件、启用
+和数值字段均不可编辑且输入不变，成功后进入详情并显示提交地址，恰一次创建、无 PUT／测试；
+新建 409 失败后字段解锁且原输入保留；延迟发布成功期间字段不可编辑，成功后详情显示提交值，
+恰一次发布、无额外保存或测试；发布 409 失败后字段解锁、原值保留且不自动重放。普通保存
+期间继续输入的既有用例保持通过。所有旅程均从既有按钮进入，未调用内部查询或构造旁路入口。
+
+真实 Python 原生证明（新生产资产、真实 API、临时 SQLite／根、可记录假 Webhook
+transport）：
+
+```sh
+.venv/bin/python scripts/notifications_workspace_browser_proof.py \
+  --artifacts .git/validation-evidence/patch-20261114-3/developer-fix-r4/native
+.venv/bin/ruff check scripts/notifications_workspace_browser_proof.py
+.venv/bin/ruff format --check scripts/notifications_workspace_browser_proof.py
+python3 scripts/check_governance.py
+git diff --check
+```
+
+结果：PASS。Active 版本 1→2；显式签名测试恰 1 次 transport 请求；只读定义／投递读取未
+改变 Active、未发送测试、未创建投递；`READ` 深链未改变打开的草稿修订／版本；第二写者
+发布后浏览器保留本地输入；最终 Active 地址为浏览器保留值；Webhook 身份集合、无关配置
+区段、Tasks／Jobs 行数未变；一条死信恢复为 pending。证据目录（未提交）：
+`.git/validation-evidence/patch-20261114-3/developer-fix-r4/native/`，含 `evidence.json`
+和六张桌面／390px 截图。`ruff`、治理检查与 `git diff --check` 均 PASS。
+
+未运行／交 B：T4 全量 Python／Web／Node E2E、真实第二写者 409、真实权限 403 边界、
+命令响应丢失核对、1440×700／390px 完整视觉与键盘矩阵、wheel／Docker 适用门禁。
+原生证明继续使用同进程第二写者，未制造两个独立浏览器进程的并发；在途字段锁定由
+Vitest 的延迟真实 `fetch` 响应和既有按钮旅程覆盖，B 仍应在真实浏览器保存／发布窗口内
+输入确认字段不变。已知风险：本轮没有改变创建／发布协议或读回逻辑，若 B 在真实 API
+发现并发读回与成功跳转交互问题，应按原 Task 边界复核，不视为本修正已覆盖。
+
+本轮定向 Vitest、构建、Node E2E、原生证明与静态检查合计约 2 分钟；实现、差异审查与
+证据核对占主要时间，测试时间低于本轮总时间 30%。
 
 ## Latest accepted Task — PATCH-20261114-2
 
