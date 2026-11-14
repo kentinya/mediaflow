@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 在本 Task 内修复下述两项 B 阻塞，运行失败场景及直接受影响测试，再提交 READY FOR B REVIEW；B 对修正候选完成剩余 T4 验收。
+Next Action: B 复核修正候选 `93996b68`，按原 T4 验收计划完成剩余并发、权限、视觉与全量门禁。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,10 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
-Implementation Head: 83a104eeef60300ab67f7c5df7a45d0f02a2b971
-Evidence Head: 9329b1205cb3339fed7d73f3ec07f9f563793e02
+Implementation Head: 93996b687e4b39cba612141b6dfc804aecac0292
+Evidence Head: 93996b687e4b39cba612141b6dfc804aecac0292
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -369,6 +369,76 @@ npm run build
 容器／部署路径不适用。构建和两项浏览执行合计少于 1 分钟，独立代码／文档审查与结果
 核对超过 10 分钟，测试时间低于本轮总时间 50%；未通过重复测试填充时间。
 `python3 scripts/check_governance.py`、`git diff --check` 均 PASS；本地 B 检查点仅含本文件。
+
+### Developer Completion Report — FIX ROUND（2026-11-14）
+
+Status READY FOR B REVIEW。实现提交 `93996b687e4b39cba612141b6dfc804aecac0292`，包含
+源码、测试、Node E2E 与原生证明脚本；本报告提交仅改 `TASK.md`。Task Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、API／领域／
+持久化协议、SLICE、Roadmap 或 Progress，未推送、发布或部署。
+
+修复：
+
+- 编辑卡片在正常表单和无草稿状态都提供可见、键盘可达的“读取最新草稿”，连接现有
+  Draft 查询。读取只发 GET，不提交保存、检查、测试或发布。真实 409 失败后，用户可直接
+  读取最新版本，看到既有的“采用服务端值／保留本地输入并重新保存”；保留输入会以读到
+  的版本重存并核对提交值，采用服务端值会更新表单并清除旧检查、测试和发布确认证据。
+  删除了以测试内部 `queryClient` 失效查询代替用户读取入口的旧用例。
+- 定义详情、新建和投递详情补回正常状态的“读取最新定义／草稿状态／投递”入口；无草稿的
+  新建与编辑状态也可读取最新状态，既有读取失败／降级提示的重试入口保留。
+- pending 的已知接收效果不再断言接收端从未收到，改为“当前没有已确认的发送结果”，并
+  明确“此前是否已有请求到达接收端，不能仅由当前状态证明”；待投递主结论显示等待下一次
+  尝试。死信说明改用真实 `failureCategory`（HTTP 400、传输失败、配置缺失等），不再把
+  所有死信说成尝试次数用尽。恢复命令结果保留，读回 pending 与至少一次／可能重复提示一致。
+- 公共 modal、Shell、按钮和媒体结果未改；未新增通知协议、重试、租约或恢复行为。
+
+验证（Developer 实际执行）：
+
+```sh
+cd web
+npm run test -- run src/entities/operations/notification.test.ts \
+  src/features/operations/notification-presentation.test.ts \
+  src/features/operations/NotificationRouter.test.tsx \
+  src/routes/router.test.tsx src/shared/ui/modal-card.test.tsx \
+  src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+# 7 files, 174 tests passed
+
+npm run typecheck && npm run lint && npm run format:check && npm run build
+# PASS；生产资产 index-B0R4k6Jb.css / index-C944Junr.js；保留 chunk 体积提示
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts \
+  --output=test-results/patch-20261114-3-developer-fix-node-r3
+# 12 passed
+```
+
+首个 Node E2E 轮次在新增“读取最新定义”步骤后以 11/12 失败：对“密钥引用：已就绪”的
+断言同时匹配背景列表与卡片，属于 strict-mode 重复匹配，不是产品失败。将断言限定到
+`dialog` 后重跑通过；保留该首次失败记录。最终资产重建后再次 12/12 通过。
+
+```sh
+.venv/bin/python scripts/notifications_workspace_browser_proof.py \
+  --artifacts .git/validation-evidence/patch-20261114-3/developer-fix/native-r2
+.venv/bin/ruff check scripts/notifications_workspace_browser_proof.py
+.venv/bin/ruff format --check scripts/notifications_workspace_browser_proof.py
+python3 scripts/check_governance.py
+git diff --check
+```
+
+原生证明 PASS，证据目录（未提交）：
+`.git/validation-evidence/patch-20261114-3/developer-fix/native-r2/`。只读定义／投递
+读取（含新增读取入口）未改变 Active、未发送测试、未改变投递；显式签名测试恰 1 次
+transport 请求；保存、检查、发布后 Active 1→2 且只改变所选 Webhook；一条 HTTP 400 死信
+恢复为 pending，界面显示“当前没有已确认的发送结果”，不再出现“接收端尚未收到”；
+Tasks／Jobs 行数未变。`ruff`、治理检查与 `git diff --check` 均 PASS。
+
+未运行／交 B：T4 全量 Python／Web／Node E2E、真实第二写者 409、真实权限边界、命令丢响应
+核对、1440×700／390px 完整视觉与键盘矩阵、wheel／Docker 适用门禁。Vitest 的 409 旅程
+使用两个连续真实 HTTP 响应和一个 API 写者状态变化，不是生产环境第二浏览器；B 仍需按原
+计划用真实 Python API 复核。已知风险：新增读取入口在窄窗口的最终排版与焦点顺序仅由
+Node E2E／原生证明的点击路径覆盖，完整视觉矩阵保留给 B。
+
+本轮定向 Vitest、构建、Node E2E 与原生证明合计约 3 分钟；实现、差异审查与结果核对占
+主要时间，测试时间低于本轮总时间 30%。
 
 ## Latest accepted Task — PATCH-20261114-2
 
