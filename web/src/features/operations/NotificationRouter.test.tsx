@@ -2584,7 +2584,19 @@ describe("DeliveryDetailPage recovery", () => {
     await userEvent.click(
       view.getByRole("button", { name: "重新入队死信投递" }),
     );
-    expect(await view.findByText(/命令结果未知/)).toBeVisible();
+    const unknownHeading = await view.findByRole("heading", {
+      name: "恢复结果未知",
+      level: 2,
+    });
+    expect(unknownHeading).toBeVisible();
+    const unknownBanner = unknownHeading.closest("section");
+    expect(unknownBanner).not.toBeNull();
+    expect(unknownBanner).toHaveTextContent(
+      /命令结果未知：所选投递可能已经恢复为待投递/,
+    );
+    expect(unknownBanner).toHaveTextContent(/请重新读取当前持久状态核对/);
+    expect(unknownBanner).not.toHaveTextContent(/恢复没有应用/);
+    expect(view.queryByText("恢复没有应用")).toBeNull();
     expect(view.getByText("死信", { exact: true })).toBeVisible();
     expect(
       calls.filter(
@@ -2617,7 +2629,16 @@ describe("DeliveryDetailPage recovery", () => {
     await userEvent.click(
       view.getByRole("button", { name: "重新入队死信投递" }),
     );
-    expect(await view.findByText(/没有应用恢复/)).toBeVisible();
+    expect(
+      await view.findByRole("heading", {
+        name: "恢复没有应用",
+        level: 2,
+      }),
+    ).toBeVisible();
+    expect(
+      view.getByText(/投递状态比你查看时更新，因此没有应用恢复/),
+    ).toBeVisible();
+    expect(view.queryByText("恢复结果未知")).toBeNull();
     expect(
       calls.filter(
         (call) => call.url === "/api/v1/notifications/delivery-1/requeue",

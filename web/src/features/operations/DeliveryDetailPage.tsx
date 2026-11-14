@@ -86,7 +86,10 @@ export function DeliveryDetailPage() {
       ? rawStatus
       : null;
   const returnSearch = returnStatus === null ? {} : { status: returnStatus };
-  const [error, setError] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<{
+    message: string;
+    unknown: boolean;
+  } | null>(null);
   const [confirmRequeue, setConfirmRequeue] = useState(false);
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [recoveryOutcome, setRecoveryOutcome] = useState<string | null>(null);
@@ -111,7 +114,7 @@ export function DeliveryDetailPage() {
     },
     retry: false,
     onMutate: () => {
-      setError(null);
+      setRecoveryError(null);
       setConfirmRequeue(false);
       setConfirmResolve(false);
     },
@@ -130,14 +133,19 @@ export function DeliveryDetailPage() {
       }
       setRecoveryOutcome(null);
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("所选投递可能已经恢复为待投递"));
+        setRecoveryError({
+          message: unknownCommandMessage("所选投递可能已经恢复为待投递"),
+          unknown: true,
+        });
         return;
       }
-      setError(
-        result.status === 409
-          ? "投递状态比你查看时更新，因此没有应用恢复。重新读取投递后再恢复精确的当前状态。"
-          : `恢复动作没有执行（${result.code}）。重新读取当前持久状态后再试；系统没有自动重试。`,
-      );
+      setRecoveryError({
+        message:
+          result.status === 409
+            ? "投递状态比你查看时更新，因此没有应用恢复。重新读取投递后再恢复精确的当前状态。"
+            : `恢复动作没有执行（${result.code}）。重新读取当前持久状态后再试；系统没有自动重试。`,
+        unknown: false,
+      });
     },
   });
 
@@ -155,7 +163,7 @@ export function DeliveryDetailPage() {
     onDiscard: () => {
       setConfirmRequeue(false);
       setConfirmResolve(false);
-      setError(null);
+      setRecoveryError(null);
     },
     firstFieldId: "notification-delivery-close",
     fallbackFocusId: "notification-deliveries-background",
@@ -507,9 +515,12 @@ export function DeliveryDetailPage() {
             )}
           </section>
 
-          {error !== null && (
-            <StatusBanner variant="error" title="恢复没有应用">
-              <p>{error}</p>
+          {recoveryError !== null && (
+            <StatusBanner
+              variant={recoveryError.unknown ? "warning" : "error"}
+              title={recoveryError.unknown ? "恢复结果未知" : "恢复没有应用"}
+            >
+              <p>{recoveryError.message}</p>
             </StatusBanner>
           )}
         </div>
