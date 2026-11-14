@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 在同一 Task 修正保存响应覆盖较新输入、只读深链仍可编辑保存两项已复现阻塞；提交固定候选后由 B 继续剩余 T4 验收。
+Next Action: B 在固定候选复审保存期间输入保留与只读深链两项修正；通过后继续本轮剩余 T4 门禁与独立验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,10 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
-Implementation Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
-Evidence Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
+Implementation Head: 925b45efec1868cd726fa7e56f5c7cbda24b5ca8
+Evidence Head: 925b45efec1868cd726fa7e56f5c7cbda24b5ca8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -533,6 +533,80 @@ git diff --check
 打包安装门禁及剩余视觉／未知结果矩阵；B 在修正候选上继续，不将缺少全量结果算成
 Developer 缺陷。本轮构建与浏览执行合计少于 1 分钟，代码／文档和证据审查占主要时间，
 测试时间低于本轮总时间 50%。本次只改 TASK.md，无产品代码变更、推送或部署。
+
+### Developer Completion Report — FIX ROUND 3（2026-11-14）
+
+Status READY FOR B REVIEW。实现提交
+`925b45efec1868cd726fa7e56f5c7cbda24b5ca8`；本报告提交仅改 `TASK.md`。Task Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、API／领域／
+持久化协议、SLICE、Roadmap 或 Progress，未推送、发布或部署。
+
+修复：
+
+- 保存成功不再把表单重置为请求时的值。成功回调把已确认提交的 A 与返回版本设为已保存
+  基线；若保存期间表单已继续输入 B，则保留 B 和“有未保存修改”，成功提示明确说明保存的是
+  提交时内容、B 尚未写入。自动读回与手动“读取最新草稿”都保留 B；检查、测试、发布继续
+  只针对已保存版本，禁用并显示原因；只有再次明确保存才以新版本写入 B。没有增加自动保存、
+  本地持久化或后端协议。
+- 编辑卡片现在遵循服务端 `actions.save.available`。草稿存在但不可保存时，不渲染可填写
+  表单、保存、检查、测试或发布控件；显示权限原因、持久草稿只读摘要，以及“查看定义”
+  “返回通知列表”“读取最新草稿”。真实保存返回 403 时立即隐藏表单并给出权限原因和
+  联系管理员／重新读取的下一步，不再解释为表单或版本过期；读取只用于核对服务端动作，
+  不自动重试保存。
+- 原生浏览证明增加真实 `READ` principal：在同一已打开草稿上，通过既有编辑地址重新认证
+  进入卡片，核对无保存／测试控件、无填写表单，并证明草稿修订与版本未变；随后可进入
+  只读定义。
+
+验证（Developer 实际执行）：
+
+```sh
+cd web
+npm run test -- run src/entities/operations/notification.test.ts \
+  src/features/operations/notification-presentation.test.ts \
+  src/features/operations/NotificationRouter.test.tsx \
+  src/routes/router.test.tsx src/shared/ui/modal-card.test.tsx \
+  src/shared/ui/AppShell.test.tsx src/shared/navigation/destination-model.test.ts
+# 7 files, 180 tests passed
+
+npm run typecheck && npm run lint && npm run format:check
+# PASS
+
+npm run build
+# PASS；index-DGwduE4V.js / index-B0R4k6Jb.css；保留既有 chunk 体积提示
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts \
+  --output=test-results/patch-20261114-3-developer-fix-node-r5
+# 12 passed
+```
+
+真实 Python 原生证明：
+
+```sh
+.venv/bin/python scripts/notifications_workspace_browser_proof.py \
+  --artifacts .git/validation-evidence/patch-20261114-3/developer-fix-r3/native-r5
+.venv/bin/ruff check scripts/notifications_workspace_browser_proof.py
+.venv/bin/ruff format --check scripts/notifications_workspace_browser_proof.py
+python3 scripts/check_governance.py
+git diff --check
+```
+
+结果：PASS。Active 版本 1→2；显式签名测试恰 1 次 transport 请求；只读定义／投递读取未
+改变 Active、未发送测试、未创建投递；`READ` 深链未改变打开的草稿修订／版本，卡片无保存
+或测试控件；第二写者发布后浏览器保留本地输入并可通过既有后继草稿选择完成发布；最终
+Active 地址为浏览器保留值；无关配置区段、Webhook 身份集合、Tasks／Jobs 行数未变；一条
+死信恢复为 pending。证据目录（未提交）：
+`.git/validation-evidence/patch-20261114-3/developer-fix-r3/native-r5/`。
+
+保留的首次失败：新增只读 Vitest 首次运行时测试本身漏了 `connect()`，页面停在读取态；
+补齐连接后通过，不是产品失败。原生证明首次给只读浏览器补深链时未定义 `webhookId`；第二次
+在管理员创建草稿之前运行，读到的是“没有可编辑的草稿”而非草稿只读分支；改为在管理员已
+打开草稿的阶段用第二页面验证 `READ` 深链后通过。首跑结果不作为通过证据。
+
+未运行／交 B：T4 全量 Python／Web／Node E2E、真实第二写者 409、真实权限 403 边界、命令
+响应丢失核对、1440×700／390px 完整视觉与键盘矩阵、wheel／Docker 适用门禁。原生证明的
+只读账号使用真实 Python API 与真实路由，但不是独立服务进程；B 仍需按原计划复核并发、
+权限和迟到响应旅程。定向 Vitest、构建、Node E2E、原生证明与静态检查合计约 2 分钟，
+实现、差异审查和证据核对占主要时间，测试时间低于本轮总时间 30%。
 
 ## Latest accepted Task — PATCH-20261114-2
 
