@@ -21,6 +21,7 @@ Slice53 及更早接受身份、延期保持；开发关闭与发布事实分别
 
 | 已接受修正 | 当前结果与固定验收 |
 |---|---|
+| 冒号来源、规则重跑与整理弹窗 | [PATCH-20261114-1](https://github.com/kentinya/mediaflow/blob/280fc5fdedaf8c079dee52480e1eb4d3bf26449a/TASK.md#patch-20261114-1--b-pass)：合法名称中的冒号原样浏览／整理，规则单项重跑原位覆盖；准备页按真实阶段呈现，共享整理卡减少套框并在翻页／分析／整批复核时局部过渡。此前四项失败测试在正确套件通过；T4 结果、文档检查修正、7 项可选跳过及本机证据范围见固定验收与 [发布验证边界](release.md#current-v2-validation-boundary) |
 | 任务中心原位继续整理 | [PATCH-20261113-3](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)：原任务详情点击“继续整理”，在原列表／详情背景上打开共享整理卡；后台任务读取失败保留草稿及原请求核对。继续／历史地址统一为准确 Task 加弹窗标记，删除旧独立接收页及路由；关闭、刷新／重认证及准确任务交接保持。现行旅程见 [任务中心](task-center-page-spec.md#手动受理与确认)，T4 结果、基线失败与限制见固定验收及 [发布验证边界](release.md#current-v2-validation-boundary) |
 | 文件浏览反馈与表头调节 | [PATCH-20261113-2](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)：文件页移除固定蓝色说明；两页列表／网格有悬停、按下、焦点与选中反馈，共享精确条目选择；名称／大小仅对当前页排序，四个数据列可拖动／键盘调宽。切目录、翻页及读取重试保留会话设置，整页重载恢复默认；现行旅程见 [文件浏览](product-experience.md#browse-feedback-selection-and-table-controls)，T3 结果、首轮产物冲突与重跑见固定验收及 [发布验证边界](release.md#current-v2-validation-boundary) |
 | 任务证据与记录去重 | [PATCH-20261113-1](https://github.com/kentinya/mediaflow/blob/e8d7d33ff2a3d421cabbab952e15bcfc1a78ca19/TASK.md#patch-20261113-1--b-pass)：当前结论与逐次执行历史分层，同一 Result 合为一条、相同状态的不同历史保留；文件使用统一诊断，同源同值下一步只显示一份，四类恢复及读取失败状态保持。现行呈现见 [任务中心](task-center-page-spec.md#current--任务正文与文件证据)，T3 结果及样例限制见 [发布验证边界](release.md#current-v2-validation-boundary) |

@@ -745,7 +745,9 @@ publication, local analysis and safety semantics remain.
   Default output leads with conclusion, actual rendered name/destination or condition/reference/
   effect evidence, failure and corrective next action. Technical family/revision/version, raw
   categories/call counts and full JSON remain available in diagnostics. Relevant edits invalidate
-  evidence; late results cannot overwrite a newer subject/sample as current.
+  evidence; late results cannot overwrite a newer subject/sample as current. Repeating the main
+  check or using 用当前输入重新运行此项 replaces the one current result in place, including loading,
+  success, invalid input and failure; result groups do not accumulate below earlier runs.
 - **Complete flow:** only Overview offers the complete-flow check against published Active.
   All Add/Copy/Edit surfaces remove legacy complete-chain regions/buttons. Local success never
   proves whole-flow readiness, publication or execution authority. Guidance to Overview explains
@@ -1017,6 +1019,9 @@ item admission across manual/Automation/continuation work. Equal names are not s
 eligible siblings remain independent and a finished history row is not a perpetual entry lock.
 Matching enabled trailers attach to the retained main even in explicit mixed selection. Exact legal
 long names survive handoff; first stat/old mtime/lost observation is not a stable-size interval.
+Ordinary colons in supported Storage filenames and directory names remain exact through browsing,
+single-file/folder/mixed admission, planning and confirmed execution. They are not URI or drive
+prefixes; existing root, relative-path and selection limits still apply.
 
 Cancellation is cooperative; Pause/resume-from-pause is retired. If safe unfrozen continuation cannot be proved, retain
 stage/findings/zero media effects, settle/fence the old attempt and offer visibly distinct explicit
@@ -1039,6 +1044,10 @@ and the Tasks/recovery journey below remain.
 1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
    discovery/stability/analysis status and bounded exclusions, rather than waiting to open it.
+   Preparation leads with Chinese stage guidance and meaningful actual counts; technical Worker
+   messages remain in diagnostics. Queued/running does not imply completed traversal. Before files
+   are available, omit the empty pager and batch-review action; show exclusions/read failures and
+   their recovery when present. An unavailable Worker retains the admitted preparation for reread.
 2. **Review/action:** one primary file per page; show filename/path, 第 i / N 个, status,
    one primary status: the current legal decision, its saved waiting/refusal state, or the ready
    plan. When the plan exists, show the adopted work identity, source → target, operation/source
@@ -1049,7 +1058,8 @@ and the Tasks/recovery journey below remain.
    not generated yet. Typical two-candidate decisions and their save action remain visible without
    scrolling past placeholder facts. Exact diagnostics stay expandable under distinct item/decision
    labels. Previous/Next only browse and preserve per-item drafts and inclusion; they never save,
-   analyze or execute.
+   analyze or execute. The legal-decision form belongs directly to the primary status section;
+   candidate options keep their own selectable surfaces without another surrounding card.
 3. **Ten ambiguous files:** on 第 1 / 10 个 select the matching candidate and click
    保存并重新分析; after its saved choice is analyzed, inspect the new exact plan and go to the
    next file. Repeat for all 10: ten candidate selections, ten save/reanalysis actions, no per-file
@@ -1088,7 +1098,11 @@ work identity and generated source/target are the plan, and attachments/diagnost
 evidence. Duplicate operation/source statements and same-named diagnostic entries collapse into
 those sections; long paths wrap instead of truncating. Stable header/close/footer, internal body
 scroll, accessible focus/background locking and narrow/short viewport behavior are required, with
-state changes keeping the current file/action in place rather than jumping to the top.
+local transitions for preparation, file changes, saved-decision analysis and batch review. Switching
+files or review steps starts the body at the top; unchanged polling preserves scroll and does not
+replay the transition. Replacing a focused decision action keeps keyboard focus inside the card.
+The same organizer retains drafts, inclusion and submission identity. Reduced-motion shows usable
+content immediately; interaction and commands do not wait for animation.
 **Slice53 preserved Task Center task-detail layout, content, progress, results and recovery UI.**
 The later independent preparation-entry correction follows the Manual organize journey above; it
 does not redesign progress/results/recovery.

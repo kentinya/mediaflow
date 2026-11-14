@@ -737,6 +737,9 @@ The shared responsive AppShell owns route/auth continuation, bounded return cont
 unavailable/not-found recovery. Tokens remain memory-only; reject 401 authority and clear its queries,
 while 403 preserves authenticated identity. Exact path identity survives typed normalization, including
 boundary whitespace; navigation/cache cannot confer scope or rewrite an entry's name.
+The shared domain path-prefix check distinguishes ordinary colons in supported Storage names from
+drive and URI prefixes. Browsing, discovery, planning, recovery and logical OpenList/S3 paths
+preserve those names; relative-path, root-confinement and budget checks remain at their boundaries.
 
 API-principal Bearer/RBAC, exact immutable Active/pinned work, explicit effect authority, audit,
 claim/lease/fence and completed/uncertain non-replay remain unchanged. V1 does not add a password DB,
@@ -999,6 +1002,9 @@ necessary-reference validation precedes analysis. It does not require a whole-ru
 to test one object. Results bind family, candidate/revision/digest, purpose, sample and context;
 relevant edits or Active changes invalidate freshness. Python retains RBAC, audit, concurrency and
 policy authority. Analysis changes no Active pointer and creates no executable work.
+The shared Web panel keeps one current run. Main checks and result-local reruns replace it through
+pending, success and failure; only the matching run identity may settle that result. Currentness
+still binds the submitted candidate/sample/Active, so late evidence cannot become current again.
 
 RecognitionType definition needs no sample or downstream binding. Optional associated-rule
 analysis uses only its bounded relevant set; absent rules are inapplicable. RecognitionRule reuses
@@ -1528,6 +1534,13 @@ instead of re-enabling a request that was already accepted. No second analysis a
 button exists. Navigation is read-only. Late responses cannot switch files or overwrite unrelated
 drafts. Summary/subset changes invalidate stale dangerous authorization; server gates remain
 authoritative.
+Preparation presentation derives from the actual discovery stage/counts, with technical messages
+in diagnostics and no empty file pager. A stable organizer content boundary owns the local fade;
+current file, review step, preparation/plan identity and saved-analysis stage determine its changes.
+Unchanged polling leaves it still. File/step changes reset body scroll before the transition, and
+replaced focused controls return focus to that boundary. Reduced-motion removes the animation.
+The primary decision form uses organizer-scoped styling; Task Center's other recovery forms retain
+their own presentation. These are presentation states, not new durable workflow or admission states.
 One immutable submission identity (previewId, copied itemIds, intentVersion, allowOverwrite and
 allowSourceCleanup) is captured at confirmation and used by Execute and every unknown-request
 read. It is independent of the editable current summary and survives its replacement during sibling

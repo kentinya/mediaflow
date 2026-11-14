@@ -43,6 +43,26 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [source-path and organizer-presentation correction](https://github.com/kentinya/mediaflow/blob/280fc5fdedaf8c079dee52480e1eb4d3bf26449a/TASK.md#patch-20261114-1--b-pass)
+passed independent B T4 review on 2026-11-14: Base
+`6bf8f58b8283bc891c4b768208d343d2d52600f2` through reviewed Head
+`754d7286ba27943be507e7c93b233f9e930aa6c6`, implementation
+`ecf2956f9c177010de73e473cebf331fc2a05416`. Ordinary colon names survive the existing
+source-to-confirmed-Worker journey; Rules reruns replace one current result, and organizer
+preparation, decision hierarchy and local transitions were checked at three viewports.
+
+Web unit tests passed 1565 cases, default Node browser tests 274 and real-Python browser tests 55.
+Full Python ran 2692 cases: 2684 passed, 7 existing optional external/endurance cases skipped and
+one Task-heading documentation check failed. B corrected the heading and all 8 release-security
+documentation consumers then passed; the original failure log remains. The four failures recorded
+in the earlier continuation review below now pass in their correct suites. Quality/configuration,
+fresh production assets and new wheel/outside-source installation smoke passed. Wheel SHA-256:
+`f88f694962a79f7a9989ceb63c06c6fec9887711c730ff69f28ce429433afcc1`.
+Raw evidence remains local at `.git/validation-evidence/754d7286/patch-20261114-1-b/`;
+the fixed report records exact-path proof reuse and all limits. No container/startup/deployment
+path changed, so the broad Docker matrix was not applicable. This is development acceptance;
+Git publication does not constitute a V2 release or production-service validation.
+
 The [Task Center in-place continuation correction](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)
 passed independent B T4 review on 2026-11-14: Base
 `1c625220b9552bd1e75bfd351a54ddb524ff3e65` through reviewed Head
@@ -60,7 +80,7 @@ column-header locator and two Python-only year-search tests included by the Node
 The four required real-Python browser specs passed 56 cases; the two year-search cases passed
 under their existing Python configuration. Critical continuation, normal/reduced-motion keyboard
 and retained-background checks, three viewport reviews, quality/configuration/build checks and
-fresh wheel/outside-source installation smoke passed. The full suites are not all green; no
+fresh wheel/outside-source installation smoke passed. At that checkpoint the full suites were not all green; no
 assertions were weakened. Detailed failures, commands and artifact identities remain in the fixed
 report. Raw evidence is local at `.git/validation-evidence/218e6bf6/patch-20261113-3-b/`, not remote
 CI. No container path changed, so the broad Docker matrix was not applicable. The existing skips,
