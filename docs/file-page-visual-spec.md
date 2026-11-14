@@ -13,6 +13,8 @@ This file owns Files/shared-shell composition and controlled visual acceptance, 
 The [accepted browse correction](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)
 records the notice removal, shared list/grid feedback, current-page sorting and session column widths
 specified below; it does not reopen an accepted Slice.
+The later [toolbar/header correction](https://github.com/kentinya/mediaflow/blob/7ffe380669e50c46da15982a86e14e54228a38d8/TASK.md#patch-20261114-2--b-pass)
+records the compact sort status, shared display-settings menu and coordinated header/resize feedback.
 Original revision/delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
 

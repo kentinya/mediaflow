@@ -52,6 +52,8 @@ former organizing-history panel and fixed blue browse notice are removed. Both l
 hover/pressed/focus/selected feedback and share exact file/folder selection across list/grid views.
 Name/size sorting applies only to the loaded current page. Drag or use the keyboard to adjust column
 widths; sorting and widths survive directory changes, paging and refresh within the page session.
+The toolbar shows the current sort; `显示设置` restores order and column widths independently,
+with width recovery available in list view.
 A full page reload restores defaults. See the [browse controls](docs/product-experience.md#browse-feedback-selection-and-table-controls).
 Select files and click Organize to open a centered
 per-file dialog. Choose candidates and use `保存并重新分析` for each file that needs correction;

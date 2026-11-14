@@ -43,6 +43,26 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The [Files toolbar/header correction](https://github.com/kentinya/mediaflow/blob/7ffe380669e50c46da15982a86e14e54228a38d8/TASK.md#patch-20261114-2--b-pass)
+passed independent B T3 review on 2026-11-14: Base
+`4107c299d8f99b817fcd3cbdffa274de1f5598ea`, implementation
+`6a358085d1fc622c0257c545d83be41539d38620`, reviewed handoff
+`a98403804f23a47d4bac771def3fc5f07234fcde`. Both library toolbars consolidate current-page
+sorting and independent order/width recovery; table headers and resize feedback are coordinated.
+Selection, list/grid switching, session settings and real directory-read recovery were verified.
+
+Acceptance passed 112 affected Web unit tests, 71 Node browser tests and 6 real-Python live-list
+tests, plus type/lint/changed-file format/build and governance checks. Both pages were compared
+with Base at four viewports; keyboard, long names, loading/error/recovery, reduced-motion and
+reload defaults were checked. Concurrent Node/Python runs initially shared an output directory:
+Node recorded 70 passes and one trace-archive ENOENT failure; all 71 passed with an independent
+output directory. The original log remains; assertions, timeouts and retries were unchanged.
+Raw logs, build digests and screenshots remain local at
+`.git/validation-evidence/6a358085d1fc622c0257c545d83be41539d38620/patch-20261114-2-b/`.
+The fixed report retains existing jsdom/bundle warnings and all limits. These T3 results add no
+full-suite, wheel, Docker, remote-CI or production-service validation. This is development
+acceptance; subsequent documentation reconciliation changes no executable inputs.
+
 The [source-path and organizer-presentation correction](https://github.com/kentinya/mediaflow/blob/280fc5fdedaf8c079dee52480e1eb4d3bf26449a/TASK.md#patch-20261114-1--b-pass)
 passed independent B T4 review on 2026-11-14: Base
 `6bf8f58b8283bc891c4b768208d343d2d52600f2` through reviewed Head
