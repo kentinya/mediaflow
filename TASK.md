@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: B 在固定候选复核新建保存／发布成功后离开时不再接受新输入，并确认通知主页面过渡断言已按当前中文标题和读取标识协调；随后继续本轮剩余 T4 门禁。
+Next Action: Developer 在同一 Task 修正投递恢复响应丢失时“恢复没有应用”的错误标题，补齐现有未知恢复用例的可见结果断言；跑受影响检查后交 B 复核。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,7 +15,7 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
 Implementation Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
 Evidence Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
@@ -136,7 +136,7 @@ Base..规划检查点仅有 `TASK.md` 规划变更，没有独立产品变化；
 遵循 [测试分工](docs/development-workflow.md#6-test-levels)。下列未来命令是实施／验收计划，
 规划／激活轮未执行产品测试。新脚本及必要新测试只服务本 Task，不建设通用新测试平台。
 
-**Developer — new / changed / directly affected**
+### Developer — affected tests
 
 在 `web/`：
 
@@ -170,7 +170,7 @@ git diff --check
 若修改既有 Python 测试／夹具，另跑对应测试与该次变更文件检查。Developer 不运行 B 的
 全量 Python／Web／E2E 和发布矩阵；受影响结果齐全即可交接。
 
-**B — independent acceptance / full regression**
+### B — independent acceptance / full regression
 
 - 在固定候选先审完整 Base..Head、复现四个问题已纠正，独立查看同视口完整改前／改后及
   自动化参考；验收矩阵覆盖长地址／名称／全部事件、空／慢读／失败、390px／矮窗口、
@@ -524,98 +524,11 @@ Active 地址为浏览器保留值；无关配置区段、Webhook 身份集合�
 权限和迟到响应旅程。定向 Vitest、构建、Node E2E、原生证明与静态检查合计约 3 分钟，
 实现、差异审查和证据核对占主要时间，测试时间低于本轮总时间 30%。
 
-### B Review Result — FIX REQUIRED（2026-11-15）
+### Earlier B review
 
-固定审查范围：`51480dc318837e4f1e4f9c60c17b8e708abb6409`..
-`9a19621e1031abc7ca8feb39ad9eed5c3ea806ff`；产品候选
-`42fbe6c4bafbf880a99c59fd743b71090dc8bb1e`。B 接续完整 Base..Head 审查，重新核对
-18 文件清单、本轮全部 3 文件产品修正及关联创建／发布／公共退出行为；候选到报告
-Head 仅改本文件，执行输入一致。分支 `main`，起始工作区和暂存区干净；治理检查 PASS。
-
-**上轮两项阻塞已修复。** 使用新生产资产和真实 Python API：编辑卡片保存 A 时继续
-输入 B，真实 200 返回后 B 保留且标明未保存；自动及手动读回不覆盖 B，检查不可用，
-只有再次明确保存才写入下一版本。只读用户从管理员实际编辑入口取得的地址进入并重新
-认证，只见草稿摘要和权限原因，无填写表单、保存或测试控件，零写请求，可返回定义。
-两个浏览器的真实 409 读取／明确保留／保存、其他管理员发布后的输入保留／后继草稿
-恢复也通过。原生主旅程的一次签名测试、精确发布、单条死信恢复和筛选返回保持。
-
-**当前产品阻塞（P1）：新建保存和发布的成功跳转仍丢弃处理期间的新输入。**
-
-- 用户从通知列表创建后继草稿，点“新建 Webhook”，填写定义和地址 A，再点“保存到
-  草稿”。保存期间整张表单仍能编辑，用户将地址改为 B；真实 HTTP 200 返回后自动
-  跳到新定义详情，只显示 A，B 消失，没有明确放弃。实际只创建一次，后台合法保存 A。
-- 用户从列表打开既有 Webhook 编辑卡片，将 A 保存、检查并明确发布。发布期间地址框
-  仍可编辑，用户输入 B；真实 HTTP 200 返回后自动进入已生效详情，B 消失，没有明确
-  放弃。Active 正确为 A，问题是用户刚输入的 B 被成功离开动作丢弃。
-
-独立复现从现有按钮进入，拦截实际发出的请求，等待真实后端完成后仅延迟成功响应
-交付；没有修改请求或响应体。新建／发布各一次请求，输入 B 未被提交。两种旅程都
-违反 Scope 4 的未保存输入保护、在途交互及迟到响应要求。
-
-根因：`NotificationNewPage.tsx:106` 和 `NotificationEditorPage.tsx:483` 成功回调
-无条件调用 `guard.guardNavigation`，绕过退出保护，而对应表单在命令处理中仍可编辑。
-发布回调只比较草稿修订／版本，继续输入不会改变它，故不能识别较新的本地修改。
-这些成功跳转逻辑来自 `83a104eeef60300ab67f7c5df7a45d0f02a2b971`
-（2026-11-14 12:52 +08:00）。本轮普通编辑保存已修复，但未覆盖这两个成功即离开表单
-的动作；不需要改变创建、发布协议或扩大 Task。
-
-**已运行门禁的实际失败：** Node 全量为 273 passed / 1 failed。失败于
-`page-transition.spec.ts:320` 的九个侧栏主页面旅程：通知页面标题已是“通知”，该测试
-`:289` 仍等待旧标题 `Notifications`。这是本 Task 中文呈现变更遗漏的直接消费者断言，
-不是页面打不开。相关读取等待标识也仍匹配旧英文，需协调当前“正在读取通知定义”，
-保留原九页、过渡次数、Shell 几何、溢出及等待态断言。
-
-### Developer Guidance — 成功即离开表单的动作
-
-1. 新建保存、发布这两个成功后离开的动作，在请求处理中将相关整张表单设为不可编辑，
-   包括标识、地址、密钥引用、事件、启用及数值设置；现有忙碌按钮和退出保护保持。
-   成功后仍按真实结果进入详情；失败后恢复合适的编辑／只读状态并保留原输入。
-   普通“保存到草稿”继续保留本轮已实现的在途新输入能力，不回退已通过修正。
-2. 为上述两个现有按钮旅程补回归：延迟真实成功响应，确认处理期间鼠标／键盘不能改变
-   相关字段；成功后详情显示提交值，恰有一次命令、无额外写入或测试。另核对失败后原值
-   保留且能按现有恢复步骤继续。无需添加通用状态平台、后端接口或持久化本地草稿。
-3. 更新 `page-transition.spec.ts` 中通知的实际标题和读取标识；保持原旅程及行为断言。
-   Developer 只跑新增／修改／已失败及直接受影响测试和检查，B 在固定修正候选上承担
-   余下真实失败／未知结果、视觉键盘矩阵及完整 T4 验收。直接受影响 E2E 命令：
-   `npm run test:e2e -- tests/e2e/notifications.spec.ts tests/e2e/page-transition.spec.ts --output=test-results/patch-20261114-3-developer-fix-r4`（cwd `web/`）。
-
-修正在同一 Task 内完成。Slice54 仍 PASS / CLOSED；Parent Slice NONE；
-SLICE／Roadmap／Progress 不变。
-
-### B Actual Validation — 本轮
-
-实际执行及结果（均针对上述固定候选）：
-
-- `web/`：`npm run build` PASS，资产 `index-DJ7-SHRm.js`／`index-B0R4k6Jb.css`，
-  保留 chunk 体积提示；typecheck、lint、format:check PASS。
-- `web/`：`npm run test -- run` PASS，100 files / 1598 tests，175.32 秒；保留 jsdom
-  `Window.scrollTo` 未实现提示，没有删断言或加重试。
-- `web/`：`npm run test:e2e -- --output=test-results/patch-20261114-3-b-round4-node`
-  273 passed / 1 failed，3.6 分钟；上述旧标题断言失败，原日志／error-context／trace 保留。
-- `.venv/bin/ruff format --check .`（385 files）、`.venv/bin/ruff check .`、
-  `.venv/bin/python -m compileall -q mediaflow tests scripts`、`.venv/bin/python -m pip check`
-  PASS。两个现有 example 的 CLI config validate PASS；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml`
-  无匹配（exit 1）。
-- `.venv/bin/python -m pip wheel . --no-deps -w dist` 与
-  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-2.0.0.dev0-py3-none-any.whl`
-  PASS，包含源码外安装消费者；wheel SHA256
-  `82081a8e2d28af55753d16a5dfb4b444bcee565d72eece2af7220c280309e3d9`。
-- `.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts .git/validation-evidence/patch-20261114-3/b-round4/native`
-  PASS：READ 深链不写、Active 1→2、显式测试恰 1 次、精确发布、单条恢复 pending。
-- B 独立 `reproduce.py`／`permissions.py` 验证上轮修正通过；`create_pending.py`／
-  `publish_pending.py` 完成并证实当前输入丢失，JSON、命令状态及四张前后截图保留。
-  首次新建证明的事件标签定位遗漏同一 label 中的 `task.completed`，超时 30 秒；按实际
-  完整可访问名修正后完成，原失败日志保留。为核对最终截图又等待现有有限动效结束后取图，
-  没有改变产品或请求。复现完成不表示产品 PASS。
-
-`.venv/bin/python -m unittest discover -s tests` 已启动；产品阻塞成立后由 B 主动中止，
-exit 130／KeyboardInterrupt，尚未完成全量，不记 PASS。原日志保留 ResourceWarning 与
-中止位置（当时在普通自动化用例中等待），不将主动中止算作产品失败。其余原生日志／证据均在
-`.git/validation-evidence/patch-20261114-3/b-round4/`（未提交）。B 已查看实际截图和请求
-结果。依流程 §6，当前产品阻塞已成立，剩余真实权限 403／命令丢响应核对及完整视觉／
-键盘矩阵留待修正候选，未冒充通过。Docker 广域矩阵不适用：未改容器或部署路径。
-本轮测试按并行执行的实际经过时间计，低于总审查时间 50%；本次只改 TASK.md，
-无推送、发布或部署。治理检查与 `git diff --check` 在审查检查点前 PASS。
+上一轮 FIX REQUIRED 的完整旅程、原因及原失败日志见 `09e9d3de:TASK.md`。
+本轮独立复核已确认其中新建／发布期间输入丢失和通知页面过渡断言问题纠正；
+原 Task ID、Base、范围和 T4 分工不变。
 
 ### Developer Completion Report — FIX ROUND 4（2026-11-15）
 
@@ -693,6 +606,86 @@ Vitest 的延迟真实 `fetch` 响应和既有按钮旅程覆盖，B 仍应在�
 
 本轮定向 Vitest、构建、Node E2E、原生证明与静态检查合计约 2 分钟；实现、差异审查与
 证据核对占主要时间，测试时间低于本轮总时间 30%。
+
+### B Review Result — FIX REQUIRED（2026-11-15，本轮）
+
+B 独立审查完整范围：
+`51480dc318837e4f1e4f9c60c17b8e708abb6409..48e9d2769abd96cbc06c37139cf67cb33c00b428`。
+产品候选为 `4edb1526cc418ab5bbeb0ca96323f0584d0b5091`；其到交接 Head 仅改 TASK.md，
+执行输入一致。分支 main，开始时工作区／暂存区干净、治理检查 PASS。本轮仅维护 TASK.md。
+
+**尚余一个 P1 阻塞：未知的恢复结果被标题断言为没有应用。**
+
+用户从通知 → 查看投递记录 → 死信筛选 → 查看投递，勾选确认并点击重新入队。
+真实 Python API 已返回 200、SQLite 已把所选记录改为 pending，但该成功响应在返回浏览器时
+丢失。卡片此时以红色标题“恢复没有应用”给出确定结论，正文却说明“命令结果未知：所选
+投递可能已经恢复为待投递”。同一结果相互矛盾，用户无法直接判断应相信哪个结论；这不是
+后端恢复失败。点击读取最新投递后能确认待投递，整个过程只发送一次恢复命令、没有自动重放。
+本 Task 明确要求实际失败与未知不混淆，因此该可见结果仍不满足验收。
+
+根因：`DeliveryDetailPage.tsx:511` 对所有 error 字符串固定使用“恢复没有应用”，包括
+`isUnknownCommandResult` 分支。引入提交 `83a104eeef60300ab67f7c5df7a45d0f02a2b971`
+（2026-11-14 12:52 +08）；本轮候选仍保留。可读证据在本机
+`.git/validation-evidence/patch-20261114-3/b-round5/recovery-unknown.json`、
+`recovery-unknown-390.png`、`recovery-unknown.log`。该证明从既有页面／按钮进入，
+在真实恢复完成后只丢弃响应；没有伪造入口或恢复返回值。
+
+**给 Developer 的修复指导与验收：**
+
+1. 只协调恢复结果的标题、正文和呈现：未知结果明确显示“恢复结果未知”或等义结论，
+   已确定拒绝仍明确显示没有应用及原因。沿用现有错误分支和读回入口，不改恢复协议。
+2. 保留“可能已执行 → 读取持久状态核对”的下一步，保留显式确认、精确投递身份／fence，
+   读回 pending 后不再提供死信恢复；不得为修正文案重新发送命令。
+3. 在已有 unknown recovery 回归中断言用户实际可见标题与正文一致；保留 409 拒绝、
+   已知成功后读取失败、一次命令和原死信筛选返回断言。无需新增通用证明平台。
+4. Developer 跑 NotificationRouter 定向 Vitest、通知 Node E2E，以及受影响类型／lint／格式／
+   构建检查后提交同一 Task。B 复核真实“已完成后丢响应 → 未知 → 读回待投递”旅程，
+   并依工作流匹配最终候选的 T4 证据。原 ID／Base／范围／High／T4 不变。
+
+**本轮已独立通过的交付：**
+
+- 新建保存与发布真实请求在途时全部字段禁用，提交值不变，各恰一次命令，成功后进入正确
+  定义；普通保存仍允许继续输入，迟到成功保留新值为未保存修改。双浏览器真实 409、
+  第二写者发布、读取后明确保留／采用服务端值、退出继续编辑及再次保存均正常。
+- 原生证明通过：Active 1→2，仅所选 Webhook 变化；READ 深链无可填写表单、无保存／测试；
+  只读访问不写配置、不发测试；一次签名测试恰一次 transport、零新投递；所选死信恢复 pending。
+- 真实已完成保存／发布／签名测试丢响应后提示未知，显式读回核对，不自动重放；发布后的
+  精确地址经“读取最新定义”与 Active 核对。已知恢复成功后 GET 失败仍保留已知成功、标识
+  旧读取，显式重试恢复为 pending；返回保持原死信筛选。
+- 以 Base 新构建和候选新构建对照六页的 1440×1000、390×844、1440×700 实际截图，并对照
+  自动化页面。字段／事件分组、可读 URL、状态和诊断层次较 Base 改善，卡片头尾操作区与
+  内部滚动可用。真实创建 64 字符标识、360 字符地址、全部四事件后能查看和编辑，窄屏无
+  页面横向溢出。键盘操作投递筛选／确认／恢复、Tab 限于卡片、Escape、继续编辑／明确放弃
+  和 reduced-motion 通过。读取与状态分支同时由全量 Web／Node 回归覆盖。
+
+**实际门禁与限制：**
+
+证据根目录 `.git/validation-evidence/patch-20261114-3/b-round5/`（本机忽略产物，未提交）：
+
+- `.venv/bin/python -m unittest discover -s tests`：2692 项，2684 通过、7 skipped、1 文档格式
+  失败，306.599 秒；原日志 `python-full.log` 保留。失败是 B 规划中的测试分工使用粗体标题，
+  未满足仓库文档消费者要求。B 本轮改成标准三级标题，未改测试或产品；随后
+  `.venv/bin/python -m unittest discover -s tests -p test_release_security.py`：8 项通过
+  （`python-task-doc-rerun.log`）。未将首次全量冒充全绿，产品执行输入未因该文档修正变化。
+- `web/`：`npm run test -- run` 100 文件／1601 项通过；
+  `npm run test:e2e -- --output=test-results/patch-20261114-3-b-round5-node` 274 项通过；
+  typecheck、lint、format:check、build 均通过。新资产
+  `index-C9lHThdg.js`／`index-B0R4k6Jb.css`；既有 chunk 体积提示保留。
+- 原生脚本 `scripts/notifications_workspace_browser_proof.py --artifacts .../b-round5/native`
+  通过；B 独立补充证明为 `create_pending.py`、`publish_pending.py`、`reproduce.py`、
+  `remaining.py`、`recovery_unknown.py`、`long_visual.py`，结果／截图保留同目录。
+  补充脚本首次运行的定位器严格匹配、PUT 拦截方法、已关闭草稿预期、显式读取及重试按钮
+  定位问题已修正后通过，所有原失败日志保留；未修改产品以迁就脚本。
+- ruff 格式（385 文件）、ruff check、compileall、pip check、两个示例 config validate、
+  禁用依赖检索（无 FFmpeg／FFprobe，exit 1）通过；wheel 构建和源码外安装 smoke 通过。
+  精确 wheel：`mediaflow-2.0.0.dev0-py3-none-any.whl`，SHA-256
+  `0a7b00e78ed17a26d61fa03f0631b3b15c75b4d8a863ceae7f35e656ac2f238d`。
+- Docker 广域矩阵不适用：未改容器／部署路径；未使用生产接收端、凭据或用户媒体。
+  本轮按并行执行的实际经过时间计，测试低于审查总时间 50%。
+
+结论为 FIX REQUIRED，仅上述恢复未知结果的确定性标题阻塞。没有后端重放或越权证据，
+不新增功能／防御性机制或后续 Task。Slice54 保持 PASS / CLOSED，SLICE／Roadmap／Progress
+未变，无推送、发布或部署。治理检查与 `git diff --check` 在本轮检查点前通过。
 
 ## Latest accepted Task — PATCH-20261114-2
 
