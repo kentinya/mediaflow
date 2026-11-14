@@ -1,9 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import {
   FILES_COLUMN_DEFAULT_WIDTH,
   FILES_COLUMN_MIN_WIDTH,
   FilesColumnResizeHandle,
+  FilesDisplaySettings,
   filesSortLabel,
   nextFilesSort,
   sortFilesRows,
@@ -111,7 +118,7 @@ describe("Files current-page ordering", () => {
       field: "size",
       direction: "asc",
     });
-    expect(filesSortLabel(null)).toBe("服务端默认顺序");
+    expect(filesSortLabel(null)).toBe("默认顺序");
   });
 });
 
@@ -169,8 +176,10 @@ describe("Files column resizing", () => {
       clientX: 100,
       button: 0,
     });
+    expect(handle).toHaveClass("is-dragging");
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: -1000 });
     fireEvent.pointerUp(handle, { pointerId: 1, clientX: -1000 });
+    expect(handle).not.toHaveClass("is-dragging");
     expect(handle).toHaveAttribute(
       "aria-valuenow",
       String(FILES_COLUMN_MIN_WIDTH.name),
@@ -236,5 +245,85 @@ describe("Files column resizing", () => {
     fireEvent.blur(handle);
     fireEvent.pointerMove(handle, { pointerId: 10, clientX: 400 });
     expect(handle).toHaveAttribute("aria-valuenow", beforeBlur as string);
+  });
+});
+
+describe("Files display settings", () => {
+  it("shows the current-page scope and disables default recovery entries", () => {
+    render(
+      <FilesDisplaySettings
+        sort={null}
+        onResetSort={() => {}}
+        onResetWidths={() => {}}
+        widthsResettable={false}
+      />,
+    );
+
+    expect(screen.getByText("当前页排序：默认顺序")).toBeVisible();
+    const trigger = screen.getByRole("button", { name: "显示设置" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-controls");
+    expect(
+      screen.getByRole("menuitem", { name: "恢复默认顺序" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", { name: "恢复默认列宽" }),
+    ).toBeDisabled();
+  });
+
+  it("runs each recovery independently, navigates by keyboard and restores focus on Escape", async () => {
+    const onResetSort = vi.fn();
+    const onResetWidths = vi.fn();
+    render(
+      <FilesDisplaySettings
+        sort={{ field: "name", direction: "asc" }}
+        onResetSort={onResetSort}
+        onResetWidths={onResetWidths}
+        widthsResettable
+      />,
+    );
+
+    expect(screen.getByText("当前页排序：名称升序")).toBeVisible();
+    const trigger = screen.getByRole("button", { name: "显示设置" });
+    fireEvent.click(trigger);
+    const order = screen.getByRole("menuitem", { name: "恢复默认顺序" });
+    const widths = screen.getByRole("menuitem", { name: "恢复默认列宽" });
+    expect(order).toBeEnabled();
+    expect(widths).toBeEnabled();
+    await waitFor(() => expect(order).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(widths).toHaveFocus();
+    fireEvent.keyDown(document, { key: "ArrowUp" });
+    expect(order).toHaveFocus();
+
+    fireEvent.click(order);
+    expect(onResetSort).toHaveBeenCalledTimes(1);
+    expect(onResetWidths).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes on an outside pointer and keeps the readable status", () => {
+    render(
+      <FilesDisplaySettings
+        sort={{ field: "size", direction: "desc" }}
+        onResetSort={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "显示设置" }));
+    expect(screen.getByRole("menu")).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "恢复默认列宽" })).toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText("当前页排序：大小降序")).toBeVisible();
   });
 });

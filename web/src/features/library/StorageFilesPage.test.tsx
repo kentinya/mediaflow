@@ -1326,6 +1326,14 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.getByText(/已选择 1 个文件/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "网格视图" }));
     expect(screen.queryByRole("table")).toBeNull();
+    const displayTrigger = screen.getByRole("button", { name: "显示设置" });
+    await user.click(displayTrigger);
+    expect(screen.queryByRole("menuitem", { name: "恢复默认列宽" })).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: "恢复默认顺序" }),
+    ).toBeEnabled();
+    await user.keyboard("{Escape}");
+    expect(displayTrigger).toHaveFocus();
     const gridSelection = screen.getByRole("checkbox", {
       name: "选择 alpha.mkv",
     });
@@ -1336,6 +1344,28 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.getByText(/已选择 3 个项目/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "取消选择" }));
     expect(screen.getByText("已选择 0 个文件", { exact: true })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "列表视图" }));
+    expect(screen.getByText("当前页排序：大小升序")).toBeVisible();
+    await user.click(displayTrigger);
+    await user.click(screen.getByRole("menuitem", { name: "恢复默认列宽" }));
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(widthBefore));
+    expect(screen.getByRole("columnheader", { name: /大小/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(displayTrigger).toHaveFocus();
+    await user.click(displayTrigger);
+    await user.click(screen.getByRole("menuitem", { name: "恢复默认顺序" }));
+    expect(
+      screen.getByRole("columnheader", { name: /大小/ }),
+    ).not.toHaveAttribute("aria-sort");
+    expect(screen.getByText("当前页排序：默认顺序")).toBeVisible();
+    expect(
+      screen.getByRole("separator", { name: "调整名称列宽" }),
+    ).toHaveAttribute("aria-valuenow", String(widthBefore));
   });
 
   it("keeps current-page order and exact widths through a first directory read, retry and paging", async () => {

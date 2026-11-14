@@ -106,12 +106,19 @@ test("a failed directory read offers its own retry and no organizing history", a
 
   await expect(page.getByText("文件读取不可用", { exact: true })).toBeVisible();
   await expect(page.getByText("整理记录")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "显示设置" })).toHaveCount(0);
   expect(historyReads(api)).toHaveLength(0);
 
   // The one bounded read-only retry restores the directory, not history.
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("table")).toBeVisible();
   await expect(page.getByText("整理记录")).toHaveCount(0);
+  await expect(page.getByText("当前页排序：默认顺序")).toBeVisible();
+  await page.getByRole("button", { name: "显示设置" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "显示设置" })).toBeFocused();
   expect(historyReads(api)).toHaveLength(0);
 });
 
@@ -124,6 +131,17 @@ test("the narrow viewport keeps the same page without horizontal overflow", asyn
 
   await expect(page.getByRole("table")).toBeVisible();
   await expect(page.getByText("整理记录")).toHaveCount(0);
+  await expect(page.getByText("当前页排序：默认顺序")).toBeVisible();
+  const displaySettings = page.getByRole("button", { name: "显示设置" });
+  await displaySettings.click();
+  const menuBox = await page.getByRole("menu").boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect((menuBox?.x ?? 0) >= 0).toBe(true);
+  expect((menuBox?.y ?? 0) >= 0).toBe(true);
+  expect((menuBox?.x ?? 0) + (menuBox?.width ?? 0)).toBeLessThanOrEqual(390);
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(844);
+  await page.keyboard.press("Escape");
+  await expect(displaySettings).toBeFocused();
   expect(historyReads(api)).toHaveLength(0);
   await expect
     .poll(() =>

@@ -51,9 +51,9 @@ import { LibraryFileOperationsDialog } from "./LibraryFileOperationsDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
   FilesColumnResizeHandle,
+  FilesDisplaySettings,
   FilesGridSelectAll,
   FilesSortButton,
-  FilesSortScope,
   FilesTableColumnGroup,
   nextFilesSort,
   sortFilesRows,
@@ -926,18 +926,21 @@ function MediaBrowseView({
               >
                 <Icon name="grid" />
               </button>
+              {rows.length > 0 && (
+                <FilesDisplaySettings
+                  sort={sort}
+                  onResetSort={() => onSortChange(null)}
+                  onResetWidths={
+                    view === "list" ? resetFilesColumnWidths : undefined
+                  }
+                  widthsResettable={
+                    view === "list" && columnResizedWidths !== null
+                  }
+                />
+              )}
             </div>
           </div>
           <FilesRefreshState refreshing={refreshing} />
-          {rows.length > 0 && (
-            <FilesSortScope
-              sort={sort}
-              onResetSort={() => onSortChange(null)}
-              onResetWidths={
-                view === "list" ? resetFilesColumnWidths : undefined
-              }
-            />
-          )}
           {rows.length === 0 ? (
             <p className="mf-files-state">
               {query !== ""

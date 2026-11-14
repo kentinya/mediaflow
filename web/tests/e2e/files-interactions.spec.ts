@@ -114,8 +114,8 @@ test("ResourceLibrary Files sorts, resizes, selects across views and keeps path-
     "aria-label",
     "文件条目 TV",
   );
-  await page.getByRole("button", { name: "恢复默认顺序" }).click();
-  await expect.poll(() => nameHeader.getAttribute("aria-sort")).toBeNull();
+  const displaySettings = page.getByRole("button", { name: "显示设置" });
+  await expect(page.getByText("当前页排序：大小升序")).toBeVisible();
 
   const resize = page.getByRole("separator", { name: "调整名称列宽" });
   const initialWidth = Number(await resize.getAttribute("aria-valuenow"));
@@ -142,6 +142,35 @@ test("ResourceLibrary Files sorts, resizes, selects across views and keeps path-
     .poll(async () => Math.abs((await headerWidth()) - rightDragWidth))
     .toBeLessThanOrEqual(1);
 
+  // The anchored display settings menu is keyboard reachable; both recovery
+  // actions are enabled because order and width differ from their defaults.
+  await displaySettings.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "恢复默认顺序" }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "恢复默认列宽" }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    page.getByRole("menuitem", { name: "恢复默认顺序" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(displaySettings).toBeFocused();
+
+  await displaySettings.click();
+  await page.getByRole("menuitem", { name: "恢复默认顺序" }).click();
+  await expect.poll(() => nameHeader.getAttribute("aria-sort")).toBeNull();
+  await expect.poll(() => sizeHeader.getAttribute("aria-sort")).toBeNull();
+  await expect(page.getByText("当前页排序：默认顺序")).toBeVisible();
+  await expect(displaySettings).toBeFocused();
+  await expect
+    .poll(async () => Number(await resize.getAttribute("aria-valuenow")))
+    .toBe(rightDragWidth);
+
   await resize.dblclick();
   await expect
     .poll(async () => Number(await resize.getAttribute("aria-valuenow")))
@@ -156,6 +185,15 @@ test("ResourceLibrary Files sorts, resizes, selects across views and keeps path-
   await page.getByRole("button", { name: "网格视图" }).click();
   await expect(page.getByRole("table")).toHaveCount(0);
   await expect(page.locator(".mf-files-grid")).toBeVisible();
+  await displaySettings.click();
+  await expect(
+    page.getByRole("menuitem", { name: "恢复默认列宽" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "恢复默认顺序" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(displaySettings).toBeFocused();
   const gridSelection = page.getByRole("checkbox", {
     name: "选择 sample.mkv",
   });
@@ -244,10 +282,15 @@ test("MediaLibrary Files sorts, resizes and selects with the same exact identiti
   await expect
     .poll(async () => Number(await typeResize.getAttribute("aria-valuenow")))
     .toBe(initialTypeWidth + 16);
-  await page.getByRole("button", { name: "恢复默认列宽" }).click();
+  const displaySettings = page.getByRole("button", { name: "显示设置" });
+  await displaySettings.click();
+  await page.getByRole("menuitem", { name: "恢复默认列宽" }).click();
   await expect
     .poll(async () => Number(await typeResize.getAttribute("aria-valuenow")))
     .toBe(initialTypeWidth);
+  // Width recovery is independent of the active current-page order.
+  await expect(nameHeader).toHaveAttribute("aria-sort", "descending");
+  await expect(displaySettings).toBeFocused();
 
   await page.getByRole("checkbox", { name: "选择 Dune (2021)" }).check();
   await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();

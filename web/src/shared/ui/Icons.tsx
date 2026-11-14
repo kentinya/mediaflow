@@ -18,6 +18,9 @@ export type IconName =
   | "refresh"
   | "list"
   | "grid"
+  | "sort"
+  | "sort-asc"
+  | "sort-desc"
   | "file"
   | "image"
   | "video"
@@ -165,6 +168,24 @@ export function Icon({ name, ...props }: IconProps) {
           <rect x="13.5" y="4.5" width="6" height="6" rx=".5" />
           <rect x="4.5" y="13.5" width="6" height="6" rx=".5" />
           <rect x="13.5" y="13.5" width="6" height="6" rx=".5" />
+        </svg>
+      );
+    case "sort":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M12 5v14M9 8l3-3 3 3M9 16l3 3 3-3" />
+        </svg>
+      );
+    case "sort-asc":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M12 19V5M8 9l4-4 4 4" />
+        </svg>
+      );
+    case "sort-desc":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M12 5v14M8 15l4 4 4-4" />
         </svg>
       );
     case "file":

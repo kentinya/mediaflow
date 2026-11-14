@@ -79,4 +79,43 @@ describe("Files toolbar geometry CSS", () => {
     expect(disclosure).toContain("white-space: pre-wrap");
     expect(disclosure).toContain("z-index: 60");
   });
+
+  it("keeps the display settings in the toolbar and gives the header a quiet complete surface", () => {
+    expect(css).not.toContain(".mf-files-sortscope");
+    const display = declarationsFor(".mf-files-display").join("\n");
+    expect(display).toContain("border: 1px solid #e3e9f1");
+    expect(display).toContain("background: #f8fafc");
+    expect(display).toContain("white-space: nowrap");
+    const menu = declarationsFor(".mf-files-display-menu").join("\n");
+    expect(menu).toContain("z-index: 80");
+    expect(menu).toContain("min-width: 184px");
+    const header = declarationsFor(".mf-files-table thead th").join("\n");
+    expect(header).toContain("background: #f7f9fc");
+    expect(header).toContain("border-bottom: 1px solid #dfe6f0");
+  });
+
+  it("reveals an inactive sort direction on hover or focus and keeps the active one visible", () => {
+    const indicator = declarationsFor(".mf-sort-indicator").join("\n");
+    expect(indicator).toContain("opacity: 0");
+    const revealed = declarationsFor(".mf-sort-button:hover .mf-sort-indicator")
+      .concat(
+        declarationsFor(".mf-sort-button:focus-visible .mf-sort-indicator"),
+      )
+      .concat(declarationsFor(".mf-sort-button.is-active .mf-sort-indicator"))
+      .join("\n");
+    expect(revealed).toContain("opacity: 1");
+  });
+
+  it("keeps a subtle resize boundary that strengthens without shrinking its hit area", () => {
+    const handle = declarationsFor(".mf-col-resize").join("\n");
+    expect(handle).toContain("width: 8px");
+    const boundary = declarationsFor(".mf-col-resize::after").join("\n");
+    expect(boundary).toContain("border-left: 1px solid #d5dfec");
+    expect(boundary).toContain("opacity: 0.75");
+    const enhanced = declarationsFor(".mf-col-resize.is-dragging::after")
+      .concat(declarationsFor(".mf-col-resize:hover::after"))
+      .join("\n");
+    expect(enhanced).toContain("border-left-color: var(--files-accent)");
+    expect(enhanced).toContain("opacity: 1");
+  });
 });

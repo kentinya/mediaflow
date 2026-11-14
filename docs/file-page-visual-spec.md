@@ -204,15 +204,22 @@ The table columns are exactly (current presentation boundary — see above):
 选择 | 名称 | 类型 | 大小 | 修改时间
 ```
 
-Name and size headers are buttons that order only the already loaded page; the visible
-`当前页排序` line names the active field/direction and offers `恢复默认顺序`. Server order is the
-initial state, clicking a field starts ascending and the next click reverses it. Equal values keep an
-exact-path tie-break, directories do not pretend to have a zero-byte size and appear after real
-files in size order. Sorting never requests another page or changes the cursor, selection or a
-row's command path. The same order is used by list and grid views.
+The header uses one quiet pale surface with a soft bottom edge; the name column stays flexible and
+the other columns keep readable spacing without an arbitrary maximum table width.
+
+Name and size headers are buttons that order only the already loaded page. The toolbar keeps a
+compact `当前页排序：…` status and a `显示设置` menu whose `恢复默认顺序` entry resets only the order;
+the initial state reads `默认顺序` without naming an implementation. Clicking a field starts
+ascending and the next click reverses it; the active direction stays beside the label, while an
+inactive direction appears on hover or keyboard focus. Equal values keep an exact-path tie-break,
+directories do not pretend to have a zero-byte size and appear after real files in size order.
+Sorting never requests another page or changes the cursor, selection or a row's command path. The
+same order is used by list and grid views.
 
 The four data columns expose a focusable boundary handle for pointer dragging, `ArrowLeft`/
-`ArrowRight` keyboard adjustment, and `恢复默认列宽` (double-click a handle resets the widths). Widths
+`ArrowRight` keyboard adjustment, and the same `显示设置` menu's `恢复默认列宽` entry (double-click a
+handle also resets the widths). The order and width entries are disabled at their own default and
+reset independently; the width entry is absent in grid view. Widths
 are session-only and survive directory, paging, refresh and list/grid changes. Once widths are
 user-set the table is exactly as wide as its five columns, so the visible boundary follows the
 announced width and leftover pane space stays outside the table (the default layout still fills the

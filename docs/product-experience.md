@@ -812,13 +812,17 @@ Space toggles a focused checkbox. List/grid changes preserve the same selection 
 select-all/clear for the loaded page. Directory/page/library changes keep the existing selection
 lifecycle. Folder clicks still open that folder; ordinary file clicks add no new operation.
 
-Name/size headers sort only the loaded current page, with visible `当前页排序`, ascending/descending
-state and `恢复默认顺序`. List and grid share that order; sorting neither fetches more pages nor
-changes command targets. Four data-column handles support dragging and left/right keys; double-click
-or `恢复默认列宽` resets them. The visible boundary matches the chosen width, with horizontal overflow
-inside the table scroller. Sort and widths survive directory changes, paging, refresh and read-failure
-retry within that page session; full page reload restores defaults. Reduced-motion keeps immediate
-feedback. The Files fixed blue browse explanation is removed; meaningful errors/results remain.
+Name/size headers sort only the loaded current page. A compact toolbar status reads
+`当前页排序：…` (the initial state is `默认顺序`), and its `显示设置` menu offers `恢复默认顺序`;
+list and grid share that order, and sorting neither fetches more pages nor changes command targets.
+Four data-column handles support dragging and left/right keys; the same menu offers
+`恢复默认列宽` in list view, and double-click also resets the widths. Order and width recovery are
+disabled at their own default and reset independently; the inactive sort direction appears on
+hover/focus while an active column keeps its direction visible. The visible boundary matches the
+chosen width, with horizontal overflow inside the table scroller. Sort and widths survive directory
+changes, paging, refresh and read-failure retry within that page session; full page reload restores
+defaults. Reduced-motion keeps immediate feedback. The Files fixed blue browse explanation is
+removed; meaningful errors/results remain.
 
 For example: open a library → sort the current page by name → narrow the name column → select a file
 → switch to grid to see the same selected item → return to list and open a folder. The folder loads

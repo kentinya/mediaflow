@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -9,6 +10,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
+import { Icon } from "../../shared/ui/Icons";
 
 /**
  * Presentation-only Files helpers shared by the ResourceLibrary and
@@ -140,7 +143,7 @@ export function nextFilesSort(
 }
 
 export function filesSortLabel(sort: FilesSortState | null): string {
-  if (sort === null) return "服务端默认顺序";
+  if (sort === null) return "默认顺序";
   const field = sort.field === "name" ? "名称" : "大小";
   return field + (sort.direction === "asc" ? "升序" : "降序");
 }
@@ -156,7 +159,13 @@ export function FilesSortButton({
   readonly sort: FilesSortState | null;
   readonly onSort: (field: FilesSortField) => void;
 }) {
-  const active = sort?.field === field;
+  const active = sort !== null && sort.field === field;
+  const indicator =
+    active && sort.direction === "asc"
+      ? "sort-asc"
+      : active
+        ? "sort-desc"
+        : "sort";
   return (
     <button
       type="button"
@@ -166,44 +175,226 @@ export function FilesSortButton({
     >
       <span>{label}</span>
       <span className="mf-sort-indicator" aria-hidden="true">
-        {active ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}
+        <Icon name={indicator} />
       </span>
     </button>
   );
 }
 
-/** The visible scope and reset entries for current-page ordering. */
-export function FilesSortScope({
+/**
+ * The compact toolbar status for current-page ordering and its display
+ * settings menu. Sort and width recovery stay separate actions; the width
+ * entry is absent for the grid, where no column geometry is on screen.
+ */
+export function FilesDisplaySettings({
   sort,
   onResetSort,
   onResetWidths,
+  widthsResettable = false,
 }: {
   readonly sort: FilesSortState | null;
   readonly onResetSort: () => void;
   readonly onResetWidths?: () => void;
+  readonly widthsResettable?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{
+    readonly top: number;
+    readonly left: number;
+  } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuId = useId();
+  const openedAtRef = useRef(0);
+
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    setOpen(false);
+    setPosition(null);
+    if (restoreFocus) triggerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    // A focus scroll can already be queued before the menu opens; only a
+    // viewport change after this measurement invalidates the anchor.
+    openedAtRef.current = performance.now();
+    const measure = () => {
+      const trigger = triggerRef.current;
+      const menu = menuRef.current;
+      if (trigger === null) return;
+      const anchor = trigger.getBoundingClientRect();
+      const width = menu?.offsetWidth ?? 184;
+      const height = menu?.offsetHeight ?? 84;
+      let left = anchor.right - width;
+      left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+      let top = anchor.bottom + 6;
+      if (top + height > window.innerHeight - 8) {
+        top = anchor.top - height - 6;
+      }
+      top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
+      setPosition((current) =>
+        current !== null && current.top === top && current.left === left
+          ? current
+          : { top, left },
+      );
+    };
+    measure();
+    // The first paint may not know the real box yet; measure it once more.
+    const frame = window.requestAnimationFrame(measure);
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  useEffect(() => {
+    // The first portal frame is hidden until the anchor has been measured; a
+    // hidden element cannot take focus, so wait for the measured position.
+    if (!open || position === null) return;
+    const menu = menuRef.current;
+    const enabledItems = () =>
+      Array.from(
+        menu?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitem"]:not(:disabled)',
+        ) ?? [],
+      );
+    // Let the initiating click/key event finish its own focus handling first,
+    // then place focus on the first enabled action (or the menu itself).
+    const frame = window.requestAnimationFrame(() => {
+      const first = enabledItems()[0];
+      if (first !== undefined) first.focus({ preventScroll: true });
+      else menu?.focus({ preventScroll: true });
+    });
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenu(true);
+        return;
+      }
+      if (event.key === "Tab") {
+        // Let Tab continue from the trigger instead of the portal's position.
+        closeMenu(true);
+        return;
+      }
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowUp" &&
+        event.key !== "Home" &&
+        event.key !== "End"
+      ) {
+        return;
+      }
+      const items = enabledItems();
+      if (items.length === 0) return;
+      event.preventDefault();
+      const current = items.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : event.key === "ArrowDown"
+              ? (current + 1 + items.length) % items.length
+              : (current - 1 + items.length) % items.length;
+      items[next]?.focus({ preventScroll: true });
+    };
+    const handlePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (menu?.contains(target) ||
+          (triggerRef.current?.contains(target) ?? false))
+      ) {
+        return;
+      }
+      closeMenu(false);
+    };
+    const handleViewportChange = (event: Event) => {
+      if (event.timeStamp < openedAtRef.current) return;
+      if (event.target instanceof Node && menu?.contains(event.target)) return;
+      const focusWasInMenu =
+        menu !== null && menu.contains(document.activeElement);
+      closeMenu(focusWasInMenu);
+    };
+    document.addEventListener("keydown", handleKey, true);
+    document.addEventListener("pointerdown", handlePointer, true);
+    window.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("resize", handleViewportChange);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKey, true);
+      document.removeEventListener("pointerdown", handlePointer, true);
+      window.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("resize", handleViewportChange);
+    };
+  }, [open, position, closeMenu]);
+
+  const runAction = (action: () => void) => {
+    closeMenu(true);
+    action();
+  };
+
   return (
-    <div className="mf-files-sortscope">
-      <span className="mf-files-sortscope-label">
+    <div className="mf-files-display">
+      <span className="mf-files-sort-status">
         当前页排序：{filesSortLabel(sort)}
       </span>
       <button
+        ref={triggerRef}
         type="button"
-        className="mf-files-sortscope-reset"
-        onClick={onResetSort}
-        disabled={sort === null}
+        className="mf-files-display-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => {
+          if (open) closeMenu(false);
+          else setOpen(true);
+        }}
       >
-        恢复默认顺序
+        <Icon name="settings" />
+        显示设置
       </button>
-      {onResetWidths !== undefined && (
-        <button
-          type="button"
-          className="mf-files-sortscope-reset"
-          onClick={onResetWidths}
-        >
-          恢复默认列宽
-        </button>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            className="mf-card-menu mf-files-display-menu"
+            role="menu"
+            aria-label="显示设置"
+            tabIndex={-1}
+            style={{
+              position: "fixed",
+              top: position?.top ?? -9999,
+              left: position?.left ?? -9999,
+              right: "auto",
+              visibility: position === null ? "hidden" : "visible",
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item"
+              disabled={sort === null}
+              onClick={() => runAction(onResetSort)}
+            >
+              恢复默认顺序
+            </button>
+            {onResetWidths !== undefined && (
+              <button
+                type="button"
+                role="menuitem"
+                className="mf-card-menu-item"
+                disabled={!widthsResettable}
+                onClick={() => runAction(onResetWidths)}
+              >
+                恢复默认列宽
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -409,6 +600,7 @@ export function FilesColumnResizeHandle({
     readonly startX: number;
     readonly startWidth: number;
   } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -419,6 +611,7 @@ export function FilesColumnResizeHandle({
   const finishDrag = (element: HTMLSpanElement, pointerId: number) => {
     if (dragRef.current?.pointerId !== pointerId) return;
     dragRef.current = null;
+    setDragging(false);
     if (
       typeof element.hasPointerCapture === "function" &&
       element.hasPointerCapture(pointerId) &&
@@ -437,6 +630,7 @@ export function FilesColumnResizeHandle({
       startX: event.clientX,
       startWidth: width,
     };
+    setDragging(true);
     event.currentTarget.focus();
     if (typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -474,7 +668,7 @@ export function FilesColumnResizeHandle({
       aria-valuemax={FILES_COLUMN_MAX_WIDTH[column]}
       aria-valuenow={width}
       aria-valuetext={`${label}列 ${width} 像素`}
-      className="mf-col-resize"
+      className={dragging ? "mf-col-resize is-dragging" : "mf-col-resize"}
       data-column-resize={column}
       tabIndex={0}
       onPointerDown={handlePointerDown}
