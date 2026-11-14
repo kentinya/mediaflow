@@ -513,6 +513,7 @@ export function NotificationEditorPage() {
     validateMutation.isPending ||
     testMutation.isPending ||
     activateMutation.isPending;
+  const activateInFlight = activateMutation.isPending;
 
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
@@ -1100,6 +1101,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-url"
                   value={currentForm.url}
+                  disabled={activateInFlight}
                   maxLength={2048}
                   inputMode="url"
                   autoCapitalize="off"
@@ -1124,6 +1126,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-secret"
                   value={currentForm.secretEnv}
+                  disabled={activateInFlight}
                   maxLength={128}
                   autoCapitalize="off"
                   spellCheck={false}
@@ -1155,6 +1158,7 @@ export function NotificationEditorPage() {
                     <label key={event} className="mf-notification-check">
                       <input
                         type="checkbox"
+                        disabled={activateInFlight}
                         checked={currentForm.events.includes(event)}
                         onChange={(changeEvent) => {
                           const events = changeEvent.target.checked
@@ -1180,6 +1184,7 @@ export function NotificationEditorPage() {
               <label className="mf-notification-switch">
                 <input
                   type="checkbox"
+                  disabled={activateInFlight}
                   checked={currentForm.enabled}
                   onChange={(event) =>
                     updateForm({ enabled: event.target.checked })
@@ -1205,6 +1210,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-timeout"
                   value={currentForm.timeoutSeconds}
+                  disabled={activateInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("timeoutSeconds") !== null}
                   onChange={(event) =>
@@ -1223,6 +1229,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-attempts"
                   value={currentForm.maxAttempts}
+                  disabled={activateInFlight}
                   inputMode="numeric"
                   aria-invalid={fieldIssue("maxAttempts") !== null}
                   onChange={(event) =>
@@ -1243,6 +1250,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-base-retry"
                   value={currentForm.baseRetrySeconds}
+                  disabled={activateInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("baseRetrySeconds") !== null}
                   onChange={(event) =>
@@ -1262,6 +1270,7 @@ export function NotificationEditorPage() {
                 <input
                   id="notification-edit-max-retry"
                   value={currentForm.maxRetrySeconds}
+                  disabled={activateInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("maxRetrySeconds") !== null}
                   onChange={(event) =>

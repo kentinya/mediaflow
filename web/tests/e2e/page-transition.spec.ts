@@ -37,7 +37,7 @@ interface NavigationFrame {
  * Failure banners and honest empty states are deliberately not listed.
  */
 const WAITING_READ_MARKERS =
-  /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录|引擎设置)|正在加载(运行清单|存储管理)|读取运行清单|Loading Notification definitions/;
+  /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录|引擎设置|通知定义)|正在加载(运行清单|存储管理)|读取运行清单/;
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
@@ -286,7 +286,7 @@ const DESTINATIONS: ReadonlyArray<{
     name: "Notifications",
     page: "notifications",
     path: "/ui-v2/operations/notifications",
-    heading: "Notifications",
+    heading: "通知",
   },
   {
     name: "Configuration",

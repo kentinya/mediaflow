@@ -161,6 +161,7 @@ export function NotificationNewPage() {
   const dirty =
     webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
   const busy = createMutation.isPending || draftMutation.isPending;
+  const createInFlight = createMutation.isPending;
   const guard = useNotificationCardGuard({
     busy,
     dirty,
@@ -418,6 +419,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-id"
                   value={webhookId}
+                  disabled={createInFlight}
                   maxLength={64}
                   autoCapitalize="off"
                   spellCheck={false}
@@ -448,6 +450,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-url"
                   value={form.url}
+                  disabled={createInFlight}
                   maxLength={2048}
                   inputMode="url"
                   autoCapitalize="off"
@@ -480,6 +483,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-secret"
                   value={form.secretEnv}
+                  disabled={createInFlight}
                   maxLength={128}
                   autoCapitalize="off"
                   spellCheck={false}
@@ -513,6 +517,7 @@ export function NotificationNewPage() {
                     <label key={event} className="mf-notification-check">
                       <input
                         type="checkbox"
+                        disabled={createInFlight}
                         checked={form.events.includes(event)}
                         onChange={(changeEvent) => {
                           const events = changeEvent.target.checked
@@ -536,6 +541,7 @@ export function NotificationNewPage() {
               <label className="mf-notification-switch">
                 <input
                   type="checkbox"
+                  disabled={createInFlight}
                   checked={form.enabled}
                   onChange={(event) =>
                     setForm({ ...form, enabled: event.target.checked })
@@ -559,6 +565,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-timeout"
                   value={form.timeoutSeconds}
+                  disabled={createInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("timeoutSeconds") !== null}
                   onChange={(event) => {
@@ -578,6 +585,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-attempts"
                   value={form.maxAttempts}
+                  disabled={createInFlight}
                   inputMode="numeric"
                   aria-invalid={fieldIssue("maxAttempts") !== null}
                   onChange={(event) => {
@@ -599,6 +607,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-base-retry"
                   value={form.baseRetrySeconds}
+                  disabled={createInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("baseRetrySeconds") !== null}
                   onChange={(event) => {
@@ -622,6 +631,7 @@ export function NotificationNewPage() {
                 <input
                   id="notification-new-max-retry"
                   value={form.maxRetrySeconds}
+                  disabled={createInFlight}
                   inputMode="decimal"
                   aria-invalid={fieldIssue("maxRetrySeconds") !== null}
                   onChange={(event) => {

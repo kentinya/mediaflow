@@ -739,6 +739,174 @@ describe("NotificationNewPage", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("locks the create form while the leaving save is in flight and shows the submitted value", async () => {
+    const createdId = "created-webhook";
+    const submittedUrl = "https://example.invalid/hooks/created";
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "POST" &&
+        call.url ===
+          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+      ) {
+        return saveGate.then(() =>
+          jsonResponse({
+            revisionId: DRAFT_REVISION,
+            version: 5,
+            webhook: webhookDocument({
+              id: createdId,
+              url: submittedUrl,
+              events: ["task.completed"],
+            }),
+          }),
+        );
+      }
+      if (
+        call.method === "GET" &&
+        call.url === `/api/v1/operations/notifications/webhooks/${createdId}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload({
+            id: createdId,
+            url: submittedUrl,
+            events: ["task.completed"],
+          }),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      "/ui-v2/operations/notifications/webhooks/new",
+    );
+    const view = within(await dialog());
+    await userEvent.type(await view.findByLabelText("标识符"), createdId);
+    const urlInput = view.getByLabelText("HTTPS 接收地址");
+    await userEvent.type(urlInput, submittedUrl);
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getByRole("checkbox", { name: /任务完成/ }));
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    await waitFor(() => {
+      expect(
+        calls.filter(
+          (call) =>
+            call.method === "POST" &&
+            call.url ===
+              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+        ),
+      ).toHaveLength(1);
+    });
+
+    // The success path leaves the card, so the exact submitted form must not
+    // accept a newer value that the detail cannot show or that would be lost.
+    expect(view.getByLabelText("标识符")).toBeDisabled();
+    expect(urlInput).toBeDisabled();
+    expect(view.getByLabelText("密钥环境变量引用")).toBeDisabled();
+    expect(view.getByRole("checkbox", { name: /任务完成/ })).toBeDisabled();
+    expect(
+      view.getByRole("checkbox", { name: /启用这个 Webhook/ }),
+    ).toBeDisabled();
+    expect(view.getByLabelText("请求超时（秒）")).toBeDisabled();
+    expect(view.getByLabelText("最大尝试次数")).toBeDisabled();
+    expect(view.getByLabelText("基础重试间隔（秒）")).toBeDisabled();
+    expect(view.getByLabelText("最大重试间隔（秒）")).toBeDisabled();
+    await userEvent.type(urlInput, "-locked");
+    expect(urlInput).toHaveValue(submittedUrl);
+
+    releaseSave();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(
+        `/operations/notifications/webhooks/${createdId}`,
+      );
+    });
+    expect(await screen.findByText("定义已保存到草稿")).toBeVisible();
+    const detail = within(await dialog());
+    expect(await detail.findByText(submittedUrl)).toBeVisible();
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`),
+      ),
+    ).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+  });
+
+  it("unlocks the create form and keeps the input after a rejected save", async () => {
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "POST" &&
+        call.url ===
+          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+      ) {
+        return saveGate.then(() =>
+          jsonResponse(
+            { error: { code: "notification_definition_conflict" } },
+            409,
+          ),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp(
+      "/ui-v2/operations/notifications/webhooks/new",
+    );
+    const view = within(await dialog());
+    await userEvent.type(
+      await view.findByLabelText("标识符"),
+      "conflicted-webhook",
+    );
+    const urlInput = view.getByLabelText("HTTPS 接收地址");
+    await userEvent.type(urlInput, "https://example.invalid/hooks/conflicted");
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getByRole("checkbox", { name: /任务完成/ }));
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    await waitFor(() => {
+      expect(
+        calls.filter(
+          (call) =>
+            call.method === "POST" &&
+            call.url ===
+              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+        ),
+      ).toHaveLength(1);
+    });
+    expect(urlInput).toBeDisabled();
+    releaseSave();
+
+    expect(await view.findByText(/定义没有写入/)).toBeVisible();
+    expect(view.getByLabelText("标识符")).toBeEnabled();
+    expect(view.getByLabelText("标识符")).toHaveValue("conflicted-webhook");
+    expect(urlInput).toBeEnabled();
+    expect(urlInput).toHaveValue("https://example.invalid/hooks/conflicted");
+    expect(router.state.location.pathname).toBe(
+      "/operations/notifications/webhooks/new",
+    );
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url ===
+            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 describe("NotificationDetailPage", () => {
@@ -1542,27 +1710,131 @@ describe("NotificationEditorPage", () => {
     expect(JSON.stringify(activationCall?.body)).not.toMatch(/digest/i);
   });
 
-  it("does not replay a stale activation and keeps the input correctable", async () => {
+  it("locks the editor while publishing and opens the active definition with the submitted value", async () => {
+    const publishedUrl = "https://example.invalid/hooks/published-a";
     const state = editorResponder();
+    let releaseActivation!: () => void;
+    const activationGate = new Promise<void>((resolve) => {
+      releaseActivation = resolve;
+    });
     const { calls } = recordingFetch((call) => {
       if (call.url.endsWith("/activate-draft")) {
-        return jsonResponse(
-          { error: { code: "notification_activation_out_of_scope" } },
-          409,
+        const response = state.responder(call);
+        if (response === undefined) {
+          throw new Error("missing activation response");
+        }
+        return activationGate.then(() => response);
+      }
+      if (
+        call.method === "GET" &&
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload({ url: publishedUrl }),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      return state.responder(call);
+    });
+    await connect();
+    const { router } = renderApp(
+      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
+    const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, publishedUrl);
+    await userEvent.click(view.getByRole("button", { name: "保存到草稿" }));
+    expect(await view.findByText(/已保存到草稿版本 5/)).toBeVisible();
+    await userEvent.click(view.getByRole("button", { name: "检查草稿" }));
+    expect(await view.findByText("草稿检查通过")).toBeVisible();
+
+    await userEvent.click(
+      view.getByLabelText("我确认把当前已检查的草稿发布为新的已生效配置"),
+    );
+    await userEvent.click(view.getByRole("button", { name: "发布已检查草稿" }));
+    await waitFor(() => {
+      expect(
+        calls.filter((call) => call.url.endsWith("/activate-draft")),
+      ).toHaveLength(1);
+    });
+
+    expect(urlInput).toBeDisabled();
+    expect(view.getByLabelText("密钥环境变量引用")).toBeDisabled();
+    expect(view.getByRole("checkbox", { name: /任务完成/ })).toBeDisabled();
+    expect(
+      view.getByRole("checkbox", { name: /启用这个 Webhook/ }),
+    ).toBeDisabled();
+    expect(view.getByLabelText("请求超时（秒）")).toBeDisabled();
+    expect(view.getByLabelText("最大尝试次数")).toBeDisabled();
+    expect(view.getByLabelText("基础重试间隔（秒）")).toBeDisabled();
+    expect(view.getByLabelText("最大重试间隔（秒）")).toBeDisabled();
+    await userEvent.type(urlInput, "-locked");
+    expect(urlInput).toHaveValue(publishedUrl);
+
+    releaseActivation();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(
+        `/operations/notifications/webhooks/${WEBHOOK_ID}`,
+      );
+    });
+    expect(await screen.findByText("草稿已发布为已生效配置")).toBeVisible();
+    const detail = within(await dialog());
+    expect(await detail.findByText(publishedUrl)).toBeVisible();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/test"),
+      ),
+    ).toHaveLength(0);
+    expect(
+      calls.filter((call) => call.url.endsWith("/activate-draft")),
+    ).toHaveLength(1);
+  });
+
+  it("does not replay a stale activation and keeps the input correctable", async () => {
+    const state = editorResponder();
+    let releaseActivation!: () => void;
+    const activationGate = new Promise<void>((resolve) => {
+      releaseActivation = resolve;
+    });
+    const { calls } = recordingFetch((call) => {
+      if (call.url.endsWith("/activate-draft")) {
+        return activationGate.then(() =>
+          jsonResponse(
+            { error: { code: "notification_activation_out_of_scope" } },
+            409,
+          ),
         );
       }
       return state.responder(call);
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    const { router } = renderApp(
+      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
     const view = within(await dialog());
+    const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.click(
       await view.findByLabelText(
         "我确认把当前已检查的草稿发布为新的已生效配置",
       ),
     );
     await userEvent.click(view.getByRole("button", { name: "发布已检查草稿" }));
+    await waitFor(() => {
+      expect(
+        calls.filter((call) => call.url.endsWith("/activate-draft")),
+      ).toHaveLength(1);
+    });
+    expect(urlInput).toBeDisabled();
+    releaseActivation();
+
     expect(await view.findByText(/发布没有执行/)).toBeVisible();
+    expect(urlInput).toBeEnabled();
+    expect(urlInput).toHaveValue("https://example.invalid/hooks/mediaflow");
+    expect(router.state.location.pathname).toBe(
+      `/operations/notifications/editor/${WEBHOOK_ID}`,
+    );
     expect(
       calls.filter((call) => call.url.endsWith("/activate-draft")),
     ).toHaveLength(1);
