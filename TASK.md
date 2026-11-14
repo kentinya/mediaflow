@@ -1,6 +1,7 @@
 # Task PATCH-20261114-2 — 文件浏览工具栏与表头呈现修复
 
-Next Action: Developer 按本 Task 开始实施，完成受影响测试后提交 READY FOR B REVIEW。
+Next Action: B 独立审查候选 `6a358085d1fc622c0257c545d83be41539d38620`；Developer
+已完成实施与受影响测试，无 PASS／FIX REQUIRED 结论。
 
 用户于 2026-11-14 在规划检查点 `d3d984a50d3364d06f9e763a1231d4299b5a1e9b`
 后明确“激活 Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -10,7 +11,7 @@ Next Action: Developer 按本 Task 开始实施，完成受影响测试后提交
 Task ID: PATCH-20261114-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 4107c299d8f99b817fcd3cbdffa274de1f5598ea
 Difficulty: Medium
 Test Level: T3
@@ -39,8 +40,8 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-14
 尚未启动浏览器验收；截图中的大空白对应名称列默认吸收剩余宽度，不能误判为丢列。
 
 激活前 HEAD 为上述规划检查点，分支 `main`，工作区无变更；治理检查 PASS。
-Task Base 仍为原始产品基线，不因纯规划／激活提交重新设定。当前状态 PLANNED 表示
-已授权、等待 Developer 开始；实际实施时更新为 IN PROGRESS，B 独立审查保持。
+Task Base 仍为原始产品基线，不因纯规划／激活提交重新设定。实施后候选状态为
+READY FOR B REVIEW；B 独立审查保持。
 
 ### Observed behavior and cause
 
@@ -166,13 +167,70 @@ npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/files-read-ha
 
 ### Developer completion report
 
-已授权，尚未实施。Developer 交接：完整候选 SHA、READY FOR B REVIEW、实际变更与关键决定、
-受影响测试命令／结果及剩余风险；B 独立验收尚待执行。
+```text
+Candidate: 6a358085d1fc622c0257c545d83be41539d38620
+Status: READY FOR B REVIEW
+Scope: 4107c299d8f99b817fcd3cbdffa274de1f5598ea..6a358085d1fc622c0257c545d83be41539d38620
+Branch: main
+```
+
+实现与测试均已完成，候选未推送、未发布、未部署。工作区开始时仅含本 Task 的规划／
+激活文档提交，无预存产品改动；候选中未读取运行数据库、私有配置、凭据或用户媒体。
+
+**实际变更与关键决定**
+
+1. **工具栏收敛。** 用共用 `FilesDisplaySettings` 替换独立排序行：两页非空浏览区在
+   工具栏右侧显示轻量 `当前页排序：…`（默认 `默认顺序`，不再显示“服务端”术语）和
+   `显示设置` 入口。菜单经 portal 锚定并夹取在视口内，支持鼠标、Enter/Space、方向键、
+   Home/End、Escape、外点与滚动／resize 关闭，关闭后回到触发按钮。
+2. **恢复语义。** `恢复默认顺序`／`恢复默认列宽` 分别使用现有页面会话状态；各自在
+   默认值禁用、互不重置。列表显示列宽动作，网格不冒充可用；网格保留排序状态和顺序
+   恢复。触发菜单、排序、调宽不读取目录、不刷新、不创建命令。
+3. **表头与排序。** 名称／大小仍只排序当前已读页；未激活方向图标仅在 hover／focus
+   显示，激活列常显线性方向图标并保留 `aria-sort` 与可访问名称。表头使用淡底、柔和
+   底边和一致内边距；名称列继续弹性填充，宽屏不设最大表宽。
+4. **调宽反馈。** 四个数据列保留 8px 命中区、焦点轮廓、拖动／左右键与双击恢复；竖线
+   默认轻提示，hover／focus／拖动增强，拖动状态不改变排序、选择或命令对象。
+5. **测试与文档。** 共用组件、两页、CSS 结构和浏览器用例加入新菜单路径、默认禁用、
+   独立恢复、网格缺省、键盘、窄屏与读取错误后恢复断言；Files／MediaLibrary visual
+   spec 与 Product Experience 的现行呈现描述同步更新。
+
+**实际执行结果（cwd 除注明外为 `web/`）**
+
+```text
+python3 scripts/check_governance.py                     PASS（根目录）
+git diff --check                                        PASS（根目录）
+npm run test -- run <5 affected files>                  5 files / 112 tests PASS
+npm run typecheck                                       PASS
+npm run lint                                            PASS
+npx prettier --check <11 changed web files>             PASS
+npm run build                                           PASS（299 modules；CSS 139.67 kB / JS 1,500.62 kB）
+npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/files-read-handoff.spec.ts
+                                                        8 tests PASS
+```
+
+首轮新 E2E 有 1 项焦点断言失败：菜单打开时浏览器在 Enter 激活后的焦点修复把焦点抢回
+触发按钮；修正为测量完成后再于 `requestAnimationFrame` 聚焦首个可用项，并避免重复
+位置更新，修正后上述 8 项全部通过。未删除或放宽断言。
+
+使用新构建与本地 Node 假服务在 `1536×1024`、`2048×1024`、`390×844`、`1280×600`
+实看两页默认呈现，并在 `1536×1024` 实看排序＋自定义宽度后的菜单；截图保存在本机忽略
+目录 `.git/validation-evidence/6a358085d1fc622c0257c545d83be41539d38620/patch-20261114-2-developer/`。
+
+**剩余风险与未执行项**
+
+- 上述证据来自本地 Node 假服务与 Chromium；真实 Python／API／SQLite／Storage 活列表、
+  真实长名称／失败恢复及独立 B 视觉验收尚未执行，按 Task 由 B 承担。
+- 未运行全量 Web／Python／原生 E2E、wheel、Docker 或生产部署矩阵；本 Task 为 T3 呈现
+  修复，未改后端、schema、权限、Storage 或执行协议。
+- `prefers-reduced-motion` 仅由 CSS 结构与构建检查覆盖，实际动态观感需 B 在浏览器中
+  复核；未对生产服务或用户媒体验收。
 
 ### B review result
 
-未开始实现审查，无 PASS／FIX REQUIRED 结论。独立 Task 经实际验收 PASS 后按 workflow
-§3.1 恢复简短 no-active notice，保留精确 reviewed Base..Head 和结果指针；不宣布 Slice 关闭。
+候选 `6a358085d1fc622c0257c545d83be41539d38620` 已提交 READY FOR B REVIEW；B 独立验收
+尚未执行，无 PASS／FIX REQUIRED 结论。独立 Task 经实际验收 PASS 后按 workflow §3.1
+恢复简短 no-active notice，保留精确 reviewed Base..Head 和结果指针；不宣布 Slice 关闭。
 
 ## Latest accepted Task — PATCH-20261114-1
 
