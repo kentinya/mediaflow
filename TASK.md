@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: Developer 在同一 Task 修正投递恢复响应丢失时“恢复没有应用”的错误标题，补齐现有未知恢复用例的可见结果断言；跑受影响检查后交 B 复核。
+Next Action: B 在固定候选复核投递恢复响应丢失时显示“恢复结果未知”且与正文一致，明确拒绝仍显示“恢复没有应用”，随后继续本轮剩余 T4 验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,10 +15,10 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
-Implementation Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
-Evidence Head: 4edb1526cc418ab5bbeb0ca96323f0584d0b5091
+Implementation Head: 07624ec95b948f211bd93ed77596ebdea7e9992f
+Evidence Head: 07624ec95b948f211bd93ed77596ebdea7e9992f
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -686,6 +686,71 @@ B 独立审查完整范围：
 结论为 FIX REQUIRED，仅上述恢复未知结果的确定性标题阻塞。没有后端重放或越权证据，
 不新增功能／防御性机制或后续 Task。Slice54 保持 PASS / CLOSED，SLICE／Roadmap／Progress
 未变，无推送、发布或部署。治理检查与 `git diff --check` 在本轮检查点前通过。
+
+### Developer Completion Report — FIX ROUND 5（2026-11-15）
+
+Status READY FOR B REVIEW。实现提交
+`07624ec95b948f211bd93ed77596ebdea7e9992f`；本报告提交仅改 `TASK.md`。Task Base 保持
+`51480dc318837e4f1e4f9c60c17b8e708abb6409`。本轮未改 Python 生产代码、恢复协议、API／
+领域／持久化、公共 modal、SLICE／Roadmap／Progress，未推送、发布或部署。
+
+修复：
+
+- `DeliveryDetailPage` 的恢复错误状态改为同时保存文案与“是否未知”。传输丢失、5xx 和
+  不可解析的 2xx 结果继续走既有 `isUnknownCommandResult` 分支，但标题显示
+  “恢复结果未知”，使用 warning 呈现；正文保留“命令结果未知：所选投递可能已经恢复为
+  待投递……请重新读取当前持久状态核对；系统不会自动重试或重复提交”。同一卡片不再同时
+  出现“恢复没有应用”。
+- 409 与其他确定拒绝继续显示“恢复没有应用”，正文保留“没有应用恢复”或
+  “恢复动作没有执行（code）”的明确原因，并指引读取当前状态后再决定。
+- 恢复协议、精确投递身份与观察到的状态／时间 fence、显式确认、至少一次提示、读回
+  pending 后不再提供死信恢复以及原投递筛选返回均未改；没有新增自动读回、重发或后端字段。
+
+回归（均从既有投递详情卡片和按钮进入）：
+
+- 既有 unknown recovery 用例改为定位异常 banner 的二级标题，断言标题为“恢复结果未知”、
+  同一 banner 正文包含“可能已经恢复为待投递”和“重新读取当前持久状态核对”，且同一
+  banner 与页面都不含“恢复没有应用”；仍断言读取到的投递保持死信且恢复命令只发送一次。
+- 既有 409 用例断言标题“恢复没有应用”和“因此没有应用恢复”正文，页面不出现
+  “恢复结果未知”，仍断言恢复命令只发送一次。
+- 既有已知成功后读取失败、恢复命令一次、原死信筛选返回断言保持不变并继续通过。
+
+验证（Developer 实际执行）：
+
+```sh
+cd web
+npm run test -- run src/features/operations/NotificationRouter.test.tsx
+# 1 file, 43 tests passed，5.40s
+
+npm run typecheck && npm run lint && npm run format:check
+# PASS
+
+npm run build
+# PASS；index-xYA76ha9.js / index-B0R4k6Jb.css；保留既有 chunk 体积提示
+
+npm run test:e2e -- tests/e2e/notifications.spec.ts \
+  --output=test-results/patch-20261114-3-developer-fix-r5
+# 12 passed，10.2s
+```
+
+```sh
+python3 scripts/check_governance.py
+# PASS
+git diff --check
+# 无输出
+```
+
+未运行／交 B：真实 Python API 下“恢复已应用但响应丢失 → 未知 → 读取最新投递确认
+pending”的完整旅程、真实权限与并发门禁、T4 全量 Python／Web／Node E2E、wheel／Docker
+适用门禁。本轮的 unknown Vitest 使用既有网络失败分支和固定死信详情，不冒充真实第二写者；
+Node E2E 覆盖已知恢复成功与陈旧恢复拒绝，未覆盖未知恢复，B 仍应按原计划复核。
+
+已知风险：未知结果的提示仍保留在卡片内，直到用户开始新的明确操作；读取最新投递确认
+pending 后，状态和恢复入口按持久值更新，但标题不会自动改成“已恢复”。这不影响本轮要求的
+“未知不冒充失败、确定拒绝明确没有应用”，B 应核对读回后的实际呈现。
+
+本轮定向 Vitest、构建、Node E2E 与静态检查合计约 30 秒；实现、差异审查与证据核对占
+主要时间，测试时间低于本轮总时间 30%。
 
 ## Latest accepted Task — PATCH-20261114-2
 
