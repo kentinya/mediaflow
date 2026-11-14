@@ -249,6 +249,40 @@ def stop_api(state: dict) -> None:
     state["configuration_repository"].close()
 
 
+READ_ONLY_BROWSER = r"""
+import { chromium, expect } from '@playwright/test';
+
+const base = process.env.MF_PROOF_BASE;
+const token = process.env.MF_PROOF_TOKEN;
+const browser = await chromium.launch({ headless: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.goto(base + '/ui-v2/operations/notifications');
+  await page.getByLabel('API token').fill(token);
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await expect(page.getByRole('heading', { name: '通知', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '查看定义' }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '关闭', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('link', { name: '查看投递记录' }).click();
+  await expect(page.getByRole('heading', { name: '通知投递记录', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '查看投递' }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '关闭', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  console.log(JSON.stringify({ readOnly: true }));
+} finally {
+  await browser.close();
+}
+"""
+
 BROWSER = r"""
 import { chromium, expect } from '@playwright/test';
 import fs from 'node:fs';
@@ -364,12 +398,12 @@ try {
 """
 
 
-def run_browser(state: dict, artifacts: Path) -> dict:
+def run_browser(code: str, state: dict, artifacts: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise RuntimeError("node is required for the browser proof")
     result = subprocess.run(
-        [node, "--input-type=module", "-e", BROWSER],
+        [node, "--input-type=module", "-e", code],
         cwd=ROOT / "web",
         env={
             **os.environ,
@@ -436,8 +470,27 @@ def main() -> int:
         before_counts = table_counts(root / "runtime.sqlite3")
         before_version = state["configuration"].active().version
         before_transport = len(state["transport"].requests)
+        before_delivery_rows = len(state["delivery_repository"].list_deliveries(limit=100))
+        before_delivery_status = delivery_status(state["delivery_repository"], state["delivery_id"])
 
-        browser_evidence = run_browser(state, artifacts)
+        run_browser(READ_ONLY_BROWSER, state, artifacts)
+        read_only_version = state["configuration"].active().version
+        read_only_transport = len(state["transport"].requests)
+        read_only_delivery_rows = len(state["delivery_repository"].list_deliveries(limit=100))
+        if read_only_version != before_version:
+            raise RuntimeError("read-only Notification navigation changed Active")
+        if read_only_transport != before_transport:
+            raise RuntimeError("read-only Notification navigation sent a test request")
+        if read_only_delivery_rows != before_delivery_rows:
+            raise RuntimeError("read-only Notification navigation created a delivery")
+        if (
+            delivery_status(state["delivery_repository"], state["delivery_id"])
+            != before_delivery_status
+            or before_delivery_status != "dead-letter"
+        ):
+            raise RuntimeError("read-only Notification navigation changed the delivery")
+
+        browser_evidence = run_browser(BROWSER, state, artifacts)
 
         after_transport = len(state["transport"].requests)
         if after_transport - before_transport != 1:
@@ -483,6 +536,7 @@ def main() -> int:
             "activeVersionBefore": before_version,
             "activeVersionAfter": after_version,
             "webhookTransportRequests": after_transport - before_transport,
+            "readOnlyNavigationWrote": False,
             "deliveryStatusAfter": status,
             "durableDeliveryRows": len(deliveries),
             "deliveryId": state["delivery_id"],
