@@ -9977,14 +9977,6 @@ tr[aria-selected="true"] {
   border: 0;
 }
 
-/* The native decision form is the primary section's content, so it must not
-   read as a third nested card. Its candidate options keep their own cards. */
-.mf-organize-section-primary .mf-organize-decision.mf-count-section {
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
 .mf-organize-decision-host {
   display: grid;
   gap: 8px;
@@ -10042,12 +10034,14 @@ tr[aria-selected="true"] {
 }
 
 /* Stage changes are immediate local fades, never a re-mounted card or a
-   delayed command. Polling an unchanged stage does not re-run the animation. */
-.mf-organize-dialog-body > .mf-organize-file-head,
-.mf-organize-dialog-body > section,
-.mf-organize-dialog-body > .mf-modal-card-status,
-.mf-organize-dialog-body > .mf-status-banner {
+   delayed command. The stage wrapper stays mounted; its identity change
+   restarts this one animation, while an unchanged poll leaves it still. */
+.mf-organize-stage {
   animation: mf-organize-stage-in 140ms ease-out;
+}
+
+.mf-organize-stage:focus {
+  outline: none;
 }
 
 @keyframes mf-organize-stage-in {
@@ -10065,6 +10059,19 @@ tr[aria-selected="true"] {
   padding: 13px 14px;
   border: 1px solid #dbe4f3;
   background: #f8faff;
+}
+
+/* The native decision form is the primary section's content, so it must not
+   read as a third nested card. This scoped rule follows the dialog's own
+   decision surface, so it wins over that shared card treatment; its candidate
+   options keep their individual cards. */
+.mf-organize-dialog-body
+  .mf-organize-section-primary
+  .mf-organize-decision.mf-count-section {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .mf-organize-dialog-body .mf-run-items-head {
@@ -10111,10 +10118,7 @@ tr[aria-selected="true"] {
    reduced motion keeps the state change but removes the transition. */
 @media (prefers-reduced-motion: reduce) {
   .mf-organize-busy-dot,
-  .mf-organize-dialog-body > .mf-organize-file-head,
-  .mf-organize-dialog-body > section,
-  .mf-organize-dialog-body > .mf-modal-card-status,
-  .mf-organize-dialog-body > .mf-status-banner {
+  .mf-organize-stage {
     animation: none;
   }
 

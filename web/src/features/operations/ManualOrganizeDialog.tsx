@@ -24,7 +24,14 @@
  * confirmation and destructive authorization stays with the backend.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -202,6 +209,9 @@ export function ManualOrganizeDialog({
   const intent =
     intentQuery.data?.ok === true ? intentQuery.data.model : undefined;
   const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+  const preparationUnavailable =
+    session.phase === "admitted" &&
+    (preparationQuery.isError || preparationQuery.data?.ok === false);
   // An ended preparation whose linked Preview was cleared (for example a
   // failed re-analysis) reads its original saved plan through the intent's
   // durable association.  The read itself may still be pending or may have
@@ -987,8 +997,46 @@ export function ManualOrganizeDialog({
     !organizeFlowEnded;
   const isIncluded =
     currentItemId !== null && isExecutable && !excluded.has(currentItemId);
+  const currentProblemItemId = currentItem?.problemTaskItemId ?? null;
+  const currentDecisionStatus =
+    currentProblemItemId === null
+      ? null
+      : (decisionStatuses[currentProblemItemId] ?? null);
+  /**
+   * The one local stage identity for the current file, display phase and
+   * durable plan. An unchanged poll keeps it stable, so the existing content
+   * and the operator's focus never replay a transition by themselves. The
+   * initial decision read is part of the new file's own reveal, not a second
+   * saved-analysis transition.
+   */
+  const savedDecisionStage =
+    currentDecisionStatus === null ||
+    currentDecisionStatus === "decision_required"
+      ? ""
+      : currentDecisionStatus;
+  const stageTransitionKey = [
+    session.phase,
+    preparationUnavailable ? "unavailable" : "",
+    organizeFlowEnded ? "ended" : "",
+    preparation?.status ?? "unread",
+    preparation?.previewId ?? "",
+    preview === undefined
+      ? "plan-pending"
+      : preview.current
+        ? "plan-current"
+        : "plan-superseded",
+    preview?.previewId ?? "",
+    step,
+    currentItemId ?? "",
+    savedDecisionStage,
+  ].join("|");
   const lastScrollAnchor = useRef<string | null>(null);
-  useEffect(() => {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const renderedStageKey = useRef<string | null>(null);
+  // A real current-file or display-stage change starts at the top of the body
+  // before its local fade, so the operator never lands mid-way through a
+  // previous file's unrelated content.
+  useLayoutEffect(() => {
     const anchor =
       preview === undefined ? "preparation" : `${step}:${currentItemId ?? ""}`;
     if (lastScrollAnchor.current === anchor) return;
@@ -998,6 +1046,23 @@ export function ManualOrganizeDialog({
     );
     if (body !== null && body !== undefined) body.scrollTop = 0;
   }, [currentItemId, layer.layerRef, preview, step]);
+  // The stage stays mounted, so the current decision form, drafts, selection
+  // and original submission identity survive; only the local fade restarts.
+  // If a replaced control had focus, the content boundary takes it back
+  // instead of dropping the keyboard position onto the inert background.
+  useLayoutEffect(() => {
+    const previous = renderedStageKey.current;
+    renderedStageKey.current = stageTransitionKey;
+    if (previous === null || previous === stageTransitionKey) return;
+    const stage = stageRef.current;
+    if (stage === null) return;
+    if (document.activeElement === document.body) {
+      stage.focus({ preventScroll: true });
+    }
+    stage.style.animation = "none";
+    stage.getBoundingClientRect();
+    stage.style.animation = "";
+  }, [stageTransitionKey]);
 
   const recognitionOptions = (intent?.options.recognitionTypes ?? []).filter(
     (value) => value.enabled,
@@ -1142,7 +1207,7 @@ export function ManualOrganizeDialog({
     if (preparation.status === "waiting_stability")
       return "所选范围已遍历，正在等待未稳定来源达到稳定条件。";
     if (preparation.status === "queued" || preparation.status === "running")
-      return "遍历尚未结束，不会声称已完整遍历所选范围。";
+      return "正在检查所选范围；下面的计数是当前已完成的真实进度。";
     if (
       preparation.status === "completed" ||
       preparation.status === "partial_success"
@@ -1491,10 +1556,6 @@ export function ManualOrganizeDialog({
     );
   };
 
-  const preparationUnavailable =
-    session.phase === "admitted" &&
-    (preparationQuery.isError || preparationQuery.data?.ok === false);
-
   const renderReview = () => {
     if (items.length === 0 || currentItem === undefined) {
       return (
@@ -1516,10 +1577,7 @@ export function ManualOrganizeDialog({
       !organizeFlowEnded &&
       organizeTaskId !== null &&
       problemTaskItemId !== null;
-    const decisionStatus =
-      problemTaskItemId === null
-        ? null
-        : (decisionStatuses[problemTaskItemId] ?? null);
+    const decisionStatus = currentDecisionStatus;
     const recognitionTypeName =
       intent?.options.recognitionTypes.find(
         (value) =>
@@ -2555,7 +2613,15 @@ export function ManualOrganizeDialog({
           </div>
         </div>
       ) : null}
-      {body}
+      <div
+        ref={stageRef}
+        className="mf-organize-stage"
+        role="group"
+        aria-label="整理内容"
+        tabIndex={-1}
+      >
+        {body}
+      </div>
     </ModalCardShell>
   );
 }

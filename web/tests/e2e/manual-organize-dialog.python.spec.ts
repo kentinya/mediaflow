@@ -208,6 +208,32 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     await expect(card.getByText("选择正确的作品")).toBeVisible({
       timeout: 30_000,
     });
+    if (index === 1) {
+      // The native decision form is the primary section's content, not a
+      // third nested card. Its candidate options remain individually bordered
+      // and selectable.
+      const embeddedDecision = card
+        .locator(".mf-organize-section-primary .mf-organize-decision")
+        .first();
+      const decisionSurface = await embeddedDecision.evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return {
+          border: style.borderTopWidth,
+          padding: style.paddingTop,
+          background: style.backgroundColor,
+        };
+      });
+      expect(decisionSurface).toEqual({
+        border: "0px",
+        padding: "0px",
+        background: "rgba(0, 0, 0, 0)",
+      });
+      const candidateBorder = await card
+        .locator(".mf-organize-decision-option")
+        .first()
+        .evaluate((element) => window.getComputedStyle(element).borderTopWidth);
+      expect(candidateBorder).toBe("1px");
+    }
     await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
     await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
     await expect(
@@ -220,7 +246,40 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     await expect(card.getByText("纳入本次整理").first()).toBeVisible({
       timeout: 30_000,
     });
-    if (index < 10) {
+    if (index === 1) {
+      // The actual current-file change restarts the one local stage fade on
+      // the same mounted stage; the decision form and drafts are not remounted.
+      const stage = card.locator(".mf-organize-stage");
+      const stageNode = await stage.elementHandle();
+      await page.evaluate(() => {
+        const element = document.querySelector(".mf-organize-stage");
+        if (element === null) throw new Error("the organizer stage is missing");
+        const counts = { fades: 0 };
+        (
+          window as unknown as { __organizeStageFades: typeof counts }
+        ).__organizeStageFades = counts;
+        element.addEventListener("animationstart", (event) => {
+          if (
+            (event as AnimationEvent).animationName === "mf-organize-stage-in"
+          ) {
+            counts.fades += 1;
+          }
+        });
+      });
+      await card.getByRole("button", { name: "下一项" }).click();
+      await expect(
+        card.getByRole("heading", { name: /第 2 \/ 10 个/ }),
+      ).toBeVisible();
+      await page.waitForFunction(
+        () =>
+          (
+            window as unknown as {
+              __organizeStageFades: { fades: number };
+            }
+          ).__organizeStageFades.fades > 0,
+      );
+      expect(await stageNode?.evaluate((node) => node.isConnected)).toBe(true);
+    } else if (index < 10) {
       await card.getByRole("button", { name: "下一项" }).click();
     }
   }

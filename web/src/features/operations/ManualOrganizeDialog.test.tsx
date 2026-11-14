@@ -1955,6 +1955,10 @@ describe("ManualOrganizeDialog", () => {
       { timeout: 5_000 },
     );
     expect(stage).toHaveTextContent("所选范围已受理，等待后台 Worker 开始检查");
+    expect(
+      screen.getByText("正在检查所选范围；下面的计数是当前已完成的真实进度。"),
+    ).toBeVisible();
+    expect(screen.queryByText(/不会声称已完整遍历/)).toBeNull();
     expect(screen.queryByText("已完整遍历所选范围。")).toBeNull();
     expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
     expect(screen.queryByText(/第 0 \/ 0 个/)).toBeNull();
