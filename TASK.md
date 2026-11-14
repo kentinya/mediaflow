@@ -1,6 +1,6 @@
 # Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
 
-Next Action: B 在固定候选 `ed8b7f4f2872c14488544fbfdc8164ba150ab752` 上复核跨发布读取保留、后继草稿保留输入保存及剩余 T4 验收。
+Next Action: Developer 在同一 Task 修正保存响应覆盖较新输入、只读深链仍可编辑保存两项已复现阻塞；提交固定候选后由 B 继续剩余 T4 验收。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,7 +15,7 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
 Implementation Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
 Evidence Head: ed8b7f4f2872c14488544fbfdc8164ba150ab752
@@ -350,86 +350,12 @@ Node E2E／原生证明的点击路径覆盖，完整视觉矩阵保留给 B。
 本轮定向 Vitest、构建、Node E2E 与原生证明合计约 3 分钟；实现、差异审查与结果核对占
 主要时间，测试时间低于本轮总时间 30%。
 
-### B Review Result — FIX REQUIRED（修正候选复核）
+### Previous B Review — 修正候选
 
-固定范围：`51480dc318837e4f1e4f9c60c17b8e708abb6409`..
-`6db78cba6551df5d53a3e92aa4c869cbe829e3ca`；产品候选
-`93996b687e4b39cba612141b6dfc804aecac0292`。B 在前轮完整范围审查基础上重新核对
-18 文件总清单及本轮全部修正；`93996b68..6db78cba` 仅改 Task 报告，执行输入相同。
-分支 `main`，起始工作区／暂存区干净，治理检查 PASS；本次只更新本文件。
-
-**上轮两项修正已核对。** B 以两个独立浏览器窗口连接真实 Python API，从通知列表
-打开同一草稿：乙保存后甲收到真实 409；甲点击新加的“读取最新草稿”，本地地址 A
-保留，选择“保留本地输入并重新保存”后，以新版本保存成功（版本 2→3，HTTP 200）。
-新生产资产上的原生主流程通过：只读／新增读取入口无配置写入或测试发送；一次签名
-测试，保存／检查／发布 Active 1→2，只改变所选 Webhook；HTTP 400 死信恢复为 pending
-后不再说“接收端尚未收到”，返回死信筛选保持，Tasks／Jobs 数量不变。
-
-**当前唯一已证实阻塞：其他管理员发布后，读取最新草稿会直接丢弃未保存输入。**
-
-完整用户旅程：甲乙从通知列表进入同一草稿。甲留下尚未保存的地址
-`https://example.invalid/hooks/unsaved-local`；乙把地址改为
-`https://example.invalid/hooks/published-by-b`，保存、检查并明确发布。甲随后点击
-“读取最新草稿”，卡片立即变成“没有可编辑的草稿”，地址输入框与本地修改消失，
-没有放弃确认。甲在同一卡片点击“创建后继草稿”，显示的是乙已发布的地址，本地输入
-没有恢复。读取没有提交甲的修改，Active 仍是乙的合法发布；问题是甲的编辑内容被读取
-动作静默清除了。该真实旅程违反 Scope 4–5 及未保存输入／并发恢复验收。
-
-根因：`NotificationEditorPage.tsx:149–153` 在读到草稿为空时直接清除 form 和 baseline；
-同一 effect 的 `:158–169` 在修订身份变化时直接用服务端值初始化，均在检查本地修改
-之前执行。前一种分支已通过真实发布旅程复现。清除逻辑由
-`83a104eeef60300ab67f7c5df7a45d0f02a2b971`（2026-11-14 12:52 +08:00）引入；
-`93996b68` 增加的合法读取按钮使用户可以直接走到此分支。本轮没有把模拟查询状态或
-不存在的入口作为缺陷依据。
-
-### Developer Guidance — 保留跨发布的本地编辑
-
-1. 将当前本地编辑及其原始基线，与读到的“当前没有草稿／已有另一份草稿”分开保存。
-   用户有未保存输入时，读取操作保留这些输入，说明旧草稿已发布；不要在读取 effect
-   中清空或替换，也不要把旧输入自动绑定给新修订。现有测试／检查证据与发布确认失效。
-2. 在同一卡片沿用现有后继草稿创建和明确选择，让甲能够决定保留本地内容继续编辑，
-   或采用服务端值／明确放弃。创建后继草稿仍为显式动作；选定新基线后再由用户保存、
-   检查、发布。保留输入期间关闭／Escape／后退继续执行未保存退出确认。无需新增本地
-   持久化草稿、协议、接口或后端 schema。
-3. 从上面的双窗口旅程补回归：乙发布，甲读取，确认本地输入仍可见且没有新增写请求；
-   甲创建后继草稿并明确保留输入后保存，核对新修订、版本与提交地址。另覆盖读取时乙已
-   创建后继草稿的同一身份切换分支，以及明确采用服务端值／放弃后才移除本地内容。
-   测试通过现有按钮完成，不调用内部 queryClient 代替用户动作。
-
-修正在本 Task 内，保留已经完成的两项修正。Developer 仅跑新改／失败场景及直接受影响
-检查；B 对修正后的固定候选承担剩余并发、权限、未知结果、视觉和完整 T4 验收。
-Slice54 继续 PASS / CLOSED，本 Task 没有父 Slice；SLICE／Roadmap／Progress 未变。
-
-### B Actual Validation — 本轮
-
-```sh
-# cwd web
-npm run build
-# PASS；index-C944Junr.js / index-B0R4k6Jb.css，保留 chunk 大小提示
-
-# cwd repository
-.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts .git/validation-evidence/patch-20261114-3/b-fix-review/native
-# PASS：真实 API／临时 SQLite，读取无写入、一次测试、精确发布、单条恢复及返回筛选
-
-.venv/bin/python .git/validation-evidence/patch-20261114-3/b-fix-review/reproduce.py
-# 完成：真实 409→读取→保留本地值→200 已修复；乙发布→甲读取则输入框 0、放弃确认 0；
-# 创建后继草稿后仅显示乙发布值，甲原本地值丢失。最终执行约 3.1 秒。
-
-python3 scripts/check_governance.py
-git diff --check
-# PASS
-```
-
-证据：`.git/validation-evidence/patch-20261114-3/b-fix-review/`，含复现代码、JSON、
-日志与 `published-elsewhere-read.png`；B 已查看该截图及实际表单／发布读回结果。
-独立复现首跑在最后“创建后继草稿”点击时因背景与卡片有同名按钮发生 Playwright
-strict-mode 匹配失败；仅将该定位限定到 dialog 后重跑完成，首次失败说明保留。
-这次脚本完成表示阻塞被观察到，不表示产品通过验收。
-
-按流程 §6 已证实阻塞后提前 FIX REQUIRED，未运行全量 Python／Web／Node E2E、
-打包／安装、完整权限／丢响应／视觉矩阵；这些仍由 B 在修正候选验收，不转交 Developer。
-本轮构建及浏览执行累计少于 1 分钟，其余为代码／文档审查、截图和结果核对、开发指导；
-测试耗时低于本轮总时间 50%。没有改产品代码，没有推送或部署。
+`51480dc3..6db78cba` 为 FIX REQUIRED：其他管理员发布后，读取最新草稿会丢弃本地
+未保存输入。完整旅程、原因、指导与验证保留于
+`5f781ddccd5abb68412d896d2a1577d528d9ef96:TASK.md`。下述 Developer 报告与当前 B
+复核接续该检查点；此前接受身份与原 Task Base 不变。
 
 ### Developer Completion Report — FIX ROUND 2（2026-11-14）
 
@@ -515,6 +441,98 @@ transport 请求；第二写者发布后浏览器读取仍保留本地输入；�
 原生证明的“第二写者”使用真实 Python API 同进程写入，不是两个独立浏览器；B 仍需按原
 计划复核。定向 Vitest、Node E2E、原生证明与静态检查累计约半分钟，实现、差异审查与证据
 核对占主要时间，测试时间低于本轮总时间 30%。
+
+### B Review Result — FIX REQUIRED（FIX ROUND 2 复核）
+
+固定审查范围：`51480dc318837e4f1e4f9c60c17b8e708abb6409`..
+`bdb65246952d200e00143713e555d2ccf63ddcf5`；产品候选
+`ed8b7f4f2872c14488544fbfdc8164ba150ab752`。B 接续此前完整 Base..Head 审查，重新
+核对完整 18 文件清单、本轮全部 3 文件产品修正及其关联状态逻辑；产品候选到报告 Head
+仅改本文件，执行输入一致。分支 `main`，起始工作区／暂存区干净，治理检查 PASS。
+
+**上一阻塞已修复。** 两个独立浏览器窗口连接真实 Python API：甲未保存时乙保存，甲
+收到真实 409 后读取、明确保留本地输入并保存成功；甲未保存时乙保存／检查／发布，甲
+读取后输入仍可见，关闭→继续编辑也保留，创建后继草稿、明确保留后可保存到新修订。
+新生产资产的原生主旅程通过：读取无写入、显式签名测试恰 1 次、精确发布、单条死信
+恢复 pending 及原筛选返回均保持。以上结果不等于整个 Task 已通过。
+
+**阻塞 1（P1）：保存成功响应丢弃用户随后输入的内容。** 用户在现有编辑卡片填写地址
+A 并点“保存到草稿”。保存期间地址框仍可编辑，用户继续输入地址 B。真实后端已保存
+A，其 HTTP 200 返回页面后，B 被替换回 A，卡片显示“当前输入与已保存草稿一致”。
+B 没有保存、没有放弃却消失，违反 Scope 4 的迟到响应和未保存输入要求。
+
+根因在 `NotificationEditorPage.tsx:319–320`：成功回调无条件把表单设为请求时的
+`input.values`，而保存期间输入框可编辑。独立证明仅延迟真实后端响应的交付，不改请求
+或响应内容；观察到保存期间 B、返回后 A。Active 保持乙已发布地址，没有额外测试发送。
+
+**阻塞 2（P1）：只读用户通过已有草稿链接仍能编辑和保存，失败解释错误。** 管理员从
+通知列表打开草稿编辑卡片，取得实际地址；只读用户连接后在列表没有编辑入口，但通过
+该已有链接并重新认证可进入同一编辑卡片。后端读取明确返回 `actions.save.available=false`
+及缺少管理配置权限，界面却允许改地址并启用“保存到草稿”。点击后真实 PUT 返回 403，
+页面提示“服务端校验拒绝了表单或草稿版本已过期；重新读取后修正”。用户重新读取也
+无法取得写权限。后端权限拒绝正确；阻塞是允许无效编辑和给错恢复方向，违反无权限
+深链及 403 准确反馈验收。
+
+根因在编辑页表单呈现、`saveDisabled`（`:586`）及提交条件未采用已有的
+`loadedDraft.actions.save.available`。后端 `_notification_webhook_operator_draft`
+已提供此权限投影，测试使用普通 READ principal 与真实已存在的编辑地址，没有构造
+新入口。两处当前问题逻辑均来自 `83a104eeef60300ab67f7c5df7a45d0f02a2b971`
+（2026-11-14 12:52 +08:00）；Base 原保存按钮检查 `save.available`，本次改造漏掉。
+
+### Developer Guidance — 保存中的输入与只读编辑入口
+
+1. 保存成功时，将已确认请求的 A 和返回版本更新为已保存基线；表单若已继续编辑为 B，
+   保留 B 并保持“未保存修改”。后续自动读回也保留 B，成功提示说明已保存的是提交时
+   内容。检查／测试／发布仍只能针对明确已保存版本，不自动保存 B。沿用现有表单状态，
+   不增加后端协议或本地持久化机制。
+2. 为上面的普通保存旅程补回归：通过既有按钮提交 A，延迟其成功响应、继续填 B、返回
+   真实成功结果，核对 B 保留且未保存；读回后仍保留，直到用户再次保存才把 B 写入新
+   版本。第二次明确保存前恰有一次保存请求，旧检查／测试证据不被用于 B。
+3. 编辑卡片遵循现有后端 save action：只读用户深链进入时展示可读的权限原因与返回
+   定义／列表动作，不提供可填写的编辑表单或可执行保存。提交入口同样采用该动作状态；
+   403 给出权限原因和合适下一步，不能解释为表单或版本错误。保持已有合法深链和只读
+   查看能力，后端权限规则不改。
+4. 从管理员实际编辑入口取得链接，以 READ 用户通过该链接重新认证，覆盖不可编辑、
+   零 PUT、零测试发送及准确返回说明；正常管理员保存和既有无草稿恢复仍可用。
+   Developer 跑新增／修改用例与直接受影响检查，B 继续承担全部 T4 门禁。
+
+保持已核对通过的双窗口输入保留、明确后继草稿选择和单条投递恢复。修正在同一 Task
+内完成；Slice54 仍 PASS / CLOSED，Parent Slice NONE，SLICE／Roadmap／Progress 不变。
+
+### B Actual Validation — FIX ROUND 2 复核
+
+实际执行：
+
+```sh
+# cwd web
+npm run build
+# PASS；index-R_L0IApw.js / index-B0R4k6Jb.css，保留既有 chunk 体积提示
+
+# cwd repository
+.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts .git/validation-evidence/patch-20261114-3/b-round3/native
+# PASS：真实 API／临时 SQLite，主旅程、跨发布输入保留、一次测试、精确发布、恢复及筛选
+
+.venv/bin/python .git/validation-evidence/patch-20261114-3/b-round3/reproduce.py
+# 完成：两个独立窗口的 409／跨发布恢复通过；真实保存200覆盖较新输入已复现，约3秒
+
+.venv/bin/python .git/validation-evidence/patch-20261114-3/b-round3/permissions.py
+# 完成：READ 用户实际深链可填写、Save可用、后端actions不可用、真实PUT403已复现
+
+python3 scripts/check_governance.py
+git diff --check
+# PASS（审查报告检查点前）
+```
+
+证据保留于 `.git/validation-evidence/patch-20261114-3/b-round3/`（未提交）：原生
+证明、复现代码、JSON、日志和保存响应前后／只读用户截图；B 已查看截图与请求结果。
+权限证明首次硬导航后未重新连接，停在正常 Connect 页，属于证明步骤遗漏；补上已有
+连接动作后完成真实旅程，首跑日志保留于 `permissions-first-run.log`。两份复现脚本
+完成表示观察到上述阻塞，不表示产品 PASS。
+
+依流程 §6 提前 FIX REQUIRED，未运行本轮全量 Python／Web／Node E2E、完整静态／
+打包安装门禁及剩余视觉／未知结果矩阵；B 在修正候选上继续，不将缺少全量结果算成
+Developer 缺陷。本轮构建与浏览执行合计少于 1 分钟，代码／文档和证据审查占主要时间，
+测试时间低于本轮总时间 50%。本次只改 TASK.md，无产品代码变更、推送或部署。
 
 ## Latest accepted Task — PATCH-20261114-2
 
