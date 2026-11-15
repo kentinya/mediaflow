@@ -1,6 +1,6 @@
 # Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: DEVELOPER CORRECTS TASK55.1 — B55.1-01。
+Next Action: B REVIEWS TASK55.1 B55.1-01 CORRECTION CANDIDATE。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -10,12 +10,12 @@ Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁�
 Task ID: 55.1
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit user authorization, planning only
-Reviewer: B — FIX REQUIRED, B55.1-01
+Reviewer: B — B55.1-01 correction review pending
 Implementation Authorization: AUTHORIZED BY USER — TASK55.1 ONLY
 ```
 
@@ -352,6 +352,57 @@ RO-1 的旧入口移除已有代码和定向实证，但现行引用纠正旅程
 的 Web 消费者／交付物已改动，完整产物与门禁待验收。RO-2 旧业务入口／执行、RO-3
 严格当前配置、RO-4 schema／五态残留、RO-5 session／响应收敛不属于本 Task，仍待后续
 实现。本 Slice 维持 ACTIVE；不填写 Closure Packet，不声明 PASS／CLOSED，不规划下一 Task。
+
+## Developer Completion Report — B55.1-01 修正（2026-11-16）
+
+Status: READY FOR B REVIEW。
+
+```text
+Implementation candidate: ca9deea647ac3542e47ddbe12eda469c49e1793e
+Task Base: d62436be6f5848329a628356c13fdb28e760239a
+Reviewer: B — B55.1-01
+```
+
+**变更**
+
+- `DeleteResourceLibraryDialog.tsx` 按 `preview.references.items[].section` 识别当前实际
+  引用种类，并给每种已知引用提供对应管理动作：识别规则进入
+  `/rules?section=recognitionRules`（当前识别规则清单，可直接编辑被引用规则）；自动化
+  定义进入 `/operations/automation`（当前自动化清单，可从行内“编辑”进入现有编辑卡）。
+  混合引用同时显示两个动作；引用列表继续显示中文种类与对象 ID。
+- 引用证据被截断时同时提供两个管理入口并明确“仅显示前 N 项”，不根据可见前缀猜测；
+  删除按钮仍按原引用总数、Active 预览、停用状态和版本匹配条件阻止删除。取消／关闭行为
+  未改，动作先关闭弹窗再进入当前页面，浏览器返回仍回到原 Files 地址与原资源库／路径。
+- 未新增管理页、转换入口、重定向或后端读取；媒体库的分类引用继续使用原整理规则入口，
+  删除流程、权限、配置发布和数据库均未改动。
+- Node 假服务新增只含规则／只含自动化／混合引用的 session 预览模式；单元测试覆盖三类
+  引用与截断证据；`library-files.spec.ts` 覆盖两个明确动作、进入真实当前页面（规则清单
+  / 自动化行编辑入口）、浏览器返回来源，并断言整个访问没有非 GET API 命令。真实 Python
+  harness 的 `Task55.1` 用例使用现有 8 个规则＋2 个自动化定义混合引用完成同一旅程。
+
+**实际验证**
+
+- `npm run typecheck` PASS；`npm run build` PASS（`dist/index.html`、
+  `index-Cvv7FA31.css`、`index-Byllywp2.js`）。
+- `npm run test -- run src/features/library/StorageFilesPage.test.tsx`：**66 项通过**
+  （7.69s）。
+- `npm run test:e2e -- tests/e2e/library-files.spec.ts`：**51 项通过**（38.1s）。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep 'Task55\.1|retired Task collections'`：
+  **3 项通过**（3.9s），包含新增真实混合引用旅程。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/action-readability.python.spec.ts --grep 'Entry and representative business/dialog actions'`：
+  **1 项通过**（12.0s）。
+- 修改文件 ESLint／Prettier、`git diff --check`、`python3 scripts/check_governance.py`
+  均 PASS。定向测试墙钟约 2 分钟，低于本轮总耗时 30%。
+
+**剩余风险／未执行**
+
+- 未运行完整 Python／Web／E2E、Docker 镜像与四服务 smoke、wheel／源码外安装和完整视觉
+  矩阵；这些仍由 B 按 T4 门禁执行，本轮结果不能替代 B 接受。
+- 引用证据截断时显示两个入口是明确的产品选择：后端当前只可能产生这两类资源库引用，
+  但截断前缀不能证明隐藏引用的种类；该情况下双方都给出入口并保留总数与截断说明。
+- 未修改后端、数据库、权限、配置发布、Task 执行或用户数据；未推送、发布或部署。
 
 ## Latest accepted Task — PATCH-20261115-1
 
