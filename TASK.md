@@ -1,13 +1,13 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: Developer 按本 Task 开始实施，完成受影响验证后交 B 独立审查。
+Next Action: Developer 已提交 READY FOR B REVIEW；B 按 §3.1 独立审查完整 Task Base..候选。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
 实施；移除规划草案和无活动实施通知，保留原 Task ID、Base、Goal、Scope、Difficulty、
-Test Level 及验收要求。状态 PLANNED 表示已激活、待 Developer 开始；实施开始后转为
-IN PROGRESS。本轮只提交激活文档检查点，不代行 Developer 实施或 B 验收，不分派
-其他代理、不推送或部署。
+Test Level 及验收要求。激活检查点之后，Developer 已在
+`d90b91bab8171c28b634b75ff15556b9b2115a11` 提交实现、测试与交接报告；本文件现为
+READY FOR B REVIEW。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -19,7 +19,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -210,16 +210,78 @@ Python/Node 并行时分开产物目录；保存候选 SHA、命令、结果／�
 
 ### Developer Completion Report
 
-已激活，尚未实施。由 Developer 记录不可变 checkpoint、READY FOR B REVIEW、实际变更、
-受影响测试结果与已知风险；完整验收待 B，不自判 PASS。
+Status: READY FOR B REVIEW
+Task Base: `d5803682ac3e37cae6d46f3064c4cf252dc8aa30`
+Implementation checkpoint: `d90b91bab8171c28b634b75ff15556b9b2115a11`
+Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
+
+#### 实际变更
+
+- **页面层级与去重。** 默认主视图只保留一个中文“系统设置”标题、简短说明、页面刷新和
+  紧凑配置状态摘要；随后直接是“系统运行设置”。高级配置与诊断作为次级区域；诊断
+  折叠保留命令就绪、七类规则计数／缺口／混合快照、精确版本／摘要、消费证据。
+  移除 Shell 在设置表面上的只读文件搜索和重复位置行；其他页面仍走原 Shell 分支。
+- **视觉与布局。** 设置页使用与规则／自动化／通知页协调的标题、卡片、间距、字段和
+  状态样式；普通按钮按内容布局；桌面、窄屏和矮视口下分组字段、工具栏和 JSON 区域
+  堆叠，无页面横向溢出。运行采用证据收拢为一个紧凑区域，服务实例按行展开，不再
+  在正常结论后铺三张状态卡。
+- **配置查看与初始化。** 有健康 Active 时默认读取并展示其精确 JSON；草稿只在操作者
+  明确选择时读取。无 Active 时提供明确的恢复草稿或创建首个草稿操作；损坏 Active
+  只显示恢复状态，不用草稿替代。JSON 与脱敏配置包分开展示内容、来源和版本；
+  读取失败、空内容和未加载分别可辨，不把旧内容当当前结果。
+- **高级设置有类型分组。** 按后端 section 组织语言／时区、路径、日志、重试、通知
+  运行、远程执行；保留 allowlist、边界值和生效边界，排除 focused 三项运行参数与
+  部署数据库定位。布尔提供开启／关闭／未配置，枚举使用合法选项，整数／小数严格
+  拒绝空白、尾随字符、NaN/Infinity、越界和非法枚举；非法输入不发送。
+- **按组保存与两种发布语义。** 每组保存只提交本组实际修改；从 Active 保存创建精确
+  后继，从草稿保存绑定所选修订的当前编辑版本；其他组、其他打开草稿和未提交输入
+  不被提交。三项运行参数继续使用原有 focused checked Save 一次发布。高级草稿保存
+  后仍须验证并显式激活；激活使用精确已验证版本，并在界面上明确普通显式激活只发布
+  该版本、不重跑或替代 Storage／规则对象检查证据。
+- **失败、并发与输入保留。** 已知拒绝、旧 Active／草稿、未知写入、在途命令、迟到
+  响应和离开均有明确状态；未知写入先只读核实，不自动重发。保存期间仍可编辑其他
+  输入，迟到响应只确认已提交快照；未提交／在途输入保留为未保存。未保存输入或未知
+  写入按 principal 存入 sessionStorage，显式断开／身份切换由共享 cleaner 清除，重认证
+  或重载可恢复；不存凭据、令牌或发布授权。
+- **验证与交接。** 更新设置页、自动化采用区、Rules 就绪和页面过渡的既有选择器与
+  fake／真实 Python 测试；新增 typed form 模型、session 保留、Node 设置旅程及真实
+  Python 高级设置旅程。
+
+#### 实际验证（最终候选）
+
+- 根目录：`python3 scripts/check_governance.py` PASS；`git diff --check` 通过。
+- Python 受影响单测：`test_system_settings_management.py` 24、`test_configuration_status.py` 6、
+  `test_v2_settings_rule_readiness.py` 11、`test_automation_settings_management.py` 56、
+  `test_configuration_package_exchange.py` 13，全部通过（110 项）。
+- Web 质量：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
+  通过；最终候选 affected Vitest 67 项通过（configuration + AutomationSettingsPage）。
+- Node E2E（构建产物 + 隔离 fake）：`configuration-settings.spec.ts`
+  `rules-readiness.spec.ts` `page-transition.spec.ts` 共 33 项通过。
+- 真实 Python／API／SQLite：`automation-settings.python.spec.ts` 18 项通过，含新增
+  高级 typed Save→验证→激活、双浏览器同草稿并发、写成功后丢响应只读核对。
+- `scripts/storage_settings_browser_proof.py` PASS：首次空基线创建／恢复／验证／激活
+  返回 Storage，且无 token／sessionStorage 泄漏。
+- 本轮测试命令实际耗时约 10–12 分钟，约为本轮开发总时间的 12%，低于 30% 上限；
+  未运行全量 Python/Web/Node 门禁，T4 全量归 B。
+
+#### 已知风险与限制
+
+- 高级草稿激活从原页面的 `checked: true` 改为验证后的普通显式激活
+  （`checked: false`），因为真实后端 checked 激活要求针对该精确修订的 Storage／规则
+  检查证据，而设置页不提供、也不应静默重跑这些证据；focused 三项运行设置仍保持
+  checked Save。界面已明确披露该边界；请 B 重点核对这一语义。
+- 未保存输入／未知写入使用 principal-scoped sessionStorage 保留；需 B 核对
+  401／403、同 principal 重认证、显式断开、身份切换和浏览器持久化泄漏。
+- Node fake 已按真实公开形状实现设置投影与草稿生命周期，但仍为隔离 harness；
+  T4 全量、真实视觉验收、完整 RBAC／并发矩阵和可能的既有失败由 B 独立执行。
+- 本轮未修改需求、架构、旅程、SLICE、Roadmap 或 Progress；未推送、发布或部署。
 
 ### B Review Result
 
-已激活，尚未进入实施或验收。此处不作产品 PASS；本次操作仅完成激活检查点。
-后续按 §3.1 由 B 独立审查完整 Task Base..候选，给 PASS 或同一 Task 的 FIX REQUIRED。
-
-规划与激活文档检查：治理检查 PASS；`python3 -m unittest discover -s tests -p 'test_governance.py'`
-20 项通过；`git diff --check` 通过。仅 TASK.md 变更，产品测试与上述验收尚未执行。
+待 B 独立审查。Developer 已提交 READY FOR B REVIEW；此处不作产品 PASS，也不自判
+验收。B 按 §3.1 独立审查完整 Task Base..候选并运行本 Task 接受门禁，给 PASS 或同一
+Task 的 FIX REQUIRED。规划与激活文档检查：治理检查 PASS；`test_governance.py` 20 项
+通过；`git diff --check` 通过。
 
 ---
 
