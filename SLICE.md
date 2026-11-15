@@ -20,6 +20,8 @@ Next Action: USER ACTIVATES SLICE; B THEN PLANS THE FIRST TASK
 “先调查不改文档和代码”，并补充调查迁移残留。两轮只读调查后，用户现要求“规划一个Slice”。
 本合同统一规划 V1 产品及早期 V2 迁移兼容的完整退出；仅授权文档规划与本地检查点，
 不激活、不实施、不规划 B Task、不分派代理、不推送、不部署。
+用户补充要求保留稳定 V2 的正式配置键／权限名及现有有效数据；本合同据此取消无关改名，
+将现有 V2 配置、合法任务、结果及原 pins 的继续使用列为必需结果。
 生命周期、测试分工及 Git 规则只以 [Development Workflow](docs/development-workflow.md) 为准。
 
 规划前治理检查 PASS。仓库 `/Users/songzhidong/mediaflow`，分支 main，HEAD 为上述 Base，
@@ -32,19 +34,25 @@ Slice54 的 PASS / CLOSED、原 Base `e43a40674eb14aa12615a440a348fe675cd50c4e`�
 [规划前固定合同](https://github.com/kentinya/mediaflow/blob/2b2e7c1824fa5681864455714d0f97b26555c7dc/SLICE.md)
 和 [Progress](docs/progress.md)。独立修复 PATCH-20261115-1 已由 B PASS，固定报告见
 [Task 接受检查点](https://github.com/kentinya/mediaflow/blob/8c09f276409be2cf969ccd8d037bf083312c2d32/TASK.md#patch-20261115-1--b-pass)。
-本 Slice 不重开旧验收，不删除 Git 历史、release/v1、标签或 docs/history，不建设旧版本迁移。
+本 Slice 不重开旧验收，不删除 Git 历史、release/v1、标签或 docs/history，不建设 V1／
+已废弃版本的通用迁移工具。
 
 ## User outcome and completion meaning
+
+本合同的“旧／迁移／兼容”退出对象仅指 V1 或已废弃迁移的专属用途；当前正式 V2 契约、
+有效数据与继续使用所需的读取按当前职责保留，命名或实现年代不作为删除依据。
 
 用户安装本 Slice 产物后，只使用当前 V2 完成首次设置、配置／规则管理、实时库浏览、
 手工整理、自动化、任务内四类恢复、普通文件维护和通知。源代码、安装包、镜像和新库中
 均无 V1 或早期迁移兼容产品。旧入口、旧字段、旧事件、旧会话、旧执行记录不被自动
 转换、接管或重新解释，也没有隐藏开关、备用执行器、别名、跳转或专用退休说明页。
 
-支持范围为本 Slice 新规范的首次初始化 → 新工作 → 同版本重开／重启 → 原工作读取及
-安全恢复。先前 V1／V2 数据库、配置包、工作 pin 或浏览器记录不获兼容承诺；不迁移、
-不导入旧任务、不改写旧 digest，不自动清库／替换／修复存量数据。当前规范输入与真正
-未配置／损坏／不支持输入各自有准确状态和安全下一步。
+支持范围包括首次初始化，以及本 Slice Base 已接受的稳定 V2 数据继续使用：现有 Storage、
+两种库、规则、设置、自动化／通知定义、Draft／Active、合法任务／请求／结果／审计和原 pins
+在本 Slice 产物中继续有效。当前业务行为、正式接口／配置契约及目标路径语义保持；
+不要求重新初始化、重建配置或重新发起已准入工作，不改写原 digest，不重放完成／未知效果。
+新工作和保留的 V2 工作均支持同版本重开／重启后的读取与安全恢复。仅属 V1／废弃迁移
+形态的数据不提供转换或接管；未配置／损坏／本来不支持的输入仍有准确状态和安全下一步。
 
 V2 共用的 Python 应用、Storage／Provider 分层、零变更分析、RBAC、精确计划／授权、
 Task 调度、结果／审计和同版本非重放继续完整。`/api/v1/*` 是当前 API 版本，`/ui-v2/*`
@@ -63,7 +71,7 @@ TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--com
 | REQ-SCHED-003/006–007、REQ-SAFE-008 的旧实现；V2-AUTO-003/010/011 | 删除旧 schedules、远程票据和独立 grant 产品 | 当前定义 Enabled／Run once 意图、权限／作用域／逐效果核对 |
 | REQ-CONFIG-*、V2-CONFIG-001–004、V2-RULES-005 | 只接受唯一当前配置，取消旧格式与分类转换 | Draft／精确 Active、typed Save、检查／原子发布、无默认业务注入 |
 | V2-TASK-003–007/011–014、V2-OPS-007/008/011/013/016/017 | 清除暂停、旧恢复链、非内核整理执行和历史输入兼容 | 五态 flow、逐项结果、同 Task 四类恢复、取消及不确定非重放 |
-| V2-AUTO-001/007/008、V2-UX-* 的迁移地址／会话义务 | 无旧地址与旧会话格式承接；采用当前 Task 用语 | 当前深链、请求核对、同版本输入保留、真实消费者采用 |
+| V2-AUTO-001/007/008、V2-UX-* 的迁移地址／会话义务 | 无旧地址与纯迁移格式承接 | 当前正式配置键／权限名、深链、现有 V2 数据／原请求核对和真实消费者采用 |
 
 未明确修订的 REQ-STO/PARSE/REC/META/NAME/CLASS/ORG/ATT、REQ-SAFE-* 和当前原生
 旅程继续适用；RecognitionType C 复用 A Naming／Classification 后仍为 C。
@@ -123,36 +131,45 @@ api.tokenEnv→legacy-admin、单 bearer 构造器管理员回落、开发默认
 保留当前规范文档的 Draft 导入／校验／激活、设置 JSON 查看／脱敏包导出及恢复，不因退出
 JSON_BOOTSTRAP 而删除当前 V2 高级配置能力。只读／导航不能建草稿或工作。
 
-旧写法拒绝，不做优先级合并、规范化转换或静默忽略：Storage 顶层连接参数、资源库 rootPath
+下列退出清单针对仅属 V1／废弃迁移的输入；现有稳定 V2 正式契约、有效配置和合法 pins
+有当前业务用途的字段／值继续按原语义使用，不能凭名称年代或出现在旧文档中判为废弃。
+此约束同样适用于 RO-2 的接口／持久化、RO-4 的状态／结构和 RO-5 的响应／session 清理。
+纯迁移旧写法拒绝，不做优先级合并、规范化转换或静默忽略：Storage 顶层连接参数、资源库 rootPath
 显示别名、automation.taskDefinitions、notifications.webhooks、分类 library 与 category/subcategory
 代 path、MetadataPolicy.mediaType、OrganizePolicy.overwrite、staleJobAgeSeconds，以及同类旧
 命名模板／模式／事件／包结构别名。根级 automationTaskDefinitions／webhooks、Storage.options、
 资源库 displayRootPath、分类 mediaLibraryId＋path、mediaQueryType／conflictStrategy 为当前
 唯一表达。Storage.rootPath／MediaLibrary.rootPath、候选自身 movie/TV 类型和分类条件
-mediaType 有当前职责，不能按字段同名删除。旧分类转换 UI 与运行时旧前缀分支一起退出。
+mediaType 有当前职责，不能按字段同名删除。迁移专用分类转换 UI／入口退出；现有正常 V2
+规则及 pin 的目标路径保持原意，不得删前缀、改目录或失效来满足退役。其必需读取属于
+当前领域职责，不能作为 V1 残留一并删掉。
 
-Task 容量唯一键改为 automation.maximumActiveTasks；取消权限唯一名为 CANCEL_TASK／
-cancel_task，旧 maximumActiveJobs／CANCEL_JOB／cancel_job 不作别名接受。仅规范当前
-Task 用语，三项设置的容量 1–10000、全入口原子额度、Worker／Scheduler 采用与 override
-规则不变，不新增参数／设置平台。当前 /api/v1 与 /ui-v2 命名保持。
+当前正式容量键 automation.maximumActiveJobs 和取消权限 CANCEL_JOB／cancel_job 保持。
+它们的现有名称就是当前 V2 契约，本 Slice 不改名、不新增替代键／权限或别名。三项设置的
+容量 1–10000、全入口原子额度、Worker／Scheduler 采用与 override 规则不变，不新增
+参数／设置平台。当前 /api/v1 与 /ui-v2 命名保持。
 删除 job.*→task.* 事件兼容，事件仅 task.* 与当前 schedule.emitted；调度发布权限能力保持。
 兼容导出名／Phase bootstrap 类／旧 Task/ScanTask 模型／strategy-test 旧 console runner
 及默认策略接线退出；纯分析、解析、规则测试等现行引擎由当前模型／检查入口使用。
 
 ### RO-4 — 当前 schema 与五态 Task，彻底清除旧迁移及历史执行形态
 
-建立完整、唯一的当前 runtime／configuration／managed-document 支持身份和新建结构；
-当前必需列／索引／Task 调度／首次执行证据直接完整初始化，不靠历史补列／表重建顺带创建。
-删除旧 schema ALTER／回填／migrate55 等重建、旧 lock-owner、跨版本接管／转换和 upgrade
-check/rehearse 工具及专用脚本。新规范身份在实施时统一更新；不固定要求某个数字。
+新建库直接完整创建当前 runtime／configuration／managed-document 必需结构，包括列／索引／
+Task 调度／首次执行证据。清除仅服务已废弃版本的补列／重建／回填、旧 lock-owner 和
+upgrade check/rehearse 等通用旧版本工具及专用脚本。
 
-旧／畸形／混合版本的既有库在任何 DDL、版本标记写入、回填、claim 或业务执行前拒绝，
-保留原文件与数据；必要只读格式检查不是兼容读取。明确告知不支持的阶段、未执行的业务
-和使用独立新实例的下一步；没有自动重建、导入旧任务、指针改写、删表／清库或 media 操作。
-不以加上新版本号但继续接受旧字段／旧工作实现退出。
+现有稳定 V2 库继续使用，不能以“旧库”、重设 schema 身份或删除迁移代码为由拒绝启动、
+要求新建实例、丢弃配置／历史或让合法任务失效。确需结构收敛时，仅做本 Slice 必需的
+最小调整，完整保留有效业务数据、ID／关系、快照 digest／pin、原状态／结果／效果和当前
+任务继续运行的条件，具有失败原子性；不建设通用旧版本迁移／接管系统。
+
+原本不支持的 V1／废弃格式库、畸形或不支持的混合库，在修改或业务执行前准确拒绝且
+保留原文件。当前 V2 的正常使用流程保持原入口；错误说明实际阶段、已知耐久状态和
+适用下一步。不自动清库／重建、重置 Active、重命名媒体或重新准入已存在的任务。
 
 新库没有旧 schedules、execution tickets、independent grants、旧恢复子 Task／批次／scope
-链的专用表／索引／列；清除它们在查询、checkpoint、统计、来源历史、证据导出中的兼容关系。
+链的专用表／索引／列；现有 V2 库的清理以保留有效业务记录为前提，不为删除残留表／列
+而自动删除历史。清除纯兼容查询关系，当前 checkpoint／统计／来源历史／证据导出继续完整。
 保持同一 Task 内合法版本化 item／attempt／请求／结果与当前恢复关系，不新造替代迁移链。
 Task flow 仅 pending/running/completed/failed/cancelled；清除历史 paused/partial_success flow
 解析、Pause 控制、队列暂停／恢复、pause_requested 及生产者／reader／测试，文件级 partial／
@@ -165,7 +182,8 @@ Task flow 仅 pending/running/completed/failed/cancelled；清除历史 paused/p
 当前生产者的 continuation 卡／请求函数／批量模型。清理已不存在类的注释、未用导出／导入
 别名、假服务旧分支及夹具，不以隐藏 UI 保留可触发行为。
 
-当前 session 格式有明确身份，旧形状普通拒绝且不转换；读取旧 session 不成为新命令意图。
+当前 session 格式有明确身份，纯迁移形状普通拒绝且不转换；现有稳定 V2 的有效输入和
+未知提交上下文继续可核对，不能因来自 Slice Base 就作废。读取 session 不成为新命令意图。
 同版本未知 Save／Execute／Run once／Copy／通知恢复保留原请求核对和防重复提交；规则／
 设置／通知当前未保存输入与权限隔离、焦点／返回不回退。不能通过删掉所有会话记录或
 把 unknown 当失败可重试来实现退役。未知／缺失来源证据的保守拒绝、脱敏、无 fingerprint
@@ -189,14 +207,16 @@ REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到
   计划、日志、结果导出、通知或全部 CLI。仅为当前调用收敛所必需的请求／投影调整在范围内。
 - 认证、后端 RBAC、部署权限、精确 Active／原子发布／引用保护／审计、source ownership、
   claim/lease/fence、已完成／不确定非重放、唯一 OrganizerExecutor 及 C→A 身份不变量保持。
-- 新规范下合法旧 pin（相对当前 Active 而言）和同版本历史保持原样；跨旧版本数据不获转换
-  承诺，但永不改写／删除原文件。不能从当前 Active、名称、时间或缺失字段猜授权。
+- Base 已接受的稳定 V2 正式契约、有效数据和合法工作是保留基线；相对当前 Active 的原
+  pins、版本／ID、历史及效果保持原样。仅废弃 V1／迁移形态无接管承诺；不能从当前 Active、
+  名称、时间或缺失字段猜授权。配置键／权限名的无关改名不在范围内。
 - 不新增 API v2、改 Web 根、身份／OIDC／Secret Store、Provider／Storage、命名算法、恢复
   类型、跨 Task 批量、MediaLibrary 整理、上传下载、分布式队列、并行度／超时监督或回滚。
 - 不重设计当前九页、Task 详情或改变 flow／文件结果／自动化成功率；删除迁移卡和无生产者
   分支所必需的布局修正需可读、键盘／窄屏可用，当前规则 Edit 深链仍是正式当前入口。
 - 不操作用户数据、停止／迁移现有部署、发布／推送、删除 release/v1／tag 或 Git 历史。
-  不建设旧数据导入、迁移、暂停恢复、旧请求接管、历史事件重投或旧会话核对界面。
+  不建设 V1／废弃迁移形态导入、暂停恢复、旧请求接管、历史事件重投或专用旧会话界面。
+  现有稳定 V2 数据继续使用所必需的读取和最小结构调整属于本 Slice 的保留职责。
 
 ## Acceptance Criteria
 
@@ -205,15 +225,19 @@ REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到
 - [ ] AC-02 / RO-2：正常当前配置／合法权限下，旧 API 为通用 unknown route；旧 CLI 从 help／
       parser 注销。不能用401/403、无配置503或非零退出冒充删除；无额外工作／Provider／
       Storage 效果，正常解析／认证／脱敏审计允许。无旧票据、调度、grant 专用读写／接线。
-- [ ] AC-03 / RO-3：唯一当前 bootstrap／文档／字段／事件／权限／模式有效；覆盖各旧形式
-      单独、与新形式混合、旧包导入和任意 JSON 路径拒绝；零发布／Task／媒体效果。
+- [ ] AC-03 / RO-3：当前正式 bootstrap／配置／接口／权限契约保持；maximumActiveJobs 和
+      CANCEL_JOB/cancel_job 无改名／替代键。纯 V1／迁移输入单独、混合、旧包导入和任意
+      JSON 路径拒绝，零发布／Task／媒体效果；现有正常 V2 配置和合法 pins 仍有效。
 - [ ] AC-04 / RO-2/4：新手工／due／Run once 和四类恢复只走同 Task 内核，保留人等／稳定等、
       原子额度、源归属和并发fence；无非内核整理领取、旧子 Task 链、Pause／resume 实现。
-- [ ] AC-05 / RO-4：新库完整 schema 无旧专属结构；同版本 reopen／进程 restart／备份及明确
-      非覆盖 restore 保留当前 work。旧／混合／畸形库拒绝前后文件／schema／行不变，
-      无隐式DDL／回填、claim、自动清库／重建或媒体效果，不给不兼容部署假 ready。
+- [ ] AC-05 / RO-4：新库完整结构；用 Base 真实代码在隔离环境建立正常 V2 配置／任务／结果
+      后，由候选继续打开使用，保留 IDs／关系、Draft／Active／digest／pins、状态／独立效果、
+      审计和未知请求核对，不要求重建配置或重发任务。同版本 reopen／restart／备份及明确
+      非覆盖 restore 通过；必要结构调整失败原子、有效业务记录不丢。原本不支持／畸形库
+      拒绝前后文件／schema／行不变，无自动清库／重建／claim 或媒体效果。
 - [ ] AC-06 / RO-4/5：Task 五态、文件 partial／unknown／缺 Result、取消与真实未完成各自准确；
-      旧 flow／命令／事件／session／响应形状不会被映射、展示为当前或产生执行资格。
+      纯废弃 flow／命令／事件／session／响应形状无兼容转换或执行资格；现有稳定 V2 的
+      有效数据／请求／正式响应保持原业务语义和安全恢复。
 - [ ] AC-07 / RO-5：新格式输入与同版本 unknown 写入跨关闭／刷新／重新认证／双管理员并发
       保留准确请求与核对；迟到读取／写响应不串身份／版本／兄弟项，不自动重提或假失败。
 - [ ] AC-08 / RO-1/3/6：从无媒体挂载的四服务空实例，经 V2 首次 Draft／空 Active、typed
@@ -239,8 +263,9 @@ Developer 仅跑新增／修改／直接受影响测试及必要当前原生链�
 B 独立完成每 Task 必需验收、[shared full gates](docs/development-workflow.md#shared-full-regression-commands)
 和最终全部 RO 门禁；A 独立审查整个 Base..Implementation Head，不自审通过。
 
-最终必须提供：退休入口注册与正常输入反证；旧格式拒绝；新库完整结构／不兼容库零变更／
-同版本复开；真实 Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
+最终必须提供：退休入口注册与正常输入反证；纯废弃格式拒绝；新库完整结构／Base 稳定 V2
+数据由候选继续使用／必要调整失败原子／原本不支持库零变更／同版本复开；真实
+Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
 并发／丢响应／权限／pin／不确定故障；当前前端构建与截图；干净来源 wheel／安装目录／
 候选 Docker 镜像身份、四服务空初始化及安全／restart proofs。外部 SMB/OpenList/S3/TMDB
 用 fake／本地服务器与临时根，既有可选真实外部测试需披露，不拿用户媒体作证明。

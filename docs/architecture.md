@@ -36,22 +36,25 @@ minimal deployment bootstrap + api.principals
   继续是当前工作证据，不成为另一队列。普通文件／通知职责保持原边界。
 - **Configuration：** 最小管理 bootstrap 仅定位数据与部署身份，无完整 JSON 业务权威、
   legacy-admin、默认业务策略或旧字段转换。当前 Draft/Validate/check/Activate、typed
-  focused Save 与配置／结果交换继续；严格校验唯一当前 shape，旧形式不合并或忽略。
-  分类仅 MediaLibrary＋path，无旧 library 前缀／转换。Task 容量键为
-  automation.maximumActiveTasks，取消权限为 CANCEL_TASK/cancel_task；旧名不解析为别名，
-  原容量／取消／实际采用语义不变。通知只用当前 task.* 等事件，无 job.* 映射。
-- **Persistence：** 选定统一当前 schema／文档支持身份。新库直接完整创建必需结构，
-  删除旧ALTER／表重建／回填／接管和升级工具，拆出原 migrate helper 中仍必需的当前建表。
-  旧／混合／畸形库在任何DDL／标记写入／claim前拒绝且原文件不变，无自动drop／清库／
-  转换。新库无旧调度、票据、grant、批次／子Task恢复的专属表／索引／列。当前同版本
-  reopen／备份／明确非覆盖restore 保留合法 pins、请求、结果、来源／锁和审计。
+  focused Save 与配置／结果交换继续。纯 V1／废弃迁移形式退出，当前正式 V2 字段及
+  有效配置／pins 的读取和原业务语义保持，不能按实现年代删除。分类新写入以
+  MediaLibrary＋path 表达，现有正常 V2 规则／pin 的目标路径不改写。当前容量键
+  automation.maximumActiveJobs 和取消权限 CANCEL_JOB/cancel_job 保留，不作无关改名／
+  替代键；容量／取消／实际采用规则不变。纯迁移事件映射退出，当前事件契约保持。
+- **Persistence：** 新库直接完整创建当前必需结构，清除仅服务废弃版本的ALTER／重建／
+  回填／接管和升级工具。Base 已接受的稳定 V2 库、Draft／Active、配置／业务对象、合法
+  Task／请求／结果／审计继续使用，保留 IDs／关系、digest／pins、状态／目标语义／效果。
+  必要最小结构调整保留有效数据并失败原子，不因重设 schema 身份拒绝现有正常 V2 库，
+  不要求重新初始化／重配／重发工作。原本不支持或畸形／混合库在修改或执行前拒绝且
+  原文件不变。新库无旧机制专属结构；现有 V2 结构清理以有效业务记录完整为前提，无
+  自动清库／替换或历史删除。当前 reopen／备份／明确非覆盖restore 保持。
 - **State/client：** 删除 paused/partial_success Task flow、Pause/resume 队列／字段／控制及
-  历史输入reader；文件级 partial、效果 unknown、未完成工作／human或stability waiting
+  纯废弃输入reader；文件级 partial、效果 unknown、未完成工作／human或stability waiting
   独立保留。删除旧session／响应适配、无生产者UI／导出别名，当前session与未知提交核对
   仍安全。未知来源证据、可选fingerprint和恶意持久值的保守拒绝／脱敏属于当前安全职责。
 - **Artifacts：** 源／wheel／镜像／新库／示例／CI／harness／当前说明一致，不用动态导入、
-  环境开关、no-op、新archive或改名保留旧兼容。不处理旧数据／旧任务，不改历史发布线；
-  退役测试需同时证明入口注销、旧输入零效果和真实当前完整旅程。
+  环境开关、no-op、新archive或改名保留旧兼容。不建设 V1／废弃形态接管，不改历史发布线；
+  退役测试同时证明入口注销、纯废弃输入零效果、Base 稳定 V2 数据继续使用及完整旅程。
 
 权限、完整原子发布、C复用A策略仍为C、Storage confinement/capabilities、immutable pin、
 并发fence、独立primary/attachment结果、已完成／不确定非重放及OrganizerExecutor唯一
