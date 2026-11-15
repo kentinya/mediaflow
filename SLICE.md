@@ -11,7 +11,7 @@ Working Branch: main
 Development Authorization: SLICE ACTIVE — FIRST TASK PLANNING AUTHORIZED
 Risk: High
 Accepted Test Level: T4
-Next Action: A PLANS THE FIRST TASK FOR B UNDER EXPLICIT USER AUTHORIZATION
+Next Action: USER AUTHORIZES TASK55.1 IMPLEMENTATION
 ```
 
 ## Authority and baseline
@@ -258,8 +258,9 @@ REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到
 
 ## Validation ownership and final validation
 
-风险 High，产品实施与最终验收 T4。首个 Task 由 A 按用户授权代 B 规划，后续 B 按完整行为规划连贯 Task、实际 Base、
-Difficulty／Test Level 与精确 affected／acceptance 命令；本文件不预建 Task 或执行步骤配额。
+风险 High，产品实施与最终验收 T4。首个 Task55.1 已由 A 按用户授权代 B 规划，见
+[TASK.md](TASK.md)。后续 B 按完整行为规划连贯 Task、实际 Base、Difficulty／Test Level
+与精确 affected／acceptance 命令；本文件不预建后续 Task 或执行步骤配额。
 Developer 仅跑新增／修改／直接受影响测试及必要当前原生链路，按工作流交不可变检查点；
 B 独立完成每 Task 必需验收、[shared full gates](docs/development-workflow.md#shared-full-regression-commands)
 和最终全部 RO 门禁；A 独立审查整个 Base..Implementation Head，不自审通过。
@@ -278,6 +279,6 @@ Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
 ## Closure Packet and A Final Review
 
 尚未实施，Implementation Head NOT SET。Required Outcomes／最终测试／Closure Packet／
-A Final Review 均未完成；Status 为 ACTIVE。下一步按用户授权由 A 代 B 规划首个 Task，
-Task 获得实施授权后进入 Developer 阶段。
+A Final Review 均未完成；Status 为 ACTIVE。Task55.1 规划已完成，获实施授权后进入
+Developer 阶段。
 历史接受事实不被本规划替代；通过后再统一将 TARGET 协调为 CURRENT，不提前声明退役。

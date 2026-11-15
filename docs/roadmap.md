@@ -50,7 +50,8 @@ Scope includes complete source/runtime/artifact retirement with no compatibility
 conversion, hidden flag or fallback, plus current native V2 regression. The user activated the Slice and authorized A to plan
 the first Task for B; TARGET requirements/journey/architecture do not claim delivered behavior.
 
-[TASK.md](../TASK.md) has no active implementation Task. Next action: **A PLANS THE FIRST TASK FOR B**. Slice54 remains PASS / CLOSED at its original Base/accepted Head;
+[TASK.md](../TASK.md) contains the planning-only Task55.1 draft, prepared by A for B under
+explicit user authorization. Next action: **USER AUTHORIZES TASK55.1 IMPLEMENTATION**. Slice54 remains PASS / CLOSED at its original Base/accepted Head;
 its fixed closure and all earlier acceptance, original failures, role exceptions, evidence limits
 and deferrals remain in Progress/Git. Implementation awaits Task authorization; no push, release or deployment is authorized.
 
