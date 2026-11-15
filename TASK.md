@@ -1,6 +1,6 @@
 # Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: DEVELOPER SYNCS CURRENT NATIVE TEST CONSUMERS; B COMPLETES RELEASE-SECURITY EVIDENCE。
+Next Action: B REVIEWS TASK55.1 B55.1-02 CORRECTION AND COMPLETES RELEASE-SECURITY EVIDENCE。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -10,12 +10,12 @@ Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁�
 Task ID: 55.1
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit user authorization, planning only
-Reviewer: B — B55.1-01 corrected; B55.1-02 acceptance incomplete
+Reviewer: B — B55.1-02 test consumers synced; re-review pending
 Implementation Authorization: AUTHORIZED BY USER — TASK55.1 ONLY
 ```
 
@@ -485,6 +485,55 @@ RO-1 的产品退役和引用纠正已有实证；Task 的当前消费者／必�
 RO-2 旧业务入口／执行、RO-3 当前配置、RO-4 schema／五态和 RO-5 session／响应收敛
 均仍待后续实现；RO-6 仅 Web 部分已交付，安全门禁及 Slice 其余消费者仍未全部完成。
 Slice55 保持 ACTIVE，Roadmap／Progress 不变，不提交 Closure Packet 或声明 Slice 关闭。
+
+## Developer Completion Report — B55.1-02 修正（2026-11-16）
+
+Status: READY FOR B REVIEW。
+
+```text
+Implementation candidate: d378ce69ec0d3158b3bc8a6b91f230a23dbfd605
+Final test head: d378ce69ec0d3158b3bc8a6b91f230a23dbfd605
+Task Base: d62436be6f5848329a628356c13fdb28e760239a
+Reviewer: B — B55.1-02
+```
+
+**变更**
+
+- 只同步 B55.1-02 指定的三个原生浏览器消费者，没有修改生产界面、删除用例、增加
+  重试或延长超时：
+  - Settings export：不再查找已删除的“查看 Active JSON”，改为等待当前“高级配置”
+    默认显示的 Active“配置 JSON”；继续持有真实导出 GET，核对挂起期的 disabled／
+    可读性、单请求和无重放，结束后读取当前“脱敏配置包”内容。该用例后续的 Rules
+    抽屉步骤改用当前“保存”按钮，并在测量前等待既有的 220ms 弹卡入场动画结束。
+  - Notifications：改用当前“通知”标题、中文不可用态、“创建后继草稿”“查看定义”
+    “编辑草稿”；事件同时核对可见中文标签和诊断中的 task.* 技术标识，编辑草稿只
+    暴露 task.* checkbox，不出现 job.* 或旧 `/api/v1/jobs` 请求。
+  - Deliveries：改用当前“查看投递记录”“通知投递记录”“查看投递”“读取最新投递”；
+    在详情卡诊断中核对 `task.completed（task:<id>:completed）` 与 pending 状态，
+    刷新后仍只有一条 outbox 投递且已结算 Task 不重放。
+- `docs/configuration.md` 删除“旧 `?tab=settings` 会跳转”的过期事实描述，改为当前
+  未知 tab 的普通行为，并注明系统设置仍从 `/ui-v2/configuration` 进入。
+
+**实际验证**
+
+- `python3 scripts/check_governance.py` PASS；`git diff --check` PASS。
+- `npm run typecheck` PASS；`npm run build` PASS（`dist/index.html`、
+  `index-Cvv7FA31.css`、`index-Byllywp2.js`）。
+- 修改文件 ESLint／Prettier PASS。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts
+  tests/e2e/action-readability.python.spec.ts --grep
+  'the Notifications page reads|a settled Task publishes|a disabled shared secondary action'`：
+  **3 passed（5.6s）**。首次定向运行因旧定位器仍指向已退役入口而失败，按实际当前入口
+  修正后得到上述最终结果；期间没有放宽 timeout、增加 retry 或跳过断言。
+- 本轮定向测试及排查运行累计墙钟约 38 秒，低于本轮总耗时 30%。
+
+**剩余风险／未执行**
+
+- 未运行完整原生 spec、全量 Python／Web／E2E、Docker／wheel／源码外安装或完整视觉
+  矩阵；这些仍由 B 按 T4 门禁执行。`release-security` 后半程门禁仍由 B 完成。
+- 本检查点只改测试消费者、操作说明和本 Task 记录，没有改变生产代码、数据库、权限、
+  配置发布、Task 执行或用户数据；未推送、发布或部署。
 
 ## Latest accepted Task — PATCH-20261115-1
 
