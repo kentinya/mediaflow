@@ -1,6 +1,6 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: DEVELOPER FIX；B 已确认网页发布旅程修复，完整回归仍有一条 Storage 首次设置用例使用旧选择器；仅修正该受影响测试并交回同一 Task。
+Next Action: B REVIEW；Developer 已更新 Storage 首次设置回归的可见状态定位，受影响用例与完整 Storage spec 通过，待 B 独立复核并补齐全量 Node E2E。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
@@ -12,7 +12,9 @@ FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。Developer 已在
 `2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归；B 已核实修正，
 并因 B-03 网页发布旅程未完成退回。Developer 已在
 `6947b0f2f417aca68cf99c7634d288978386a0e2` 把精确草稿的只读检查接入设置页并改用网页旅程验证，
-该轮已交 READY FOR B REVIEW；B 本轮确认发布修复，但因 B-04 受影响测试遗漏退回同一 Task。未推送、发布或部署。
+该轮已交 READY FOR B REVIEW；B 本轮确认发布修复，但因 B-04 受影响测试遗漏退回同一 Task。
+Developer 已在 `5c40583f4b2e558b522ca11d1f87e4d798e1b073` 适配该既有回归并交回。
+未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -24,7 +26,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -535,6 +537,48 @@ Docker 镜像／线上部署未执行，不作为本次 Web 修复接受依据�
 本轮全量测试的执行时段超过用户要求的本轮 50% 时间比例；这是 B 的执行安排问题，
 不转为 Developer 工作或产品缺陷。已停止追加测试；下轮先核对这条遗漏，再按未变输入
 复用已完成证据。当前不宣称 T4 全通过或 Task PASS，不进行收尾文档同步。
+
+---
+
+### Developer Completion Report — B-04 修正
+
+```text
+Status: READY FOR B REVIEW
+Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+B-04 fix implementation: 5c40583f4b2e558b522ca11d1f87e4d798e1b073
+Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
+```
+
+#### 实际变更
+
+- 仅更新 `web/tests/e2e/storage-management.spec.ts` 中 B-04 指出的既有 Storage 首次设置
+  旅程定位，不改产品文案、产品代码、fake 契约或其他测试。
+- 配置状态改为在 `region “配置状态摘要”` 内断言精确文本“需要首次设置”／
+  “已有草稿待恢复”，不再查找已不存在的英文 heading。
+- 创建按钮改为“创建首个草稿”；恢复按钮匹配摘要内当前可见的
+  “恢复草稿（编辑版本 N）”。原地址、返回、创建一次、只读导航、无伪造表格和重进
+  恢复同一草稿等业务断言全部保留，未跳过、未删除、未增加超时或重试。
+
+#### 实际验证
+
+- 修正前按 B 所述运行该单条用例，实际在旧 heading 定位处失败，错误上下文确认当前页面
+  只有摘要文本与“创建首个草稿”按钮；原 trace 保留于
+  `web/test-results/patch-20261115-1-b04-before/`。
+- 修正后单条用例通过（1 项，约 0.6 秒）。
+- 完整 `storage-management.spec.ts` 通过：29 项，18.8 秒。
+- `npx prettier --check tests/e2e/storage-management.spec.ts` 通过；
+  `npm run typecheck` 通过；`python3 scripts/check_governance.py` PASS；
+  `git diff --check` 通过。
+- 本轮开发约 4 分钟，测试与检查命令累计约 33 秒，低于本轮总时间的 30%。
+
+#### 已知风险与限制
+
+- 本次只适配已授权测试定位，没有重新运行全量 Node E2E；B 已说明由其补齐该门禁。
+  其余未变执行输入的验收证据仍由 B 按身份复用或重跑。
+- 该用例继续使用既有隔离 Node fake／构建产物，不能替代真实 Python 首次设置旅程；
+  后者上一轮已通过且本轮无产品或 harness 变更。
+- 未修改 requirements、architecture、journey、SLICE、Roadmap 或 Progress；未推送、
+  发布或部署。
 
 ---
 
