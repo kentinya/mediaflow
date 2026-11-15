@@ -2631,9 +2631,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     // the embedded engine read are both on screen while that read is still
     // inside its fast window. The observed defect (B52.2-02) was this wait
     // line appearing immediately and being replaced a moment later.
-    expect(
-      await screen.findByRole("heading", { name: "Active 已激活" }),
-    ).toBeTruthy();
+    expect(await screen.findByText("配置已生效")).toBeTruthy();
     expect(
       heldRead.calls.some((call) =>
         call.url.includes("/operations/automation/settings"),
@@ -2666,9 +2664,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
   it("shows one stable engine wait state once the read is genuinely slow", async () => {
     const heldRead = heldSettingsRead();
     await connect("/ui-v2/configuration");
-    expect(
-      await screen.findByRole("heading", { name: "Active 已激活" }),
-    ).toBeTruthy();
+    expect(await screen.findByText("配置已生效")).toBeTruthy();
     // Past the shared reveal window the waiting line appears — one stable,
     // perceivable state while the read is outstanding, not a flicker.
     const banner = await screen.findByText("正在读取引擎设置", undefined, {
@@ -2707,15 +2703,13 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
       return undefined;
     });
     await connect("/ui-v2/configuration");
-    expect(
-      await screen.findByRole("heading", { name: "Active 已激活" }),
-    ).toBeTruthy();
+    expect(await screen.findByText("配置已生效")).toBeTruthy();
     // The failed read is a direct answer on the existing bounded recovery,
     // never delayed behind a waiting presentation, and it stays read-only.
     expect(await screen.findByText("引擎设置暂不可用")).toBeTruthy();
     expect(await screen.findByText(/此页面不会猜测任何发布值/)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Active 已激活" })).toBeTruthy();
+    expect(screen.getByText("配置已生效")).toBeTruthy();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 });

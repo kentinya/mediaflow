@@ -58,8 +58,13 @@ async function openSettings(page: Page, search = ""): Promise<void> {
   await page.goto(`/ui-v2/configuration${search}`);
   await connectAs(page, VIEWER_TOKEN);
   await expect(
-    page.getByRole("heading", { name: "配置生命周期" }),
+    page.getByRole("heading", { name: "系统设置", exact: true }),
   ).toBeVisible();
+}
+
+/** Diagnostics stays secondary; the readiness evidence lives inside it. */
+async function openDiagnostics(page: Page): Promise<void> {
+  await page.getByText("诊断", { exact: true }).click();
 }
 
 /**
@@ -191,6 +196,7 @@ test.describe("Rules readiness and Settings handoff", () => {
   }) => {
     await resetRules(page, "?gaps=recognitionRules");
     await openSettings(page);
+    await openDiagnostics(page);
 
     await expect(
       page.getByRole("heading", { name: "整理规则就绪状态" }),
@@ -222,6 +228,7 @@ test.describe("Rules readiness and Settings handoff", () => {
   }) => {
     await resetRules(page, "?noActive=1");
     await openSettings(page);
+    await openDiagnostics(page);
     await expect(
       page.getByRole("heading", { name: "整理规则就绪状态" }),
     ).toBeVisible();
@@ -245,7 +252,7 @@ test.describe("Rules readiness and Settings handoff", () => {
 
     // Sidebar Settings opens without manufacturing a Rules return context.
     await expect(
-      page.getByRole("heading", { name: "配置生命周期" }),
+      page.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
     expect(page.url()).not.toContain("returnTo=rules");
     // No raw revision, digest or token travels in the navigation state.
@@ -253,6 +260,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     expect(page.url()).not.toContain("digest");
 
     // Settings still provides an explicit link to each rule family.
+    await openDiagnostics(page);
     await page.getByRole("link", { name: "查看分类规则" }).click();
     await expect(
       page.getByRole("heading", { name: "分类规则", exact: true }),
@@ -289,7 +297,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     // The handoff reaches Settings and the explicit return carries the family.
     await settingsLink.click();
     await expect(
-      page.getByRole("heading", { name: "配置生命周期" }),
+      page.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
     expect(page.url()).toContain("returnSection=metadataPolicies");
     const returnLink = page.getByRole("link", {
@@ -301,18 +309,13 @@ test.describe("Rules readiness and Settings handoff", () => {
     );
 
     // First setup through the real lifecycle: create, validate, activate.
-    await page.getByRole("button", { name: "创建首个 Draft" }).click();
-    await expect(
-      page.getByRole("button", { name: "恢复 Draft" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "恢复 Draft" }).click();
-    await page.getByRole("button", { name: "验证 Draft" }).click();
+    await page.getByRole("button", { name: "创建首个草稿" }).click();
+    await expect(page.getByRole("button", { name: "验证草稿" })).toBeVisible();
+    await page.getByRole("button", { name: "验证草稿" }).click();
     await expect
-      .poll(() =>
-        page.getByRole("button", { name: "checked-activate" }).isEnabled(),
-      )
+      .poll(() => page.getByRole("button", { name: "激活配置" }).isEnabled())
       .toBe(true);
-    await page.getByRole("button", { name: "checked-activate" }).click();
+    await page.getByRole("button", { name: "激活配置" }).click();
 
     // The automatic return lands on the originating family inventory, now
     // backed by the published Active.
@@ -340,6 +343,7 @@ test.describe("Rules readiness and Settings handoff", () => {
   }) => {
     await resetRules(page);
     await openSettings(page);
+    await openDiagnostics(page);
     const settings = page.getByRole("region", { name: "整理规则就绪状态" });
     const firstSequence = await settings.locator("dd").nth(1).textContent();
 
@@ -370,6 +374,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     ).toBeVisible();
     await page.getByRole("button", { name: "刷新", exact: true }).click();
     await openSettings(page);
+    await openDiagnostics(page);
     await page.getByRole("link", { name: "查看识别类型" }).click();
     await expect(
       page.getByRole("heading", { name: "识别类型", exact: true }),

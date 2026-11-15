@@ -7810,6 +7810,508 @@ function rulesSetupRevisionSummary(state) {
   };
 }
 
+// --- PATCH-20261115-1 System Settings typed group fixture -----------------
+//
+// This fixture mirrors the real allowlisted projection shape (sections with
+// label/value/valueType/boundary) and the real Draft-versus-Active edit
+// semantics: a group Save from Active creates a successor Draft, a Draft edit
+// binds revisionId+expectedVersion, Validate changes only the status, and
+// Activate publishes the exact validated version. It is isolated per browser
+// session so the settings journey never shares authority with the rules
+// fixture or another test.
+
+const SETTINGS_FIELD_META = [
+  [
+    "Localization",
+    "locale",
+    "System locale",
+    "string",
+    "restart_required",
+    "zh-CN",
+  ],
+  [
+    "Localization",
+    "timezone",
+    "System timezone",
+    "string",
+    "restart_required",
+    "Asia/Shanghai",
+  ],
+  [
+    "Database",
+    "persistence.databasePath",
+    "Database location",
+    "string",
+    "bootstrap_immutable",
+    "/data/mediaflow.sqlite3",
+  ],
+  [
+    "Database",
+    "historyPath",
+    "History file path",
+    "string",
+    "restart_required",
+    ".mediaflow/history.jsonl",
+  ],
+  [
+    "Database",
+    "cachePath",
+    "Cache directory path",
+    "string",
+    "restart_required",
+    null,
+  ],
+  [
+    "Database",
+    "logPath",
+    "Log directory path",
+    "string",
+    "restart_required",
+    null,
+  ],
+  [
+    "Database",
+    "exportPath",
+    "Export directory path",
+    "string",
+    "restart_required",
+    null,
+  ],
+  [
+    "Logging",
+    "operationalLogging.enabled",
+    "Operational logging enabled",
+    "boolean",
+    "hot_consumed",
+    false,
+  ],
+  [
+    "Logging",
+    "operationalLogging.minimumLevel",
+    "Operational logging level",
+    "enum",
+    "hot_consumed",
+    "INFO",
+  ],
+  [
+    "Logging",
+    "operationalLogging.retentionDays",
+    "Log retention (days)",
+    "integer",
+    "hot_consumed",
+    30,
+  ],
+  [
+    "Logging",
+    "operationalLogging.maximumRecords",
+    "Maximum log records",
+    "integer",
+    "hot_consumed",
+    10000,
+  ],
+  [
+    "Workflow",
+    "workflowRetry.enabled",
+    "Workflow retry enabled",
+    "boolean",
+    "hot_consumed",
+    null,
+  ],
+  [
+    "Workflow",
+    "workflowRetry.maxAttempts",
+    "Maximum retry attempts",
+    "integer",
+    "hot_consumed",
+    3,
+  ],
+  [
+    "Workflow",
+    "workflowRetry.baseDelaySeconds",
+    "Base retry delay (seconds)",
+    "number",
+    "hot_consumed",
+    1,
+  ],
+  [
+    "Workflow",
+    "workflowRetry.maxDelaySeconds",
+    "Maximum retry delay (seconds)",
+    "number",
+    "hot_consumed",
+    30,
+  ],
+  [
+    "Workflow",
+    "workflowRetry.jitterRatio",
+    "Retry jitter ratio",
+    "number",
+    "hot_consumed",
+    0.2,
+  ],
+  [
+    "Notifications",
+    "notifications.pollSeconds",
+    "Notification poll interval (seconds)",
+    "number",
+    "hot_consumed",
+    5,
+  ],
+  [
+    "Notifications",
+    "notifications.deliveryLeaseSeconds",
+    "Delivery lease duration (seconds)",
+    "integer",
+    "hot_consumed",
+    300,
+  ],
+  [
+    "API",
+    "api.remoteExecution.enabled",
+    "Remote execution enabled",
+    "boolean",
+    "hot_consumed",
+    false,
+  ],
+  [
+    "API",
+    "api.remoteExecution.maximumTtlSeconds",
+    "Remote execution maximum TTL (seconds)",
+    "integer",
+    "hot_consumed",
+    900,
+  ],
+  [
+    "Automation",
+    "automation.maximumActiveJobs",
+    "Organizing queue limit",
+    "integer",
+    "hot_consumed",
+    100,
+  ],
+  [
+    "Automation",
+    "automation.workerPollSeconds",
+    "Worker poll interval (seconds)",
+    "number",
+    "hot_consumed",
+    2,
+  ],
+  [
+    "Automation",
+    "automation.schedulerPollSeconds",
+    "Scheduler poll interval (seconds)",
+    "number",
+    "hot_consumed",
+    5,
+  ],
+];
+
+const SETTINGS_STATES = new Map();
+
+function settingsDefaultValues() {
+  const values = {};
+  for (const [, path, , , , value] of SETTINGS_FIELD_META) values[path] = value;
+  return values;
+}
+
+function settingsState(session) {
+  const key = session ?? "shared";
+  let state = SETTINGS_STATES.get(key);
+  if (state === undefined) {
+    state = {
+      active: {
+        revisionId: "settings-active-1",
+        version: 4,
+        revisionSequence: 4,
+        digest: "settings-digest-1",
+      },
+      values: settingsDefaultValues(),
+      draft: null,
+      draftCounter: 0,
+      corrupt: false,
+      failRead: false,
+      failExport: false,
+      saveFail: null,
+      packageExported: 0,
+      exportedValues: null,
+    };
+    SETTINGS_STATES.set(key, state);
+  }
+  return state;
+}
+
+function resetSettingsState(session, params) {
+  const state = {
+    active: {
+      revisionId: "settings-active-1",
+      version: 4,
+      revisionSequence: 4,
+      digest: "settings-digest-1",
+    },
+    values: settingsDefaultValues(),
+    draft: null,
+    draftCounter: 0,
+    corrupt: params.get("mode") === "corrupt",
+    failRead: params.get("failRead") === "1",
+    failExport: params.get("failExport") === "1",
+    saveFail: params.get("saveFail") ?? null,
+    packageExported: 0,
+    exportedValues: null,
+  };
+  if (params.get("mode") === "noActive") {
+    state.active = null;
+  }
+  if (params.get("mode") === "draftOnly") {
+    state.active = null;
+    state.draft = {
+      revisionId: "settings-draft-1",
+      version: 1,
+      revisionVersion: 1,
+      status: "draft",
+      values: settingsDefaultValues(),
+    };
+  }
+  if (params.get("mode") === "activeDraft") {
+    state.draft = {
+      revisionId: "settings-draft-1",
+      version: 1,
+      revisionVersion: 4,
+      status: "draft",
+      values: settingsDefaultValues(),
+    };
+  }
+  SETTINGS_STATES.set(session, state);
+  return state;
+}
+
+function settingsSections(values) {
+  const sections = {};
+  for (const [
+    section,
+    path,
+    label,
+    valueType,
+    boundary,
+    fallback,
+  ] of SETTINGS_FIELD_META) {
+    if (sections[section] === undefined) sections[section] = {};
+    sections[section][path] = {
+      label,
+      value: values[path] === undefined ? fallback : values[path],
+      boundary,
+      fieldPath: path,
+      valueType,
+      required: path === "persistence.databasePath",
+    };
+  }
+  return sections;
+}
+
+function settingsDraftSummary(draft) {
+  return {
+    revisionId: draft.revisionId,
+    version: draft.version,
+    revisionSequence: draft.revisionVersion,
+    status: draft.status,
+    digest: `settings-draft-digest-${draft.version}`,
+  };
+}
+
+function settingsStatusDocument(state, token) {
+  const canManage = VIEWER_TOKENS.has(token);
+  const active = state.active ? { ...state.active, status: "active" } : null;
+  const revisions = state.draft ? [settingsDraftSummary(state.draft)] : [];
+  if (state.corrupt) {
+    return {
+      authority: "MANAGED",
+      active,
+      lastKnownActive: null,
+      health: "UNAVAILABLE",
+      managementReady: true,
+      setupRequired: false,
+      runtimeConfigured: false,
+      runtimeReady: false,
+      workflowAvailable: false,
+      businessState: "UNAVAILABLE",
+      emptyActive: false,
+      recoveryRequired: true,
+      unavailableReason:
+        "managed Active configuration is not runtime-consumable (settings fixture)",
+      revisions,
+      managedActivation: true,
+      setupDraft: null,
+      setupBlockers: [],
+      nextAction:
+        "inspect configuration status and stage an explicit recovery Draft",
+      bootstrapMode: "COMPATIBILITY",
+      canManageConfiguration: canManage,
+      canActivateConfiguration: canManage,
+    };
+  }
+  if (active === null) {
+    return {
+      authority: "MANAGEMENT_BOOTSTRAP",
+      active: null,
+      lastKnownActive: null,
+      health: "SETUP_REQUIRED",
+      managementReady: true,
+      setupRequired: true,
+      runtimeConfigured: false,
+      runtimeReady: false,
+      workflowAvailable: false,
+      businessState: "NO_ACTIVE",
+      emptyActive: false,
+      recoveryRequired: false,
+      unavailableReason: null,
+      revisions,
+      managedActivation: false,
+      setupDraft: state.draft ? settingsDraftSummary(state.draft) : null,
+      setupBlockers: [],
+      nextAction: state.draft
+        ? "open and resume the existing setup Draft, complete guided setup, validate it, and activate it"
+        : "create the first setup Draft, then complete guided setup",
+      bootstrapMode: "MANAGEMENT_ONLY",
+      canManageConfiguration: canManage,
+      canActivateConfiguration: canManage,
+    };
+  }
+  return {
+    authority: "MANAGED",
+    active,
+    lastKnownActive: null,
+    health: "HEALTHY",
+    managementReady: true,
+    setupRequired: false,
+    runtimeConfigured: true,
+    runtimeReady: true,
+    workflowAvailable: true,
+    businessState: "READY",
+    emptyActive: false,
+    recoveryRequired: false,
+    unavailableReason: null,
+    revisions,
+    managedActivation: true,
+    setupDraft: null,
+    setupBlockers: [],
+    nextAction: null,
+    bootstrapMode: "COMPATIBILITY",
+    canManageConfiguration: canManage,
+    canActivateConfiguration: canManage,
+  };
+}
+
+function settingsProjection(state, revisionId, isActive) {
+  const identity = isActive ? state.active : state.draft;
+  const values = isActive ? state.values : state.draft.values;
+  return {
+    revisionId,
+    revisionVersion: identity.revisionSequence ?? identity.version,
+    revisionDigest: identity.digest,
+    draftVersion: identity.version,
+    isActive,
+    authority: "MANAGED",
+    sections: settingsSections(values),
+    settings: { ...values },
+    consumption: {
+      consumed: isActive,
+      revisionId: state.active?.revisionId ?? null,
+      hotConsumedFields: [
+        "operationalLogging.enabled",
+        "operationalLogging.retentionDays",
+        "workflowRetry.enabled",
+        "notifications.pollSeconds",
+        "api.remoteExecution.enabled",
+      ],
+      restartRequiredFields: [
+        "locale",
+        "timezone",
+        "historyPath",
+        "cachePath",
+        "logPath",
+        "exportPath",
+      ],
+    },
+  };
+}
+
+function applySettingsEdits(values, edits) {
+  const next = { ...values };
+  for (const edit of edits) {
+    if (edit && typeof edit.fieldPath === "string" && "value" in edit) {
+      next[edit.fieldPath] = edit.value;
+    }
+  }
+  return next;
+}
+
+function settingsEditsValid(edits) {
+  if (!Array.isArray(edits) || edits.length === 0) {
+    return { ok: false, error: "edits must be a non-empty array" };
+  }
+  const byPath = new Map(
+    SETTINGS_FIELD_META.map(([section, path, label, valueType, boundary]) => [
+      path,
+      { section, label, valueType, boundary },
+    ]),
+  );
+  for (const edit of edits) {
+    if (!edit || typeof edit.fieldPath !== "string" || !("value" in edit)) {
+      return { ok: false, error: "each edit needs fieldPath and value" };
+    }
+    const meta = byPath.get(edit.fieldPath);
+    if (meta === undefined) {
+      return { ok: false, error: `unknown field ${edit.fieldPath}` };
+    }
+    if (meta.boundary === "bootstrap_immutable") {
+      return { ok: false, error: `${edit.fieldPath} is bootstrap-owned` };
+    }
+    if (meta.valueType === "boolean" && typeof edit.value !== "boolean") {
+      return { ok: false, error: `${edit.fieldPath} must be a boolean` };
+    }
+    if (
+      meta.valueType === "integer" &&
+      (typeof edit.value !== "number" || !Number.isInteger(edit.value))
+    ) {
+      return { ok: false, error: `${edit.fieldPath} must be an integer` };
+    }
+    if (
+      meta.valueType === "number" &&
+      (typeof edit.value !== "number" || !Number.isFinite(edit.value))
+    ) {
+      return { ok: false, error: `${edit.fieldPath} must be a finite number` };
+    }
+    if (
+      meta.valueType === "enum" &&
+      !(
+        edit.fieldPath === "operationalLogging.minimumLevel" &&
+        ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].includes(edit.value)
+      )
+    ) {
+      return { ok: false, error: `${edit.fieldPath} has an unsupported value` };
+    }
+    if (meta.valueType === "string" && typeof edit.value !== "string") {
+      return { ok: false, error: `${edit.fieldPath} must be a string` };
+    }
+  }
+  return { ok: true };
+}
+
+function settingsReadFailure(res, message) {
+  sendJson(res, 500, {
+    error: {
+      code: "system_settings_fixture_unavailable",
+      message,
+      details: {
+        durableState: "active_preserved",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "refresh the settings read",
+      },
+    },
+  });
+}
+
 function storageDetailDocument(storage, state, canManage) {
   return {
     storage: {
@@ -8486,16 +8988,21 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    const rules = rulesState(session);
     if (url.pathname.endsWith("/inventory")) {
       sendJson(
         res,
         200,
-        rulesInventoryDocument(rules, token, url.searchParams),
+        rulesInventoryDocument(rulesState(session), token, url.searchParams),
       );
       return;
     }
-    sendJson(res, 200, configurationStatusDocument(rules, token));
+    // A session that reset the typed-settings fixture owns a separate
+    // configuration authority; rules-readiness sessions keep the rules one.
+    if (SETTINGS_STATES.has(session ?? "shared")) {
+      sendJson(res, 200, settingsStatusDocument(settingsState(session), token));
+      return;
+    }
+    sendJson(res, 200, configurationStatusDocument(rulesState(session), token));
     return;
   }
 
@@ -17177,6 +17684,19 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/__test__/reset-settings" && req.method === "POST") {
+    const sessionId =
+      session ?? `settings-${Math.random().toString(36).slice(2, 12)}`;
+    const params = new URLSearchParams(url.search);
+    resetSettingsState(sessionId, params);
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
   // Publish a successor Active between two readiness reads: the Settings page
   // must then see a new sequence, and a readiness projection that still named
   // the previous revision must never be presented as the current one.
@@ -17193,6 +17713,377 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/__test__/mutations" && req.method === "GET") {
     sendJson(res, 200, { items: RECORDED_MUTATIONS });
     return;
+  }
+
+  // --- PATCH-20261115-1 typed System Settings lifecycle ------------------
+  //
+  // Only sessions that explicitly reset the settings fixture enter this
+  // authority; every other session keeps the rules/readiness fake above. The
+  // routes use the real public shapes: revisionId+expectedVersion for a Draft
+  // edit, expectedActive* for an Active successor, status-only validation and a
+  // checked activation of the exact validated version.
+  if (
+    SETTINGS_STATES.has(session ?? "shared") &&
+    (url.pathname === "/api/v1/system/settings" ||
+      url.pathname === "/api/v1/configuration/packages/export/configuration" ||
+      /^\/api\/v1\/configuration\/revisions\/[^/]+(?:\/validate|\/activate)?$/.test(
+        url.pathname,
+      ))
+  ) {
+    const state = settingsState(session);
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (req.method !== "GET" && !VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+
+    const revisionMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)$/,
+    );
+    if (revisionMatch && req.method === "GET") {
+      if (state.failRead) {
+        settingsReadFailure(res, "the settings revision read is unavailable");
+        return;
+      }
+      const revisionId = revisionMatch[1];
+      if (state.active && state.active.revisionId === revisionId) {
+        sendJson(res, 200, {
+          revisionId,
+          version: state.active.version,
+          revisionSequence: state.active.revisionSequence,
+          status: "active",
+          digest: state.active.digest,
+          document: {
+            locale: state.values.locale,
+            timezone: state.values.timezone,
+            operationalLogging: {
+              enabled: state.values["operationalLogging.enabled"],
+              minimumLevel: state.values["operationalLogging.minimumLevel"],
+            },
+          },
+        });
+        return;
+      }
+      if (state.draft && state.draft.revisionId === revisionId) {
+        sendJson(res, 200, {
+          revisionId,
+          version: state.draft.version,
+          revisionSequence: state.draft.revisionVersion,
+          status: state.draft.status,
+          digest: `settings-draft-digest-${state.draft.version}`,
+          document: {
+            locale: state.draft.values.locale,
+            timezone: state.draft.values.timezone,
+          },
+        });
+        return;
+      }
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+
+    if (url.pathname === "/api/v1/system/settings" && req.method === "GET") {
+      if (state.failRead) {
+        settingsReadFailure(res, "the settings projection read is unavailable");
+        return;
+      }
+      const requested = url.searchParams.get("revisionId");
+      if (requested === null) {
+        if (state.active === null) {
+          sendJson(res, 503, {
+            error: {
+              code: "system_settings_unavailable",
+              details: {
+                durableState: "system_settings_not_available",
+                retrySafe: true,
+                nextAction: "activate a managed configuration",
+              },
+            },
+          });
+          return;
+        }
+        sendJson(
+          res,
+          200,
+          settingsProjection(state, state.active.revisionId, true),
+        );
+        return;
+      }
+      if (state.active && requested === state.active.revisionId) {
+        sendJson(res, 200, settingsProjection(state, requested, true));
+        return;
+      }
+      if (state.draft && requested === state.draft.revisionId) {
+        sendJson(res, 200, settingsProjection(state, requested, false));
+        return;
+      }
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+
+    if (url.pathname === "/api/v1/system/settings" && req.method === "PUT") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const document = parsed.document ?? {};
+      const edits = document.edits;
+      const valid = settingsEditsValid(edits);
+      if (!valid.ok) {
+        sendJson(res, 422, {
+          error: {
+            code: "system_settings_invalid",
+            message: valid.error,
+            details: {
+              errors: [{ field: "edits", message: valid.error }],
+              durableState: "draft_preserved_or_not_created",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "correct invalid settings values and submit again",
+            },
+          },
+        });
+        return;
+      }
+      if (state.saveFail === "conflict") {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            message: "the settings Draft changed",
+            details: {
+              revisionId: state.draft?.revisionId ?? "settings-draft-1",
+              currentVersion: (state.draft?.version ?? 1) + 1,
+              durableState: "draft_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the Draft and save again",
+            },
+          },
+        });
+        return;
+      }
+      const expectedVersion = document.expectedVersion;
+      let responseDocument;
+      if (expectedVersion !== undefined) {
+        const draft = state.draft;
+        if (
+          draft === null ||
+          typeof document.revisionId !== "string" ||
+          draft.revisionId !== document.revisionId
+        ) {
+          sendJson(res, 404, { error: { code: "not_found" } });
+          return;
+        }
+        if (
+          typeof expectedVersion !== "number" ||
+          draft.version !== expectedVersion
+        ) {
+          sendJson(res, 409, {
+            error: {
+              code: "configuration_version_conflict",
+              message: "configuration Draft is stale",
+              details: {
+                revisionId: draft.revisionId,
+                currentVersion: draft.version,
+                durableState: "draft_preserved",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "refresh the Draft, review the current version, and edit again",
+              },
+            },
+          });
+          return;
+        }
+        draft.values = applySettingsEdits(draft.values, edits);
+        draft.version += 1;
+        draft.status = "draft";
+        responseDocument = {
+          ...settingsProjection(state, draft.revisionId, false),
+          created: false,
+        };
+      } else {
+        if (state.active === null) {
+          sendJson(res, 503, {
+            error: { code: "system_settings_unavailable" },
+          });
+          return;
+        }
+        if (
+          (document.expectedActiveRevisionId !== undefined &&
+            document.expectedActiveRevisionId !== state.active.revisionId) ||
+          (document.expectedActiveVersion !== undefined &&
+            document.expectedActiveVersion !== state.active.revisionSequence) ||
+          (document.expectedActiveDigest !== undefined &&
+            document.expectedActiveDigest !== state.active.digest)
+        ) {
+          sendJson(res, 409, {
+            error: {
+              code: "configuration_version_conflict",
+              message: "Active changed",
+              details: {
+                revisionId: state.active.revisionId,
+                currentVersion: state.active.revisionSequence,
+                durableState: "active_preserved",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "reload configuration status, then create the successor Draft again",
+              },
+            },
+          });
+          return;
+        }
+        state.draftCounter += 1;
+        state.draft = {
+          revisionId:
+            state.draftCounter === 1
+              ? "settings-draft-from-active-1"
+              : `settings-draft-from-active-${state.draftCounter}`,
+          version: 1,
+          revisionVersion: state.active.revisionSequence + state.draftCounter,
+          status: "draft",
+          values: applySettingsEdits(state.values, edits),
+        };
+        responseDocument = {
+          ...settingsProjection(state, state.draft.revisionId, false),
+          created: true,
+        };
+      }
+      if (state.saveFail === "unknown") {
+        // The write really happened; only its answer is lost.
+        req.socket.destroy();
+        return;
+      }
+      sendJson(
+        res,
+        expectedVersion === undefined ? 201 : 200,
+        responseDocument,
+      );
+      return;
+    }
+
+    const validateMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/validate$/,
+    );
+    if (validateMatch && req.method === "POST") {
+      if (!state.draft || state.draft.revisionId !== validateMatch[1]) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      state.draft.status = "validated";
+      sendJson(res, 200, {
+        ...settingsDraftSummary(state.draft),
+        revisionId: state.draft.revisionId,
+        version: state.draft.version,
+        status: "validated",
+      });
+      return;
+    }
+
+    const activateMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/activate$/,
+    );
+    if (activateMatch && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const expectedVersion = parsed.document?.expectedVersion;
+      const draft = state.draft;
+      if (draft === null || draft.revisionId !== activateMatch[1]) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      if (
+        typeof expectedVersion !== "number" ||
+        expectedVersion !== draft.version
+      ) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            details: {
+              durableState: "draft_preserved",
+              nextAction: "reload the exact validated Draft version",
+            },
+          },
+        });
+        return;
+      }
+      if (draft.status !== "validated") {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_not_validated",
+            details: {
+              durableState: "draft_preserved",
+              nextAction: "validate the exact Draft version before activation",
+            },
+          },
+        });
+        return;
+      }
+      state.active = {
+        revisionId: draft.revisionId,
+        version: draft.version,
+        revisionSequence: draft.revisionVersion,
+        digest: `settings-active-digest-${draft.version}`,
+      };
+      state.values = draft.values;
+      state.draft = null;
+      sendJson(res, 200, {
+        revisionId: state.active.revisionId,
+        version: state.active.version,
+        activated: true,
+      });
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/configuration/packages/export/configuration" &&
+      req.method === "GET"
+    ) {
+      if (state.failExport) {
+        sendJson(res, 500, {
+          error: {
+            code: "configuration_package_unavailable",
+            details: {
+              durableState: "active_preserved",
+              retrySafe: true,
+              nextAction: "retry the export read",
+            },
+          },
+        });
+        return;
+      }
+      const requested = url.searchParams.get("revisionId");
+      const isActive =
+        state.active !== null && requested === state.active.revisionId;
+      if (!isActive && !(state.draft && requested === state.draft.revisionId)) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      const values = isActive ? state.values : state.draft.values;
+      state.packageExported += 1;
+      sendJson(res, 200, {
+        packageKind: "mediaflow.configuration.v1",
+        kind: "configuration",
+        payload: {
+          document: {
+            locale: values.locale,
+            timezone: values.timezone,
+            operationalLogging: {
+              enabled: values["operationalLogging.enabled"],
+              minimumLevel: values["operationalLogging.minimumLevel"],
+              retentionDays: values["operationalLogging.retentionDays"],
+            },
+          },
+        },
+      });
+      return;
+    }
   }
 
   // No-Active first-setup lifecycle (Task 41.5 correction): the same routes
@@ -17267,6 +18158,20 @@ const server = createServer(async (req, res) => {
         revisionId,
         version: state.published.version,
         status: "validated",
+        document: {},
+      });
+      return;
+    }
+    // The ordinary rules fixture Active is a real readable revision too: the
+    // Settings page now shows its exact JSON by default.
+    const active = currentRuleActive(state);
+    if (state.available && active.revisionId === revisionId) {
+      sendJson(res, 200, {
+        revisionId,
+        version: active.version,
+        revisionSequence: active.sequence,
+        status: "active",
+        digest: active.digest,
         document: {},
       });
       return;
@@ -17384,6 +18289,26 @@ const server = createServer(async (req, res) => {
         revisionVersion: state.published.version,
         draftVersion: state.published.version,
         sections: {},
+      });
+      return;
+    }
+    // The ordinary rules fixture Active also exposes its settings projection;
+    // the page reads it to render the allowlisted groups and boundaries.
+    const active = currentRuleActive(state);
+    if (state.available && active.revisionId === requested) {
+      sendJson(res, 200, {
+        isActive: true,
+        revisionId: requested,
+        revisionVersion: active.version,
+        draftVersion: active.version,
+        revisionDigest: active.digest,
+        sections: {},
+        consumption: {
+          consumed: true,
+          revisionId: active.revisionId,
+          hotConsumedFields: [],
+          restartRequiredFields: [],
+        },
       });
       return;
     }

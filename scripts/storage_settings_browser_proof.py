@@ -138,13 +138,13 @@ try {
   await expect(handoff).toHaveAttribute('href','/ui-v2/configuration?returnTo=storage');
   await handoff.click();
   await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
-  await expect(page.getByRole('heading', {name:'需要创建首个 Draft'})).toBeVisible();
-  await expect(page.getByRole('button', {name:'创建首个 Draft'})).toBeVisible();
+  await expect(page.getByText('需要首次设置', {exact:true})).toBeVisible();
+  await expect(page.getByRole('button', {name:'创建首个草稿'})).toBeVisible();
   if (writes.length !== 0) throw new Error('opening Settings wrote configuration or started work');
 
-  await page.getByRole('button', {name:'创建首个 Draft'}).click();
-  await expect(page.getByRole('heading', {name:'Draft 可恢复'})).toBeVisible();
-  await expect(page.getByRole('button', {name:'恢复 Draft'})).toBeVisible();
+  await page.getByRole('button', {name:'创建首个草稿'}).click();
+  await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
+  await expect(page.getByRole('button', {name:/恢复草稿/})).toBeVisible();
   if (writes.length !== 1 || writes[0] !== 'POST /api/v1/configuration/drafts/first')
     throw new Error('first Draft was not created by one explicit action');
 
@@ -156,17 +156,17 @@ try {
   await expect(page.getByRole('table')).toHaveCount(0);
   await page.getByRole('link', {name:'去完成设置'}).click();
   await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
-  await expect(page.getByRole('heading', {name:'Draft 可恢复'})).toBeVisible();
-  await page.getByRole('button', {name:'恢复 Draft'}).click();
-  await expect(page.getByRole('heading', {name:/Revision/})).toBeVisible();
+  await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
+  await page.getByRole('button', {name:/恢复草稿/}).click();
+  await expect(page.getByRole('heading', {name:'高级配置'})).toBeVisible();
   if (writes.length !== 1) throw new Error('resume/navigation created another Draft');
 
-  await page.getByRole('button', {name:'验证 Draft'}).click();
-  await expect(page.getByText(/Draft 验证完成/)).toBeVisible();
+  await page.getByRole('button', {name:'验证草稿'}).click();
+  await expect(page.getByText('草稿验证通过')).toBeVisible();
   if (!writes.some(path =>
       /^POST \/api\/v1\/configuration\/revisions\/[^/]+\/validate$/.test(path)))
     throw new Error('the explicit validation action was not observed');
-  await page.getByRole('button', {name:'checked-activate'}).click();
+  await page.getByRole('button', {name:'激活配置'}).click();
   await expect(page).toHaveURL(/\/ui-v2\/storage$/);
   await expect(page.getByRole('heading', {name:'存储管理'})).toBeVisible();
   await expect(page.getByText('尚未完成首次设置')).toHaveCount(0);

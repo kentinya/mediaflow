@@ -1234,3 +1234,262 @@ test("system runtime settings keep an old summary at the current organizing capa
   ).json();
   expect(state).toEqual({ sourceExists: true, destinationTargets: [] });
 });
+
+// ---------------------------------------------------------------------------
+// PATCH-20261115-1: typed advanced settings on System Settings
+//
+// These journeys use the same real Python/API/SQLite harness and the real
+// managed publication authority as the automation settings proof above. A
+// group Save is a Draft write (successor from Active or the selected Draft),
+// validation is status-only, and activation publishes the exact validated
+// version. No media, Storage or Task is touched by settings publication.
+// ---------------------------------------------------------------------------
+
+async function openAdvancedSettings(page: Page): Promise<void> {
+  await connectOn(page, "/ui-v2/configuration");
+  await expect(
+    page.getByRole("heading", { name: "系统设置", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "系统运行设置" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
+}
+
+async function systemSettingsRead(
+  request: APIRequestContext,
+  revisionId?: string,
+): Promise<Record<string, unknown>> {
+  const path =
+    revisionId === undefined
+      ? "/api/v1/system/settings"
+      : `/api/v1/system/settings?revisionId=${encodeURIComponent(revisionId)}`;
+  const response = await request.get(path, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(response.ok()).toBe(true);
+  return (await response.json()) as Record<string, unknown>;
+}
+
+test("advanced typed settings save a Draft, validate it and activate only the exact version", async ({
+  page,
+  request,
+}) => {
+  await openAdvancedSettings(page);
+  await page.getByRole("button", { name: "日志", exact: true }).click();
+  const retention = page.getByLabel("日志保留天数");
+  const current = Number(await retention.inputValue());
+  const next = current < 3650 ? current + 1 : current - 1;
+  await retention.fill(String(next));
+
+  const saveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/v1/system/settings"),
+  );
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  const saved = await saveResponse;
+  expect([200, 201]).toContain(saved.status());
+  const savedBody = (await saved.json()) as {
+    revisionId: string;
+    draftVersion: number;
+    created: boolean;
+  };
+  expect(savedBody.created).toBe(true);
+  const submitted = saved.request().postDataJSON() as Record<string, unknown>;
+  expect(submitted.edits).toEqual([
+    { fieldPath: "operationalLogging.retentionDays", value: next },
+  ]);
+  expect(submitted.expectedActiveRevisionId).toBeTruthy();
+  expect(submitted.expectedActiveVersion).toEqual(expect.any(Number));
+  await expect(page.getByText("已保存到草稿")).toBeVisible();
+  await expect(page.getByText(/草稿尚未生效/)).toBeVisible();
+  await expect(page.getByText(/尚未验证；修改后需重新验证/)).toBeVisible();
+
+  // A Draft is a real durable successor; the exact value round-trips through
+  // the settings projection before validation.
+  const draftSettings = await systemSettingsRead(request, savedBody.revisionId);
+  const draftSections = draftSettings.sections as Record<
+    string,
+    Record<string, { value: unknown }>
+  >;
+  expect(draftSections.Logging["operationalLogging.retentionDays"].value).toBe(
+    next,
+  );
+  expect(draftSettings.isActive).toBe(false);
+
+  await page.getByRole("button", { name: "验证草稿" }).click();
+  await expect(page.getByText("草稿验证通过")).toBeVisible();
+  await expect(page.getByText(/验证有效（版本/)).toBeVisible();
+  await expect
+    .poll(() => page.getByRole("button", { name: "激活配置" }).isEnabled())
+    .toBe(true);
+  await page.getByRole("button", { name: "激活配置" }).click();
+  await expect(page.getByText("配置已激活")).toBeVisible();
+  await expect(page.getByText("配置已生效")).toBeVisible();
+
+  const activeSettings = await systemSettingsRead(request);
+  expect(activeSettings.isActive).toBe(true);
+  expect(activeSettings.revisionId).toBe(savedBody.revisionId);
+  const activeSections = activeSettings.sections as Record<
+    string,
+    Record<string, { value: unknown }>
+  >;
+  expect(activeSections.Logging["operationalLogging.retentionDays"].value).toBe(
+    next,
+  );
+});
+
+test("two browsers editing the same Draft preserve input and merge only their own fields", async ({
+  page,
+  request,
+}) => {
+  await openAdvancedSettings(page);
+  await page.getByRole("button", { name: "日志", exact: true }).click();
+  const retention = page.getByLabel("日志保留天数");
+  const current = Number(await retention.inputValue());
+  await retention.fill(String(current < 3650 ? current + 1 : current - 1));
+  const createDraft = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/v1/system/settings"),
+  );
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  const createdResponse = await createDraft;
+  expect(createdResponse.status()).toBe(201);
+  const created = (await createdResponse.json()) as {
+    revisionId: string;
+    draftVersion: number;
+  };
+
+  const second = await page.context().newPage();
+  await openAdvancedSettings(second);
+  await second.getByLabel("查看配置").selectOption(created.revisionId);
+  await expect(second.getByText("草稿", { exact: true }).first()).toBeVisible();
+  await second.getByRole("button", { name: "语言与时区", exact: true }).click();
+  const timezone = second.getByLabel("系统时区");
+  const nextZone =
+    (await timezone.inputValue()) === "Europe/Berlin"
+      ? "Etc/UTC"
+      : "Europe/Berlin";
+  await timezone.fill(nextZone);
+
+  // The first browser advances the same Draft to version 2.
+  await page.getByRole("button", { name: "重试", exact: true }).click();
+  const attempts = page.getByLabel("最大重试次数");
+  const previousAttempts = Number(await attempts.inputValue());
+  const nextAttempts = previousAttempts === 100 ? 99 : previousAttempts + 1;
+  await attempts.fill(String(nextAttempts));
+  const firstSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/v1/system/settings"),
+  );
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  expect((await firstSave).status()).toBe(200);
+
+  // The second browser still binds version 1; its Save is refused, keeps the
+  // typed value and adopts the conflict's current version.
+  const staleSave = second.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/v1/system/settings"),
+  );
+  await second.getByRole("button", { name: "保存到草稿" }).click();
+  expect((await staleSave).status()).toBe(409);
+  await expect(
+    second.getByText(
+      new RegExp(
+        `配置草稿已被其他会话更新（当前编辑版本 ${created.draftVersion + 1}）`,
+      ),
+    ),
+  ).toBeVisible();
+  await expect(timezone).toHaveValue(nextZone);
+
+  const retried = second.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/v1/system/settings"),
+  );
+  await second.getByRole("button", { name: "保存到草稿" }).click();
+  expect((await retried).status()).toBe(200);
+
+  const merged = await systemSettingsRead(request, created.revisionId);
+  const sections = merged.sections as Record<
+    string,
+    Record<string, { value: unknown }>
+  >;
+  expect(sections.Workflow["workflowRetry.maxAttempts"].value).toBe(
+    nextAttempts,
+  );
+  expect(sections.Localization.timezone.value).toBe(nextZone);
+  expect(merged.isActive).toBe(false);
+});
+
+test("a Save whose answer is lost after the real write is reconciled read-only and never replayed", async ({
+  page,
+  request,
+}) => {
+  await openAdvancedSettings(page);
+  const beforeStatus = await request.get("/api/v1/configuration/status", {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(beforeStatus.ok()).toBe(true);
+  const before = (await beforeStatus.json()) as {
+    revisions?: Array<{ revisionId: string; status: string }>;
+  };
+  const beforeDrafts = new Set(
+    (before.revisions ?? [])
+      .filter((revision) => revision.status !== "active")
+      .map((revision) => revision.revisionId),
+  );
+
+  await page.getByRole("button", { name: "日志", exact: true }).click();
+  const retention = page.getByLabel("日志保留天数");
+  const current = Number(await retention.inputValue());
+  const next = current < 3650 ? current + 2 : current - 2;
+  await retention.fill(String(next));
+
+  let writes = 0;
+  await page.route("**/api/v1/system/settings", async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    writes += 1;
+    const response = await route.fetch();
+    expect([200, 201]).toContain(response.status());
+    // The server really wrote the successor; only the browser answer is lost.
+    await route.abort();
+  });
+  await page.getByRole("button", { name: "保存到草稿" }).click();
+  await expect(page.getByText("操作结果未知")).toBeVisible();
+  await expect(page.getByText("操作结果待核实")).toBeVisible();
+  expect(writes).toBe(1);
+  await page.unroute("**/api/v1/system/settings");
+
+  await page.getByRole("button", { name: "核实当前状态" }).click();
+  await expect(page.getByText("已核实当前配置状态")).toBeVisible();
+  expect(writes).toBe(1);
+
+  const afterStatus = await request.get("/api/v1/configuration/status", {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(afterStatus.ok()).toBe(true);
+  const after = (await afterStatus.json()) as {
+    revisions?: Array<{ revisionId: string; status: string }>;
+  };
+  const newDrafts = (after.revisions ?? []).filter(
+    (revision) =>
+      revision.status !== "active" && !beforeDrafts.has(revision.revisionId),
+  );
+  expect(newDrafts).toHaveLength(1);
+  const written = await systemSettingsRead(request, newDrafts[0]!.revisionId);
+  const sections = written.sections as Record<
+    string,
+    Record<string, { value: unknown }>
+  >;
+  expect(sections.Logging["operationalLogging.retentionDays"].value).toBe(next);
+  // The reconciliation only read; the uncertain Save was not replayed.
+  expect(writes).toBe(1);
+});

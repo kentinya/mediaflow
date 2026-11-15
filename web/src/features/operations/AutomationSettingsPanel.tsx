@@ -306,7 +306,7 @@ function ConsumerAdoption({
   const label = consumerHeading(consumer.service);
   const cadence = consumer.basis !== "api_local";
   return (
-    <section className="mf-panel" aria-label={`${label}采用情况`}>
+    <section className="mf-adoption-item" aria-label={`${label}采用情况`}>
       <h3>{label}</h3>
       <p className="mf-dashboard-meta">
         {cadence
@@ -1254,14 +1254,23 @@ export function AutomationSettingsPanel() {
                   </details>
                 </section>
               </div>
-              <div className="mf-automation-consumers">
-                {model.consumers.map((consumer) => (
-                  <ConsumerAdoption
-                    key={consumer.service}
-                    consumer={consumer}
-                  />
-                ))}
-              </div>
+              <section
+                className="mf-panel mf-settings-adoption"
+                aria-label="采用情况"
+              >
+                <h3>采用情况</h3>
+                <p className="mf-dashboard-meta">
+                  正常状态只需整体结论；每个服务的实例证据与下一步可就地展开。
+                </p>
+                <div className="mf-automation-consumers">
+                  {model.consumers.map((consumer) => (
+                    <ConsumerAdoption
+                      key={consumer.service}
+                      consumer={consumer}
+                    />
+                  ))}
+                </div>
+              </section>
             </div>
           );
         }}

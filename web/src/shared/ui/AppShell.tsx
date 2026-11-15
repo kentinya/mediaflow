@@ -204,6 +204,10 @@ export function AppShell({ children }: AppShellProps) {
   // It has no separate visible page title; the shell's read-only file-search
   // field and duplicate location line would only add an unusable placeholder.
   const searchIsExplore = pathname === "/explore";
+  // Settings owns its one content title, page refresh and configuration
+  // summary. The shell's read-only file search and duplicate location line add
+  // no capability here and only push the editable settings down.
+  const isSettingsSurface = pageIdentity === "settings";
   const filesSearchContext = useMemo(
     () => ({
       query: filesSearch,
@@ -331,6 +335,7 @@ export function AppShell({ children }: AppShellProps) {
           {!searchIsOperations &&
             !isRulesSurface &&
             !searchIsExplore &&
+            !isSettingsSurface &&
             searchField}
           {shellActions}
         </header>
@@ -344,7 +349,8 @@ export function AppShell({ children }: AppShellProps) {
             !isAutomationListSurface(pathname) &&
             !isNotificationSurface &&
             !isRulesSurface &&
-            !searchIsExplore ? (
+            !searchIsExplore &&
+            !isSettingsSurface ? (
               <p className="mf-page-context">{destination.label}</p>
             ) : null}
             <FilesSearchContext.Provider value={filesSearchContext}>

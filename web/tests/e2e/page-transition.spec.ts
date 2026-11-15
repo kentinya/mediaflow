@@ -292,7 +292,7 @@ const DESTINATIONS: ReadonlyArray<{
     name: "Configuration",
     page: "settings",
     path: "/ui-v2/configuration",
-    heading: "配置生命周期",
+    heading: "系统设置",
   },
 ];
 
@@ -893,23 +893,24 @@ interface SettingsFrame {
   readonly banner: boolean;
   /** The ready engine form region exists in this frame. */
   readonly form: boolean;
-  /** The page's own configuration-status section is on screen. */
+  /** The page's own configuration-status summary is on screen. */
   readonly workspace: boolean;
   /** The engine read's bounded failure banner is on screen. */
   readonly error: boolean;
-  /** The rule-readiness block below the engine region is rendered. */
+  /** The advanced-settings block below the engine region is rendered. */
   readonly readiness: boolean;
   /** Its document-absolute top, or null while the block is not rendered. */
   readonly readinessTop: number | null;
 }
 
 /**
- * B52.2-02 (fix loop): the reading block below the engine region must be up
- * as soon as the page's own status is, stay up through every handoff of the
- * engine region, and — when its position does adapt to the region's changing
- * height — move gradually across frames. A single frame carrying (most of)
- * the whole displacement is exactly the sudden kick the engine form used to
- * give it; equal coordinates in every frame are deliberately not required.
+ * B52.2-02 (fix loop, updated for the settings page hierarchy): the advanced
+ * configuration block below the engine region must be up as soon as the
+ * page's own status is, stay up through every handoff of the engine region,
+ * and — when its position adapts to the region's changing height — move
+ * gradually across frames. A single frame carrying (most of) the whole
+ * displacement is exactly the sudden kick the engine form used to give the
+ * content below it; equal coordinates in every frame are not required.
  */
 function expectReadinessKeptThroughHandoff(
   frames: readonly SettingsFrame[],
@@ -953,13 +954,13 @@ async function startSettingsProbe(page: Page, windowMs = 2_400): Promise<void> {
     const tick = () => {
       const text = document.body.innerText;
       const readiness = document.querySelector(
-        '[aria-label="整理规则就绪状态"]',
+        '[aria-labelledby="settings-advanced-title"]',
       );
       frames.push({
         at: performance.now() - started,
         banner: text.includes("正在读取引擎设置"),
         form: document.querySelector('[aria-label="系统运行设置"]') !== null,
-        workspace: text.includes("Active revision"),
+        workspace: text.includes("配置状态"),
         error: text.includes("引擎设置暂不可用"),
         readiness: readiness !== null,
         readinessTop:
@@ -1045,9 +1046,7 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
   const form = page.getByRole("region", { name: "系统运行设置" });
   await expect(form).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "整理规则就绪状态" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
   await page.waitForTimeout(200);
   let frames = await stopSettingsProbe(page);
   expect(frames.length).toBeGreaterThan(10);
@@ -1083,9 +1082,7 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   await openSidebarLink(page, "Configuration");
   await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
   await expect(form).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "整理规则就绪状态" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
   await page.waitForTimeout(250);
   frames = await stopSettingsProbe(page);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
