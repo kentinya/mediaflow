@@ -1,6 +1,6 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: B REVIEW；Developer 已在同一 Task 从网页完成精确草稿的发布前检查与 checked 激活，待 B 独立复核。
+Next Action: DEVELOPER FIX；B 已确认网页发布旅程修复，完整回归仍有一条 Storage 首次设置用例使用旧选择器；仅修正该受影响测试并交回同一 Task。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
@@ -12,7 +12,7 @@ FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。Developer 已在
 `2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归；B 已核实修正，
 并因 B-03 网页发布旅程未完成退回。Developer 已在
 `6947b0f2f417aca68cf99c7634d288978386a0e2` 把精确草稿的只读检查接入设置页并改用网页旅程验证，
-现交 READY FOR B REVIEW。未推送、发布或部署。
+该轮已交 READY FOR B REVIEW；B 本轮确认发布修复，但因 B-04 受影响测试遗漏退回同一 Task。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -24,7 +24,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -307,7 +307,7 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
   真实视觉验收、完整 RBAC／并发矩阵和可能的既有失败由 B 独立执行。
 - 本轮未修改需求、架构、旅程、SLICE、Roadmap 或 Progress；未推送、发布或部署。
 
-### B Review Result
+### Previous B Review Result
 
 ```text
 Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
@@ -453,6 +453,88 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
   中文列表为主，后端原文仅在各项诊断折叠中。
 - Node fake 的 checked 夹具只产生通过证据；目标失败与纠正由 Vitest 与真实 Python
   旅程覆盖。未做桌面／窄屏视觉复核，T4 全量与视觉验收归 B。
+
+---
+
+### B Review Result — round 3
+
+```text
+Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+Reviewed Head: e2f7797b3ff8193006d0df2878cf1628e8a183ee
+Implementation Head: 6947b0f2f417aca68cf99c7634d288978386a0e2
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO — 一条受影响回归测试尚未适配
+Next: SAME TASK FIX LOOP
+```
+
+复核入口为已有设置页、Storage 首次设置跳转及真实 Python 隔离 harness；main、
+复核前工作区干净、治理检查 PASS。B 独立审查完整 Base..Head 的 20 文件及上轮后的
+实际修正。交接 Head 相对实现 Head 仅改 Task。没有修改产品代码、测试、SLICE、
+Roadmap 或 Progress；本次只记录审查和同一 Task 的开发指导。
+
+#### 已确认完成的修正
+
+B-01/B-02 的 checked 激活与按组放弃保持。**B-03 已修复**：在已有启用库的隔离
+真实实例，B 从网页修改日志保留天数→保存草稿→验证→运行三个存储检查→识别策略
+测试→目标预检。TV 示例实际失败时保留草稿与旧 Active；在网页改为 movie 重查通过，
+再显式 checked 激活成功。未用测试侧 API 调用代替检查按钮。策略和目标适用性模型
+与现有后端 checked 规则相符；最终发布权威仍在后端。
+
+首屏中文层级、运行参数优先、高级分组／类型字段、默认精确 Active JSON 和次级
+诊断已核对。精确 Base 与候选在 1440×900、390×844、1280×600 同视口对比：移除
+旧英文位置／搜索占位和规则清单，按钮按内容排列、字段与检查列表可读，无横向溢出。
+检查失败的键盘 Enter 操作及 reduced-motion 通过。没有因可选视觉清理扩展 Task。
+
+#### B-04 — Storage 首次设置回归仍定位旧文案（门禁阻塞）
+
+**完整用户旅程：** 新实例打开 Storage→“去完成设置”→设置页显示“需要首次设置”
+和“创建首个草稿”→显式创建→返回 Storage→再次进入并恢复原草稿。当前产品真实
+Python 旅程通过，但 `web/tests/e2e/storage-management.spec.ts:527` 仍查找旧的
+heading“需要创建首个 Draft”，因此全量 Node E2E 在第一次页面断言失败；同一用例
+后续“创建首个 Draft”“Draft 可恢复”“恢复 Draft”也未适配。该文件在完整 Task
+范围中遗漏，不能以其他测试已通过代替此条回归。不是新的产品功能缺口。
+
+**同一 Task 开发指导：**
+
+1. 仅更新 `storage-management.spec.ts` 中这条既有旅程的受影响定位。配置摘要用
+   region“配置状态摘要”内的精确文本“需要首次设置”／“已有草稿待恢复”；创建按钮
+   为“创建首个草稿”，恢复按钮匹配“恢复草稿（编辑版本 …）”。状态已不再是 heading，
+   按当前可见语义定位，避免制造不存在的标题。
+2. 保留原来的地址、返回、创建次数、只读导航、无伪造表格及恢复同一草稿等全部业务
+   断言。不跳过用例、不删断言、不增加超时／重试，不改产品文案迁就旧测试。
+3. Developer 只运行失败用例、完整 Storage spec 与相关格式／类型检查，记录实际结果，
+   提交 READY FOR B REVIEW。B 负责补齐全量 Node E2E；本轮其余未变执行输入的
+   门禁由 B 核对身份后复用，不要求 Developer 重跑全仓套件。
+
+原失败、完整错误上下文和 trace 保留于下列证据目录。修正保持 Task ID、Base、Goal、
+Scope 和 High/T4；不新增 Task，不改要求／架构／旅程或已关闭 Slice。
+
+#### 本轮 B 实际门禁与限制
+
+本机稳定忽略证据：`.git/validation-evidence/patch-20261115-1/b-round3/`；未上传远程。
+
+| 门禁 | 实际结果／日志 |
+|---|---|
+| 完整 Python | 2692 项，2685 通过、7 项原有可选测试跳过；`python-full.log` |
+| 完整 Web | 103 文件、1635 项通过；`web-full.log` |
+| 完整 Node E2E | **285 通过、1 失败**，即 B-04；`node-full.log` 和 `node-full/` |
+| 真实 Python 设置 | 18 项通过；`native-full.log`；另独立关键发布旅程 1 项通过，trace 在 `native-checks/` |
+| 真实首次设置／返回 | 创建、恢复、验证、checked 激活、空 Active／健康 Active 区分及零隐式媒体操作通过；`storage-native.log` |
+| Python 质量／依赖／示例 | ruff format/check、compileall、pip check、两份示例验证通过；无 FFmpeg/FFprobe 依赖匹配 |
+| Web 质量／构建 | typecheck、lint、format、build 通过；`web-quality.log`／`build.log` |
+| wheel／安装 | wheel 构建、精确 wheel 安装到源目录外及消费者 smoke 通过；`wheel-build.log`／`wheel-smoke.log` |
+| 视觉／键盘 | 三视口改前改后及发布检查截图已查看；`visual-result.json`、`visual-review.log` 和 PNG |
+| 范围／空白 | 治理、完整 Base..Head whitespace 通过；后端契约未改，无部署／Docker 变更 |
+
+候选资产 `index-BikKo9f0.js`／`index-Cvv7FA31.css`；资产和 wheel SHA-256 见
+`build-identity.json`。wheel smoke 第一次误填不存在的版本路径，未执行产品验证；
+原失败保留为 `wheel-smoke-wrong-path.log`，随后对实际 2.0.0.dev0 wheel 运行通过。
+Docker 镜像／线上部署未执行，不作为本次 Web 修复接受依据；常驻采用、原 pins、
+并发、权限和未知写入不重放由完整 Python 与真实设置矩阵覆盖。
+
+本轮全量测试的执行时段超过用户要求的本轮 50% 时间比例；这是 B 的执行安排问题，
+不转为 Developer 工作或产品缺陷。已停止追加测试；下轮先核对这条遗漏，再按未变输入
+复用已完成证据。当前不宣称 T4 全通过或 Task PASS，不进行收尾文档同步。
 
 ---
 
