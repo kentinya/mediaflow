@@ -1,6 +1,6 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: B FIX REQUIRED；原两项代码问题已核实修复，Developer 在同一 Task 补齐高级设置的网页检查与发布旅程。
+Next Action: B REVIEW；Developer 已在同一 Task 从网页完成精确草稿的发布前检查与 checked 激活，待 B 独立复核。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
@@ -10,7 +10,9 @@ Test Level 及验收要求。激活检查点之后，Developer 已在
 交接检查点为 `3186660167e82bf419051cdc8a072db4ed081604`；B 首次独立复核决定
 FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。Developer 已在
 `2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归；B 已核实修正，
-当前因 B-03 网页发布旅程未完成，仍为 FIX REQUIRED。未推送、发布或部署。
+并因 B-03 网页发布旅程未完成退回。Developer 已在
+`6947b0f2f417aca68cf99c7634d288978386a0e2` 把精确草稿的只读检查接入设置页并改用网页旅程验证，
+现交 READY FOR B REVIEW。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -22,7 +24,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -385,6 +387,72 @@ Task 延后，也不能降为仅提示／诊断问题后接受。保留 checked 
 - 本轮测试与构建命令累计约 5.2 秒，低于本轮超过 4 分钟复核时间的 50%。原日志、
   请求与操作清单、截图、trace 和资产 digest 存于本机忽略目录
   `.git/validation-evidence/patch-20261115-1/b-round2/`；未上传远程 CI。
+
+---
+
+### Developer Completion Report — B-03 修正
+
+```text
+Status: READY FOR B REVIEW
+Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+B-03 fix implementation: 6947b0f2f417aca68cf99c7634d288978386a0e2
+Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
+```
+
+#### 实际变更
+
+- **发布前检查模型。** 新增 `configuration-checks.ts`，从该修订的同一对象投影确定
+  checked 激活实际要求的检查：被资源库／媒体库引用且启用的存储；存在启用资源库时的
+  识别策略测试；以及按后端同一规则（媒体库＋启用识别类型策略＋启用命名／整理策略＋
+  分类规则显式引用媒体库）判断的目标预检。禁用存储不要求、引用缺失按需纠正；未识别
+  的失败类别不猜成通过。每项给出中文状态、结论与下一步，并将后端原文收在诊断折叠内。
+- **网页完成入口。** 高级配置内新增“发布前检查”区域：存储逐项运行只读检查；识别
+  策略测试使用所选启用资源库与合成文件名；目标预检使用所选识别类型与示例片名／
+  媒体类型／年份／题材／国家／扩展名。所有动作自动绑定所选草稿的当前编辑版本与摘要，
+  不需要操作者复制修订、digest 或调用 API；示例输入在前端严格校验，非法值不发送。
+  策略测试在草稿验证前禁用并说明原因。
+- **真实状态与恢复。** 每次运行后重新读取该修订对象／证据；读取失败时禁用运行且不以
+  上次结果判断当前状态。检查被拒／版本变化／权限／不可用分别说明，未执行时不声称已
+  变更配置。checked 激活被拒时用同一读取列出来自页面的未通过项（中文），保留草稿与
+  旧 Active；无适用检查的空基线明确显示“该草稿没有适用检查”，checked 激活照旧可用。
+- **接口适配。** 仅接入已有公开的精确修订 Storage check、识别策略测试、目标预检与
+  修订对象投影读取；只读检查按只读语义处理结果未知（不会误报为未知配置写入），未新增
+  endpoint、store、schema 或检查规则。
+- **测试更新。** 新增检查模型 Vitest 13 项与页面 3 项旅程（逐项检查后激活、目标预检
+  真实失败→改正示例重跑、空基线无适用检查）；Node fake 增加 checked 夹具与证据门禁，
+  新增浏览器发布旅程；真实 Python 旅程删除测试侧 `runExactRevisionChecks`，改为从网页
+  完成 3 个存储检查、策略测试、目标预检（先以 tv 示例真实失败并保留草稿／旧 Active，
+  再改回 movie 重跑）直到 checked 激活；首次设置脚本断言空基线无适用检查。
+
+#### 实际验证（实现 `6947b0f2`，最终构建 `index-BikKo9f0.js`／`index-Cvv7FA31.css`）
+
+- 根目录：`python3 scripts/check_governance.py` PASS；`git diff --check` 通过；
+  `ruff format/check` 覆盖改动的 `storage_settings_browser_proof.py` 通过。
+- Web 质量：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
+- Task 指定 affected Vitest 143 项通过（11 文件）；其中 configuration 目录 55 项
+  （新增模型 13 项、页面 33 项）。
+- Node E2E：`configuration-settings.spec.ts` 12 项通过（含新增 checked 夹具旅程）；
+  `rules-readiness.spec.ts`＋`page-transition.spec.ts` 23 项通过，合计 35 项。
+- 真实 Python／API／SQLite：`automation-settings.python.spec.ts` 18 项通过；修改后的
+  高级设置旅程从页面完成日志草稿→验证→3 个真实存储检查→策略测试→目标预检失败→
+  改正重跑→checked 激活，激活请求体为 `{expectedVersion, checked:true}`，所有 6 次
+  检查请求绑定同一修订版本／摘要。
+- `.venv/bin/python scripts/storage_settings_browser_proof.py` PASS：空基线明确无适用
+  检查，创建／恢复／验证／checked 激活／返回 Storage 保持。
+- 本轮测试与构建命令累计约 5–6 分钟，低于本轮约 50 分钟总时间的 30%；未运行 T4
+  全量 Python/Web/原生门禁，由 B 执行。
+
+#### 已知风险与限制
+
+- 适用性判断是后端 checked 激活规则的前端镜像（存储引用、启用资源库、目标策略链）；
+  后端仍是唯一发布权威，后续后端规则变化需同步该模型。目标预检一次一个示例（后端
+  支持 1–8 个），未提供批量示例。
+- 策略合成文件名与目标示例输入不随刷新／重认证保留（设置字段草稿保留不变）；如 B
+  认为示例输入也须跨刷新保留，需在同一 Task 扩展会话结构。
+- 当本地未发现阻断项而后端仍拒绝时，提示会附带后端英文 `nextAction`；正常缺项时以
+  中文列表为主，后端原文仅在各项诊断折叠中。
+- Node fake 的 checked 夹具只产生通过证据；目标失败与纠正由 Vitest 与真实 Python
+  旅程覆盖。未做桌面／窄屏视觉复核，T4 全量与视觉验收归 B。
 
 ---
 
