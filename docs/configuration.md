@@ -132,6 +132,37 @@ document Advanced exchange remain support surfaces. Secrets stay environment ref
 Settings distinguishes actual runtime Active/consumption from editable successor and deployment/
 restart-only values; another snapshot's values cannot be labelled consumed.
 
+## System Settings Web
+
+Open `系统设置` (`/ui-v2/configuration`) from the sidebar or a business page's setup/recovery
+link. The page starts with a compact configuration summary and the three system runtime settings.
+Published values and actual process adoption remain separate; instance details can be expanded.
+Command readiness, rule-family counts, exact snapshot identities and consumption evidence are in
+the secondary `诊断` section rather than repeated in the main settings view.
+
+The two existing save paths have different outcomes:
+
+- `系统运行设置` → `保存设置` publishes only the changed runtime fields through the focused checked
+  Save. No separate Draft/Validate/Activate clicks are required for these three fields.
+- `高级配置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`,
+  `通知运行` and `远程执行`. `保存到草稿` saves only that group's changed fields; other groups'
+  unsaved input stays in the form. `放弃本组修改` affects only that group. Booleans use explicit
+  choices, numbers are validated without truncation or blank-to-zero conversion, and each group
+  shows whether activation takes effect immediately or requires a restart.
+
+For advanced edits, select the intended Draft, use `验证草稿`, and complete its applicable
+`发布前检查` in the same page: referenced Storage read checks, the offline recognition test using
+a selected ResourceLibrary and synthetic filename, and the destination precheck using an explicit
+sample. Correct a failed check's input or named configuration issue and rerun it; the prior Active
+and saved Draft remain intact. `激活配置` publishes only the exact validated revision through checked
+activation. A valid empty baseline has no inapplicable checks to run.
+
+`配置内容` defaults to the exact Active JSON when one exists; select a Draft explicitly to inspect
+it. JSON and the separately generated redacted package identify their source. Reads and exports do
+not create a Draft or publish configuration. Unknown writes require `核实当前状态` and are never
+automatically replayed; leaving unsaved input requires an explicit decision. A setup/recovery return
+goes back to the allowlisted source page and reads its current state.
+
 ## Native V2 organizing-rules management
 
 `/ui-v2/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
