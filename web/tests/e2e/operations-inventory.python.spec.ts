@@ -3858,15 +3858,26 @@ test("the Notifications page reads the real Task event contract end to end", asy
     "schedule.emitted",
   ]);
   await expect(
-    page.getByRole("heading", { name: "Notifications", exact: true }),
+    page.getByRole("heading", { name: "通知", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Notification definitions unavailable"),
-  ).toHaveCount(0);
+  await expect(page.getByText("通知定义暂时不可用")).toHaveCount(0);
   await expect(page.getByText("operations-webhook").first()).toBeVisible();
-  // The old persisted job.* literal is presented as its canonical Task event.
+  // The historical persisted job.* literals are presented as their canonical
+  // Task events; the same card keeps the exact technical identity reachable.
+  const definitionCard = page
+    .locator(".mf-notification-list-card")
+    .filter({ hasText: "operations-webhook" })
+    .first();
+  await expect(definitionCard.getByText("任务完成")).toBeVisible();
+  await expect(definitionCard.getByText("任务失败")).toBeVisible();
+  await expect(definitionCard.getByText("任务已取消")).toBeVisible();
+  await expect(definitionCard.getByText("计划触发")).toBeVisible();
+  await definitionCard.locator("summary", { hasText: "诊断信息" }).click();
   await expect(
-    page.getByText(/events: task\.completed, task\.failed, task\.cancelled/),
+    definitionCard.getByText(
+      "task.completed, task.failed, task.cancelled, schedule.emitted",
+      { exact: true },
+    ),
   ).toBeVisible();
 
   // The real Draft boundary is reachable and the resolved editor advertises
@@ -3876,22 +3887,32 @@ test("the Notifications page reads the real Task event contract end to end", asy
       response.request().method() === "POST" &&
       response.url().endsWith("/successor"),
   );
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await page.getByRole("button", { name: "创建后继草稿", exact: true }).click();
   expect((await draftRead).status()).toBe(201);
-  await page.getByRole("link", { name: "Open definition" }).first().click();
-  await expect(
-    page.getByRole("heading", { name: "Webhook operations-webhook" }),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "查看定义" }).first().click();
+  const definitionDialog = page.getByRole("dialog", {
+    name: "Webhook operations-webhook",
+  });
+  await expect(definitionDialog).toBeVisible();
+  const editDraft = definitionDialog.getByRole("button", {
+    name: "编辑草稿",
+    exact: true,
+  });
+  await expect(editDraft).toBeEnabled();
   const draftDocumentRead = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname ===
         "/api/v1/operations/notifications/webhooks/operations-webhook/draft",
   );
-  await page.getByRole("link", { name: "Open Draft editor" }).click();
+  await editDraft.click();
   expect((await draftDocumentRead).status()).toBe(200);
-  await expect(page.getByLabel("Event task.completed")).toBeVisible();
-  await expect(page.getByLabel("Event job.completed")).toHaveCount(0);
+  await expect(
+    page.getByRole("checkbox", { name: /task\.completed/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: /job\.completed/ }),
+  ).toHaveCount(0);
   expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
     [],
   );
@@ -3961,33 +3982,41 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
       response.request().method() === "GET" &&
       new URL(response.url()).pathname === "/api/v1/notifications",
   );
-  await page.getByRole("link", { name: "Open deliveries" }).click();
+  await page.getByRole("link", { name: "查看投递记录", exact: true }).click();
   expect((await listRead).status()).toBe(200);
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/notifications\/deliveries$/,
   );
   await expect(
-    page.getByRole("heading", { name: "Notification deliveries" }),
+    page.getByRole("heading", { name: "通知投递记录", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Notification deliveries unavailable"),
-  ).toHaveCount(0);
+  await expect(page.getByText("通知投递记录暂时不可用")).toHaveCount(0);
   // The freshly settled Task is the newest outbox row, so its exact delivery
   // is the first link and opens the exact durable identity.
-  await page.getByRole("link", { name: "Open delivery" }).first().click();
+  await page
+    .getByRole("link", { name: "查看投递", exact: true })
+    .first()
+    .click();
   await expect(page).toHaveURL(
     new RegExp(
       `/ui-v2/operations/notifications/deliveries/${delivery.deliveryId}$`,
     ),
   );
+  const deliveryDialog = page.getByRole("dialog", {
+    name: `投递 ${delivery.deliveryId}`,
+  });
+  await expect(deliveryDialog).toBeVisible();
+  await expect(deliveryDialog.getByText("待投递").first()).toBeVisible();
+  // The technical event identity and status remain available after opening
+  // the same card's diagnostics.
+  await deliveryDialog.locator("summary", { hasText: "诊断信息" }).click();
   await expect(
-    page.getByRole("heading", { name: `Delivery ${delivery.deliveryId}` }),
+    deliveryDialog.getByText(`task.completed（${eventId}）`, {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
-    page.getByText(`task.completed (${eventId})`, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.locator("dl").getByText("pending", { exact: true }),
+    deliveryDialog.getByText("pending", { exact: true }),
   ).toBeVisible();
 
   // Reading/refreshing this delivery is side-effect free: the outbox keeps its
@@ -3998,7 +4027,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
       new URL(response.url()).pathname ===
         `/api/v1/operations/notifications/deliveries/${delivery.deliveryId}`,
   );
-  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await page.getByRole("button", { name: "读取最新投递", exact: true }).click();
   expect((await detailRead).status()).toBe(200);
   expect(
     (await readDeliveries()).items.filter((item) => item.eventId === eventId),

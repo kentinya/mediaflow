@@ -880,12 +880,12 @@ test.describe("readable V2 actions", () => {
     //    Settings configuration-package export. Open its panel the way an
     //    operator does, hold the real GET, then continue it.
     await openSurface(page, "/configuration");
-    await page
-      .getByRole("button", { name: "查看 Active JSON", exact: true })
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "高级配置", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("配置 JSON")).toBeVisible();
     const exportAction = page.getByRole("button", {
-      name: "导出脱敏配置包",
-      exact: true,
+      name: /导出/,
     });
     await expect(exportAction).toBeEnabled();
     // Read the enabled palette in the same unhovered, unfocused condition the
@@ -922,7 +922,8 @@ test.describe("readable V2 actions", () => {
     )) as Measured;
     expectReadable("Settings export disabled while held", disabledExport);
     expect(disabledExport.disabled).toBe(true);
-    expect(disabledExport.text).toBe(enabledExport.text);
+    expect(disabledExport.text).toBe("导出中…");
+    expect(disabledExport.text).not.toBe(enabledExport.text);
     // Disabled must be visible without relying on the pointer cursor alone.
     expect(
       disabledExport.backdrop,
@@ -957,8 +958,8 @@ test.describe("readable V2 actions", () => {
     )) as Measured;
     expectReadable("Settings export restored", restoredExport);
     expect(restoredExport.disabled).toBe(false);
-    await expect(page.getByLabel("配置 JSON")).toContainText(
-      "mediaflow.configuration.v1",
+    await expect(page.getByLabel("脱敏配置包")).toHaveValue(
+      /mediaflow\.configuration\.v1/,
     );
     await expectSurfaceReadable(page, "Settings after export readback");
 
@@ -985,9 +986,19 @@ test.describe("readable V2 actions", () => {
       .click();
     const drawer = page.getByRole("dialog", { name: "添加分类规则" });
     await expect(drawer).toBeVisible();
-    const drawerSave = drawer
-      .locator(".mf-rules-drawer-actions .mf-button-primary")
-      .first();
+    // Measure the settled card, not the 220ms modal entry animation whose
+    // initial composite opacity is zero.
+    await drawer.evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => undefined)),
+      );
+    });
+    const drawerSave = drawer.getByRole("button", {
+      name: "保存",
+      exact: true,
+    });
     await expect(drawerSave).toBeDisabled();
     await expect
       .poll(() => authorityReads, { message: "the authority read was issued" })

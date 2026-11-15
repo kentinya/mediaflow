@@ -256,9 +256,10 @@ This accepted contract replaces the Automation-only/four-field plan; prior accep
 ### Checked publication and actual adoption
 
 The existing `/ui-v2/configuration` System Settings page renders the one three-field form and
-readback (`AutomationSettingsPanel`); the Automation workspace no longer has a settings tab, and an
-old `?tab=settings` link redirects to System Settings without publishing or admitting work. No
-second store or editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the
+readback (`AutomationSettingsPanel`); the Automation workspace no longer has a settings tab, and
+`?tab=settings` is an ordinary unknown Automation tab with no redirect, special handling or work
+submission. System Settings is reached from its current `/ui-v2/configuration` navigation entry.
+No second store or editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the
 projection and the checked Save with READ / MANAGE_CONFIGURATION enforcement.
 
 The compact form keeps each field's meaning and backend constraints beside its input. Published
