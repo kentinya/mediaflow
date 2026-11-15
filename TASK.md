@@ -1,6 +1,6 @@
 # Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: B REVIEWS TASK55.1 CANDIDATE。
+Next Action: DEVELOPER CORRECTS TASK55.1 — B55.1-01。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -10,12 +10,12 @@ Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁�
 Task ID: 55.1
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit user authorization, planning only
-Reviewer: B — independent implementation review pending
+Reviewer: B — FIX REQUIRED, B55.1-01
 Implementation Authorization: AUTHORIZED BY USER — TASK55.1 ONLY
 ```
 
@@ -280,8 +280,78 @@ Reviewer: B
 
 ## B Review Result
 
-待 Developer 检查点；尚无审查结论。B 验收后重评 Slice 全部结果；本 Task 覆盖 RO-1，
-其余 RO 尚待后续连贯 Task。A 代 B 规划不构成 B 验收或 A 终审。
+**FIX REQUIRED — 2026-11-16，B55.1-01（P1，AC-4 未完成）。**
+
+```text
+Review Base: d62436be6f5848329a628356c13fdb28e760239a
+Implementation candidate: 87387e24fa5165fb9dbc975c2a4ac4816c8b822b
+Reviewed Head: b8909f6ad770dea94f161fb88f450492326d08f9
+Branch: main
+Initial workspace: clean
+```
+
+审查以整个 Base..Head 的变更清单、产品代码、删除的旧页面／测试、路由消费者、部署探针
+及文档为范围。旧静态分派与指定 Router 注册已删除，当前任务按钮改接正式 run 地址。
+本轮发现下列必需结果未完成，按工作流 §6 提前返工，不开展下一 Task。
+
+### B55.1-01 — 资源库的自动化引用没有对应的纠正入口
+
+真实已有旅程：文件 → 选择资源库 → 资源库操作 → 删除资源库。当前删除预览会列出
+recognitionRules 和 automationTaskDefinitions 引用。候选把唯一“前往整理规则处理这些引用”
+按钮接到 `/rules`；该页只有七类规则和概览，不能编辑自动化定义。
+
+复现使用现有 `scripts/operations_inventory_harness.py --port 4183`、真实 API／SQLite 与
+本轮构建资产，未添加入口或修改种子数据。选择 `Unified media source` 后，弹窗列出
+8 个识别规则及 `harness-scheduled`、`harness-continuation` 两个自动化定义；点击纠正按钮
+进入整理规则页，自动化引用仍无法在该目标处理。删除仍被正确阻止、资源库及文件未删除。
+
+这是本 Task 明确要求的“引用纠正动作接到实际管理入口”未完成。修复留在 Task55.1，
+不调整 Slice、数据库、配置发布或删除权限。
+
+### Developer correction guidance
+
+1. 从 `DeleteResourceLibraryDialog.tsx` 现有 `preview.references.items[].section` 出发，
+   给实际引用种类提供对应管理动作：识别规则进入现有整理规则，自动化定义进入现有
+   自动化管理入口。混合引用同时提供两类可理解的动作和原引用说明；不要把全部引用
+   继续交给同一个规则按钮。复用已存在的 Router／列表／编辑卡，不新增管理页或转换入口。
+2. 保持原删除禁止条件和关闭行为，返回文件页仍能找到原资源库／路径。媒体库的分类
+   引用继续使用整理规则入口，不扩成删除流程重构。
+3. 在现有资源库删除弹窗测试／`library-files.spec.ts` 中覆盖只含规则、只含自动化和混合
+   引用；验证动作进入能管理该引用的当前页面，返回保留来源，访问不提交配置或删除命令。
+   至少一条使用真实 Python harness 的现有混合引用完成相同旅程。不能只断言 `/rules`
+   地址或标题出现就认为所有引用都可纠正。
+4. Developer 运行修改组件及直接消费者测试、该原生用例、typecheck、build 和修改文件
+   lint／format；无需代 B 跑全量或 Docker。记录实际结果并提交新的不可变检查点，回到
+   READY FOR B REVIEW。Task ID、Base、Difficulty High／T4、原验收保持。
+
+### B actual validation and remaining gates
+
+证据目录（本地、Git 忽略）：`.git/validation-evidence/b8909f6a/b-review/`。
+
+- `python3 scripts/check_governance.py` 与 `git diff --check` PASS。
+- `web/ npm run build` PASS，日志 `build.log`。
+- `web/ npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep 'Task55\.1|retired Task collections'`
+  **2 passed (3.9s)**，日志 `native.log`。
+- 现有浏览器入口的独立引用纠正复现完成；`reference-journey.log`、
+  `resource-references.png`、`wrong-recovery-destination.png` 保存了可见引用和目标页。
+  已查看截图，未使用猜测请求或不可触发输入。
+- 已启动完整 Python unittest 和 Web unit；发现上述阻塞后主动中止（exit 130），
+  `python.log`／`web-unit.log` 只是未完成运行，**没有全量通过结论**。
+  Python 中止时的 KeyboardInterrupt 是人工停止，不能视为产品失败。
+- `docker info` 无法连接 `/var/run/docker.sock`；`colima status/list` 显示已有本地环境停止。
+  本轮未构建镜像或启动部署，Docker／restart／release-security 验收仍由 B 补齐，
+  不是交给 Developer 的产品返工项。
+- 其余 T4 质量、全量 E2E、完整原生／三种视口和 wheel／源码外安装门禁尚未完成；
+  不复用 Developer 报告冒充 B 验收。本轮先读代码／旅程再做定向复现，发现阻塞即停止
+  全量测试，测试运行墙钟小于本轮总耗时的一半。
+
+### Slice outcome reassessment
+
+RO-1 的旧入口移除已有代码和定向实证，但现行引用纠正旅程未完成，尚不接受；RO-6
+的 Web 消费者／交付物已改动，完整产物与门禁待验收。RO-2 旧业务入口／执行、RO-3
+严格当前配置、RO-4 schema／五态残留、RO-5 session／响应收敛不属于本 Task，仍待后续
+实现。本 Slice 维持 ACTIVE；不填写 Closure Packet，不声明 PASS／CLOSED，不规划下一 Task。
 
 ## Latest accepted Task — PATCH-20261115-1
 
