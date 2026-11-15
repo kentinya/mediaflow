@@ -1,15 +1,16 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: B 复核本轮修正；B-01/B-02 已修复并提交修正检查点。
+Next Action: B FIX REQUIRED；原两项代码问题已核实修复，Developer 在同一 Task 补齐高级设置的网页检查与发布旅程。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
 实施；移除规划草案和无活动实施通知，保留原 Task ID、Base、Goal、Scope、Difficulty、
 Test Level 及验收要求。激活检查点之后，Developer 已在
 `d90b91bab8171c28b634b75ff15556b9b2115a11` 提交实现、测试与交接报告。
-交接检查点为 `3186660167e82bf419051cdc8a072db4ed081604`；B 本轮独立复核决定
+交接检查点为 `3186660167e82bf419051cdc8a072db4ed081604`；B 首次独立复核决定
 FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。Developer 已在
-`2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归。未推送、发布或部署。
+`2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归；B 已核实修正，
+当前因 B-03 网页发布旅程未完成，仍为 FIX REQUIRED。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -21,7 +22,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -110,6 +111,9 @@ Webhook 定义／投递记录的重复。仅修设置页过量展示，保留它
    保存发布，不重增草稿／验证／激活步骤，也不在高级表单重复编辑这三项或退休字段。
    高级设置保存仍只是草稿；同一区域明确显示后续“验证草稿”“激活配置”和当前验证
    是否有效，激活只针对精确已验证版本；不新增自动整份发布或悄悄发布其他草稿改动。
+   已有启用库时，同一高级区域须能通过已有只读检查能力完成该精确草稿适用的检查与
+   checked 发布；缺项提示必须有可执行的网页操作，不能由用户或测试脚本手工调用 API
+   补齐。这是原完整设置旅程的实现指导，不改变检查规则或增加新的配置能力。
    保存成功、草稿成功、生效成功和已发布但采用未完成分别反馈；两组读取在相关成功后
    更新实际权威，页面刷新覆盖当前所显示状态，刷新不清除输入或重播命令。
    已知拒绝说明阶段／旧 Active／草稿状态／修正动作；未知写入不声称未保存、不自动
@@ -135,6 +139,9 @@ Webhook 定义／投递记录的重复。仅修设置页过量展示，保留它
       JSON／配置包来源与种类清楚，脱敏和部署权威排除保持。
 - [ ] 三项运行设置一次保存只发布原三项实际修改；高级每组保存仅修改所选草稿／精确
       后继的本组改动，仍待验证和显式激活。无关设置、其他打开草稿和工作 pins 不变。
+- [ ] 已配置启用库的实例，修改日志保留天数后，仅用本页操作即可完成精确草稿的适用
+      检查与 checked 激活；检查失败能在网页纠正／重查，保留草稿与旧生效配置。原生
+      验收不得通过测试脚本直接调用检查 API，代替缺失的用户操作。
 - [ ] 空基线创建／恢复／验证／激活 Web 可完成；Viewer、缺权限、已有损坏 Active 和
       setup-required 返回保持准确；无后台隐式建草稿、媒体 Task、通知或 Storage 写入。
 - [ ] 发布目标与实际采用分别真实；正常整体结论、活实例 pending/override/missing、
@@ -302,87 +309,82 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 
 ```text
 Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
-Reviewed Head: 3186660167e82bf419051cdc8a072db4ed081604
-Implementation Head: d90b91bab8171c28b634b75ff15556b9b2115a11
+Reviewed Head: 4fa38c9ecc7dfff3f44dcb7e4002e3b2fae84c69
+Implementation Head: 2ae26aec7f03b1bcce1fc2770837e26490bad80a
 Decision: FIX REQUIRED
 Authorized bug acceptance complete: NO
 Next: SAME TASK FIX LOOP
 ```
 
-本轮核对完整 Base..交接 Head 的 18 文件变更，交接相对实现仅 TASK.md 有差异。
-独立修复没有 Parent Slice；SLICE54、Roadmap、Progress 及已接受结果未改变，不重开旧 Slice。
-已核对页面入口、分组编辑、草稿／生效状态、发布请求、诊断、返回、共享 Shell/CSS、
-相关测试及隔离 fake／真实 Python 路径。下面仅列已从现有页面完整旅程确认的阻塞。
+B 已审查完整 Base..候选的 17 文件变更，并逐项复查上次候选后的 8 文件修正。
+实现之后的 `63bf6e3e`／`4fa38c9e` 只有 Task 交接／测试结果文档变化。
+工作区 main、复核前干净，治理检查 PASS；独立修复没有 Parent Slice，不改变
+SLICE54、Roadmap、Progress 或已接受结果。本次仍只修改 Task 审查与开发指导。
 
-#### B-01 — 高级配置激活跳过原有检查（P1）
+#### 上轮阻塞的实际复核
 
-现有入口：系统设置 → 高级配置 → 日志 → 修改保留天数 → 保存到草稿 → 验证草稿 →
-激活配置。B 在新构建和真实 Python/API/SQLite 上运行该旅程，实际激活请求为
-`{"expectedVersion":2,"checked":false}`，返回 200；不是从额外构造的入口触发。
+- **B-01 的绕过检查问题已修复。** helper 恢复固定 checked:true，页面激活走原检查
+  边界；B 从真实 Python 设置页保存日志草稿、验证并激活，观察到 checked:true 和
+  缺检查时的 409，未再走兼容发布。空业务首次设置／checked 激活／返回 Storage
+  的真实旅程也通过。普通高级设置的成功／恢复仍有下列 B-03，不能据此接受整个 Task。
+- **B-02 已修复。** B 从页面修改时区→切日志修改保留天数→放弃日志组→返回时区组，
+  Europe/Berlin 仍保留；随后单独保存时区，实际 edits 只有 timezone，日志组已恢复。
+  没有整份重建表单或丢掉另一组输入。原失败与首次 FIX 记录见 `bc508559:TASK.md`。
 
-原页面/API helper 固定 `checked:true`，本次实现给 helper 增加参数，并在
-`ConfigurationPage.tsx:1466` 显式传 false。真实 API 因此进入普通 activation 分支，
-不经过 `activate_checked` 对当前修订的 Storage 检查、识别测试及目标预检的适用判断。
-验证一个草稿仍不等于这些检查完成。本 Task 明确保留原发布权威和适用检查，不能为使
-设置旅程成功而把普通 Web 激活切换为兼容路径；Developer 的风险披露不构成授权。
-当前单测反而断言 `checked:false`，Node fake 的激活也未核对 checked，现有绿测不能
-证明原检查仍在执行。
+#### B-03 — 已配置实例的高级设置发布缺少网页完成入口（P1）
 
-#### B-02 — “放弃本组修改”同时丢掉其他组输入（P1）
+**实际旅程：** 在已有启用资源库／媒体库的真实隔离实例中，打开系统设置→日志，
+把保留天数 30 改为 31→保存到草稿→验证草稿→激活配置。后端正确拒绝缺少当前草稿
+的 Storage 检查，返回 409；页面显示英文“run the read-only Storage check ...”，
+却没有运行此修订检查的按钮、链接或其他完成动作。再次验证／激活不能补齐检查，
+本次日志设置无法在当前 V2 网页完成生效。
 
-现有入口：系统设置 → 语言与时区，把系统时区从 Asia/Shanghai 改为 Europe/Berlin →
-切换日志，把保留天数改为 45 → 点击“放弃本组修改” → 返回语言与时区。
-实际时区恢复为 Asia/Shanghai，未保存的 Europe/Berlin 被一起清除；用户只选择放弃
-日志组。B 用本次新构建和现有 Node fixture 从页面操作复现，没有发送配置保存。
+B 的本页实际请求中，三类检查请求数为 0；高级区域只有验证、激活、分组、保存、
+重读和导出等操作。源码检索也确认 V2 没有接入精确草稿的 storage-check／
+recognition-strategy-test／destination-precheck。旧 V1 和后端存在相关能力，不是
+本页可执行的恢复入口。
 
-`ConfigurationPage.tsx:2234` 用整份 baseline 重建当前修订的 FormState，覆盖了所有组
-的 values/initial/authority；按钮语义却限定本组。它违反 Task 的多组输入保留要求。
+当前真实 Python 用例在 `automation-settings.python.spec.ts:1481` 直接通过
+`runExactRevisionChecks(request, ...)` 调用这些 API，随后才再次点击页面激活。
+这证明后端能力可用，不证明操作者能完成网页旅程。Developer 已披露缺口，B 确认
+它属于本 Task 已要求的“高级设置编辑→验证／检查→显式激活→失败恢复”，不能另开
+Task 延后，也不能降为仅提示／诊断问题后接受。保留 checked 边界的修正正确，不回退。
 
-#### Developer 开发指导（同一 Task 修正）
+#### Developer 开发指导（同一 Task）
 
-1. **修正 B-01。** 恢复高级配置现有 Web 激活的 checked 路径和精确版本约束，撤销为
-   本页绕开检查增加的 false 调用。先读已有真实后端的适用检查与公开检查能力，复用
-   当前修订的合法证据／已有操作完成发布；适用项未完成时，说明具体缺项、保留草稿
-   和旧生效配置，给出已有的完成动作。空业务基线仍应按原适用规则可激活。
-   不把恢复成 checked 后的失败再改成兼容发布，不新增 endpoint/store 或降低检查。
-   若已有能力无法完成本 Task 的旅程，明确具体缺口交 B 核对，不能自行改发布语义。
-2. **修正 B-02。** 本组放弃只恢复当前组字段的显示值／修改记录，保留其他组输入、
-   初始比较值及原编辑权威。不要因放弃一个组，整份重建 FormState 或把其他输入重新
-   绑定到新版本。随后切回其他组应仍看到原输入与未保存标记；保存该组时仍只提交
-   该组实际修改。
-3. **补齐直接回归。** 在现有 `ConfigurationPage.test.tsx` 和
-   `configuration-settings.spec.ts` 增加上述双组放弃旅程，验证返回另一组后仍可准确
-   保存；把激活断言恢复为 checked，保留精确版本／返回／未知结果的原断言。
-   更新既有真实 Python 高级设置旅程，证明适用检查确实被满足，缺失／失败检查不会
-   发布，同时首次空基线可以完成。fake 按真实接口表达 checked，不以 fake 成功替代
-   真实发布证据。继续运行 Task 原有 Developer 受影响测试和新失败用例；全量仍由 B 负责。
-4. **交接。** 提交一个连贯的修正 checkpoint，记录两条旅程的实际结果，返回
-   READY FOR B REVIEW；不改 Task Base、不新拆 Task、不自判 PASS，不重做过程工具。
-   本轮开发与复核的测试命令累计时间须小于各自本轮总时间的 50%，记录实际时间；
-   本 Task 不以无关探测或等待凑时长。
+1. 在当前高级设置区域接入已有的精确草稿只读检查和发布能力，使操作者从本页能
+   完成适用检查后 checked 激活。按已有后端规则判断适用项、绑定所选修订与精确版本，
+   能自动确定的内容由产品完成；确需样本／选择时提供业务输入，不要求复制修订、
+   digest 或自己调用 API。复用已有服务／公开接口，不建新检查平台、设置库或 endpoint。
+2. 将真实返回的检查缺项、进行中、通过、失败与下一步整理为中文可读结果，提供实际
+   检查／纠正／重查操作。检查失败保留草稿与旧生效配置；再次编辑后使用新版本的
+   适用证据，最后仍调用原 checked 激活。不要跳过检查，也不让用户陷入反复验证／
+   激活同一份缺证据草稿的循环；三项运行参数的一次保存发布路径保持。
+3. 修改现有真实 Python 高级设置旅程：移除代替用户完成检查的测试侧
+   `runExactRevisionChecks` 调用，从真实网页执行新接入的操作，一直到新日志值真实
+   生效。测试只观察／控制既有隔离依赖，不在 UI 之外补证据。覆盖正常带启用库、实际
+   检查失败后网页恢复、无适用检查的空基线；继续保留 B-02 双组放弃和输入隔离回归。
+4. 运行 Task 的新／改变／直接受影响验证，记录实际结果并交 READY FOR B REVIEW。
+   完整 T4 仍由 B 负责。本轮开发／复核测试时间小于各自总时间的 50%；不改 Task
+   Base，不新拆 Task，不降低验收，不开发无关过程工具。
 
 #### 本轮实际验证与限制
 
-- 规划前／候选治理检查 PASS；完整 Base..Head 的 `git diff --check` 通过。
-- `npm --prefix web run build` 通过，新资产为 `index-B6jnQrOq.js`、
-  `index-DsUx6wXB.css`；B 的浏览器复现均使用这份构建，不使用先前部署作候选证据。
-- Web 目录运行 `npm run test -- run src/features/configuration
-  src/features/operations/AutomationSettingsPage.test.tsx`：4 文件／67 项通过。
-  现有套件未覆盖 B-02，并把 B-01 的 false 当成预期，不能因此接受。
-- Web 目录运行 `npm run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-settings.python.spec.ts -g 'advanced typed settings save a Draft'
-  --trace on --output=../.git/validation-evidence/patch-20261115-1/b-round1/native`：
-  1 项通过；trace 确认本页发送 checked:false 并得到 200。测试成功不等于契约通过。
-- 现有 Node server／设置入口的独立双组复现确认 B-02；已查看 1440×900、390×844、
-  1280×600 产物中的桌面与窄屏截图。页面标题／分组／诊断的改进可见，视觉完整验收
-  仍待修正候选；本轮不把 fixture 的服务缺失状态当生产缺陷。
-- 存在明确 Task 阻塞，依流程先退回，未运行 T4 全量 Python/Web/Node、完整原生矩阵、
-  wheel／安装门禁；没有复用 Developer 的 PASS 标签代替 B 验收。
-- 本轮测试及构建命令累计约 47 秒，低于本轮约 6 分钟审查时间的 50%；未为满足比例
-  增加等待。Vitest 的 JSDOM scrollTo 未实现提示及 Vite chunk-size 提示保留原日志。
-- 原始日志、实际请求、双组前后值、截图和 trace 位于本机忽略目录
-  `.git/validation-evidence/patch-20261115-1/b-round1/`，未上传远程 CI。
-  本轮只更新 Task 审查／开发指导，没有修改产品代码、外部配置或用户媒体。
+- `python3 scripts/check_governance.py` PASS；完整 Base..Head `git diff --check` 通过。
+- `npm --prefix web run build` 通过，产物 `index-EfCqwWlB.js`／`index-DsUx6wXB.css`。
+  实际复现使用新构建和现有临时 Node fixture／真实 Python API／SQLite harness。
+- 从已有页面完成 B-02 双组修改、单组放弃、另一组单独保存：通过；请求 edits
+  为 `[{fieldPath: timezone, value: Europe/Berlin}]`（JSON 原值见证据）。
+- 从真实 Python 设置页完成日志保存→验证→激活：checked:true、409 缺检查；页面
+  没有检查执行入口，确认 B-03。没有用直接 API 检查补救并冒充网页成功。
+- `.venv/bin/python scripts/storage_settings_browser_proof.py` 通过：首次空基线的
+  创建／恢复／验证／checked 激活／返回以及健康 Active 文件浏览保持。
+- 已查看带实际错误与全部高级操作的新构建截图；本轮没有据 fixture 中缺 Worker／
+  Scheduler 的状态扩展产品问题。存在明确 Task 阻塞，按流程先退回，T4 全量与完整
+  视觉／原生／安装矩阵待修正候选，不以 Developer 127 项等通过标签代替独立接受。
+- 本轮测试与构建命令累计约 5.2 秒，低于本轮超过 4 分钟复核时间的 50%。原日志、
+  请求与操作清单、截图、trace 和资产 digest 存于本机忽略目录
+  `.git/validation-evidence/patch-20261115-1/b-round2/`；未上传远程 CI。
 
 ---
 
