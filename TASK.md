@@ -1,13 +1,13 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: PATCH-20261115-1 已完成独立修复规划草案，等待用户授权实施；本文件不授权开发。
+Next Action: Developer 按本 Task 开始实施，完成受影响验证后交 B 独立审查。
 
-## Planning draft — PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
-
-本节为 **PLANNING ONLY / NOT AUTHORIZED FOR IMPLEMENTATION**。用户先要求只读调查，
-随后要求“规划一个独立修复 Task”；本轮只规划并提交 Task 文档，不修改产品代码、
-不启动其他角色、不实施、不推送或部署。下列 PLANNED 是待激活草案的状态；根文档仍为
-NO ACTIVE IMPLEMENTATION TASK。后续明确授权实施时再提升为活动 Task，保留 ID/Base/边界。
+用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
+`9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
+实施；移除规划草案和无活动实施通知，保留原 Task ID、Base、Goal、Scope、Difficulty、
+Test Level 及验收要求。状态 PLANNED 表示已激活、待 Developer 开始；实施开始后转为
+IN PROGRESS。本轮只提交激活文档检查点，不代行 Developer 实施或 B 验收，不分派
+其他代理、不推送或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -24,7 +24,7 @@ Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED — 用户明确“激活Task”
 ```
 
 ### Goal and complete journey
@@ -51,6 +51,10 @@ Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
 分支 main，HEAD 为 Task Base；暂存区与工作区干净，TASK.md 与 Git 可写。
 已读取当前治理、模板、B 经验、HEAD:SLICE、Task、Roadmap/Progress 和适用旅程／契约。
 既有 Slice54 为 PASS / CLOSED，无活动实施 Task；符合独立修复路径。
+
+激活前 HEAD 为 `9820cffa5dc4804634cc67ef96c3868aea75858e`，分支仍为 main，
+暂存区与工作区干净，治理检查 PASS；未出现介入产品变更，Task Base 保持不变。
+本次独立 Task 不修改 SLICE、Roadmap、Progress 或已接受 Slice 的关闭事实。
 
 调查通过浏览器只读观察现有部署的设置／规则／自动化／通知页，并核对当前源码。
 没有保存、验证、激活或写入部署；未核对部署构建与 HEAD 身份，未完成窄屏、故障注入或
@@ -206,15 +210,15 @@ Python/Node 并行时分开产物目录；保存候选 SHA、命令、结果／�
 
 ### Developer Completion Report
 
-未实施。激活后由 Developer 记录不可变 checkpoint、READY FOR B REVIEW、实际变更、
+已激活，尚未实施。由 Developer 记录不可变 checkpoint、READY FOR B REVIEW、实际变更、
 受影响测试结果与已知风险；完整验收待 B，不自判 PASS。
 
 ### B Review Result
 
-尚未进入实施或验收。此处不作产品 PASS；用户只授权规划，完成规划即停止。
+已激活，尚未进入实施或验收。此处不作产品 PASS；本次操作仅完成激活检查点。
 后续按 §3.1 由 B 独立审查完整 Task Base..候选，给 PASS 或同一 Task 的 FIX REQUIRED。
 
-规划文档检查：治理检查 PASS；`python3 -m unittest discover -s tests -p 'test_governance.py'`
+规划与激活文档检查：治理检查 PASS；`python3 -m unittest discover -s tests -p 'test_governance.py'`
 20 项通过；`git diff --check` 通过。仅 TASK.md 变更，产品测试与上述验收尚未执行。
 
 ---
