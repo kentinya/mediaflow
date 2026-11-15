@@ -265,8 +265,8 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
   `test_v2_settings_rule_readiness.py` 11、`test_automation_settings_management.py` 56、
   `test_configuration_package_exchange.py` 13，全部通过（110 项）。
 - Web 质量：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
-  通过；构建产物为 `index-EfCqwWlB.js`、`index-DsUx6wXB.css`。最终候选 affected Vitest
-  69 项通过（configuration + AutomationSettingsPage，4 文件）。
+  通过；构建产物为 `index-EfCqwWlB.js`、`index-DsUx6wXB.css`。Task 指定的 affected
+  Vitest 127 项通过（10 文件）；其中 configuration + AutomationSettingsPage 子集 69 项。
 - Node E2E（构建产物 + 隔离 fake）：`configuration-settings.spec.ts`
   `rules-readiness.spec.ts` `page-transition.spec.ts` 共 34 项通过（新增双组放弃旅程；
   fake 拒绝未 checked 的激活，并断言激活请求体为 `{expectedVersion, checked:true}`）。
@@ -277,7 +277,7 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 - `scripts/storage_settings_browser_proof.py` PASS：首次空基线创建／恢复／验证／
   checked 激活返回 Storage（已断言激活请求 `checked:true`），且无 token／sessionStorage
   泄漏。
-- 本轮测试及构建命令累计约 3–4 分钟，低于本轮开发总时间（约 30+ 分钟）的 30%；
+- 本轮测试及构建命令累计约 4–5 分钟，低于本轮开发总时间（约 25 分钟）的 30%；
   其中一次真实 Python 用例失败是测试辅助读取了错误的 detail 字段，修正测试后全量
   通过，无产品失败。未运行全量 Python/Web/Node 门禁，T4 全量归 B。
 
