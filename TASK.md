@@ -1,13 +1,14 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: Developer 已提交 READY FOR B REVIEW；B 按 §3.1 独立审查完整 Task Base..候选。
+Next Action: B FIX REQUIRED；Developer 按本 Task 的两项阻塞和开发指导修正，交回 B 复核。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
 实施；移除规划草案和无活动实施通知，保留原 Task ID、Base、Goal、Scope、Difficulty、
 Test Level 及验收要求。激活检查点之后，Developer 已在
 `d90b91bab8171c28b634b75ff15556b9b2115a11` 提交实现、测试与交接报告；本文件现为
-READY FOR B REVIEW。未推送、发布或部署。
+交接检查点为 `3186660167e82bf419051cdc8a072db4ed081604`；B 本轮独立复核决定
+FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -19,7 +20,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -278,10 +279,89 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 
 ### B Review Result
 
-待 B 独立审查。Developer 已提交 READY FOR B REVIEW；此处不作产品 PASS，也不自判
-验收。B 按 §3.1 独立审查完整 Task Base..候选并运行本 Task 接受门禁，给 PASS 或同一
-Task 的 FIX REQUIRED。规划与激活文档检查：治理检查 PASS；`test_governance.py` 20 项
-通过；`git diff --check` 通过。
+```text
+Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+Reviewed Head: 3186660167e82bf419051cdc8a072db4ed081604
+Implementation Head: d90b91bab8171c28b634b75ff15556b9b2115a11
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+本轮核对完整 Base..交接 Head 的 18 文件变更，交接相对实现仅 TASK.md 有差异。
+独立修复没有 Parent Slice；SLICE54、Roadmap、Progress 及已接受结果未改变，不重开旧 Slice。
+已核对页面入口、分组编辑、草稿／生效状态、发布请求、诊断、返回、共享 Shell/CSS、
+相关测试及隔离 fake／真实 Python 路径。下面仅列已从现有页面完整旅程确认的阻塞。
+
+#### B-01 — 高级配置激活跳过原有检查（P1）
+
+现有入口：系统设置 → 高级配置 → 日志 → 修改保留天数 → 保存到草稿 → 验证草稿 →
+激活配置。B 在新构建和真实 Python/API/SQLite 上运行该旅程，实际激活请求为
+`{"expectedVersion":2,"checked":false}`，返回 200；不是从额外构造的入口触发。
+
+原页面/API helper 固定 `checked:true`，本次实现给 helper 增加参数，并在
+`ConfigurationPage.tsx:1466` 显式传 false。真实 API 因此进入普通 activation 分支，
+不经过 `activate_checked` 对当前修订的 Storage 检查、识别测试及目标预检的适用判断。
+验证一个草稿仍不等于这些检查完成。本 Task 明确保留原发布权威和适用检查，不能为使
+设置旅程成功而把普通 Web 激活切换为兼容路径；Developer 的风险披露不构成授权。
+当前单测反而断言 `checked:false`，Node fake 的激活也未核对 checked，现有绿测不能
+证明原检查仍在执行。
+
+#### B-02 — “放弃本组修改”同时丢掉其他组输入（P1）
+
+现有入口：系统设置 → 语言与时区，把系统时区从 Asia/Shanghai 改为 Europe/Berlin →
+切换日志，把保留天数改为 45 → 点击“放弃本组修改” → 返回语言与时区。
+实际时区恢复为 Asia/Shanghai，未保存的 Europe/Berlin 被一起清除；用户只选择放弃
+日志组。B 用本次新构建和现有 Node fixture 从页面操作复现，没有发送配置保存。
+
+`ConfigurationPage.tsx:2234` 用整份 baseline 重建当前修订的 FormState，覆盖了所有组
+的 values/initial/authority；按钮语义却限定本组。它违反 Task 的多组输入保留要求。
+
+#### Developer 开发指导（同一 Task 修正）
+
+1. **修正 B-01。** 恢复高级配置现有 Web 激活的 checked 路径和精确版本约束，撤销为
+   本页绕开检查增加的 false 调用。先读已有真实后端的适用检查与公开检查能力，复用
+   当前修订的合法证据／已有操作完成发布；适用项未完成时，说明具体缺项、保留草稿
+   和旧生效配置，给出已有的完成动作。空业务基线仍应按原适用规则可激活。
+   不把恢复成 checked 后的失败再改成兼容发布，不新增 endpoint/store 或降低检查。
+   若已有能力无法完成本 Task 的旅程，明确具体缺口交 B 核对，不能自行改发布语义。
+2. **修正 B-02。** 本组放弃只恢复当前组字段的显示值／修改记录，保留其他组输入、
+   初始比较值及原编辑权威。不要因放弃一个组，整份重建 FormState 或把其他输入重新
+   绑定到新版本。随后切回其他组应仍看到原输入与未保存标记；保存该组时仍只提交
+   该组实际修改。
+3. **补齐直接回归。** 在现有 `ConfigurationPage.test.tsx` 和
+   `configuration-settings.spec.ts` 增加上述双组放弃旅程，验证返回另一组后仍可准确
+   保存；把激活断言恢复为 checked，保留精确版本／返回／未知结果的原断言。
+   更新既有真实 Python 高级设置旅程，证明适用检查确实被满足，缺失／失败检查不会
+   发布，同时首次空基线可以完成。fake 按真实接口表达 checked，不以 fake 成功替代
+   真实发布证据。继续运行 Task 原有 Developer 受影响测试和新失败用例；全量仍由 B 负责。
+4. **交接。** 提交一个连贯的修正 checkpoint，记录两条旅程的实际结果，返回
+   READY FOR B REVIEW；不改 Task Base、不新拆 Task、不自判 PASS，不重做过程工具。
+   本轮开发与复核的测试命令累计时间须小于各自本轮总时间的 50%，记录实际时间；
+   本 Task 不以无关探测或等待凑时长。
+
+#### 本轮实际验证与限制
+
+- 规划前／候选治理检查 PASS；完整 Base..Head 的 `git diff --check` 通过。
+- `npm --prefix web run build` 通过，新资产为 `index-B6jnQrOq.js`、
+  `index-DsUx6wXB.css`；B 的浏览器复现均使用这份构建，不使用先前部署作候选证据。
+- Web 目录运行 `npm run test -- run src/features/configuration
+  src/features/operations/AutomationSettingsPage.test.tsx`：4 文件／67 项通过。
+  现有套件未覆盖 B-02，并把 B-01 的 false 当成预期，不能因此接受。
+- Web 目录运行 `npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-settings.python.spec.ts -g 'advanced typed settings save a Draft'
+  --trace on --output=../.git/validation-evidence/patch-20261115-1/b-round1/native`：
+  1 项通过；trace 确认本页发送 checked:false 并得到 200。测试成功不等于契约通过。
+- 现有 Node server／设置入口的独立双组复现确认 B-02；已查看 1440×900、390×844、
+  1280×600 产物中的桌面与窄屏截图。页面标题／分组／诊断的改进可见，视觉完整验收
+  仍待修正候选；本轮不把 fixture 的服务缺失状态当生产缺陷。
+- 存在明确 Task 阻塞，依流程先退回，未运行 T4 全量 Python/Web/Node、完整原生矩阵、
+  wheel／安装门禁；没有复用 Developer 的 PASS 标签代替 B 验收。
+- 本轮测试及构建命令累计约 47 秒，低于本轮约 6 分钟审查时间的 50%；未为满足比例
+  增加等待。Vitest 的 JSDOM scrollTo 未实现提示及 Vite chunk-size 提示保留原日志。
+- 原始日志、实际请求、双组前后值、截图和 trace 位于本机忽略目录
+  `.git/validation-evidence/patch-20261115-1/b-round1/`，未上传远程 CI。
+  本轮只更新 Task 审查／开发指导，没有修改产品代码、外部配置或用户媒体。
 
 ---
 
