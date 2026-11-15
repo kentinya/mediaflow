@@ -1307,6 +1307,44 @@ secret-free configuration/result exchange stays explicit. Notifications manages 
 events/secret references, exact test, enable state, deliveries, leases/dead letters and recovery.
 Actions share RBAC/audit/validation and preserve prior Active/correctable input on failed Save.
 
+### Notification definitions and deliveries
+
+Enter 通知 from the sidebar. The definitions list distinguishes 已生效 from 仅草稿, enabled state,
+HTTPS endpoint, readable events and secret-reference readiness. Add, view and edit open centered
+cards over that list; delivery detail opens over the delivery list. Cards retain list context on
+return, support direct links/reconnection, and keep their contents and primary/close actions reachable
+on narrow or short windows. Technical identities and revisions remain available under diagnostics.
+
+Create or edit the open successor Draft using grouped endpoint/secret-reference, event/enablement
+and timeout/retry fields. Without an editable Draft or permission, explain the reason and offer
+the permitted next action instead of a writable form. Saving writes only the Draft. Check and
+signature-test the exact saved version, then explicitly confirm publication; publication refuses
+sibling-definition or unrelated configuration changes. Read the resulting immutable Active rather
+than treating local inputs or a saved Draft as effective configuration. A signature test sends one
+request to the configured endpoint; it creates no delivery and publishes nothing.
+
+Unsaved edits invalidate saved-version test/check feedback and publication confirmation. Closing,
+Escape, backdrop and browser navigation share the continue-editing/discard choice; continuing
+retains both inputs and the exact route. Commands in flight prevent conflicting exits and duplicate
+submission. New-definition creation and publication lock fields until their result because success
+leaves the form. Ordinary Save permits further editing: its success applies to submitted values,
+while newer input remains visibly unsaved. A concurrent change retains local edits and offers an
+explicit choice to adopt server values or keep inputs before saving against the read version.
+
+Open 投递记录, choose a status such as 死信, and view one delivery's result, attempts, readable times,
+failure reason, known receiver effects and permitted next action. Confirm recovery of that exact
+delivery with its duplicate-delivery explanation; recovery changes no media result. Returning
+preserves the original status/page context. Completed or automatically retrying deliveries do not
+gain an invented manual-recovery action.
+
+Known command success remains visible if its follow-up read fails; show the older read as stale and
+offer an explicit read retry. If a command response is lost, show an unknown result and explain
+what may already have happened, then read durable state rather than automatically resubmitting.
+For example, after requeue succeeds but its response is lost, show 恢复结果未知; reading pending
+removes dead-letter recovery. A definite stale-state refusal shows 恢复没有应用 and its reason.
+For an unknown signature-test result, also ask the operator to check the receiver before another
+explicit test. Permission loss removes unavailable editing actions and explains the legal next step.
+
 Delivery failure never changes media results. Retry/requeue is scoped to the delivery, with bounded
 safe backoff and durable target identity; missing/changed target waits/refuses rather than silent
 retargeting. Correct endpoint/secret/configuration then explicitly use its permitted recovery.

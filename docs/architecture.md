@@ -1862,6 +1862,22 @@ surface manages Webhook definitions, event selection, deployment-owned secret re
 revision bounded tests, delivery detail and per-delivery retry/requeue recovery without exposing
 secret values or changing completed media work.
 
+The V2 Web uses persistent definition/delivery list backgrounds with nested routes for create,
+definition, editor and delivery cards; existing external URLs remain supported. Notification-specific
+presentation and exit handling reuse the shared modal shell. They do not introduce another
+configuration, delivery or command protocol. Backend actions/RBAC remain authoritative, and denied
+Draft editors render read-only content rather than writable controls.
+
+The editor keeps local inputs paired with their saved revision/version baseline. Remote changes
+with unsaved input require an explicit reconciliation choice; an in-flight ordinary Save updates
+the submitted baseline without replacing newer input. Creation/publication lock fields while their
+terminal navigation is pending. Checks, tests and publication confirmation belong to the exact
+saved context and are invalidated when that context or input changes. Unknown command responses
+remain distinct from definite refusal; explicit durable reads reconcile current state without
+automatic command replay. A known success survives a failed follow-up read with stale-read labeling.
+The [notification journey](product-experience.md#notification-definitions-and-deliveries) owns the
+operator presentation and recovery steps.
+
 Webhook signatures use HMAC-SHA256 over `timestamp + "." + exact UTF-8 body`. Transport/429/5xx
 failures use bounded backoff; other 4xx enter dead-letter. Claims use `deliveryLeaseSeconds` (default
 300); an expired claim permits another delivery attempt, with stable delivery ID for receiver

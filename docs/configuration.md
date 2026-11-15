@@ -353,6 +353,14 @@ exception for Provider access, and an explicit Webhook test sends one bounded si
 configured endpoint. Neither starts media work, creates an Outbox delivery nor performs Storage
 mutation.
 
+### Notification Draft checks and publication
+
+The Notification editor saves one Webhook into the open successor Draft; Save does not activate it.
+Its object-specific publication requires that checked Webhook to be the Draft's only change;
+it is distinct from the general guided activation below. The complete saved-context checks,
+signature test, explicit publication and concurrent/unknown-result recovery belong to the
+[notification journey](product-experience.md#notification-definitions-and-deliveries).
+
 ### Checked activation
 
 The guided checked path requires current evidence for the exact revision:

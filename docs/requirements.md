@@ -761,7 +761,10 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
   原项、决策、续作与新结果；读取/刷新/导出不创建任务、不调用 Provider、不变更 Storage。
 
 Slice42 未交付全局 Review 收件箱；Slice45 另已交付五类跨任务问题列表。跨任务批量审核、任务历史删除/保留策略、无限整库手工整理、任意历史
-Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确定 mutation 自动重放仍未交付。
+Reprocess、通用回滚、V1 退役和不确定 mutation 自动重放仍未交付。
+后续已接受的自动化／通知页面交互以 Product Experience 的
+[自动化工作区](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)和
+[通知旅程](product-experience.md#notification-definitions-and-deliveries)为准，不再列作未交付页面重设计。
 已退役的文件级重新识别、metadata rematch、re-plan 与 recognition retry-pending 接口不恢复。
 
 #### **V2 任务中心重构（CURRENT；Slice45 PASS / CLOSED）**
