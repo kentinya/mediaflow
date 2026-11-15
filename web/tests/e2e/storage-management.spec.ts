@@ -523,21 +523,26 @@ test.describe("Storage management", () => {
     });
     await page.getByRole("link", { name: "去完成设置" }).click();
     await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    const statusSummary = page.getByRole("region", {
+      name: "配置状态摘要",
+    });
     await expect(
-      page.getByRole("heading", { name: "需要创建首个 Draft" }),
+      statusSummary.getByText("需要首次设置", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "创建首个 Draft" }),
+      statusSummary.getByRole("button", { name: "创建首个草稿" }),
     ).toBeVisible();
     // Merely opening Settings is a read. Creation is a separate, visible
     // operator action and produces a resumable Draft without implying Active.
     expect(setupWrites).toEqual([]);
-    await page.getByRole("button", { name: "创建首个 Draft" }).click();
+    await statusSummary.getByRole("button", { name: "创建首个草稿" }).click();
     await expect(
-      page.getByRole("heading", { name: "Draft 可恢复" }),
+      statusSummary.getByText("已有草稿待恢复", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "恢复 Draft" }),
+      statusSummary.getByRole("button", {
+        name: /恢复草稿（编辑版本 \d+）/,
+      }),
     ).toBeVisible();
     expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
     await page.getByRole("link", { name: "返回上一页" }).click();
@@ -547,10 +552,12 @@ test.describe("Storage management", () => {
     await page.getByRole("link", { name: "去完成设置" }).click();
     await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
     await expect(
-      page.getByRole("heading", { name: "Draft 可恢复" }),
+      statusSummary.getByText("已有草稿待恢复", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "恢复 Draft" }),
+      statusSummary.getByRole("button", {
+        name: /恢复草稿（编辑版本 \d+）/,
+      }),
     ).toBeVisible();
     expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
   });
