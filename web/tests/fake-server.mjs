@@ -17993,6 +17993,24 @@ const server = createServer(async (req, res) => {
       const parsed = await readBoundedJsonBody(req, res);
       if (!parsed.ok) return;
       const expectedVersion = parsed.document?.expectedVersion;
+      // The real interface treats activation as checked activation; a request
+      // that omits the checked decision is refused rather than published as an
+      // unchecked compatibility activation.
+      if (parsed.document?.checked !== true) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_checked_activation_required",
+            details: {
+              durableState: "draft_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "activate the exact validated revision with checked activation",
+            },
+          },
+        });
+        return;
+      }
       const draft = state.draft;
       if (draft === null || draft.revisionId !== activateMatch[1]) {
         sendJson(res, 404, { error: { code: "not_found" } });

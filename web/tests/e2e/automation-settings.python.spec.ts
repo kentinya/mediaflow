@@ -1271,6 +1271,133 @@ async function systemSettingsRead(
   return (await response.json()) as Record<string, unknown>;
 }
 
+interface RevisionDetail {
+  readonly revisionId: string;
+  readonly version: number;
+  readonly digest: string;
+  readonly document: {
+    readonly storages?: ReadonlyArray<{ id: string; enabled?: boolean }>;
+    readonly resourceLibraries?: ReadonlyArray<{
+      id: string;
+      enabled?: boolean;
+      storageId?: string;
+    }>;
+    readonly mediaLibraries?: ReadonlyArray<{
+      id: string;
+      enabled?: boolean;
+      storageId?: string;
+    }>;
+  };
+}
+
+async function readRevisionDetail(
+  request: APIRequestContext,
+  revisionId: string,
+): Promise<RevisionDetail> {
+  const response = await request.get(
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(response.ok()).toBe(true);
+  return (await response.json()) as RevisionDetail;
+}
+
+/**
+ * Satisfy the exact-revision checked-activation gates through the real public
+ * read-only check endpoints. The Settings page intentionally does not run
+ * these checks itself; this proves that a missing gate refuses publication and
+ * that the existing evidence operations allow the exact validated Draft to
+ * become Active without weakening the checked boundary.
+ */
+async function runExactRevisionChecks(
+  request: APIRequestContext,
+  revisionId: string,
+): Promise<RevisionDetail> {
+  const detail = await readRevisionDetail(request, revisionId);
+  const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const enabledStorages = new Set(
+    (detail.document.storages ?? [])
+      .filter((storage) => storage.enabled !== false)
+      .map((storage) => storage.id),
+  );
+  const referencedStorages = new Set<string>();
+  for (const library of [
+    ...(detail.document.resourceLibraries ?? []),
+    ...(detail.document.mediaLibraries ?? []),
+  ]) {
+    if (library.enabled === false) continue;
+    if (
+      library.storageId !== undefined &&
+      enabledStorages.has(library.storageId)
+    ) {
+      referencedStorages.add(library.storageId);
+    }
+  }
+  for (const storageId of referencedStorages) {
+    const checked = await request.post(
+      `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/storage-check`,
+      {
+        headers,
+        data: {
+          storageId,
+          expectedVersion: detail.version,
+          expectedDigest: detail.digest,
+        },
+      },
+    );
+    expect(checked.ok()).toBe(true);
+    expect(((await checked.json()) as { status: string }).status).toBe(
+      "passed",
+    );
+  }
+
+  const resourceLibrary = (detail.document.resourceLibraries ?? []).find(
+    (library) => library.enabled !== false,
+  );
+  expect(resourceLibrary).toBeDefined();
+  const strategy = await request.post(
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/recognition-strategy-test`,
+    {
+      headers,
+      data: {
+        expectedVersion: detail.version,
+        expectedDigest: detail.digest,
+        resourceLibraryId: resourceLibrary!.id,
+        syntheticPath: "Example.Movie.2024.1080p.mkv",
+      },
+    },
+  );
+  expect(strategy.ok()).toBe(true);
+  expect(((await strategy.json()) as { status: string }).status).toBe(
+    "completed",
+  );
+
+  const precheck = await request.post(
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/destination-precheck`,
+    {
+      headers,
+      data: {
+        expectedVersion: detail.version,
+        expectedDigest: detail.digest,
+        recognitionType: "C",
+        sample: {
+          title: "One",
+          mediaType: "movie",
+          year: 2001,
+          genres: ["Animation"],
+          countries: ["JP"],
+          extension: "mkv",
+        },
+      },
+    },
+  );
+  expect(precheck.ok()).toBe(true);
+  expect(((await precheck.json()) as { status: string }).status).toBe(
+    "completed",
+  );
+  return detail;
+}
+
 test("advanced typed settings save a Draft, validate it and activate only the exact version", async ({
   page,
   request,
@@ -1324,7 +1451,44 @@ test("advanced typed settings save a Draft, validate it and activate only the ex
   await expect
     .poll(() => page.getByRole("button", { name: "激活配置" }).isEnabled())
     .toBe(true);
+
+  // A validated Draft alone is not enough: the backend refuses checked
+  // activation until the exact revision has its applicable read-only
+  // evidence. The page must state that refusal and keep the Draft and the
+  // previous Active untouched.
+  const beforeChecks = await systemSettingsRead(request);
   await page.getByRole("button", { name: "激活配置" }).click();
+  await expect(page.getByText(/发布前检查未满足/)).toBeVisible();
+  await expect(
+    page.getByText(/Storage check for 'source-storage'/),
+  ).toBeVisible();
+  await expect(page.getByText(/验证有效（版本/)).toBeVisible();
+  const afterRefusal = await systemSettingsRead(request);
+  expect(afterRefusal.isActive).toBe(true);
+  expect(afterRefusal.revisionId).toBe(beforeChecks.revisionId);
+  expect(afterRefusal.revisionId).not.toBe(savedBody.revisionId);
+  const refusedStatus = await request.get("/api/v1/configuration/status", {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(refusedStatus.ok()).toBe(true);
+  const refusedBody = (await refusedStatus.json()) as {
+    active: { revisionId: string };
+  };
+  expect(refusedBody.active.revisionId).toBe(beforeChecks.revisionId);
+
+  // Satisfy the real public gates for this exact revision, then publish
+  // through the page's checked activation.
+  const exact = await runExactRevisionChecks(request, savedBody.revisionId);
+  const activationRequest = page.waitForRequest(
+    (candidate) =>
+      candidate.method() === "POST" && candidate.url().endsWith("/activate"),
+  );
+  await page.getByRole("button", { name: "激活配置" }).click();
+  const published = await activationRequest;
+  expect(published.postDataJSON()).toEqual({
+    expectedVersion: exact.version,
+    checked: true,
+  });
   await expect(page.getByText("配置已激活")).toBeVisible();
   await expect(page.getByText("配置已生效")).toBeVisible();
 

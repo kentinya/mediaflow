@@ -211,6 +211,23 @@ export function configurationMutationFailure(
           currentVersion: conflictVersion,
         };
       }
+      if (action === "activate" && conflictVersion === null) {
+        // Checked activation is refused until the exact revision has the
+        // applicable read-only check, strategy test and destination precheck.
+        // A stale activation version always carries currentVersion, so this
+        // branch is the missing/invalid-evidence refusal and keeps both the
+        // Draft and the previous Active untouched.
+        return {
+          title,
+          message:
+            "发布前检查未满足或该修订已不是可激活的精确版本，本次没有激活；草稿与当前生效配置保持不变。" +
+            (error.nextAction === null
+              ? "请完成该修订适用的只读 Storage 检查、识别策略测试和目标预检，再重新验证并激活。"
+              : `后端给出的具体缺项与下一步：${error.nextAction}`),
+          verifyRequired: false,
+          currentVersion: null,
+        };
+      }
       const durable =
         details.durableState === "draft_preserved_active_unchanged"
           ? "草稿已保留，原有生效配置未变化。"
@@ -1459,16 +1476,12 @@ export function ConfigurationPage() {
     setNotice(null);
     setReadNotice(null);
     try {
-      // The generic Draft editor is the explicit compatibility activation
-      // path: it publishes only this exact validated revision and never
-      // pretends that focused object/Storage evidence was re-run here. The
-      // focused runtime/form commands keep their own checked publication.
-      await activateRevision(
-        token,
-        selectedView.revisionId,
-        validatedVersion,
-        false,
-      );
+      // The generic Draft editor publishes only this exact validated revision
+      // through the normal checked activation boundary: the backend re-checks
+      // the applicable Storage evidence, Recognition Strategy Test and
+      // destination precheck before it can become Active. A refusal keeps the
+      // Draft and the previous Active untouched.
+      await activateRevision(token, selectedView.revisionId, validatedVersion);
       bumpEpoch(selectedView.revisionId);
       if (hadUnsavedInput) {
         formsRef.current = {};
@@ -1933,6 +1946,13 @@ export function ConfigurationPage() {
                     )}
                 </div>
               )}
+              {selectedView !== null && !selectionIsActive && (
+                <p className="mf-settings-group-note">
+                  激活只发布该已验证草稿的精确版本；后端会复核该修订适用的只读
+                  Storage
+                  检查、识别策略测试和目标预检，任一项未满足时都不会发布，草稿和当前生效配置保持不变。
+                </p>
+              )}
               {selectedView === null ? (
                 <section className="mf-panel mf-settings-empty">
                   <h2>
@@ -2233,18 +2253,35 @@ export function ConfigurationPage() {
                                       disabled={busy !== null}
                                       onClick={() => {
                                         if (selectionId === null) return;
-                                        const next: FormState = {
-                                          values: { ...baseline },
-                                          initial: { ...baseline },
-                                          authority: authorityOf(
-                                            selectedView,
-                                            model.activeId,
+                                        const groupPaths = new Set(
+                                          startGroup.fields.map(
+                                            (field) => field.path,
                                           ),
-                                        };
-                                        updateForms((previousForms) => ({
-                                          ...previousForms,
-                                          [selectionId]: next,
-                                        }));
+                                        );
+                                        updateForms((previousForms) => {
+                                          const current =
+                                            previousForms[selectionId];
+                                          if (current === undefined) {
+                                            return previousForms;
+                                          }
+                                          const values = { ...current.values };
+                                          for (const path of groupPaths) {
+                                            const initial =
+                                              current.initial[path];
+                                            if (initial === undefined) {
+                                              delete values[path];
+                                            } else {
+                                              values[path] = initial;
+                                            }
+                                          }
+                                          return {
+                                            ...previousForms,
+                                            [selectionId]: {
+                                              ...current,
+                                              values,
+                                            },
+                                          };
+                                        });
                                         setFieldErrors((previous) => ({
                                           ...previous,
                                           [startGroup.id]: {},

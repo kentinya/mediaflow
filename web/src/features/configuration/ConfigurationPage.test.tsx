@@ -448,7 +448,7 @@ describe("V2 configuration route", () => {
     const activation = calls.find((call) => call.input.endsWith("/activate"));
     expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
       expectedVersion: 3,
-      checked: false,
+      checked: true,
     });
     expect(calls.some((call) => call.init?.method === "PUT")).toBe(false);
   });
@@ -511,7 +511,7 @@ describe("V2 configuration route", () => {
     const activation = calls.find((call) => call.input.endsWith("/activate"));
     expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
       expectedVersion: 2,
-      checked: false,
+      checked: true,
     });
   });
 
@@ -626,6 +626,143 @@ describe("V2 configuration route", () => {
     await userEvent.click(screen.getByRole("button", { name: "日志" }));
     expect(screen.getByLabelText("日志保留天数")).toHaveValue("45");
     expect(screen.getByText(/本组与最新读取一致/)).toBeVisible();
+  });
+
+  it("discards only the selected group and keeps another group's unsaved input", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const updatedSections = {
+      ...SECTIONS,
+      Localization: {
+        ...SECTIONS.Localization,
+        timezone: {
+          ...SECTIONS.Localization.timezone,
+          value: "Europe/Berlin",
+        },
+      },
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (init?.method === "PUT")
+        return response({
+          revisionId: "draft-2",
+          isActive: false,
+          revisionVersion: 8,
+          draftVersion: 1,
+          sections: updatedSections,
+        });
+      if (input.includes("/revisions/draft-2"))
+        return response({ revisionId: "draft-2", version: 1, document: {} });
+      if (input.includes("/revisions/active-1"))
+        return response({ revisionId: "active-1", version: 4, document: {} });
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    const timezone = await screen.findByLabelText("系统时区");
+    await userEvent.clear(timezone);
+    await userEvent.type(timezone, "Europe/Berlin");
+    await userEvent.click(screen.getByRole("button", { name: "日志" }));
+    const retention = screen.getByLabelText("日志保留天数");
+    await userEvent.clear(retention);
+    await userEvent.type(retention, "45");
+    // Discard only the Logging group; the Localization input is a separate
+    // unsaved decision and must not be rebuilt from the whole baseline.
+    await userEvent.click(screen.getByRole("button", { name: "放弃本组修改" }));
+    expect(screen.getByLabelText("日志保留天数")).toHaveValue("30");
+    await userEvent.click(screen.getByRole("button", { name: "语言与时区" }));
+    expect(screen.getByLabelText("系统时区")).toHaveValue("Europe/Berlin");
+    expect(screen.getByText(/本组有未保存修改/)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "保存到草稿" }));
+    await waitFor(() =>
+      expect(calls.some((call) => call.init?.method === "PUT")).toBe(true),
+    );
+    const save = calls.find((call) => call.init?.method === "PUT");
+    expect(JSON.parse(String(save?.init?.body))).toMatchObject({
+      expectedActiveRevisionId: "active-1",
+      expectedActiveVersion: 4,
+      expectedActiveDigest: "digest-1",
+      edits: [{ fieldPath: "timezone", value: "Europe/Berlin" }],
+    });
+  });
+
+  it("shows the checked activation blocker and keeps the Draft and Active intact", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/validate"))
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          status: "validated",
+        });
+      if (input.endsWith("/activate"))
+        return response(
+          {
+            error: {
+              code: "configuration_conflict",
+              details: {
+                revisionId: "draft-1",
+                durableState: "draft_preserved",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "run the read-only Storage check for 'source-storage' on this revision, then activate checked",
+              },
+            },
+          },
+          409,
+        );
+      if (input.includes("/revisions/draft-1"))
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          status: "validated",
+          document: {},
+        });
+      if (input.includes("/system/settings"))
+        return response(draftSettings({ revisionVersion: 2, draftVersion: 2 }));
+      return response(
+        setupStatus({
+          setupDraft: {
+            revisionId: "draft-1",
+            version: 2,
+            status: "validated",
+          },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /恢复草稿/ }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "验证草稿" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "激活配置" })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "激活配置" }));
+    expect(await screen.findByText(/发布前检查未满足/)).toBeVisible();
+    expect(
+      screen.getByText(/Storage check for 'source-storage'/),
+    ).toBeVisible();
+    // The exact validated Draft remains the selected object and the action is
+    // still available after the operator satisfies the reported evidence.
+    expect(screen.getByText(/验证有效（版本 2）/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "激活配置" })).toBeEnabled();
+    const activation = calls.find((call) => call.input.endsWith("/activate"));
+    expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
+      expectedVersion: 2,
+      checked: true,
+    });
   });
 
   it("keeps input typed during an outstanding Save as still unsaved", async () => {

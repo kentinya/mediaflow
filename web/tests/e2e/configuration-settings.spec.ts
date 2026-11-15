@@ -140,9 +140,13 @@ test.describe("Settings hierarchy and typed settings", () => {
     await expect(page.getByText("尚未验证；修改后需重新验证")).toBeVisible();
 
     const validateRequests: string[] = [];
+    const activations: Array<Record<string, unknown>> = [];
     page.on("request", (request) => {
       if (request.method() === "POST" && request.url().includes("/validate")) {
         validateRequests.push(new URL(request.url()).pathname);
+      }
+      if (request.method() === "POST" && request.url().endsWith("/activate")) {
+        activations.push(request.postDataJSON() as Record<string, unknown>);
       }
     });
     await page.getByRole("button", { name: "验证草稿" }).click();
@@ -157,6 +161,9 @@ test.describe("Settings hierarchy and typed settings", () => {
 
     await page.getByRole("button", { name: "激活配置" }).click();
     await expect(page.getByText("配置已激活")).toBeVisible();
+    // Activation stays on the checked boundary for the exact validated
+    // revision; an unchecked compatibility request is not accepted.
+    expect(activations).toEqual([{ expectedVersion: 1, checked: true }]);
     await expect(page.getByText("配置已生效")).toBeVisible();
     await expect(
       page.getByRole("option", { name: /生效配置（序号 5）/ }),
@@ -165,6 +172,30 @@ test.describe("Settings hierarchy and typed settings", () => {
     // The activated snapshot is read back as Active, not as a second Draft.
     await expect(page.getByLabel("配置 JSON")).toHaveValue(/zh-CN/);
     expect(saves).toHaveLength(1);
+  });
+
+  test("discarding one group keeps another group's unsaved input", async ({
+    page,
+  }) => {
+    const saves = recordSaves(page);
+    await openSettings(page);
+    const timezone = page.getByLabel("系统时区");
+    await timezone.fill("Europe/Berlin");
+    await openGroup(page, "日志");
+    const retention = page.getByLabel("日志保留天数");
+    await retention.fill("45");
+    await page.getByRole("button", { name: "放弃本组修改" }).click();
+    await expect(retention).toHaveValue("30");
+    await openGroup(page, "语言与时区");
+    await expect(page.getByLabel("系统时区")).toHaveValue("Europe/Berlin");
+    await expect(page.getByText(/本组有未保存修改/)).toBeVisible();
+    await page.getByRole("button", { name: "保存到草稿" }).click();
+    await expect(page.getByText("已保存到草稿")).toBeVisible();
+    await expect.poll(() => saves.length).toBe(1);
+    expect(saves[0]).toMatchObject({
+      expectedActiveRevisionId: "settings-active-1",
+      edits: [{ fieldPath: "timezone", value: "Europe/Berlin" }],
+    });
   });
 
   test("boolean states and strict numeric input never send a rewritten value", async ({

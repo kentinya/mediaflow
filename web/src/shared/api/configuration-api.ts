@@ -234,7 +234,6 @@ export const activateRevision = (
   token: string | null,
   revisionId: string,
   expectedVersion: number,
-  checked = true,
   fetchImpl?: FetchLike,
 ) =>
   request<Record<string, unknown>>(
@@ -242,7 +241,7 @@ export const activateRevision = (
     `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/activate`,
     {
       method: "POST",
-      body: JSON.stringify({ expectedVersion, checked }),
+      body: JSON.stringify({ expectedVersion, checked: true }),
     },
     fetchImpl,
   );

@@ -121,12 +121,15 @@ const browser = await chromium.launch({headless:true});
 try {
   const page = await browser.newPage({viewport:{width:1360,height:900}});
   const writes = [];
+  let activationBody = null;
   page.on('request', request => {
     if (request.method() !== 'GET' && request.url().includes('/api/v1/configuration'))
       writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
     if (request.method() !== 'GET' &&
         /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(new URL(request.url()).pathname))
       writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    if (request.method() === 'POST' && request.url().endsWith('/activate'))
+      activationBody = request.postDataJSON();
   });
   await page.goto(base + '/ui-v2/storage');
   await page.getByLabel('API token').fill(token);
@@ -176,6 +179,8 @@ try {
       path.startsWith('POST /api/v1/configuration/revisions/') &&
       path.endsWith('/activate')))
     throw new Error('activation did not follow explicit validation');
+  if (!activationBody || activationBody.checked !== true)
+    throw new Error('first activation did not use the checked boundary');
   if (writes.some(path => /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(path)))
     throw new Error('setup navigation started media work');
 
