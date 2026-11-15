@@ -8,11 +8,16 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice54](../SLICE.md) is **PASS / CLOSED** after independent A Final Review on 2026-11-11.
-Its original Base is `e43a40674eb14aa12615a440a348fe675cd50c4e`, accepted implementation
-`aef044e51dc91655372bf5fe39c6116da976c3b4`; the report successor through `9220f344` changes
-only SLICE/TASK handoff text. [TASK.md](../TASK.md) has no active implementation Task.
-Next action: **A SELECTS THE NEXT LARGE SLICE**, separately from this closure.
+[Slice55](../SLICE.md) is **PLANNED** after the user's 2026-11-15 complete V1/migration-residue
+retirement and planning authorization. Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`,
+Implementation Head NOT SET; no product implementation or acceptance is claimed.
+[TASK.md](../TASK.md) has no active implementation Task. Next action: **USER ACTIVATES SLICE;
+B THEN PLANS THE FIRST TASK**. This pointer adds no closure-ledger entry.
+
+Latest accepted Slice remains54, independently closed on 2026-11-11 at original Base
+`e43a40674eb14aa12615a440a348fe675cd50c4e` through implementation
+`aef044e51dc91655372bf5fe39c6116da976c3b4`; its report successor through `9220f344` changes
+only SLICE/TASK handoff text. Fixed acceptance and all prior facts/limits remain below.
 
 ## Latest accepted closure — Slice54
 

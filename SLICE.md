@@ -1,273 +1,256 @@
-# Slice 54 — 整理规则统一弹窗与可读性
+# Slice 55 — V1 与迁移残留完全退役
 
 ```text
-Slice ID: 54
-Name: Organizing Rules Dialogs and Readability
+Slice ID: 55
+Name: Complete V1 and Migration Residue Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
-Implementation Head: aef044e51dc91655372bf5fe39c6116da976c3b4
+Status: PLANNED
+Base SHA: 2b2e7c1824fa5681864455714d0f97b26555c7dc
+Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: TASK54.1 IMPLEMENTATION USER AUTHORIZED ON 2026-11-10
+Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
 Risk: High
 Accepted Test Level: T4
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: USER ACTIVATES SLICE; B THEN PLANS THE FIRST TASK
 ```
 
-## Authority and accepted baseline
+## Authority and baseline
 
-用户先授权只读调查：概览保留完整流程验证，其他规则表面只保留单项检查；七类添加
-改为与自动化／文件页协调的居中弹窗。随后补充七类编辑也改为弹窗，并改善这些表单
-内容的美观与可读性。2026-11-10 用户先授权 A 规划，合同提交于 022d7777；随后明确
-“激活 Slice 并代替 B 规划第一个 Task”。本次将 Slice 激活并先提交合同，再由 A 按用户
-授权代行 B 规划首个 Task。该角色例外仅限本次 Task 规划，不包含自审实现或代行最终
-A 验收。用户随后明确“激活 Task”，正式授权 Task54.1 实施；原 Task ID／Base／Goal／Scope
-保持，移除规划草案通知。Task54.1 经 Developer 实施与同一 Task 修正，现由 B 独立
-复核 PASS；A 已于 2026-11-11 独立审查完整 Slice 范围、真实旅程及证据，
-决定 PASS / CLOSED。规划角色例外没有延伸到 B 复核或 A 最终验收。
+用户先要求调查 V1 遗留，明确“V1版本的完全彻底的退役不做兼容，也不隐藏”，随后限定
+“先调查不改文档和代码”，并补充调查迁移残留。两轮只读调查后，用户现要求“规划一个Slice”。
+本合同统一规划 V1 产品及早期 V2 迁移兼容的完整退出；仅授权文档规划与本地检查点，
+不激活、不实施、不规划 B Task、不分派代理、不推送、不部署。
+生命周期、测试分工及 Git 规则只以 [Development Workflow](docs/development-workflow.md) 为准。
 
-Slice53 已于 2026-11-10 **PASS / CLOSED**，原 Base、接受实现、A53-01 原退回／修正、
-验证限制及 B 转任 A 的用户授权例外均保留于
-[固定关闭记录](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)。
-本 Slice 不重开 Slice41／44／50／53；原始实施基线为
-`e43a40674eb14aa12615a440a348fe675cd50c4e`。Base 固定，后续纯规划／激活提交不重设；
-若实现前出现独立产品变更，A 应先明确基线／范围的合法处理，不能静默重定 Base。
-生命周期以 [Development Workflow](docs/development-workflow.md) 为唯一依据。
+规划前治理检查 PASS。仓库 `/Users/songzhidong/mediaflow`，分支 main，HEAD 为上述 Base，
+暂存／工作区干净，文档与 Git 可写；没有读取私有配置、运行数据库、秘密或用户媒体。
+Base 是本 Slice 产品实施前的真实检查点；规划／激活文档提交不重设 Base。如实施前出现
+介入产品变更，A 需先核对合法集成与范围，不静默换基线。
 
-规划前治理检查 PASS；工作区 `/Users/songzhidong/mediaflow`，分支 `main`，HEAD 如上，
-暂存区为空，工作区／Git 可写。预存 `mediaflow/.DS_Store` 修改及未跟踪系统元数据、
-`.explore_adapter_block.py`、日志、`15` 和 `output/` 调查材料原样保留，不进入本检查点。
-调查检查七类共用表单／测试／编辑路由；使用已有构建和隔离 Node 假服务实际查看命名、
-分类添加界面。假服务清单对象的编辑投影缺失不能当成产品缺陷；该调查不等于当前源码
-构建或真实 Python 编辑旅程验收。未读取运行数据库、私有配置、凭据或用户媒体。
+Slice54 的 PASS / CLOSED、原 Base `e43a40674eb14aa12615a440a348fe675cd50c4e`、已接受实现
+`aef044e51dc91655372bf5fe39c6116da976c3b4`、角色例外及验证限制保留于
+[规划前固定合同](https://github.com/kentinya/mediaflow/blob/2b2e7c1824fa5681864455714d0f97b26555c7dc/SLICE.md)
+和 [Progress](docs/progress.md)。独立修复 PATCH-20261115-1 已由 B PASS，固定报告见
+[Task 接受检查点](https://github.com/kentinya/mediaflow/blob/8c09f276409be2cf969ccd8d037bf083312c2d32/TASK.md#patch-20261115-1--b-pass)。
+本 Slice 不重开旧验收，不删除 Git 历史、release/v1、标签或 docs/history，不建设旧版本迁移。
 
-## User goal and requirement mapping
+## User outcome and completion meaning
 
-用户从整理规则的任一分类清单添加、复制或编辑对象，在原列表背景上的协调弹窗内
-理解并修改规则、显式运行当前对象测试、一次保存发布，返回原清单确认真实结果。
-表单按业务目的组织，关键设置、测试结论与纠正动作清晰；完整流程只在概览检查。
+用户安装本 Slice 产物后，只使用当前 V2 完成首次设置、配置／规则管理、实时库浏览、
+手工整理、自动化、任务内四类恢复、普通文件维护和通知。源代码、安装包、镜像和新库中
+均无 V1 或早期迁移兼容产品。旧入口、旧字段、旧事件、旧会话、旧执行记录不被自动
+转换、接管或重新解释，也没有隐藏开关、备用执行器、别名、跳转或专用退休说明页。
 
-| Required Outcome | 完整旅程 | 需求 |
+支持范围为本 Slice 新规范的首次初始化 → 新工作 → 同版本重开／重启 → 原工作读取及
+安全恢复。先前 V1／V2 数据库、配置包、工作 pin 或浏览器记录不获兼容承诺；不迁移、
+不导入旧任务、不改写旧 digest，不自动清库／替换／修复存量数据。当前规范输入与真正
+未配置／损坏／不支持输入各自有准确状态和安全下一步。
+
+V2 共用的 Python 应用、Storage／Provider 分层、零变更分析、RBAC、精确计划／授权、
+Task 调度、结果／审计和同版本非重放继续完整。`/api/v1/*` 是当前 API 版本，`/ui-v2/*`
+是当前 Web 根；保留二者作为唯一当前命名，不建设第二套 API 或全站改地址工程。
+
+## Requirement and journey mapping
+
+TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-planned)，
+[目标旅程](docs/product-experience.md#target--complete-v1-and-migration-residue-retirement-slice55-planned) 与
+[目标架构](docs/architecture.md#target--complete-v1-and-migration-residue-retirement-slice55-planned)。
+当前合同尚未实现；下列修订只在本 Slice 验收后成为 CURRENT：
+
+| 被修订的当前边界 | 本 Slice 目标 | 保留的义务 |
 |---|---|---|
-| RO-1 七类统一弹窗 | 列表／空态添加、复制、编辑及准确旧编辑链接 → 稳定卡片 → 保存或安全关闭 → 原清单 | CURRENT `V2-RULES-010`；`V2-RULES-001/002/007/008`、`V2-UX-001–003/011/013–015` |
-| RO-2 内容可读与协调 | 七类设置／内部规则／单项测试 → 有层级的输入和结果 → 直接纠正 → 精确重测／保存 | CURRENT `V2-RULES-011`；`V2-RULES-003–009` |
-| RO-3 完整流程入口收敛 | 概览完整图检查；其余表单仅当前对象检查 → 各自结论／失效／恢复 | CURRENT `V2-RULES-012`；`V2-RULES-006/009` |
+| V2-MIG-001/002、REQ-WEB-001/004、V1 /ui 共存／回退 | 仅当前 V2；退出 V1 专用入口及迁移承接 | 原生完整旅程、共享后端与 RBAC，不新建身份系统 |
+| REQ-SCHED-003/006–007、REQ-SAFE-008 的旧实现；V2-AUTO-003/010/011 | 删除旧 schedules、远程票据和独立 grant 产品 | 当前定义 Enabled／Run once 意图、权限／作用域／逐效果核对 |
+| REQ-CONFIG-*、V2-CONFIG-001–004、V2-RULES-005 | 只接受唯一当前配置，取消旧格式与分类转换 | Draft／精确 Active、typed Save、检查／原子发布、无默认业务注入 |
+| V2-TASK-003–007/011–014、V2-OPS-007/008/011/013/016/017 | 清除暂停、旧恢复链、非内核整理执行和历史输入兼容 | 五态 flow、逐项结果、同 Task 四类恢复、取消及不确定非重放 |
+| V2-AUTO-001/007/008、V2-UX-* 的迁移地址／会话义务 | 无旧地址与旧会话格式承接；采用当前 Task 用语 | 当前深链、请求核对、同版本输入保留、真实消费者采用 |
 
-本合同已 **PASS / CLOSED**，下列结果为 CURRENT。见
-[V2 CURRENT](docs/v2-requirements.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)、
-[完整 CURRENT 旅程](docs/product-experience.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed) 和
-[架构 CURRENT](docs/architecture.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)。
-已替换既有 Rules Add／Copy 抽屉、独立整页 Edit 及编辑器内完整链路预览的呈现约定；
-当前发布、安全、识别身份、局部分析和共享完整规划的业务语义保持。
+未明确修订的 REQ-STO/PARSE/REC/META/NAME/CLASS/ORG/ATT、REQ-SAFE-* 和当前原生
+旅程继续适用；RecognitionType C 复用 A Naming／Classification 后仍为 C。
 
-## Required outcomes and surfaces
+## Investigation facts and coverage boundary
 
-### RO-1 — 七类添加／复制／编辑统一弹窗
+Base 源码调查证明 /ui 四项静态资源实际返回 200；其内嵌文件 3910 行，至少 19 个 Python
+测试文件直接引用旧 UI。CLI help 仍注册 execution-authorizations、旧 scheduler 查询和
+upgrade。旧 schedules 与远程票据已接入统一 Task，但入口／专用表尚在；旧 grant 授予／
+撤销 API 也仍注册。七条旧 V2 路由、自动化 settings 跳转、历史状态／事件别名、非内核
+领取、旧恢复链、会话兼容及初始化迁移逻辑均存在。运行库已拒绝 schema <58，仍有历史
+补列／重建；部分当前建表依赖 migrate helper，不能直接删整段。
 
-覆盖类型策略、识别类型、识别规则、元数据策略、命名规则、分类规则、整理策略。
-顶部与空列表添加、每行复制／编辑使用同一视觉体系；不同对象不串输入、权限、响应或
-测试证据。默认仍是八区导航和完整清单，不自动选中或弹出表单。
+这些是源码及无数据库入口探测事实，不等于当前部署身份、浏览器验收或产品门禁通过。
+清单为必需下限；B 必须根据完整调用／注册／持久化依赖核对同类残留，不能因某项没有
+单独写函数名而留兼容入口。真实当前业务用途迁到唯一当前契约，纯兼容部分完整删除。
 
-以现有自动化新建／编辑及文件页库配置卡片为视觉基准，优先复用业务无关公共 modal。
-圆角、遮罩、阴影、标题、按钮、间距、开关动效协调；按规则复杂度安排内容，不复制
-自动化字段或库配置步骤。标题显示动作、类别和可读名称；精确 ID 保持可查且编辑不可改。
-正文内部滚动，标题／关闭／底栏稳定可达；读取权限和对象、失败与就绪不从矮壳突然撑大
-重新居中。背景位置／宽度稳定，原分类、搜索、状态筛选和滚动保留。
+## Required Outcomes and surfaces
 
-现有 `/ui-v2/rules/edit/{family}/{objectId}` 的合法链接、刷新、前后退和重认证仍准确
-打开同一对象的弹窗；直接进入时提供对应分类清单作为背景及默认关闭去向。不保留
-第二套独立整页编辑体验，不以改 ID 或返回错误分类作兼容。合法特殊字符 ID 仍可用。
+### RO-1 — 只有当前 Web 入口，没有迁移承接
 
-保存期间所有退出途径共同保护在途命令并阻止重复提交；未保存关闭／返回提供清楚的
-继续编辑／明确放弃选择。Escape、Tab、回焦、背景不可交互／锁滚、窄屏和 reduced-motion
-可用。不能用两次关闭手势代替明确放弃决定。表单输入按类别／对象隔离并保持已有
-刷新／重认证恢复能力；不保存凭据或将草稿显示为 Active。
+删除 operator_ui.py 及服务注入／CSP 专用差异／静态资源、/review 迁移页、v1Path／migration
+模型及其文案。退出旧 /library、/library/files、/operations/tasks[/:id]、/operations/jobs[/:id]、
+/operations/automation/new，取消 tab=settings 的专用跳转、旧筛选／书签转换及已退役
+definition/editor/execution/new-organize 等残余接线；不得另设重定向、别名或“已迁移”页面。
+当前自动化新建入口为 /operations/automation/lifecycle；保留当前编辑、规则对象 Edit、
+Task Center run＋hosted-card、通知／两种库等真实现行深链，不把当前地址因出现“旧”注释删除。
 
-一次明确保存仍校验并原子发布完整后继。成功读回／更新清单并回到原清单，显示真实
-保存结果；后续清单读取失败不能抹掉已知发布或自动重提。校验、引用、权限、并发拒绝
-保留旧 Active 与可修正输入；未知保存说明可能已发布、保留核对入口，不能因关闭／
-重开或换对象自动重发、借新弹窗误报未保存，核对前不提供无保护的重复提交。
+旧 Web 使用普通未知路由／认证边界；前端 SPA 返回通用入口文档时，必须证明 Router 未注册
+旧页并实际呈现通用 not-found，不能仅凭 HTTP 200／非200 判定。当前九页导航、刷新／
+重认证、弹窗关闭与原来源返回可用，无返回 V1、旧壳或兼容入口。
 
-### RO-2 — 七类设置与单项测试内容可读
+### RO-2 — 只有当前业务受理与执行，没有旧调度／票据／grant／全局恢复入口
 
-设置与单项测试在卡内有明确分区／切换，保留当前输入、样本和证据；不再把所有配置、
-长篇说明、全部样本和历史结果平铺成一条长表单。简单类型不强塞复杂步骤；复杂条件
-必须能在卡内完成，不借可读性删除已有字段、隐藏生效设置或生成业务默认值。
+删除 automation.schedules 的 IntervalSchedule／CronSchedule 产品、到期／执行分支、
+/api/v1/schedules 与旧 scheduler list／audit 等专属查询。Scheduler run／必要当前检查
+继续服务当前 Automation 定义；Cron／间隔算法保留，不构造替代旧调度列表。
+删除 execution-authorizations CLI、X-MediaFlow-Execution-Token 受理、远程票据 POST
+/api/v1/tasks、api.remoteExecution 设置及专用服务／模型／权限／持久化。
+删除独立 unattended grant 的查询／授予／撤销／别名／审计 API、模型及当前定义管理里的
+旧 grant 读取／撤销耦合；当前 Enabled 发布证据与真实执行权限检查由当前权威承担。
 
-| 类别 | 必需内容结果 |
-|---|---|
-| 识别类型 | 基本定义、说明与启用状态紧凑清晰；无需下游绑定即可检查定义，关联规则试识别保持可选。 |
-| 识别规则 | 清楚呈现“哪些条件 → 哪个识别类型”；优先级／分数／停止匹配解释就近，AND／OR／NOT 层级与条件操作可读。 |
-| 类型策略 | 类型与四个下游策略关联一眼可辨，名称优先、ID 可查；缺失／禁用／重复启用引用能定位纠正，复用不改类型。 |
-| 元数据策略 | 服务／查询、语言／地区、候选接受阈值与高级请求限制合理分组；单位、范围和凭据状态清楚，不展示密钥。 |
-| 命名规则 | 电影／剧集模板分明，变量帮助集中可查，不在每字段重复整串；长模板可读可编辑，真实单项渲染能对照目录／文件名与缺失原因。 |
-| 分类规则 | 内部规则清单与当前规则编辑层级明确，条件、优先级、目标媒体库和相对路径可读；复杂表格不依赖整页横向溢出，内部“完成”与最终“保存”意图区分。 |
-| 整理策略 | 操作／冲突、附件、重复检测及回滚／清理分组，枚举有可懂中文、数值有单位；覆盖／删除等实际危险影响就近明确，不默认授权或承诺万能回滚。 |
+退出仅为 V1 存在的全局 recognition/metadata/classification/conflict 队列、manual-* 别名和
+独立授权分步入口、旧恢复 API／批次／Pause/resume／remaining-scope 等专用 409/410
+退休处理与枚举广告。当前 API／CLI 需要的审核、分析、精确摘要、执行及日志／系统／审计／
+导出使用唯一当前行为；按真实调用拆开旧传输表面和共享应用服务。删除旧 Task／Worker
+返回格式分支，不保留旧字段投影；当前直接 /tasks 恢复／取消请求按当前契约保留。
 
-统一表单标签、控件、帮助、错误、按钮和结果样式，包含
-`RulesObjectTestPanel` 的配套样式及分类内部动作。单项测试保留必要样本，按当前类型／用途组织，
-显示真实作用域；默认先看结论、实际输出、失败原因和下一步。技术 family、修订／版本、
-原始类别、调用统计及完整 JSON 放入诊断展开，不作为普通操作前置条件。不能用隐藏
-真实阻塞、截断关键路径、删除证据或一律绿色成功来美化。样本、输入、Active／对象
-变化后证据失效，迟到响应不覆盖新上下文；失败与未知保持可辨。
+所有新整理与合法续作由 Task 内核受理／claim／fence；删除常驻 Worker 的非内核 discovery／
+manual execution 轮询、领取、无调度记录回落和专用旧恢复执行。共享 discovery／execution
+服务继续供 Task Worker 调用；普通 Copy／Move／Delete 的现有独立职责不被改成整理队列。
 
-### RO-3 — 仅概览保留完整流程检查
+### RO-3 — 唯一严格的当前配置与领域契约
 
-概览保留显式 `完整流程检查`，基于读取到的精确 Active 完整图，保留真实竞争、策略
-解析、合成身份标记、必要只读目标检查及单独实时元数据意图。
-七类添加／复制／编辑全部移除 `完整链路预览（既有能力）` 及其完整链路表单／按钮，
-不是折叠隐藏。各对象只提供自身及必要依赖的单项测试，不增加旁路完整流程入口。
+部署只通过最小 bootstrap 定位当前库和 api.principals；去掉完整 JSON 直接业务运行权威、
+api.tokenEnv→legacy-admin、单 bearer 构造器管理员回落、开发默认策略／部分文档补业务对象。
+保留当前规范文档的 Draft 导入／校验／激活、设置 JSON 查看／脱敏包导出及恢复，不因退出
+JSON_BOOTSTRAP 而删除当前 V2 高级配置能力。只读／导航不能建草稿或工作。
 
-单项结果不能宣称全图就绪、发布成功或执行授权；如需全流程，清楚引导到概览并说明
-它检查已发布 Active，尚未保存的候选不会被偷偷代入。保存仍独立校验完整后继及适用
-发布证据，不能因删检查 UI 而降低检查；共享后端分析／DryRun／配置／自动化预检和
-既有 API 语义保留，本 Slice 不做完整测试后端退役。
+旧写法拒绝，不做优先级合并、规范化转换或静默忽略：Storage 顶层连接参数、资源库 rootPath
+显示别名、automation.taskDefinitions、notifications.webhooks、分类 library 与 category/subcategory
+代 path、MetadataPolicy.mediaType、OrganizePolicy.overwrite、staleJobAgeSeconds，以及同类旧
+命名模板／模式／事件／包结构别名。根级 automationTaskDefinitions／webhooks、Storage.options、
+资源库 displayRootPath、分类 mediaLibraryId＋path、mediaQueryType／conflictStrategy 为当前
+唯一表达。Storage.rootPath／MediaLibrary.rootPath、候选自身 movie/TV 类型和分类条件
+mediaType 有当前职责，不能按字段同名删除。旧分类转换 UI 与运行时旧前缀分支一起退出。
 
-必需表面：Rules 清单入口／空态／路由、七类表单与嵌套条件／分类内部规则、局部测试
-输入／结果／诊断、概览检查分界、必要公共 modal、直接受影响测试和交付时文档协调。
-清单只做支持弹窗返回与正确状态所需调整；八区导航、表格整体与概览布局不另行重设计。
+Task 容量唯一键改为 automation.maximumActiveTasks；取消权限唯一名为 CANCEL_TASK／
+cancel_task，旧 maximumActiveJobs／CANCEL_JOB／cancel_job 不作别名接受。仅规范当前
+Task 用语，三项设置的容量 1–10000、全入口原子额度、Worker／Scheduler 采用与 override
+规则不变，不新增参数／设置平台。当前 /api/v1 与 /ui-v2 命名保持。
+删除 job.*→task.* 事件兼容，事件仅 task.* 与当前 schedule.emitted；调度发布权限能力保持。
+兼容导出名／Phase bootstrap 类／旧 Task/ScanTask 模型／strategy-test 旧 console runner
+及默认策略接线退出；纯分析、解析、规则测试等现行引擎由当前模型／检查入口使用。
+
+### RO-4 — 当前 schema 与五态 Task，彻底清除旧迁移及历史执行形态
+
+建立完整、唯一的当前 runtime／configuration／managed-document 支持身份和新建结构；
+当前必需列／索引／Task 调度／首次执行证据直接完整初始化，不靠历史补列／表重建顺带创建。
+删除旧 schema ALTER／回填／migrate55 等重建、旧 lock-owner、跨版本接管／转换和 upgrade
+check/rehearse 工具及专用脚本。新规范身份在实施时统一更新；不固定要求某个数字。
+
+旧／畸形／混合版本的既有库在任何 DDL、版本标记写入、回填、claim 或业务执行前拒绝，
+保留原文件与数据；必要只读格式检查不是兼容读取。明确告知不支持的阶段、未执行的业务
+和使用独立新实例的下一步；没有自动重建、导入旧任务、指针改写、删表／清库或 media 操作。
+不以加上新版本号但继续接受旧字段／旧工作实现退出。
+
+新库没有旧 schedules、execution tickets、independent grants、旧恢复子 Task／批次／scope
+链的专用表／索引／列；清除它们在查询、checkpoint、统计、来源历史、证据导出中的兼容关系。
+保持同一 Task 内合法版本化 item／attempt／请求／结果与当前恢复关系，不新造替代迁移链。
+Task flow 仅 pending/running/completed/failed/cancelled；清除历史 paused/partial_success flow
+解析、Pause 控制、队列暂停／恢复、pause_requested 及生产者／reader／测试，文件级 partial／
+主附件结果、human/stability waiting、真实未结束工作及取消语义保持独立。
+
+### RO-5 — 前后端只消费当前数据，当前未知结果恢复仍安全
+
+删除旧 Run once／Copy 编辑页 session 格式读取／合并／标志、旧设置缺 baseline 格式适配、
+规则旧 key 迁移清理、旧协议 action／统计／Storage 列表／模式／可选字段回落，以及已无
+当前生产者的 continuation 卡／请求函数／批量模型。清理已不存在类的注释、未用导出／导入
+别名、假服务旧分支及夹具，不以隐藏 UI 保留可触发行为。
+
+当前 session 格式有明确身份，旧形状普通拒绝且不转换；读取旧 session 不成为新命令意图。
+同版本未知 Save／Execute／Run once／Copy／通知恢复保留原请求核对和防重复提交；规则／
+设置／通知当前未保存输入与权限隔离、焦点／返回不回退。不能通过删掉所有会话记录或
+把 unknown 当失败可重试来实现退役。未知／缺失来源证据的保守拒绝、脱敏、无 fingerprint
+Storage 的现有合法行为仍是当前安全职责，不当成迁移回落删除。
+
+### RO-6 — 源码、测试、包、镜像、示例和当前说明一致
+
+移除旧正向支持测试、兼容升级脚本／假服务／fixture 和产物清单要求；保留、改接真实当前
+V2 安全／功能断言，并新增退休不存在和当前旅程的真实证据。示例配置、部署生成器、四服务
+Compose、健康／安全／重启 smoke、wheel／源码外安装不再生成、包含或要求旧机制。
+只保留当前 bootstrap 和当前规范配置样例；替换旧文件引用需在同一结果内更新 CI／命令。
+
+当前 README／配置／部署／发布／Requirements／旅程／架构准确说明唯一支持边界；原始
+REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到新 archive、动态导入、
+环境开关或 no-op 服务。全仓关键词搜索只是证据一部分，不要求删除合法历史文档或否定测试
+中的单词；每个当前源码残留需证明真实职责或完成删除，不能用改名掩盖同一兼容行为。
 
 ## Safety invariants and explicit deferrals
 
-- 后端 RBAC、精确 Active 基线、并发拒绝、完整后继检查、原子激活、引用保护、隐藏配置
-  保留和审计脱敏不变。草稿／局部成功不是 Active；未知保存先核对，不自动重放。
-- 打开、编辑、切换、关闭、刷新不发布／创建可执行 Task／访问 Provider。显式离线局部
-  测试零 Provider／媒体 Storage I/O；实时元数据需明确意图，完整检查只做既有有界只读观察。
-- RecognitionType C 使用 A 命名／分类后仍为 C，保留自动化测试；Naming／Classification
-  不突变 Storage，只有 OrganizerExecutor 可按原明确授权变更媒体。
-- 新建分类保持 MediaLibrary＋安全 path；旧 library/path 只可明确转换，历史 pins 不重写。
-  保留真实规则竞争、模板、Provider 抽象及附件／冲突／高风险权限语义，不做前端第二引擎。
-- 公共组件仅作必要兼容扩展，自动化、Files／MediaLibrary、存储与任务详情／恢复消费者
-  保持已接受行为；尤其不改 Slice53 的原请求核对、逐文件整理与准确 Task 交接。
+- 当前原生完整旅程和失败／恢复保持；不以曾属于 V1 为由删除当前设置、审核服务、分析、
+  计划、日志、结果导出、通知或全部 CLI。仅为当前调用收敛所必需的请求／投影调整在范围内。
+- 认证、后端 RBAC、部署权限、精确 Active／原子发布／引用保护／审计、source ownership、
+  claim/lease/fence、已完成／不确定非重放、唯一 OrganizerExecutor 及 C→A 身份不变量保持。
+- 新规范下合法旧 pin（相对当前 Active 而言）和同版本历史保持原样；跨旧版本数据不获转换
+  承诺，但永不改写／删除原文件。不能从当前 Active、名称、时间或缺失字段猜授权。
+- 不新增 API v2、改 Web 根、身份／OIDC／Secret Store、Provider／Storage、命名算法、恢复
+  类型、跨 Task 批量、MediaLibrary 整理、上传下载、分布式队列、并行度／超时监督或回滚。
+- 不重设计当前九页、Task 详情或改变 flow／文件结果／自动化成功率；删除迁移卡和无生产者
+  分支所必需的布局修正需可读、键盘／窄屏可用，当前规则 Edit 深链仍是正式当前入口。
+- 不操作用户数据、停止／迁移现有部署、发布／推送、删除 release/v1／tag 或 Git 历史。
+  不建设旧数据导入、迁移、暂停恢复、旧请求接管、历史事件重投或旧会话核对界面。
 
-延期：新规则字段／条件／算法、Provider／Storage 操作、schema、权限／配置发布协议、
-队列／执行引擎／恢复模型、全站主题或动效设置、规则批量修改／导入导出／版本差异／
-回滚产品、V1 切换／UI 改造、完整测试 API／后端退役、概览／清单整体重设计、其他页面
-业务改造、生产服务／用户媒体验证、推送、发布及部署。不得借可读性改写枚举值或危险默认。
+## Acceptance Criteria
 
-## Acceptance and final validation
+- [ ] AC-01 / RO-1：所有指定旧 Web 入口注销；带查询、直达／刷新／重连均使用普通 not-found／
+      auth，无遮蔽开关、V1 资源、跳转、说明壳或旧地址到当前意图的自动转换。
+- [ ] AC-02 / RO-2：正常当前配置／合法权限下，旧 API 为通用 unknown route；旧 CLI 从 help／
+      parser 注销。不能用401/403、无配置503或非零退出冒充删除；无额外工作／Provider／
+      Storage 效果，正常解析／认证／脱敏审计允许。无旧票据、调度、grant 专用读写／接线。
+- [ ] AC-03 / RO-3：唯一当前 bootstrap／文档／字段／事件／权限／模式有效；覆盖各旧形式
+      单独、与新形式混合、旧包导入和任意 JSON 路径拒绝；零发布／Task／媒体效果。
+- [ ] AC-04 / RO-2/4：新手工／due／Run once 和四类恢复只走同 Task 内核，保留人等／稳定等、
+      原子额度、源归属和并发fence；无非内核整理领取、旧子 Task 链、Pause／resume 实现。
+- [ ] AC-05 / RO-4：新库完整 schema 无旧专属结构；同版本 reopen／进程 restart／备份及明确
+      非覆盖 restore 保留当前 work。旧／混合／畸形库拒绝前后文件／schema／行不变，
+      无隐式DDL／回填、claim、自动清库／重建或媒体效果，不给不兼容部署假 ready。
+- [ ] AC-06 / RO-4/5：Task 五态、文件 partial／unknown／缺 Result、取消与真实未完成各自准确；
+      旧 flow／命令／事件／session／响应形状不会被映射、展示为当前或产生执行资格。
+- [ ] AC-07 / RO-5：新格式输入与同版本 unknown 写入跨关闭／刷新／重新认证／双管理员并发
+      保留准确请求与核对；迟到读取／写响应不串身份／版本／兄弟项，不自动重提或假失败。
+- [ ] AC-08 / RO-1/3/6：从无媒体挂载的四服务空实例，经 V2 首次 Draft／空 Active、typed
+      Storage／两种库／七类规则、设置高级草稿检查与激活、自动化及通知配置完成；无 V1／
+      手写整份业务 JSON／旧 runner 回退，C 使用 A 命名分类仍为 C。
+- [ ] AC-09 / RO-2/4/5：真实 Files 单项／批量／有界文件夹 → per-file 决策 → 精确选中摘要
+      → 显式确认 → 同 Task，及 due／禁用定义 Run once → 四类问题 → 同 Task 续作通过。
+      各项／附件独立，成功和不确定效果不重放，当前来源失败历史门禁／自动化统计保持。
+- [ ] AC-10 / RO-2/6：两种库普通维护／异步 Copy/Move/Delete、当前页耐久结果／恢复、通知
+      投递／死信恢复、权限变化、满额、坏 Active／pin、丢响应均保持实际安全边界和下一步。
+- [ ] AC-11 / RO-6：新构建浏览器、wheel／源码外安装和候选 Docker 四服务镜像证明无旧
+      产物／入口；当前安全头、健康、无 Active 常驻、设置采用和重启恢复保持。桌面／390px／
+      矮窗口检查移除迁移内容后的可读／键盘／返回，不要求全站重设计。
+- [ ] AC-12 / RO-6：源／注册／schema／消费者反向清单、CI／示例／脚本／当前说明完整；
+      无把旧断言直接删弱的通过。全部 Required Outcomes 和安全／原生／包门禁有精确候选
+      实证，未执行项不记为 PASS；无旧版兼容例外待补而声称“完全退役”。
 
-1. 七类的添加（含空态）、复制、编辑均为协调居中弹窗；列表保留，保存回到准确分类并
-   展示真实结果。七类现有字段、嵌套编辑、状态能力、值回填和不可变 ID 均完整。
-2. 旧编辑链接与特殊 ID 的直达／刷新／重认证及浏览器前后退进入准确弹窗；普通打开关闭
-   保留分类／筛选／滚动／焦点，不触发整页切换动画、不意外丢稿或串对象。
-3. 七类设置与单项测试按 RO-2 可读；桌面同视口改前／改后及自动化／库配置参考对照，
-   390px 窄屏与矮窗口中，复杂条件、多条分类规则、长模板／名称／路径和错误结果可操作。
-   检查真实中间过程：慢权限／对象读取、就绪、错误、开关动效及 reduced-motion。
-4. 明确测试只提交当前候选及必要样本；局部成功／非匹配／不适用／阻塞／失败真实，编辑
-   后证据失效、迟到结果不串项，实时 Provider 不自动调用；完整证据仍可查看。
-5. 完整流程只在概览可操作；添加／复制／编辑没有旧链路区域或按钮。概览精确 Active
-   全图结果、保存全图校验和共享 API／后端能力保持。
-6. 一次保存成功、无效输入、缺失／禁用引用、权限拒绝、并发发布、读取失败及未知保存
-   的完整恢复旅程；所有退出方式遵守在途／未保存保护，已发布／未知命令不自动重发。
-7. 公共 modal、自动化／两种库／存储／任务详情及 Slice53 交接的直接影响回归；C→A
-   仍为 C、零媒体变更、审计脱敏、pins／fences 和已完成／不确定效果非重放保持。
+## Validation ownership and final validation
 
-T4 因七类表单直接承载 Active 配置发布、危险策略输入和未知保存／导航状态交接而选择，
-不是要求新后端能力。Developer 负责新改及直接受影响测试；B 负责固定 Base..candidate
-审查、七类真实 Python／API／临时 SQLite 的完整旅程、实际视觉／键盘验收和适用
-[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)，包括精确新构建／
-安装 smoke。外部 Provider 用本地假服务，Storage 用临时根；生产服务不是必需验收环境。
-无容器执行路径变更时 Docker 广域矩阵不适用，B 说明依据并保留失败／跳过／未运行限制。
-首个 Task 由 A 按本次明确授权代行 B 规划，依据实际代码组织连贯行为，不按七类、字段或纯技术层机械拆分。
+风险 High，产品实施与最终验收 T4。B 在激活后按完整行为规划连贯 Task、实际 Base、
+Difficulty／Test Level 与精确 affected／acceptance 命令；本文件不预建 Task 或执行步骤配额。
+Developer 仅跑新增／修改／直接受影响测试及必要当前原生链路，按工作流交不可变检查点；
+B 独立完成每 Task 必需验收、[shared full gates](docs/development-workflow.md#shared-full-regression-commands)
+和最终全部 RO 门禁；A 独立审查整个 Base..Implementation Head，不自审通过。
+
+最终必须提供：退休入口注册与正常输入反证；旧格式拒绝；新库完整结构／不兼容库零变更／
+同版本复开；真实 Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
+并发／丢响应／权限／pin／不确定故障；当前前端构建与截图；干净来源 wheel／安装目录／
+候选 Docker 镜像身份、四服务空初始化及安全／restart proofs。外部 SMB/OpenList/S3/TMDB
+用 fake／本地服务器与临时根，既有可选真实外部测试需披露，不拿用户媒体作证明。
+证据存稳定忽略目录或 CI；已删除的旧测试／脚本必须逐项对应退出义务或保留的当前断言。
+
+本次规划只检查文档一致性／链接、治理及受影响文档测试和 whitespace；不把这些结果
+当作产品 T4、已退役或 Slice PASS。实际规划命令／结果在本地检查点交接中报告。
 
 ## Closure Packet and A Final Review
 
-~~~text
-Slice: 54
-Base SHA: e43a40674eb14aa12615a440a348fe675cd50c4e
-Implementation Head: aef044e51dc91655372bf5fe39c6116da976c3b4
-Last Product Checkpoint: 2aedd74e1085aa42c96fe7b438ee3ffc606572d7
-Required Outcomes and Surfaces: COMPLETE
-Tasks completed: Task54.1 — B PASS (High / T4)
-B Decision: SLICE READY FOR A REVIEW
-A Final Review: PASS / CLOSED — 2026-11-11
-~~~
-
-### Outcome / Surface coverage
-
-| Required Outcome | B 的完整结果核对 |
-|---|---|
-| RO-1 | 七类 Add／Copy／Edit 共 21 个真实入口共用清单背景上的居中卡片；旧链接／特殊 ID、刷新／重认证、草稿模式隔离、Back／继续、退出与在途保护、准确发布及未知核对完成。搜索 `Normal`→编辑→取消时页头／导航／表格全程 y=78／158／375，七类返回及 390px 已滚动背景保持 |
-| RO-2 | 七类设置与单项测试的内容矩阵完整；名称／ID、条件与输出、四策略引用、Metadata 分组、模板帮助、分类内部编辑及操作／附件／高风险权限保持。桌面、390px、矮窗口的复杂条件、模板／路径、多条分类规则、错误与慢读取／失败恢复可读可操作；局部结论／输出／原因／下一步与诊断分层 |
-| RO-3 | 三模式移除表单完整链路区域与动作；概览保持显式精确 Active 完整检查，未保存候选只做局部分析，保存仍校验完整后继。共享 preview／Python 能力保留，无旁路入口 |
-
-固定 Task 审查范围为 `6351b60433f0e79dac6f5f7150884a1fecb0da43` 到上述 Head；B 已重评
-全部 Slice 结果与表面，不再规划 Task。最后产品检查点后的提交仅为交接文字。
-详细验收、命令与原始失败说明见 [固定 B 终审](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review)。
-
-### Final tests and safety evidence
-
-本机证据根目录 `.git/validation-evidence/aef044e5/task54-1-b/`：Python 2678 tests OK
-（7 个既有外部服务／endurance skip），Web 99 文件／1516 项、Node E2E 268 项 PASS；
-新生产资产、类型／lint／format、受版本控制 Python 的 Ruff、compileall、配置验证、
-新 wheel 与源码外安装 smoke PASS。根 Ruff 扫到预存未跟踪调查文件的语法失败保留。
-
-Rules 主原生、analysis／identity／classification 三项原生证明与补充恢复／视觉矩阵
-通过；七类局部分析零 Provider／媒体 Storage 读取，C 使用 A 命名／分类仍为 C。
-真实 409 后采用／复核所用对象、基线与分析一致；真实发布后丢响应保留原请求，
-刷新后没有第二次 PUT。打开／测试不创建执行工作，已接受的领域与权限语义保持。
-
-共享消费者：自动化最终 35 项、存储 8 项、整理／Task 交接 10 项、包含两种库实际保存
-的原生用例 1 项 PASS；两种库取消返回背景稳定且参考旅程零写。自动化首次运行有
-1 项因连续复制时清单尚未读完而没有发出第二次请求，原失败／trace、单项诊断及
-最终完整结果全部保留，详见上述固定 B 终审。未通过修改用例或重试配置掩盖原失败。
-
-### Known non-blocking issues / explicit deferrals
-
-无剩余 Task 或 Slice 结果阻塞。上述自动化用例的读取就绪时序作为非阻塞验证记录
-保留。外部服务／endurance 未运行；无 Docker／依赖／容器路径变更，广域 Docker
-矩阵不适用。本机证据未声明为远程 CI，原合同的延期及既有接受边界保持。
-
-### Documentation reconciliation
-
-A 在本关闭检查点一次协调 Requirements、V2 Requirements、Product Experience、Architecture、
-`docs/configuration.md` 的旧呈现措辞，以及 Roadmap／Progress／根 Task 的关闭事实；
-`V2-RULES-010–012` 转为 CURRENT。Slice41／44／50／53 的接受身份、原证据与延期保留。
-三角色经验已复核：A 的共享呈现经验合并完整背景检查，Developer 补充输入／读取配对
-与模式隔离；B 的现有完整旅程及返回检查经验继续适用，不重复追加。
-
-### A Final Review — PASS / CLOSED
-
-~~~text
-Reviewer: A — Slice Owner / Architect / Final Reviewer
-Date: 2026-11-11
-Reviewed Base: e43a40674eb14aa12615a440a348fe675cd50c4e
-Reviewed Implementation Head: aef044e51dc91655372bf5fe39c6116da976c3b4
-Reviewed Handoff Head: 9220f34420bc4807d4c0bbbe98cf7dece5f100dd
-Decision: PASS / CLOSED
-P0 / P1 / Remaining Required Outcomes: NONE
-Next Action: A SELECTS THE NEXT LARGE SLICE
-~~~
-
-A 独立核对了原始 Base 的真实祖先身份、完整 Base..Implementation Head 清单／差异，
-以及之后仅含 SLICE／TASK 交接文字的报告提交。审查覆盖七类三模式共用卡片、旧编辑路由、
-清单返回、principal／family／mode／subject 草稿隔离、原读取配对、保存／未知核对、
-局部测试与完整检查分界、字段／嵌套编辑、CSS 及 Shell 的直接影响。未发现范围外业务、
-后端权限／发布协议／schema／领域语义变更，或未解决的 P0／P1。
-
-RO-1 的进入、明确放弃、在途保护、准确保存及未知不重发完整；RO-2 的七类设置／
-单项结论、输出、纠正与诊断层次完整；RO-3 仅概览保留完整流程入口，后端共享能力及
-完整后继校验保持。现有 API、C→A 身份、安全边界与已接受消费者未被另立前端规则取代。
-
-独立验收从既有 Rules 清单／Add／Copy／Edit 和正常刷新／重认证／浏览器 Back 入口
-开展，未猜造产品入口或将不可达注入当作用户缺陷：
-
-- 使用当前生产资产、真实 Python API、临时 SQLite／Local 根复跑
-  `scripts/rules_workspace_browser_proof.py`，PASS，39 张截图；真实第二管理员发布造成
-  409 后核对／采用、精确上下文单项测试及明确保存通过，七类桌面／390px 返回保持
-  清单背景／搜索／位置，读取／测试不创建可执行工作。
-- 在独立临时实例复跑既有补充恢复脚本，PASS：Edit 草稿 Back→继续→刷新、Create／Copy
-  刷新隔离、采用当前值与保留输入后复核均可完成。真实服务完成 Save 后仅丢响应，
-  刷新后保留原请求核对，服务端 200、浏览器 PUT 总计 1 次，没有第二次发布请求。
-- 直接查看桌面、390px 和矮窗口的已稳定七类／复杂内容／失败截图及自动化／库配置参考，
-  核对长模板、嵌套条件、分类内部列表与可达底栏。入场帧只作中间状态，不冒充稳定画面。
-
-A 原始日志、脚本、JSON 及截图留于本机忽略目录
-`.git/validation-evidence/aef044e5/slice54-a/`；B 原始证据继续保留于上列目录。
-A 核实 B 的 Python 2678（7 skip）、Web 1516、Node E2E 268、原生消费者与 wheel 结果，
-并确认最后产品检查点至交接没有可执行输入变化，未机械重复全量套件。根 Ruff 的
-预存未跟踪调查文件错误、自动化首跑 1 项读取时序失败／原 trace 及最终结果、可选外部
-服务／endurance skip、未运行的生产服务和不适用的广域 Docker 矩阵均按原事实保留；
-没有删除断言、隐藏失败或把本机证据称作远程 CI。收尾仅改治理／文档，执行受影响的
-链接／状态核对、`git diff --check` 和提交后治理检查。
+尚未实施，Implementation Head NOT SET。Required Outcomes／最终测试／Closure Packet／
+A Final Review 均未完成；Status 保持 PLANNED。用户激活 Slice、B 规划／激活 Task 后才可实施。
+历史接受事实不被本规划替代；通过后再统一将 TARGET 协调为 CURRENT，不提前声明退役。

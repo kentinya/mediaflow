@@ -11,6 +11,40 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
+## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+
+用户于 2026-11-15 授权规划 [Slice55](../SLICE.md)，目标为 V1 与迁移兼容完整退出，
+不隐藏、不做别名／跳转／转换。`V2-RETIRE-001–010` 尚未实现或接受；以下是目标旅程，
+明确替代下文当前旅程中的 V1 共存、旧链接、旧配置／状态／会话读取与旧迁移承诺。
+此前 CURRENT 及历史验收在本 Slice 接受前保持事实身份。
+
+- **目标／入口：** 新实例四服务从最小管理 bootstrap 启动，无业务 JSON runtime 或媒体
+  挂载前置。用户连接当前 api.principals 身份，进入现有 V2 系统设置，显式创建／恢复
+  当前 Draft、完成适用检查并激活空或完整 Active；当前业务页保持直接 checked Save。
+- **可见状态／动作：** 探索、两种库、存储、规则、系统设置、自动化、任务中心和通知只
+  提供当前能力；旧 /ui、/review、Library/Task/Job 地址、自动化旧创建／settings 链接
+  使用普通未知路由／认证结果，无迁移卡、跳转或 V1 回退。当前正式深链和来源返回保持。
+  当前容量键 automation.maximumActiveTasks 与 cancel_task 权限取代 Job 旧名，用户仍
+  直接修改原三项运行参数并查看实际采用，不增加权限／配置步骤。
+- **行动／成功：** 管理当前规范对象，Files 受理整理→逐文件决策／分析→精确选中摘要
+  →显式确认→同 Task 结果；Automation checked Enabled 到期和显式 Run once 使用同一
+  Task 引擎。四类问题在原 Task 内保存决策／分析／确认，成功兄弟与不确定效果不重放。
+  两种库普通维护／Copy/Move/Delete 保持页内耐久进度和合法恢复；通知仍完整管理草稿、
+  检查／发布、投递和死信恢复。共享分析／精确授权／审核服务完整，无旧全局兼容流程。
+- **失败／恢复：** 当前输入失效、权限／并发／满额／坏 Active 或 pin 保留真实耐久状态、
+  输入及合法下一步。旧字段／旧包／旧事件／旧 session 普通拒绝，不偷偷转换、忽略或
+  变成新命令；旧数据库在任何修改／claim 前拒绝，说明不支持、原数据保留及使用独立
+  新实例的下一步，不自动清空／迁移／重建。未知当前写入仍核对原请求，读取不重发。
+- **重开／支持边界：** 本规范新建工作在同版本关闭／刷新／认证／进程重启后仍可准确读取
+  与安全继续；原 pins、结果和效果不改写。保留明确非覆盖的同版本备份恢复。跨旧版本的
+  数据库／旧工作／旧浏览器记录不提供转换、接管或专门历史旅程。旧文件不被删除或改写。
+
+当前规则 Edit、自动化 lifecycle、Task run＋hosted-card、两种库和通知深链仍为正式入口。
+移除兼容不重设计这些页面，不删除当前 JSON 支持路径、零变更分析、文件 partial、取消、
+human/stability waiting、Storage 可选 fingerprint 的合法行为或安全脱敏。
+完成标准含正常权限／配置下旧入口不存在，以及真实当前空初始化／操作／故障／恢复／
+同版本重启、源码外安装和候选镜像证据；旧路径没有按钮不构成退役完成。
+
 ## Current journey boundary
 
 Current journeys incorporate accepted Slice52 experience refinements `V2-EXPLORE-012–015`,

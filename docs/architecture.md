@@ -11,6 +11,52 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+
+[Slice55](../SLICE.md) 与 `V2-RETIRE-001–010` 是用户于 2026-11-15 授权的规划，未激活、
+实施或接受。下文 CURRENT 的 V1共存、兼容读取／schema补齐和旧路径支持只在最终验收
+后由本 TARGET 替代；此前接受身份、冻结 V1、Git 和 docs/history 不改写。
+
+```text
+minimal deployment bootstrap + api.principals
+  -> current complete configuration/runtime schema + managed Active
+  -> native V2 + one current /api/v1 and CLI contract
+  -> Task admission / claim / discovery-analysis / exact authority / execution
+  -> same-Task decisions, attempts, independent Results/effects and audit
+```
+
+- **Web/transport：** 删除 V1静态模块／分派与旧 V2 migration／resolver／redirect，旧输入
+  使用通用未知路由／参数错误；不保留专用退休409/410。当前 SPA／安全头及正式深链保持，
+  根仍 /ui-v2。逐端点删除 V1-only／alias／旧投影，当前消费者接唯一当前契约；不建设
+  API v2、新服务器或兼容后端。仅旧传输退出，共享审核／规划／执行／配置服务继续使用。
+- **Authority/engine：** 删除 legacy schedules、远程执行票据与独立 grant 的表面、模型、
+  专用持久化和注入；Enabled 发布者权限／审计证据与 Run once 意图仍是当前权威。
+  整理及合法续作只在同一 Task 内核调度，不装配 non-kernel discovery/execution 领取／
+  旧恢复子 Task 链。内部 discovery、intent、summary、一次性授权、execution/effect 记录
+  继续是当前工作证据，不成为另一队列。普通文件／通知职责保持原边界。
+- **Configuration：** 最小管理 bootstrap 仅定位数据与部署身份，无完整 JSON 业务权威、
+  legacy-admin、默认业务策略或旧字段转换。当前 Draft/Validate/check/Activate、typed
+  focused Save 与配置／结果交换继续；严格校验唯一当前 shape，旧形式不合并或忽略。
+  分类仅 MediaLibrary＋path，无旧 library 前缀／转换。Task 容量键为
+  automation.maximumActiveTasks，取消权限为 CANCEL_TASK/cancel_task；旧名不解析为别名，
+  原容量／取消／实际采用语义不变。通知只用当前 task.* 等事件，无 job.* 映射。
+- **Persistence：** 选定统一当前 schema／文档支持身份。新库直接完整创建必需结构，
+  删除旧ALTER／表重建／回填／接管和升级工具，拆出原 migrate helper 中仍必需的当前建表。
+  旧／混合／畸形库在任何DDL／标记写入／claim前拒绝且原文件不变，无自动drop／清库／
+  转换。新库无旧调度、票据、grant、批次／子Task恢复的专属表／索引／列。当前同版本
+  reopen／备份／明确非覆盖restore 保留合法 pins、请求、结果、来源／锁和审计。
+- **State/client：** 删除 paused/partial_success Task flow、Pause/resume 队列／字段／控制及
+  历史输入reader；文件级 partial、效果 unknown、未完成工作／human或stability waiting
+  独立保留。删除旧session／响应适配、无生产者UI／导出别名，当前session与未知提交核对
+  仍安全。未知来源证据、可选fingerprint和恶意持久值的保守拒绝／脱敏属于当前安全职责。
+- **Artifacts：** 源／wheel／镜像／新库／示例／CI／harness／当前说明一致，不用动态导入、
+  环境开关、no-op、新archive或改名保留旧兼容。不处理旧数据／旧任务，不改历史发布线；
+  退役测试需同时证明入口注销、旧输入零效果和真实当前完整旅程。
+
+权限、完整原子发布、C复用A策略仍为C、Storage confinement/capabilities、immutable pin、
+并发fence、独立primary/attachment结果、已完成／不确定非重放及OrganizerExecutor唯一
+媒体mutator保持。完整范围、失败／恢复、Required Outcomes与T4门禁由Slice55定义。
+
 ## CURRENT — Slice52 experience refinement (Slice52 PASS / CLOSED)
 
 [Slice52](https://github.com/kentinya/mediaflow/blob/19a458eb6c1a6afb8693d2757755487a58213a4f/SLICE.md#closure-packet-and-a-final-review) 于 2026-11-08 通过独立 A 终审

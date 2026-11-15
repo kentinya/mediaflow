@@ -8,6 +8,34 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
+## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+
+用户于 2026-11-15 明确要求 V1 完全退役、不做兼容也不隐藏，并在调查迁移残留后授权
+规划 [Slice55](../SLICE.md)。下列要求是 **TARGET / PLANNED**，尚未实施或接受；已有
+CURRENT／历史验收不因规划改变。它们取代被明确列出的共存、兼容读取和旧迁移义务，
+保留当前 V2 用户结果与安全；不改写冻结 V1 定义、release/v1 或历史记录。
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-RETIRE-001 | 当前产品仅提供原生 V2，完整删除 V1 UI 与迁移承接。 | 删除 /ui 资源、/review 迁移页、旧 Library/Task/Job 页面、自动化旧创建入口／settings 跳转及专属模型；普通 not-found/auth，无别名、重定向、退休说明页、隐藏开关或备用 UI。当前规则 Edit、自动化 lifecycle 和 Task hosted-card 等正式深链保持。替代 V2-MIG-002 及受影响旧地址承接义务。 |
+| V2-RETIRE-002 | 仅当前业务入口可受理工作。 | 删除旧 automation.schedules、远程执行票据 CLI/API/header/config、独立 grant 的读写／审计 API 及专属持久化和旧全局审核／恢复传输表面；无专用退休处理。当前 API/CLI、Task 内四类决策、精确计划确认和当前 Enabled/Run once 意图完整，保留真实权限／作用域／效果核对。 |
+| V2-RETIRE-003 | 所有整理及其合法续作只由当前同 Task 内核拥有。 | 删除非内核 organizing discovery/execution 领取、旧恢复子 Task／批次／scope 链的受理、运行、查询兼容与专属结构；当前同 Task 的版本化 item／attempt／请求／结果关系保持。普通文件操作保留现有职责；不新增第二引擎或恢复系统。 |
+| V2-RETIRE-004 | 只接受唯一当前部署／配置／领域格式。 | 最小管理 bootstrap＋api.principals 和 managed Active 为唯一权威路径；无完整 JSON runtime、legacy-admin、旧嵌套写法、分类前缀／转换、旧策略／事件／模式／命名模板／包别名或忽略退休字段。旧输入单独或混合均普通拒绝，不转换执行。当前规范 JSON 草稿导入／导出、typed 设置、空基线和共享分析保持。 |
+| V2-RETIRE-005 | 使用完整当前 schema 初始化，并仅支持该规范下新工作及同版本持久化。 | 新库不含旧机制专用表／列／索引；当前结构直接完整创建。取消旧 schema 补列／重建／回填、升级／接管工具；旧／混合／畸形库在任何修改和工作前拒绝，原数据文件不变，无自动清库／转换／重建。当前同版本 pins、Task/Result/effects、备份和明确非覆盖 restore 保持。 |
+| V2-RETIRE-006 | 当前 Task 契约不再携带旧 Job 命名兼容。 | 容量唯一键为 automation.maximumActiveTasks；取消权限为 CANCEL_TASK/cancel_task，旧名称不接受为别名。保留三项运行设置的原范围、原子额度、实际采用／override、RBAC 和取消安全；当前 /api/v1 与 /ui-v2 命名保持，不新建 API 版本。 |
+| V2-RETIRE-007 | 五态 flow 和安全取消完全脱离暂停及历史 aggregate 兼容。 | 删除 Pause/resume 的控制／状态／队列／字段／恢复实现及历史 paused/partial_success flow 解析；保留 pending/running/completed/failed/cancelled、human/stability waiting、独立文件 partial／未知效果／缺 Result，不重放成功或不确定步骤。收紧 V2-TASK-007 的退休完成标准。 |
+| V2-RETIRE-008 | 前后端只消费当前协议和当前 session 格式。 | 删除旧响应／统计／action／Storage 列表回落、job.* 事件映射、旧 Run once/Copy/设置／规则 session 适配和无生产者 continuation 表面；旧格式不被转换为当前状态或命令。当前同版本未知写入核对、防重复提交、输入保留和身份隔离保持。 |
+| V2-RETIRE-009 | 退休结果覆盖源码和全部交付／消费者。 | 删除专属模块、别名／旧 console runner、模型、测试正向支持、迁移脚本、fixture、清单／CI／部署样例依赖；wheel、源码外安装和候选镜像无旧机制。当前功能／安全断言重新接到当前链路；历史文档和 Git 接受身份保留，不搬代码进 archive 或 no-op 隐藏。 |
+| V2-RETIRE-010 | V2 完整旅程与原安全不变量通过真实验证。 | 从无媒体挂载空实例完成配置、两种库、规则、手工整理、due/Run once、同 Task 四类恢复、普通文件维护和通知。验证并发、失联／丢响应、坏 Active/pin、权限、满额、独立结果和非重放；正常权限／配置下证明旧入口注销，不能用401/503或非零退出冒充。T4 与最终原生／包／Docker门禁遵循工作流。 |
+
+授权范围还修订 V2-MIG-001 的旧客户端兼容含义、V2-RULES-005 的旧 policy mediaType
+读取、V2-AUTO-001/007 与 V2-TASK-011 的旧设置链接／key／退休字段可读性，以及
+V2-TASK-004–006 中旧版本格式读取义务；当前规范下、相对新 Active 的合法原 pins 与
+同版本历史仍必须完整。REQ-CONFIG/SCHED/WEB、REQ-SAFE-008 的被替代实现和旧语义见
+[Requirements 的 TARGET 修订](requirements.md#v2-requirements-boundary)。
+共享业务服务／Storage／Provider、当前元数据身份、逐项效果、审核／取消安全不被退出。
+完整旧输入下限、Required Outcomes、支持范围和验收在 Slice55；CURRENT 只在最终接受后协调。
+
 ## Current program boundary
 
 [Release](release.md) owns release lines; [Roadmap](roadmap.md) priorities/status; [Progress](progress.md)

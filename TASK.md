@@ -1,6 +1,11 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: A SELECTS THE NEXT LARGE SLICE（另行选择；本独立修复已完成，不自动规划新 Task）。
+Next Action: USER ACTIVATES SLICE55; B THEN PLANS THE FIRST TASK。
+
+[Slice55](SLICE.md) 已按用户要求规划 V1 与迁移残留完全退役，状态 PLANNED；本轮仅文档
+规划，不激活、不实施、不创建 B Task。Base 为 `2b2e7c1824fa5681864455714d0f97b26555c7dc`，
+Implementation Head NOT SET。用户激活 Slice 后由 B 在已提交合同内规划首个 Task；本通知
+不构成实施授权。下方已接受独立修复身份／结果／证据保持，不重开 Slice54 或旧 Task。
 
 ## Latest accepted Task — PATCH-20261115-1
 
