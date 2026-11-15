@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -1571,6 +1571,483 @@ describe("V2 configuration rule readiness", () => {
     expect(router.state.location.search).toEqual({
       section: "metadataPolicies",
     });
+  });
+
+  it("runs the exact publish checks from the page and activates only after they pass", async () => {
+    let validated = false;
+    const checks: {
+      storageChecks: Array<Record<string, unknown>>;
+      recognitionStrategyTest: Record<string, unknown> | null;
+      destinationPrecheck: Record<string, unknown> | null;
+    } = {
+      storageChecks: [],
+      recognitionStrategyTest: null,
+      destinationPrecheck: null,
+    };
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      const path = new URL(input, "http://local").pathname;
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (path.endsWith("/storage-check")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        requests.push({ path, body });
+        const evidence = {
+          storageId: "source-storage",
+          revisionId: "draft-1",
+          revisionVersion: body.expectedVersion,
+          revisionDigest: body.expectedDigest,
+          status: "passed",
+          stale: false,
+          checkedAt: "2026-11-15T10:00:00+00:00",
+        };
+        checks.storageChecks = [evidence];
+        return response(evidence);
+      }
+      if (path.endsWith("/recognition-strategy-test")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        requests.push({ path, body });
+        const evidence = {
+          revisionId: "draft-1",
+          revisionVersion: body.expectedVersion,
+          revisionDigest: body.expectedDigest,
+          status: "completed",
+          stale: false,
+          testedAt: "2026-11-15T10:01:00+00:00",
+          result: { recognition: { status: "matched", recognitionType: "C" } },
+        };
+        checks.recognitionStrategyTest = evidence;
+        return response(evidence);
+      }
+      if (path.endsWith("/destination-precheck")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        requests.push({ path, body });
+        const evidence = {
+          revisionId: "draft-1",
+          revisionVersion: body.expectedVersion,
+          revisionDigest: body.expectedDigest,
+          status: "completed",
+          stale: false,
+          precheckedAt: "2026-11-15T10:02:00+00:00",
+          result: {
+            verdict: "ready",
+            mediaLibraryId: "movies",
+            destinationPath:
+              "Movies/Action/The Matrix (1999)/The Matrix (1999).mkv",
+          },
+        };
+        checks.destinationPrecheck = evidence;
+        return response(evidence);
+      }
+      if (path.endsWith("/validate")) {
+        validated = true;
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          digest: "digest-2",
+        });
+      }
+      if (path.endsWith("/activate")) {
+        requests.push({
+          path,
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return response({ revisionId: "draft-1", version: 2, activated: true });
+      }
+      if (
+        path === "/api/v1/configuration/revisions/draft-1" ||
+        path === "/api/v1/configuration/revisions/draft-1/objects"
+      ) {
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          status: validated ? "validated" : "draft",
+          digest: "digest-2",
+          objects: {
+            storages: [
+              {
+                id: "source-storage",
+                name: "Source",
+                type: "local",
+                enabled: true,
+              },
+            ],
+            resourceLibraries: [
+              {
+                id: "source",
+                name: "Source",
+                enabled: true,
+                storageId: "source-storage",
+              },
+            ],
+            mediaLibraries: [
+              {
+                id: "movies",
+                name: "Movies",
+                enabled: true,
+                storageId: "source-storage",
+              },
+            ],
+            recognitionTypes: [{ id: "C", name: "Movies", enabled: true }],
+            recognitionTypePolicies: [
+              {
+                enabled: true,
+                recognitionType: "C",
+                namingPolicy: "naming",
+                classificationPolicy: "classification",
+                organizePolicy: "organize",
+              },
+            ],
+            namingPolicies: [{ id: "naming", enabled: true }],
+            organizePolicies: [{ id: "organize", enabled: true }],
+            classificationPolicies: [
+              {
+                id: "classification",
+                enabled: true,
+                rules: [
+                  {
+                    id: "movies",
+                    conditions: {},
+                    result: { mediaLibraryId: "movies" },
+                  },
+                ],
+              },
+            ],
+          },
+          ...checks,
+        });
+      }
+      if (input.includes("/system/settings"))
+        return response(draftSettings({ revisionVersion: 2, draftVersion: 2 }));
+      return response(
+        setupStatus({
+          setupDraft: { revisionId: "draft-1", version: 2, status: "draft" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /恢复草稿/ }),
+    );
+    await screen.findByRole("heading", { name: "发布前检查" });
+    expect(screen.getByText("还有 3 项未通过")).toBeVisible();
+    const strategyItem = screen.getByText("识别策略测试").closest("li");
+    expect(strategyItem).not.toBeNull();
+    expect(
+      within(strategyItem!).getByRole("button", { name: "运行检查" }),
+    ).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "验证草稿" }));
+    await expect(screen.findByText("草稿验证通过")).resolves.toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(strategyItem!).getByRole("button", { name: "运行检查" }),
+      ).toBeEnabled(),
+    );
+
+    const storageItem = screen
+      .getByText("存储只读检查：Source（source-storage）")
+      .closest("li");
+    await userEvent.click(
+      within(storageItem!).getByRole("button", { name: "运行检查" }),
+    );
+    await expect(screen.findByText("存储检查通过")).resolves.toBeVisible();
+    await waitFor(() =>
+      expect(within(storageItem!).getByText("已通过")).toBeVisible(),
+    );
+
+    await userEvent.click(
+      within(strategyItem!).getByRole("button", { name: "运行检查" }),
+    );
+    await expect(
+      screen.findByText("识别策略测试已完成"),
+    ).resolves.toBeVisible();
+
+    const destinationItem = screen.getByText("目标预检").closest("li");
+    await userEvent.click(
+      within(destinationItem!).getByRole("button", { name: "运行检查" }),
+    );
+    await expect(screen.findByText("目标预检通过")).resolves.toBeVisible();
+    await expect(
+      screen.findByText("适用检查已全部通过"),
+    ).resolves.toBeVisible();
+
+    expect(requests.map((entry) => [entry.path, entry.body])).toEqual([
+      [
+        "/api/v1/configuration/revisions/draft-1/storage-check",
+        {
+          storageId: "source-storage",
+          expectedVersion: 2,
+          expectedDigest: "digest-2",
+        },
+      ],
+      [
+        "/api/v1/configuration/revisions/draft-1/recognition-strategy-test",
+        {
+          expectedVersion: 2,
+          expectedDigest: "digest-2",
+          resourceLibraryId: "source",
+          syntheticPath: "Example.Movie.2024.1080p.mkv",
+        },
+      ],
+      [
+        "/api/v1/configuration/revisions/draft-1/destination-precheck",
+        {
+          expectedVersion: 2,
+          expectedDigest: "digest-2",
+          recognitionType: "C",
+          sample: {
+            title: "The Matrix",
+            mediaType: "movie",
+            extension: "mkv",
+            year: 1999,
+            genres: ["Action"],
+          },
+        },
+      ],
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: "激活配置" }));
+    await expect(screen.findByText("配置已激活")).resolves.toBeVisible();
+    expect(requests.at(-1)).toEqual({
+      path: "/api/v1/configuration/revisions/draft-1/activate",
+      body: { expectedVersion: 2, checked: true },
+    });
+  });
+
+  it("explains a failed destination check and re-runs the corrected sample without configuration writes", async () => {
+    let attempts = 0;
+    const precheckBodies: Array<Record<string, unknown>> = [];
+    const writes: string[] = [];
+    const destinationPrecheck: { value: Record<string, unknown> | null } = {
+      value: null,
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      const path = new URL(input, "http://local").pathname;
+      if (init?.method === "PUT" || init?.method === "DELETE")
+        writes.push(path);
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (path.endsWith("/destination-precheck")) {
+        attempts += 1;
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        precheckBodies.push(body);
+        const evidence =
+          attempts === 1
+            ? {
+                revisionId: "draft-1",
+                revisionVersion: 2,
+                revisionDigest: "digest-2",
+                status: "failed",
+                stale: false,
+                precheckedAt: "2026-11-15T10:02:00+00:00",
+                failureCategory: "invalid_rule",
+                message:
+                  "no enabled classification rule matched the destination sample",
+                nextAction:
+                  "correct the destination or conflict policy, then rerun precheck",
+              }
+            : {
+                revisionId: "draft-1",
+                revisionVersion: 2,
+                revisionDigest: "digest-2",
+                status: "completed",
+                stale: false,
+                precheckedAt: "2026-11-15T10:03:00+00:00",
+                result: {
+                  verdict: "ready",
+                  mediaLibraryId: "movies",
+                  destinationPath:
+                    "Movies/Animation/Example (2024)/Example (2024).mkv",
+                },
+              };
+        destinationPrecheck.value = evidence;
+        return response(evidence);
+      }
+      if (
+        path === "/api/v1/configuration/revisions/draft-1" ||
+        path === "/api/v1/configuration/revisions/draft-1/objects"
+      ) {
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          status: "draft",
+          digest: "digest-2",
+          objects: {
+            storages: [
+              {
+                id: "media-target",
+                name: "Target",
+                type: "local",
+                enabled: true,
+              },
+            ],
+            resourceLibraries: [],
+            mediaLibraries: [
+              {
+                id: "movies",
+                name: "Movies",
+                enabled: true,
+                storageId: "media-target",
+              },
+            ],
+            recognitionTypes: [{ id: "C", name: "Movies", enabled: true }],
+            recognitionTypePolicies: [
+              {
+                enabled: true,
+                recognitionType: "C",
+                namingPolicy: "naming",
+                classificationPolicy: "classification",
+                organizePolicy: "organize",
+              },
+            ],
+            namingPolicies: [{ id: "naming", enabled: true }],
+            organizePolicies: [{ id: "organize", enabled: true }],
+            classificationPolicies: [
+              {
+                id: "classification",
+                enabled: true,
+                rules: [
+                  {
+                    id: "movies",
+                    conditions: {},
+                    result: { mediaLibraryId: "movies" },
+                  },
+                ],
+              },
+            ],
+          },
+          storageChecks: [
+            {
+              storageId: "media-target",
+              status: "passed",
+              stale: false,
+              checkedAt: "2026-11-15T10:00:00+00:00",
+            },
+          ],
+          recognitionStrategyTest: null,
+          destinationPrecheck: destinationPrecheck.value,
+        });
+      }
+      if (input.includes("/system/settings"))
+        return response(draftSettings({ revisionVersion: 2, draftVersion: 2 }));
+      return response(
+        setupStatus({
+          setupDraft: { revisionId: "draft-1", version: 2, status: "draft" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /恢复草稿/ }),
+    );
+    await screen.findByRole("heading", { name: "发布前检查" });
+    expect(screen.getByText("还有 1 项未通过")).toBeVisible();
+    const destinationItem = screen.getByText("目标预检").closest("li");
+    await userEvent.click(
+      within(destinationItem!).getByRole("button", { name: "运行检查" }),
+    );
+    await expect(screen.findByText("目标预检未通过")).resolves.toBeVisible();
+    expect(
+      screen.getAllByText(/没有分类规则匹配该示例/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/调整示例的题材或国家/).length).toBeGreaterThan(
+      0,
+    );
+    await waitFor(() =>
+      expect(within(destinationItem!).getByText("未通过")).toBeVisible(),
+    );
+
+    await userEvent.clear(screen.getByLabelText("示例题材"));
+    await userEvent.type(screen.getByLabelText("示例题材"), "Animation");
+    await userEvent.click(
+      within(destinationItem!).getByRole("button", {
+        name: "重新运行检查",
+      }),
+    );
+    await expect(screen.findByText("目标预检通过")).resolves.toBeVisible();
+    await waitFor(() =>
+      expect(within(destinationItem!).getByText("已通过")).toBeVisible(),
+    );
+    expect(
+      (precheckBodies[1]?.sample as Record<string, unknown>).genres,
+    ).toEqual(["Animation"]);
+    expect(precheckBodies[1]).toMatchObject({
+      expectedVersion: 2,
+      expectedDigest: "digest-2",
+      recognitionType: "C",
+    });
+    expect(writes).toEqual([]);
+  });
+
+  it("shows that an empty baseline has no applicable publish checks", async () => {
+    const activations: Array<Record<string, unknown>> = [];
+    let validated = false;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      const path = new URL(input, "http://local").pathname;
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (path.endsWith("/validate")) {
+        validated = true;
+        return response({ revisionId: "draft-1", version: 2 });
+      }
+      if (path.endsWith("/activate")) {
+        activations.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        return response({ revisionId: "draft-1", version: 2 });
+      }
+      if (
+        path === "/api/v1/configuration/revisions/draft-1" ||
+        path === "/api/v1/configuration/revisions/draft-1/objects"
+      ) {
+        return response({
+          revisionId: "draft-1",
+          version: 2,
+          status: validated ? "validated" : "draft",
+          digest: "digest-2",
+          objects: {
+            storages: [],
+            resourceLibraries: [],
+            mediaLibraries: [],
+            recognitionTypes: [],
+          },
+          storageChecks: [],
+          recognitionStrategyTest: null,
+          destinationPrecheck: null,
+        });
+      }
+      if (input.includes("/system/settings"))
+        return response(draftSettings({ revisionVersion: 2, draftVersion: 2 }));
+      return response(
+        setupStatus({
+          setupDraft: { revisionId: "draft-1", version: 2, status: "draft" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /恢复草稿/ }),
+    );
+    await screen.findByRole("heading", { name: "发布前检查" });
+    expect(screen.getByText("该草稿没有适用检查")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "验证草稿" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "激活配置" })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "激活配置" }));
+    await waitFor(() =>
+      expect(activations).toEqual([{ expectedVersion: 2, checked: true }]),
+    );
   });
 
   it("refuses an unsafe return context instead of offering an open redirect", async () => {

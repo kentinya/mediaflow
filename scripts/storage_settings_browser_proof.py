@@ -162,6 +162,11 @@ try {
   await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
   await page.getByRole('button', {name:/恢复草稿/}).click();
   await expect(page.getByRole('heading', {name:'高级配置'})).toBeVisible();
+  // The empty setup baseline references no Storage, ResourceLibrary or
+  // MediaLibrary, so checked activation requires no publish check and the page
+  // says so instead of presenting a no-op requirement.
+  await expect(page.getByRole('region', {name:'发布前检查'})).toContainText(
+    '该草稿没有适用检查');
   if (writes.length !== 1) throw new Error('resume/navigation created another Draft');
 
   await page.getByRole('button', {name:'验证草稿'}).click();

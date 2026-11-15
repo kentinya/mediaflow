@@ -174,6 +174,67 @@ test.describe("Settings hierarchy and typed settings", () => {
     expect(saves).toHaveLength(1);
   });
 
+  test("a Draft completes its publish checks from the page before checked activation", async ({
+    page,
+  }) => {
+    await openSettings(page, { mode: "checked" });
+    await openGroup(page, "日志");
+    await page.getByLabel("日志保留天数").fill("46");
+    await page.getByRole("button", { name: "保存到草稿" }).click();
+    await expect(page.getByText("已保存到草稿")).toBeVisible();
+    await page.getByRole("button", { name: "验证草稿" }).click();
+    await expect(page.getByText("草稿验证通过")).toBeVisible();
+
+    const checks = page.getByRole("region", { name: "发布前检查" });
+    await expect(checks).toBeVisible();
+    await expect(checks).toContainText("还有 4 项未通过");
+
+    const activations: Array<Record<string, unknown>> = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/activate")) {
+        activations.push(request.postDataJSON() as Record<string, unknown>);
+      }
+    });
+
+    // The checked boundary refuses publication before this exact revision has
+    // its applicable evidence; the page names the missing checks it derived
+    // from the same revision read and offers the matching actions.
+    await page.getByRole("button", { name: "激活配置" }).click();
+    await expect(page.getByText(/发布前检查未满足/)).toBeVisible();
+    await expect(page.getByText(/尚未通过的发布前检查：/)).toBeVisible();
+    expect(activations).toEqual([{ expectedVersion: 1, checked: true }]);
+
+    const rows = checks.getByRole("listitem");
+    const sourceRow = rows.filter({ hasText: "Source（source-storage）" });
+    await expect(sourceRow.getByText("未运行", { exact: true })).toBeVisible();
+    await sourceRow.getByRole("button", { name: "运行检查" }).click();
+    await expect(sourceRow.getByText("已通过", { exact: true })).toBeVisible();
+    const targetRow = rows.filter({
+      hasText: "存储只读检查：Target（media-target）",
+    });
+    await targetRow.getByRole("button", { name: "运行检查" }).click();
+    await expect(targetRow.getByText("已通过", { exact: true })).toBeVisible();
+    const strategyRow = rows.filter({ hasText: "识别策略测试" });
+    await strategyRow.getByRole("button", { name: "运行检查" }).click();
+    await expect(
+      strategyRow.getByText("已通过", { exact: true }),
+    ).toBeVisible();
+    const destinationRow = rows.filter({ hasText: "目标预检" });
+    await expect(
+      destinationRow.getByText("未运行", { exact: true }),
+    ).toBeVisible();
+    await destinationRow.getByRole("button", { name: "运行检查" }).click();
+    await expect(
+      destinationRow.getByText("已通过", { exact: true }),
+    ).toBeVisible();
+    await expect(checks).toContainText("适用检查已全部通过");
+
+    await page.getByRole("button", { name: "激活配置" }).click();
+    await expect(page.getByText("配置已激活")).toBeVisible();
+    await expect(page.getByText("配置已生效")).toBeVisible();
+    expect(activations.at(-1)).toEqual({ expectedVersion: 1, checked: true });
+  });
+
   test("discarding one group keeps another group's unsaved input", async ({
     page,
   }) => {

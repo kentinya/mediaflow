@@ -115,9 +115,14 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
   fetchImpl: FetchLike = fetch,
+  // The exact-revision publish checks are POST commands that only record
+  // read-only evidence. A lost answer cannot change configuration or media, so
+  // it is reported as an unfinished check to rerun, never as an unknown
+  // configuration write that must be reconciled before any action.
+  readOnlyCheck = false,
 ): Promise<T> {
   const method = init.method ?? "GET";
-  const isMutation = method !== "GET" && method !== "HEAD";
+  const isMutation = method !== "GET" && method !== "HEAD" && !readOnlyCheck;
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
@@ -194,6 +199,25 @@ export const fetchRevision = (
     fetchImpl,
   );
 
+/**
+ * The bounded object/evidence projection of one exact revision.
+ *
+ * The snapshot detail read above carries the redacted document, while this
+ * projection carries the referenced objects and the recorded read-only check
+ * evidence. Both come from the same immutable revision.
+ */
+export const fetchRevisionObjects = (
+  token: string | null,
+  revisionId: string,
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/objects`,
+    {},
+    fetchImpl,
+  );
+
 export const fetchSystemSettings = (
   token: string | null,
   revisionId?: string,
@@ -260,3 +284,62 @@ export const exportConfigurationPackage = (
 
 export const fetchManagementReadiness = (token: string | null) =>
   request<Record<string, unknown>>(token, "/api/v1/management/readiness", {});
+
+/** Run one exact-revision, read-only Storage root check. */
+export const runStorageCheck = (
+  token: string | null,
+  revisionId: string,
+  input: {
+    readonly storageId: string;
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+  },
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/storage-check`,
+    { method: "POST", body: JSON.stringify(input) },
+    fetchImpl,
+    true,
+  );
+
+/** Run the offline Recognition Strategy Test for one exact revision. */
+export const runRecognitionStrategyTest = (
+  token: string | null,
+  revisionId: string,
+  input: {
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+    readonly resourceLibraryId: string;
+    readonly syntheticPath: string;
+  },
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/recognition-strategy-test`,
+    { method: "POST", body: JSON.stringify(input) },
+    fetchImpl,
+    true,
+  );
+
+/** Run the read-only destination precheck for one exact revision. */
+export const runDestinationPrecheck = (
+  token: string | null,
+  revisionId: string,
+  input: {
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+    readonly recognitionType: string;
+    readonly sample: Record<string, unknown>;
+  },
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/destination-precheck`,
+    { method: "POST", body: JSON.stringify(input) },
+    fetchImpl,
+    true,
+  );

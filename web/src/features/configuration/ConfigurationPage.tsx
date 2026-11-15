@@ -40,7 +40,11 @@ import {
   exportConfigurationPackage,
   fetchConfigurationStatus,
   fetchRevision,
+  fetchRevisionObjects,
   fetchSystemSettings,
+  runDestinationPrecheck,
+  runRecognitionStrategyTest,
+  runStorageCheck,
   saveSystemSettings,
   validateRevision,
   ConfigurationApiError,
@@ -66,6 +70,17 @@ import {
   writeRetainedSettingsSession,
   type RetainedSettingsSession,
 } from "./configuration-draft-session";
+import {
+  destinationFailureCopy,
+  destinationVerdictLabel,
+  readCheckEvidence,
+  readCheckObjects,
+  readPublishChecks,
+  storageFailureCopy,
+  type CheckObjects,
+  type PublishCheckItem,
+  type PublishCheckModel,
+} from "./configuration-checks";
 
 const QUERY_KEY = ["configuration-status"] as const;
 
@@ -167,6 +182,7 @@ const ACTION_FAILURE_TITLES: Readonly<Record<MutationAction, string>> = {
 export function configurationMutationFailure(
   error: unknown,
   action: MutationAction,
+  blockingChecks: readonly string[] = [],
 ): ConfigurationMutationFailureView {
   const title = ACTION_FAILURE_TITLES[action];
   if (error instanceof ConfigurationUnknownOutcomeError) {
@@ -217,13 +233,20 @@ export function configurationMutationFailure(
         // A stale activation version always carries currentVersion, so this
         // branch is the missing/invalid-evidence refusal and keeps both the
         // Draft and the previous Active untouched.
+        const guidance =
+          blockingChecks.length > 0
+            ? `尚未通过的发布前检查：${blockingChecks.join(
+                "、",
+              )}。请在上方“发布前检查”中运行或纠正这些检查，然后再次激活。`
+            : "请在上方“发布前检查”中运行该修订适用的只读 Storage 检查、识别策略测试和目标预检，然后再次激活。";
         return {
           title,
           message:
             "发布前检查未满足或该修订已不是可激活的精确版本，本次没有激活；草稿与当前生效配置保持不变。" +
-            (error.nextAction === null
-              ? "请完成该修订适用的只读 Storage 检查、识别策略测试和目标预检，再重新验证并激活。"
-              : `后端给出的具体缺项与下一步：${error.nextAction}`),
+            guidance +
+            (blockingChecks.length > 0 || error.nextAction === null
+              ? ""
+              : ` 后端给出的具体缺项与下一步：${error.nextAction}`),
           verifyRequired: false,
           currentVersion: null,
         };
@@ -427,6 +450,12 @@ interface RevisionView {
   readonly packageKind: string | null;
   readonly packageState: LoadState;
   readonly packageError: string | null;
+  /** The revision's own object projection, used to derive publish checks. */
+  readonly objects: Record<string, unknown> | null;
+  readonly checksState: LoadState;
+  readonly storageChecks: readonly Record<string, unknown>[];
+  readonly strategyTest: Record<string, unknown> | null;
+  readonly destinationPrecheck: Record<string, unknown> | null;
 }
 
 function emptyView(revisionId: string): RevisionView {
@@ -445,6 +474,11 @@ function emptyView(revisionId: string): RevisionView {
     packageKind: null,
     packageState: "idle",
     packageError: null,
+    objects: null,
+    checksState: "idle",
+    storageChecks: [],
+    strategyTest: null,
+    destinationPrecheck: null,
   };
 }
 
@@ -541,9 +575,10 @@ interface Notice {
 
 interface BusyState {
   readonly kind:
-    "create" | "save" | "validate" | "activate" | "export" | "verify";
+    "create" | "save" | "validate" | "activate" | "export" | "verify" | "check";
   readonly revisionId?: string;
   readonly groupId?: string;
+  readonly checkId?: string;
 }
 
 interface PendingWindowDecision {
@@ -706,6 +741,405 @@ function RuleReadinessPanel({
   );
 }
 
+interface CheckInputs {
+  readonly strategyLibraryId: string;
+  readonly syntheticPath: string;
+  readonly recognitionType: string;
+  readonly sampleTitle: string;
+  readonly sampleMediaType: "movie" | "tv";
+  readonly sampleYear: string;
+  readonly sampleGenres: string;
+  readonly sampleCountries: string;
+  readonly sampleExtension: string;
+}
+
+const DEFAULT_SYNTHETIC_PATH = "Example.Movie.2024.1080p.mkv";
+
+function defaultCheckInputs(objects: CheckObjects): CheckInputs {
+  const library = objects.resourceLibraries.find((item) => item.enabled);
+  const recognitionType = objects.recognitionTypes.find((item) => item.enabled);
+  return {
+    strategyLibraryId: library?.id ?? "",
+    syntheticPath: DEFAULT_SYNTHETIC_PATH,
+    recognitionType: recognitionType?.id ?? "",
+    sampleTitle: "The Matrix",
+    sampleMediaType: "movie",
+    sampleYear: "1999",
+    sampleGenres: "Action",
+    sampleCountries: "",
+    sampleExtension: "mkv",
+  };
+}
+
+function splitSampleList(value: string): readonly string[] {
+  return value
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
+
+function formatCheckTime(value: string | null): string | null {
+  if (value === null) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleString("zh-CN", { hour12: false });
+}
+
+/** Chinese, action-oriented result of one check that has just answered. */
+function checkResultNotice(
+  entry: PublishCheckItem,
+  result: Record<string, unknown>,
+  version: number,
+): Notice {
+  if (entry.kind === "storage") {
+    if (result.status === "passed") {
+      return {
+        tone: "success",
+        title: "存储检查通过",
+        text: `该存储的只读检查已通过（编辑版本 ${version}）。`,
+      };
+    }
+    const failure = storageFailureCopy(result.failureCategory);
+    return {
+      tone: "error",
+      title: "存储检查未通过",
+      text: `该存储的只读检查未通过：${failure.label}（编辑版本 ${version}）。${failure.nextAction}`,
+    };
+  }
+  if (entry.kind === "strategy") {
+    if (result.status === "completed") {
+      const recognition = asRecord(asRecord(result.result)?.recognition);
+      const recognitionStatus = text(recognition?.status, "");
+      const recognitionType = text(recognition?.recognitionType, "");
+      const caveat =
+        recognitionStatus === "unrecognized"
+          ? "识别结果为未识别，不会阻止 checked 激活，但请核对识别规则。"
+          : recognitionStatus === "ambiguous"
+            ? "匹配到多个识别类型，请核对规则优先级；这不阻止 checked 激活。"
+            : "";
+      return {
+        tone: "success",
+        title: "识别策略测试已完成",
+        text: `编辑版本 ${version} 的识别策略测试已完成${
+          recognitionType === "" ? "" : `（识别类型 ${recognitionType}）`
+        }。${caveat}`,
+      };
+    }
+    return {
+      tone: "error",
+      title: "识别策略测试未完成",
+      text: `编辑版本 ${version} 的识别策略测试未完成；请核对识别规则与所选资源库后重新运行。`,
+    };
+  }
+  const verdict = text(asRecord(result.result)?.verdict, "");
+  if (result.status === "completed" && verdict !== "capability_gap") {
+    return {
+      tone: "success",
+      title: "目标预检通过",
+      text: `编辑版本 ${version} 的目标预检已通过：${
+        destinationVerdictLabel(verdict) ?? "目标可推算"
+      }。`,
+    };
+  }
+  if (result.status === "completed") {
+    return {
+      tone: "error",
+      title: "目标预检未通过",
+      text: `目标存储缺少当前整理操作所需的全部能力（编辑版本 ${version}）；请更改整理操作或目标存储后重新运行预检。`,
+    };
+  }
+  const failure = destinationFailureCopy(result.failureCategory);
+  return {
+    tone: "error",
+    title: "目标预检未通过",
+    text: `${failure.label}（编辑版本 ${version}）。${failure.nextAction}`,
+  };
+}
+
+/**
+ * The exact-revision publish checks for one Draft.
+ *
+ * Every action binds the selected revision and its current version/digest; the
+ * panel never accepts a hand-copied revision, digest or authority token. A
+ * check that is not applicable in this Draft is absent rather than shown as a
+ * successful no-op, and a Storage referenced but missing stays a correction.
+ */
+function PublishChecksPanel({
+  model,
+  inputs,
+  validated,
+  checksState,
+  canRun,
+  busyId,
+  notice,
+  onChange,
+  onRun,
+}: {
+  readonly model: PublishCheckModel;
+  readonly inputs: CheckInputs;
+  readonly validated: boolean;
+  readonly checksState: LoadState;
+  readonly canRun: boolean;
+  readonly busyId: string | null;
+  readonly notice: Notice | null;
+  readonly onChange: (patch: Partial<CheckInputs>) => void;
+  readonly onRun: (entry: PublishCheckItem) => void;
+}) {
+  return (
+    <section className="mf-panel mf-settings-checks" aria-label="发布前检查">
+      <header className="mf-settings-checks-head">
+        <div>
+          <h3>发布前检查</h3>
+          <p className="mf-dashboard-meta">
+            这些检查只读取该草稿引用的存储、识别与目标配置，不修改配置或媒体，也不授予整理权限。
+          </p>
+        </div>
+        <span
+          className={`mf-settings-check-summary ${
+            model.satisfied
+              ? "mf-settings-check-summary-passed"
+              : "mf-settings-check-summary-pending"
+          }`}
+          role="status"
+        >
+          {checksState === "ready"
+            ? model.applicable === 0
+              ? "该草稿没有适用检查"
+              : model.satisfied
+                ? "适用检查已全部通过"
+                : `还有 ${model.blocking.length} 项未通过`
+            : checksState === "loading"
+              ? "正在读取检查证据"
+              : checksState === "error"
+                ? "检查证据读取失败"
+                : "等待读取检查证据"}
+        </span>
+      </header>
+      {notice !== null && (
+        <p
+          className={`mf-settings-check-notice is-${notice.tone}`}
+          role="status"
+        >
+          <strong>{notice.title}</strong> {notice.text}
+        </p>
+      )}
+      {checksState === "loading" || checksState === "idle" ? (
+        <p className="mf-settings-check-empty" role="status">
+          正在读取该草稿的存储、类型引用和检查证据…
+        </p>
+      ) : checksState === "error" ? (
+        <p className="mf-settings-check-empty" role="status">
+          本次没有读取到该草稿的检查证据；页面不会用上次结果判断当前检查状态。请重新读取该修订后再运行检查或激活。
+        </p>
+      ) : model.applicable === 0 ? (
+        <p className="mf-settings-check-empty">
+          该草稿没有被引用的启用存储，也没有启用的资源库或媒体库，因此 checked
+          激活不要求运行这些检查。
+        </p>
+      ) : (
+        <ul className="mf-settings-check-list">
+          {model.items.map((entry) => {
+            const busy = busyId === entry.id;
+            const strategyBlocked = entry.kind === "strategy" && !validated;
+            return (
+              <li
+                key={entry.id}
+                className={`mf-settings-check mf-settings-check-${entry.state}`}
+              >
+                <div className="mf-settings-check-row">
+                  <strong>{entry.title}</strong>
+                  <span className="mf-settings-check-state">
+                    {entry.stateLabel}
+                  </span>
+                </div>
+                <p className="mf-settings-check-detail">{entry.detail}</p>
+                {formatCheckTime(entry.checkedAt) !== null && (
+                  <p className="mf-dashboard-meta">
+                    上次检查：{formatCheckTime(entry.checkedAt)}
+                  </p>
+                )}
+                {entry.nextAction !== null && (
+                  <p className="mf-settings-check-next">{entry.nextAction}</p>
+                )}
+                {entry.kind === "strategy" && (
+                  <div className="mf-settings-check-inputs">
+                    <label>
+                      <span>测试用资源库</span>
+                      <select
+                        value={inputs.strategyLibraryId}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ strategyLibraryId: event.target.value })
+                        }
+                      >
+                        <option value="">请选择启用的资源库</option>
+                        {model.strategyLibraries.map((library) => (
+                          <option key={library.id} value={library.id}>
+                            {library.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>合成文件名</span>
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        value={inputs.syntheticPath}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ syntheticPath: event.target.value })
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+                {entry.kind === "destination" && (
+                  <div className="mf-settings-check-inputs">
+                    <label>
+                      <span>示例片名</span>
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        value={inputs.sampleTitle}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ sampleTitle: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>示例媒体类型</span>
+                      <select
+                        value={inputs.sampleMediaType}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({
+                            sampleMediaType:
+                              event.target.value === "tv" ? "tv" : "movie",
+                          })
+                        }
+                      >
+                        <option value="movie">电影</option>
+                        <option value="tv">剧集</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>示例年份</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        spellCheck={false}
+                        autoComplete="off"
+                        value={inputs.sampleYear}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ sampleYear: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>示例题材</span>
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder="动画, 动作"
+                        value={inputs.sampleGenres}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ sampleGenres: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>示例国家/地区</span>
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder="JP, US"
+                        value={inputs.sampleCountries}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ sampleCountries: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>示例扩展名</span>
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        value={inputs.sampleExtension}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ sampleExtension: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>示例识别类型</span>
+                      <select
+                        value={inputs.recognitionType}
+                        disabled={!canRun || busy}
+                        onChange={(event) =>
+                          onChange({ recognitionType: event.target.value })
+                        }
+                      >
+                        <option value="">请选择启用的识别类型</option>
+                        {model.recognitionTypeOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                <div className="mf-settings-check-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!canRun || busy || strategyBlocked}
+                    onClick={() => onRun(entry)}
+                  >
+                    {busy
+                      ? "检查中…"
+                      : entry.state === "missing"
+                        ? "运行检查"
+                        : "重新运行检查"}
+                  </Button>
+                  {strategyBlocked && (
+                    <span className="mf-dashboard-meta">
+                      先验证草稿，才能运行识别策略测试。
+                    </span>
+                  )}
+                </div>
+                {(entry.backendMessage !== null ||
+                  entry.backendNextAction !== null) && (
+                  <details className="mf-settings-check-diagnostics">
+                    <summary>后端原始说明（诊断）</summary>
+                    {entry.backendMessage !== null && (
+                      <p>{entry.backendMessage}</p>
+                    )}
+                    {entry.backendNextAction !== null && (
+                      <p>{entry.backendNextAction}</p>
+                    )}
+                  </details>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function ConfigurationPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
@@ -842,36 +1276,16 @@ export function ConfigurationPage() {
           detailState: "loading",
         },
       }));
-      try {
-        const detail = await fetchRevision(token, revisionId);
-        if ((epochRef.current[revisionId] ?? 0) !== epoch) return true;
-        const document = detail.document;
-        const json =
-          document !== null &&
-          document !== undefined &&
-          typeof document === "object"
-            ? JSON.stringify(document, null, 2)
-            : null;
-        updateViews((previous) => {
-          const current = previous[revisionId] ?? emptyView(revisionId);
-          return {
-            ...previous,
-            [revisionId]: {
-              ...current,
-              detailState: json === null ? "empty" : "ready",
-              json,
-              status: text(detail.status, current.status ?? ""),
-              revisionVersion:
-                numberValue(detail.revisionSequence) ??
-                numberValue(detail.version) ??
-                current.revisionVersion,
-              digest: text(detail.digest, current.digest ?? ""),
-            },
-          };
-        });
-        return true;
-      } catch {
-        if ((epochRef.current[revisionId] ?? 0) !== epoch) return true;
+      const [detailResult, objectsResult] = await Promise.allSettled([
+        fetchRevision(token, revisionId),
+        fetchRevisionObjects(token, revisionId),
+      ]);
+      if ((epochRef.current[revisionId] ?? 0) !== epoch) return true;
+      const detail =
+        detailResult.status === "fulfilled" ? detailResult.value : null;
+      const objectsProjection =
+        objectsResult.status === "fulfilled" ? objectsResult.value : null;
+      if (detail === null) {
         updateViews((previous) => {
           const current = previous[revisionId] ?? emptyView(revisionId);
           return {
@@ -879,12 +1293,47 @@ export function ConfigurationPage() {
             [revisionId]: {
               ...current,
               detailState: "error",
+              checksState: "error",
               json: null,
             },
           };
         });
         return false;
       }
+      const document = detail.document;
+      const json =
+        document !== null &&
+        document !== undefined &&
+        typeof document === "object"
+          ? JSON.stringify(document, null, 2)
+          : null;
+      updateViews((previous) => {
+        const current = previous[revisionId] ?? emptyView(revisionId);
+        return {
+          ...previous,
+          [revisionId]: {
+            ...current,
+            detailState: json === null ? "empty" : "ready",
+            json,
+            status: text(detail.status, current.status ?? ""),
+            revisionVersion:
+              numberValue(detail.revisionSequence) ??
+              numberValue(detail.version) ??
+              current.revisionVersion,
+            digest: text(detail.digest, current.digest ?? ""),
+            draftVersion: numberValue(detail.version) ?? current.draftVersion,
+            ...(objectsProjection === null
+              ? { checksState: "error" as const }
+              : {
+                  checksState: "ready" as const,
+                  objects:
+                    asRecord(objectsProjection.objects) ?? current.objects,
+                  ...readCheckEvidence(objectsProjection),
+                }),
+          },
+        };
+      });
+      return true;
     },
     [token, updateViews],
   );
@@ -899,20 +1348,25 @@ export function ConfigurationPage() {
           [revisionId]: {
             ...current,
             detailState: "loading",
+            checksState: "loading",
             settingsState: "loading",
             readError: null,
           },
         };
       });
-      const [detailResult, settingsResult] = await Promise.allSettled([
-        fetchRevision(token, revisionId),
-        fetchSystemSettings(token, revisionId),
-      ]);
+      const [detailResult, settingsResult, objectsResult] =
+        await Promise.allSettled([
+          fetchRevision(token, revisionId),
+          fetchSystemSettings(token, revisionId),
+          fetchRevisionObjects(token, revisionId),
+        ]);
       if ((epochRef.current[revisionId] ?? 0) !== epoch) return true;
       const detail =
         detailResult.status === "fulfilled" ? detailResult.value : null;
       const settings =
         settingsResult.status === "fulfilled" ? settingsResult.value : null;
+      const objectsProjection =
+        objectsResult.status === "fulfilled" ? objectsResult.value : null;
       const document = detail?.document;
       const json =
         document !== null &&
@@ -958,6 +1412,14 @@ export function ConfigurationPage() {
               settingsDigest !== ""
                 ? settingsDigest
                 : text(detail?.digest, current.digest ?? ""),
+            ...(objectsProjection === null
+              ? { checksState: "error" as const }
+              : {
+                  checksState: "ready" as const,
+                  objects:
+                    asRecord(objectsProjection.objects) ?? current.objects,
+                  ...readCheckEvidence(objectsProjection),
+                }),
             readError: settingsOk
               ? detail === null
                 ? DETAIL_READ_FAILURE
@@ -1079,6 +1541,288 @@ export function ConfigurationPage() {
   const canActivate =
     validatedVersion !== null && model.canActivate && canWrite;
 
+  // Publish checks bind the selected Draft's exact version and digest. Their
+  // applicability comes from the same revision read that rendered the page;
+  // the backend remains the sole authority on checked activation.
+  const [checkInputs, setCheckInputs] = useState<Record<string, CheckInputs>>(
+    {},
+  );
+  const [checkNotice, setCheckNotice] = useState<{
+    readonly revisionId: string;
+    readonly notice: Notice;
+  } | null>(null);
+  const checkObjects = useMemo(
+    () => readCheckObjects(selectedView?.objects ?? null),
+    [selectedView?.objects],
+  );
+  const checkModel = useMemo(
+    () =>
+      readPublishChecks(checkObjects, {
+        storageChecks: selectedView?.storageChecks ?? [],
+        strategyTest: selectedView?.strategyTest ?? null,
+        destinationPrecheck: selectedView?.destinationPrecheck ?? null,
+      }),
+    [
+      checkObjects,
+      selectedView?.destinationPrecheck,
+      selectedView?.storageChecks,
+      selectedView?.strategyTest,
+    ],
+  );
+  const checkInputsForSelection =
+    selectionId === null
+      ? null
+      : (checkInputs[selectionId] ?? defaultCheckInputs(checkObjects));
+  const updateCheckInputs = (patch: Partial<CheckInputs>) => {
+    if (selectionId === null) return;
+    setCheckInputs((previous) => ({
+      ...previous,
+      [selectionId]: {
+        ...(previous[selectionId] ?? defaultCheckInputs(checkObjects)),
+        ...patch,
+      },
+    }));
+  };
+  const checkTarget = (): {
+    readonly revisionId: string;
+    readonly version: number;
+    readonly digest: string;
+  } | null => {
+    if (selectedView === null) return null;
+    const version = selectedView.draftVersion;
+    const digest = selectedView.digest;
+    if (version === null || digest === null || digest === "") return null;
+    return {
+      revisionId: selectedView.revisionId,
+      version,
+      digest,
+    };
+  };
+  const canRunChecks =
+    showManage &&
+    !awaitingVerification &&
+    busy === null &&
+    selectedView !== null &&
+    selectedView.settingsState === "ready" &&
+    selectedView.checksState === "ready" &&
+    selectedView.detailState !== "error" &&
+    checkTarget() !== null;
+
+  const runCheckFailure = (error: unknown): Notice => {
+    if (error instanceof ConfigurationConflictError) {
+      const current = numberValue(error.details?.currentVersion);
+      return {
+        tone: "error",
+        title: "检查未执行",
+        text: `该编辑版本已变化${
+          current === null ? "" : `（当前编辑版本 ${current}）`
+        }；本次检查没有执行，也没有改变配置或媒体。请核对重新读取的结果后再次运行检查。`,
+      };
+    }
+    if (error instanceof ConfigurationApiError) {
+      if (error.category === "unauthorized") {
+        return {
+          tone: "error",
+          title: "检查未执行",
+          text: "登录状态已失效；请重新连接后再次运行检查。",
+        };
+      }
+      if (error.category === "forbidden") {
+        return {
+          tone: "error",
+          title: "检查未执行",
+          text: "当前账号没有运行该检查的权限；配置与媒体没有被改变。",
+        };
+      }
+      if (error.category === "unavailable") {
+        return {
+          tone: "error",
+          title: "检查未完成",
+          text: "检查服务暂不可用，本次没有取得结果；配置与媒体没有被改变。请稍后重新运行检查。",
+        };
+      }
+      if (error.category === "malformed") {
+        return {
+          tone: "error",
+          title: "检查结果无法识别",
+          text: "后端返回的结果不符合检查证据格式；请重新读取该修订后再次运行检查。",
+        };
+      }
+      return {
+        tone: "error",
+        title: "检查未执行",
+        text:
+          "后端拒绝了本次检查请求；配置与媒体没有被改变。请核对示例与所选对象后重试。" +
+          (error.nextAction === null ? "" : `后端说明：${error.nextAction}`),
+      };
+    }
+    return {
+      tone: "error",
+      title: "检查未完成",
+      text: "没有收到可确认的检查结果；配置与媒体没有被改变，请重新运行检查。",
+    };
+  };
+
+  const buildDestinationSample = (
+    inputs: CheckInputs,
+  ):
+    | { readonly sample: Record<string, unknown> }
+    | { readonly error: string } => {
+    const title = inputs.sampleTitle.trim();
+    if (title === "") return { error: "请输入用于预检的示例片名。" };
+    const extension = inputs.sampleExtension.trim();
+    if (!/^[A-Za-z0-9]{1,16}$/.test(extension)) {
+      return { error: "示例扩展名只能包含字母或数字。" };
+    }
+    const sample: Record<string, unknown> = {
+      title,
+      mediaType: inputs.sampleMediaType,
+      extension,
+    };
+    const year = inputs.sampleYear.trim();
+    if (year !== "") {
+      if (!/^\d{4}$/.test(year)) {
+        return { error: "示例年份需为四位数字，或留空表示不带年份。" };
+      }
+      sample.year = Number(year);
+    }
+    const genres = splitSampleList(inputs.sampleGenres);
+    if (genres.some((value) => value.length > 64)) {
+      return { error: "示例题材标签过长，请使用更短的标签。" };
+    }
+    if (genres.length > 0) sample.genres = genres;
+    const countries = splitSampleList(inputs.sampleCountries);
+    if (countries.some((value) => value.length > 64)) {
+      return { error: "示例国家/地区代码过长，请使用更短的值。" };
+    }
+    if (countries.length > 0) sample.countries = countries;
+    return { sample };
+  };
+
+  const runPublishCheck = async (entry: PublishCheckItem) => {
+    if (!canRunChecks || selectedView === null) return;
+    const target = checkTarget();
+    if (target === null) {
+      setCheckNotice({
+        revisionId: selectedView.revisionId,
+        notice: {
+          tone: "error",
+          title: "检查未执行",
+          text: "尚未读取到该草稿的精确版本与摘要；请重新读取该修订后再运行检查。",
+        },
+      });
+      return;
+    }
+    const inputs =
+      checkInputs[target.revisionId] ?? defaultCheckInputs(checkObjects);
+    let strategyInput: {
+      readonly resourceLibraryId: string;
+      readonly syntheticPath: string;
+    } | null = null;
+    let destinationInput: {
+      readonly recognitionType: string;
+      readonly sample: Record<string, unknown>;
+    } | null = null;
+    if (entry.kind === "storage" && entry.storageId === null) return;
+    if (entry.kind === "strategy") {
+      const libraryId = inputs.strategyLibraryId.trim();
+      const syntheticPath = inputs.syntheticPath.trim();
+      if (libraryId === "" || syntheticPath === "") {
+        setCheckNotice({
+          revisionId: target.revisionId,
+          notice: {
+            tone: "error",
+            title: "检查未执行",
+            text: "请选择启用的测试资源库并填写合成文件名后再运行识别策略测试。",
+          },
+        });
+        return;
+      }
+      strategyInput = { resourceLibraryId: libraryId, syntheticPath };
+    }
+    if (entry.kind === "destination") {
+      const recognitionType = inputs.recognitionType.trim();
+      if (recognitionType === "") {
+        setCheckNotice({
+          revisionId: target.revisionId,
+          notice: {
+            tone: "error",
+            title: "检查未执行",
+            text: "请选择启用的识别类型后再运行目标预检。",
+          },
+        });
+        return;
+      }
+      const built = buildDestinationSample(inputs);
+      if ("error" in built) {
+        setCheckNotice({
+          revisionId: target.revisionId,
+          notice: {
+            tone: "error",
+            title: "检查未执行",
+            text: `${built.error}系统没有发送改写后的示例。`,
+          },
+        });
+        return;
+      }
+      destinationInput = { recognitionType, sample: built.sample };
+    }
+
+    setBusy({
+      kind: "check",
+      revisionId: target.revisionId,
+      checkId: entry.id,
+    });
+    setCheckNotice(null);
+    setNotice(null);
+    setReadNotice(null);
+    try {
+      const result =
+        entry.kind === "storage"
+          ? await runStorageCheck(token, target.revisionId, {
+              storageId: entry.storageId ?? "",
+              expectedVersion: target.version,
+              expectedDigest: target.digest,
+            })
+          : entry.kind === "strategy"
+            ? await runRecognitionStrategyTest(token, target.revisionId, {
+                expectedVersion: target.version,
+                expectedDigest: target.digest,
+                resourceLibraryId: strategyInput?.resourceLibraryId ?? "",
+                syntheticPath: strategyInput?.syntheticPath ?? "",
+              })
+            : await runDestinationPrecheck(token, target.revisionId, {
+                expectedVersion: target.version,
+                expectedDigest: target.digest,
+                recognitionType: destinationInput?.recognitionType ?? "",
+                sample: destinationInput?.sample ?? {},
+              });
+      const refreshed = await loadDetail(target.revisionId);
+      setCheckNotice({
+        revisionId: target.revisionId,
+        notice: checkResultNotice(entry, result, target.version),
+      });
+      if (!refreshed) {
+        setReadNotice(
+          "本次检查结果已返回，但随后读取该修订失败；请重新读取后再判断是否满足激活条件。",
+        );
+      }
+    } catch (error) {
+      const notice = runCheckFailure(error);
+      // A stale revision or a refusal still needs an honest current read; a
+      // failed read keeps the previous evidence visibly unconfirmed.
+      const refreshed = await loadDetail(target.revisionId);
+      setCheckNotice({ revisionId: target.revisionId, notice });
+      if (!refreshed) {
+        setReadNotice(
+          "检查没有取得可确认的结果，且随后读取该修订失败；页面保留上次读取的检查证据，请重新读取后再判断。",
+        );
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   // Leaving with unsaved input or an in-flight command is one explicit
   // decision. The route blocker covers in-app links and browser Back; the
   // beforeunload handler covers closing/reloading the tab.
@@ -1146,8 +1890,12 @@ export function ConfigurationPage() {
     selectedEditVersion,
   ]);
 
-  const writeFailure = (error: unknown, action: MutationAction) => {
-    const failure = configurationMutationFailure(error, action);
+  const writeFailure = (
+    error: unknown,
+    action: MutationAction,
+    blockingChecks: readonly string[] = [],
+  ) => {
+    const failure = configurationMutationFailure(error, action, blockingChecks);
     setNotice({
       tone: "error",
       title: failure.title,
@@ -1159,6 +1907,7 @@ export function ConfigurationPage() {
 
   const selectRevision = (revisionId: string | null) => {
     if (busy !== null) return;
+    setCheckNotice(null);
     setSelectionId(revisionId);
     setInspectorTab("json");
     setReadNotice(null);
@@ -1308,6 +2057,7 @@ export function ConfigurationPage() {
     setBusy({ kind: "save", revisionId: selectionId, groupId: group.id });
     setNotice(null);
     setReadNotice(null);
+    setCheckNotice(null);
     setFieldErrors((previous) => ({ ...previous, [group.id]: {} }));
     try {
       const updated = await saveSystemSettings(token, body);
@@ -1414,6 +2164,7 @@ export function ConfigurationPage() {
     setBusy({ kind: "validate", revisionId: selectedView.revisionId });
     setNotice(null);
     setReadNotice(null);
+    setCheckNotice(null);
     try {
       const result = await validateRevision(token, selectedView.revisionId);
       const revisionId = text(result.revisionId, selectedView.revisionId);
@@ -1428,6 +2179,7 @@ export function ConfigurationPage() {
         return;
       }
       bumpEpoch(revisionId);
+      const digest = text(result.digest, "");
       updateViews((previous) => {
         const current = previous[revisionId] ?? emptyView(revisionId);
         return {
@@ -1437,6 +2189,7 @@ export function ConfigurationPage() {
             status: "validated",
             revisionVersion: version,
             draftVersion: version,
+            digest: digest === "" ? current.digest : digest,
           },
         };
       });
@@ -1457,6 +2210,10 @@ export function ConfigurationPage() {
           dirty ? "当前未保存输入不会随本次验证提交。" : ""
         }`,
       });
+      // Validation rotates the exact revision version this page binds, so the
+      // publish checks must re-read their evidence instead of showing the
+      // predecessor's version as current.
+      void loadDetail(revisionId);
       void client.invalidateQueries({ queryKey: QUERY_KEY });
       void query.refetch();
     } catch (error) {
@@ -1516,7 +2273,13 @@ export function ConfigurationPage() {
         );
       }
     } catch (error) {
-      writeFailure(error, "activate");
+      const failure = writeFailure(error, "activate", checkModel.blocking);
+      if (failure.currentVersion === null) {
+        // A checked-activation refusal is about this exact revision's
+        // evidence; refresh that read so the checks panel states the current
+        // truth rather than a stale local guess.
+        void loadDetail(selectedView.revisionId);
+      }
       void client.invalidateQueries({ queryKey: QUERY_KEY });
     } finally {
       setBusy(null);
@@ -1948,10 +2711,31 @@ export function ConfigurationPage() {
               )}
               {selectedView !== null && !selectionIsActive && (
                 <p className="mf-settings-group-note">
-                  激活只发布该已验证草稿的精确版本；后端会复核该修订适用的只读
-                  Storage
-                  检查、识别策略测试和目标预检，任一项未满足时都不会发布，草稿和当前生效配置保持不变。
+                  激活只发布该已验证草稿的精确版本；下方“发布前检查”读取同一修订，
+                  任一项未满足时后端不会发布，草稿和当前生效配置保持不变。
                 </p>
+              )}
+              {selectedView !== null && !selectionIsActive && showManage && (
+                <PublishChecksPanel
+                  model={checkModel}
+                  inputs={
+                    checkInputsForSelection ?? defaultCheckInputs(checkObjects)
+                  }
+                  validated={validatedVersion !== null}
+                  checksState={selectedView.checksState}
+                  canRun={canRunChecks}
+                  busyId={
+                    busy?.kind === "check" ? (busy.checkId ?? null) : null
+                  }
+                  notice={
+                    checkNotice !== null &&
+                    checkNotice.revisionId === selectedView.revisionId
+                      ? checkNotice.notice
+                      : null
+                  }
+                  onChange={updateCheckInputs}
+                  onRun={(entry) => void runPublishCheck(entry)}
+                />
               )}
               {selectedView === null ? (
                 <section className="mf-panel mf-settings-empty">

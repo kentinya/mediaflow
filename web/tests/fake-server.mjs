@@ -8035,10 +8035,75 @@ function settingsState(session) {
       saveFail: null,
       packageExported: 0,
       exportedValues: null,
+      // Publish-check fixture: only the explicit `mode=checked` session has
+      // storages/libraries and an evidence-gated checked activation.
+      objects: null,
+      requiresEvidence: false,
+      checks: {
+        storageChecks: [],
+        recognitionStrategyTest: null,
+        destinationPrecheck: null,
+      },
     };
     SETTINGS_STATES.set(key, state);
   }
   return state;
+}
+
+function settingsCheckRequirement(state) {
+  const objects = state.objects;
+  if (objects === null) return [];
+  const missing = [];
+  const storages = new Map(objects.storages.map((item) => [item.id, item]));
+  const referenced = [];
+  for (const library of [
+    ...objects.resourceLibraries,
+    ...objects.mediaLibraries,
+  ]) {
+    if (
+      typeof library.storageId === "string" &&
+      library.storageId !== "" &&
+      !referenced.includes(library.storageId)
+    ) {
+      referenced.push(library.storageId);
+    }
+  }
+  for (const storageId of referenced) {
+    const storage = storages.get(storageId);
+    if (storage !== undefined && storage.enabled === false) continue;
+    const evidence = state.checks.storageChecks.find(
+      (item) => item.storageId === storageId,
+    );
+    if (
+      evidence === undefined ||
+      evidence.status !== "passed" ||
+      evidence.stale === true
+    ) {
+      missing.push(`Storage check for '${storageId}'`);
+    }
+  }
+  if (objects.resourceLibraries.some((library) => library.enabled !== false)) {
+    const evidence = state.checks.recognitionStrategyTest;
+    if (
+      evidence === null ||
+      evidence.status !== "completed" ||
+      evidence.stale === true
+    ) {
+      missing.push("Recognition Strategy Test");
+    }
+  }
+  if (objects.mediaLibraries.some((library) => library.enabled !== false)) {
+    const evidence = state.checks.destinationPrecheck;
+    if (
+      evidence === null ||
+      evidence.status !== "completed" ||
+      evidence.stale === true ||
+      evidence.result?.verdict === "capability_gap"
+    ) {
+      missing.push("Destination precheck");
+    }
+  }
+  return missing;
 }
 
 function resetSettingsState(session, params) {
@@ -8058,7 +8123,67 @@ function resetSettingsState(session, params) {
     saveFail: params.get("saveFail") ?? null,
     packageExported: 0,
     exportedValues: null,
+    objects: null,
+    requiresEvidence: false,
+    checks: {
+      storageChecks: [],
+      recognitionStrategyTest: null,
+      destinationPrecheck: null,
+    },
   };
+  if (params.get("mode") === "checked") {
+    // The real public publish-check requirements: two referenced enabled
+    // Local Storages, one enabled ResourceLibrary and one enabled MediaLibrary.
+    state.objects = {
+      storages: [
+        { id: "source-storage", name: "Source", type: "local", enabled: true },
+        { id: "media-target", name: "Target", type: "local", enabled: true },
+      ],
+      resourceLibraries: [
+        {
+          id: "source",
+          name: "Source",
+          enabled: true,
+          storageId: "source-storage",
+        },
+      ],
+      mediaLibraries: [
+        {
+          id: "movies",
+          name: "Movies",
+          enabled: true,
+          storageId: "media-target",
+        },
+      ],
+      recognitionTypes: [{ id: "A", name: "Movies", enabled: true }],
+      recognitionTypePolicies: [
+        {
+          id: "type-a",
+          enabled: true,
+          recognitionType: "A",
+          namingPolicy: "naming",
+          classificationPolicy: "classification",
+          organizePolicy: "organize",
+        },
+      ],
+      namingPolicies: [{ id: "naming", enabled: true }],
+      organizePolicies: [{ id: "organize", enabled: true }],
+      classificationPolicies: [
+        {
+          id: "classification",
+          enabled: true,
+          rules: [
+            {
+              id: "movies",
+              conditions: { mediaType: ["movie"] },
+              result: { mediaLibraryId: "movies" },
+            },
+          ],
+        },
+      ],
+    };
+    state.requiresEvidence = true;
+  }
   if (params.get("mode") === "noActive") {
     state.active = null;
   }
@@ -17726,7 +17851,7 @@ const server = createServer(async (req, res) => {
     SETTINGS_STATES.has(session ?? "shared") &&
     (url.pathname === "/api/v1/system/settings" ||
       url.pathname === "/api/v1/configuration/packages/export/configuration" ||
-      /^\/api\/v1\/configuration\/revisions\/[^/]+(?:\/validate|\/activate)?$/.test(
+      /^\/api\/v1\/configuration\/revisions\/[^/]+(?:\/(?:validate|activate|objects|storage-check|recognition-strategy-test|destination-precheck))?$/.test(
         url.pathname,
       ))
   ) {
@@ -17745,7 +17870,7 @@ const server = createServer(async (req, res) => {
     }
 
     const revisionMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)$/,
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
     );
     if (revisionMatch && req.method === "GET") {
       if (state.failRead) {
@@ -17768,6 +17893,8 @@ const server = createServer(async (req, res) => {
               minimumLevel: state.values["operationalLogging.minimumLevel"],
             },
           },
+          objects: state.objects ?? undefined,
+          ...state.checks,
         });
         return;
       }
@@ -17782,6 +17909,8 @@ const server = createServer(async (req, res) => {
             locale: state.draft.values.locale,
             timezone: state.draft.values.timezone,
           },
+          objects: state.objects ?? undefined,
+          ...state.checks,
         });
         return;
       }
@@ -17986,6 +18115,151 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Exact-revision publish checks. They record read-only evidence only; the
+    // shapes match the real endpoints so the page binds version/digest itself.
+    const storageCheckMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/storage-check$/,
+    );
+    if (storageCheckMatch && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const draft = state.draft;
+      if (draft === null || draft.revisionId !== storageCheckMatch[1]) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      const body = parsed.document ?? {};
+      const storage = (state.objects?.storages ?? []).find(
+        (item) => item.id === body.storageId,
+      );
+      if (storage === undefined) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      if (body.expectedVersion !== draft.version) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            details: {
+              revisionId: draft.revisionId,
+              currentVersion: draft.version,
+              durableState: "draft_and_prior_active_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "reload the revision and rerun the Storage check",
+            },
+          },
+        });
+        return;
+      }
+      const evidence = {
+        revisionId: draft.revisionId,
+        revisionVersion: draft.version,
+        revisionDigest: `settings-draft-digest-${draft.version}`,
+        storageId: body.storageId,
+        storageType: storage.type,
+        status: "passed",
+        stale: false,
+        current: true,
+        checkedAt: MANUAL_RECORDED_AT,
+      };
+      state.checks.storageChecks = state.checks.storageChecks
+        .filter((item) => item.storageId !== body.storageId)
+        .concat([evidence]);
+      sendJson(res, 200, evidence);
+      return;
+    }
+
+    const strategyTestMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/recognition-strategy-test$/,
+    );
+    if (strategyTestMatch && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const draft = state.draft;
+      if (draft === null || draft.revisionId !== strategyTestMatch[1]) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      const body = parsed.document ?? {};
+      if (draft.status !== "validated") {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_conflict",
+            details: {
+              revisionId: draft.revisionId,
+              durableState: "draft_preserved",
+              nextAction:
+                "validate the exact Draft before running Strategy Test",
+            },
+          },
+        });
+        return;
+      }
+      const evidence = {
+        revisionId: draft.revisionId,
+        revisionVersion: draft.version,
+        revisionDigest: `settings-draft-digest-${draft.version}`,
+        resourceLibraryId: body.resourceLibraryId,
+        syntheticPath: body.syntheticPath,
+        status: "completed",
+        stale: false,
+        testedAt: MANUAL_RECORDED_AT,
+        result: { recognition: { status: "matched", recognitionType: "A" } },
+      };
+      state.checks.recognitionStrategyTest = evidence;
+      sendJson(res, 200, evidence);
+      return;
+    }
+
+    const destinationPrecheckMatch = url.pathname.match(
+      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/destination-precheck$/,
+    );
+    if (destinationPrecheckMatch && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const draft = state.draft;
+      if (draft === null || draft.revisionId !== destinationPrecheckMatch[1]) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      const body = parsed.document ?? {};
+      if (body.expectedVersion !== draft.version) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            details: {
+              revisionId: draft.revisionId,
+              currentVersion: draft.version,
+              durableState:
+                "current_draft_and_prior_destination_precheck_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "reload the revision and rerun destination precheck",
+            },
+          },
+        });
+        return;
+      }
+      const evidence = {
+        revisionId: draft.revisionId,
+        revisionVersion: draft.version,
+        revisionDigest: `settings-draft-digest-${draft.version}`,
+        recognitionType: body.recognitionType,
+        status: "completed",
+        stale: false,
+        precheckedAt: MANUAL_RECORDED_AT,
+        result: {
+          verdict: "ready",
+          mediaLibraryId: "movies",
+          destinationPath: "Movies/Example (2024)/Example (2024).mkv",
+        },
+      };
+      state.checks.destinationPrecheck = evidence;
+      sendJson(res, 200, evidence);
+      return;
+    }
+
     const activateMatch = url.pathname.match(
       /^\/api\/v1\/configuration\/revisions\/([^/]+)\/activate$/,
     );
@@ -18042,6 +18316,25 @@ const server = createServer(async (req, res) => {
           },
         });
         return;
+      }
+      if (state.requiresEvidence) {
+        const missing = settingsCheckRequirement(state);
+        if (missing.length > 0) {
+          sendJson(res, 409, {
+            error: {
+              code: "configuration_conflict",
+              message: "publish checks are required",
+              details: {
+                revisionId: draft.revisionId,
+                durableState: "draft_preserved",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction: `run ${missing.join("; ")} on this revision, then activate checked`,
+              },
+            },
+          });
+          return;
+        }
       }
       state.active = {
         revisionId: draft.revisionId,
@@ -18156,9 +18449,20 @@ const server = createServer(async (req, res) => {
     return;
   }
   const rulesSetupRevisionMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)$/,
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
   );
   if (rulesSetupRevisionMatch && req.method === "GET") {
+    const emptyCheckProjection = {
+      objects: {
+        storages: [],
+        resourceLibraries: [],
+        mediaLibraries: [],
+        recognitionTypes: [],
+      },
+      storageChecks: [],
+      recognitionStrategyTest: null,
+      destinationPrecheck: null,
+    };
     const state = rulesState(session);
     const revisionId = rulesSetupRevisionMatch[1];
     const draft = state.setupDraft;
@@ -18166,6 +18470,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, {
         ...rulesSetupRevisionSummary(state),
         document: {},
+        ...emptyCheckProjection,
       });
       return;
     }
@@ -18177,6 +18482,7 @@ const server = createServer(async (req, res) => {
         version: state.published.version,
         status: "validated",
         document: {},
+        ...emptyCheckProjection,
       });
       return;
     }
@@ -18191,6 +18497,7 @@ const server = createServer(async (req, res) => {
         status: "active",
         digest: active.digest,
         document: {},
+        ...emptyCheckProjection,
       });
       return;
     }
