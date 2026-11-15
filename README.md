@@ -122,6 +122,16 @@ check of published Active. Save publishes the exact checked successor and return
 unknown publication keeps its original request for explicit verification without automatic replay.
 Settings retains configuration diagnostics/recovery.
 
+The [System Settings page](docs/configuration.md#system-settings-web) starts with compact state and
+the three runtime fields. Advanced settings use typed groups with separate Draft Save, validation,
+read-only publish checks and explicit checked activation. Exact Active JSON is the default view;
+rule counts and technical identities remain in diagnostics.
+
+The [Notifications workspace](docs/product-experience.md#notification-definitions-and-deliveries)
+uses readable Chinese state and centered definition/delivery cards. Draft Save, exact saved-version
+checks and explicit publication remain distinct; failed or unknown commands retain input and offer
+the appropriate read/reconciliation action without automatic replay.
+
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
 `新建自动化任务` and a row's `编辑` open the same Chinese card for source, schedule, limit and

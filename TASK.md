@@ -27,8 +27,8 @@ B 独立审查完整 Base..交接 Head。最终 Node E2E **286 项通过**；原
 1635 项、真实 Python 设置 18 项、首次设置／返回、三视口视觉／键盘，以及质量、示例、
 构建、wheel 和源目录外安装结果。Docker 镜像／线上部署未执行；本次未改相关边界。
 
-完整规划、开发指导、历次 FIX、最终逐项验收、命令与限制保留于本地 Git
-`8c09f276409be2cf969ccd8d037bf083312c2d32:TASK.md` 的 `PATCH-20261115-1 — B PASS`。
+完整规划、开发指导、历次 FIX、最终逐项验收、命令与限制见
+[固定 B 验收](https://github.com/kentinya/mediaflow/blob/8c09f276409be2cf969ccd8d037bf083312c2d32/TASK.md#patch-20261115-1--b-pass)。
 原始失败、截图、trace、资产／wheel digest 和复用身份在本机忽略目录
 `.git/validation-evidence/patch-20261115-1/b-round3/` 与 `b-round4/`，未上传远程 CI。
 当前操作说明见 [System Settings Web](docs/configuration.md#system-settings-web)。
@@ -36,8 +36,8 @@ B 独立审查完整 Base..交接 Head。最终 Node E2E **286 项通过**；原
 依 [Development Workflow](docs/development-workflow.md) §3.1 恢复本指针，详细历史留于 Git。
 SLICE54 保持原 PASS / CLOSED，SLICE／Roadmap／Progress 及其接受身份未变。
 收尾仅同步操作说明与本指针；文档消费者 8 项、治理和 whitespace 检查通过。
-本轮测试／质量命令累计约 221 秒，复核超过 7 分 40 秒，测试时间低于 50%。
-未推送、发布或部署。
+接受轮测试／质量命令累计约 221 秒，复核超过 7 分 40 秒，测试时间低于 50%。
+上述结果为开发验收，未发布或部署；后续文档治理和 Git 推送不改变接受身份。
 
 ## Previous accepted corrections
 

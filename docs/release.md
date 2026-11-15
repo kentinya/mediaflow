@@ -43,6 +43,28 @@ recorded. No test assertion, timeout or retry setting was weakened. Raw evidence
 applicable to this Rules frontend change; no production external-service validation or V2 release
 is claimed. Later documentation-only reconciliation changes no executable validation inputs.
 
+The following standalone corrections passed independent B T4 acceptance on 2026-11-15. They
+preserve Slice54's original acceptance and do not constitute a V2 release.
+
+| Correction and fixed review | Exact reviewed range | Acceptance results |
+|---|---|---|
+| [Settings readability and typed editing](https://github.com/kentinya/mediaflow/blob/8c09f276409be2cf969ccd8d037bf083312c2d32/TASK.md#patch-20261115-1--b-pass) | Base `d5803682ac3e37cae6d46f3064c4cf252dc8aa30` → handoff `8ba01d676bb47ae37966e639265d87959afb8395` | Python 2692 total: 2685 passed, 7 existing skips; Web 103 files / 1635 passed; final Node E2E 286 passed; 18 real-Python settings journeys, first-setup/return, three-viewport visual/keyboard checks, quality/examples/build and wheel/outside-source installation passed. |
+| [Notification workspace readability and interaction](https://github.com/kentinya/mediaflow/blob/4134ea8f6be6ac2de920d25eda56d77fcf800526/TASK.md#patch-20261114-3--b-pass) | Base `51480dc318837e4f1e4f9c60c17b8e708abb6409` → handoff `6c4b9a5d390ffc5d1f54537966d4d9f99599a3ad` | Python 2692 total: 2685 passed, 7 existing skips; Web 100 files / 1601 passed; Node E2E 274 passed; real-Python/API/SQLite/Worker recovery, concurrency, lost responses, visual/keyboard and build/install checks passed. |
+
+Settings acceptance completed a real log-setting Draft → validation → applicable Storage,
+recognition and destination checks → corrected failed sample → checked activation entirely in the
+page. Its final test-only fix retained all Storage setup/return assertions. B reran the full Node
+suite and verified unchanged executable inputs and exact asset/wheel hashes before reusing its
+other results. Notification acceptance distinguished an actual committed recovery with a lost
+response from a real 409 refusal, with no automatic command replay.
+
+The fixed reports retain original failures, exact commands, artifact identities and evidence-reuse
+boundaries. Raw logs, traces and screenshots remain local, including
+`.git/validation-evidence/patch-20261115-1/b-round3/` and `b-round4/`, and are not GitHub downloads
+or remote-CI results. The seven existing external-service/endurance skips remain disclosed. Neither
+correction adds Docker-image or production-deployment validation; documentation reconciliation and
+Git push do not change those acceptance or release limits.
+
 The [Files toolbar/header correction](https://github.com/kentinya/mediaflow/blob/7ffe380669e50c46da15982a86e14e54228a38d8/TASK.md#patch-20261114-2--b-pass)
 passed independent B T3 review on 2026-11-14: Base
 `4107c299d8f99b817fcd3cbdffa274de1f5598ea`, implementation

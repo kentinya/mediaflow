@@ -582,11 +582,17 @@ are reconciled from durable identity before another explicit attempt; reads neve
 ## Configuration lifecycle
 
 - **Goal/entry:** change runtime behavior through Settings/Configuration or focused business forms.
+  `系统设置` starts with compact state and the three runtime fields; wider typed settings are grouped
+  in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
 - **State:** JSON_BOOTSTRAP versus MANAGED authority; Draft/Validated/Active/Superseded, exact version/
   digest, references, validation/current evidence and capability readiness. Unsaved input is not Active.
 - **Action:** explicitly create/resume a Draft or successor, edit typed objects, inspect impact,
   validate/test and checked-activate. Advanced whole-document JSON/import/export is a labelled support
   path; imports create inactive Drafts. Business-page Save bundles shared validation and activation.
+  Advanced settings save only the selected group's changes to the intended Draft/successor; other
+  groups' unsaved input stays available. Validate that Draft, complete its applicable read-only
+  publish checks in the same page, correct failed checks and explicitly activate the exact version.
+  The three runtime fields keep their focused one-Save publication. See the [page guide](configuration.md#system-settings-web).
 - **Success:** one immutable candidate becomes runtime Active atomically; old work keeps its pin.
   Publication starts no media Task, scheduled occurrence, notification or Storage mutation.
 - **Failure/recovery:** stale/concurrent or invalid reference/evidence/runtime, denied permission or
