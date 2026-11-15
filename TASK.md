@@ -1,6 +1,6 @@
 # Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: DEVELOPER STARTS TASK55.1 IMPLEMENTATION。
+Next Action: B REVIEWS TASK55.1 CANDIDATE。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -10,7 +10,7 @@ Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁�
 Task ID: 55.1
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Difficulty: High
 Test Level: T4
@@ -206,8 +206,77 @@ docker build -t mediaflow:slice55-task55.1 .
 
 ## Developer Completion Report
 
-待 Developer 实施。完成本 Task 和 affected tests，提交不可变检查点并交接
-READY FOR B REVIEW；报告变更、实际结果、剩余问题。Implementation Head 尚未产生。
+Developer 已完成 Task55.1 affected implementation 并交接 READY FOR B REVIEW。
+
+```text
+Implementation candidate: 87387e24
+Task Base: d62436be6f5848329a628356c13fdb28e760239a
+Reviewer: B
+```
+
+**变更**
+
+- 删除 `mediaflow/interfaces/operator_ui.py`、`tests/test_operator_ui.py`、V1 ASSETS 导入／
+  静态分派及 V1 专用 CSP 默认分支；`/ui`、`/ui/`、`/ui/app.js`、`/ui/style.css` 及其查询／
+  其他 method 现为普通 404。`/ui-v2/` 生产资产、固定 TMDB `img-src`、路径穿越／缺失资产
+  拒绝和 API RBAC 保持。
+- 删除 `/review`、旧 `/library`、`/library/files`、`/operations/tasks[/:id]`、
+  `/operations/jobs[/:id]`、`/operations/automation/new` 路由及 MigrationPage、
+  RetiredLibraryRoute、LegacyTaskRoutes、未再使用的 OrganizeNewPage；旧地址无别名、重定向、
+  说明壳或身份解析，按普通 not-found／认证边界处理。
+- 收敛 destination model／标题／Shell 判断／认证续转 allowlist：移除 `migration`、
+  `v1Path`、旧 Task/Job 分支和 `settings` tab token；`tab=settings` 与任意未知 tab 相同。
+  自动化 admitted “查看任务” 改到 `/operations?run=<Task>`，关联分析保留 `item` 与
+  `returnOps`，两种库引用纠正改到当前 `/rules`；当前 lifecycle、规则 Edit、
+  `/operations?run=`＋hosted-card、两种库和通知地址保持。
+- API 中 Automation `definitionSettings`／`supportedCommandPath` 的旧 definition 地址
+  改到当前 lifecycle 地址；Web fixture 同步。删除 Node 假服务 V1 `/ui` 分支，更新四个
+  Docker smoke 的 Web 探针为当前 V2 入口＋旧 `/ui` 404。
+- README／部署／配置说明同步当前唯一 `/ui-v2/` 入口、旧 `/ui` 普通 unknown 和当前静态
+  安全头描述；构建入口 title 去掉 migration 字样。
+
+**实际验证**
+
+- 治理：`.venv/bin/python scripts/check_governance.py` PASS；`git diff --check` PASS。
+- Python affected：`test_automation_task_definition`、`test_configuration_package_exchange`、
+  `test_configuration_snapshot`、`test_configuration_status`、
+  `test_configuration_successor_draft`、`test_guided_storage_lifecycle`、`test_management_setup`、
+  `test_notification_delivery_management`、`test_operational_logging`、`test_phase21_closure`、
+  `test_processing_checkpoint`、`test_runtime_files_browser`、`test_storage_browser`、
+  `test_storage_setup_check`、`test_system_settings_management`、`test_v2_ui`、
+  `test_webhook_management`、`test_webhook_url_security`、`test_release_security`：
+  **218 项通过**。`ruff format`／`ruff check` 对本轮修改 Python 文件通过；
+  `compileall -q mediaflow tests scripts` 通过。
+- Web unit：13 个受影响文件（router、AuthBoundary、destination-model、AppShell、
+  OperationsRouter、OperationsInventory、RunDetailTabs、AutomationSettingsPage、
+  AutomationRunOncePage、AutomationRouter、AutomationListRunOnce、MediaLibraryFilesPage、
+  MediaLibraryConfigDialogs）**280 项通过**；`npm run typecheck`、`npm run build` 通过；
+  修改文件 ESLint／Prettier 通过。
+- Browser：built 资产＋Node fake 的 `deep-link`／`operations` **42 项通过**，另
+  `automation`／`medialib-config`／`medialib-transfers`／`library-files` **86 项通过**；
+  真实 Python harness 的新增 `Task55.1` 原生用例 **2 项通过**（含 `/ui` 四路径 404、
+  `/review`／Library／Task／Job／旧 Automation／旧 Organize 直达＋reload＋back、当前库／
+  系统设置入口、`tab=settings` 未知 tab 行为）；action-readability 代表动作 **1 项通过**；
+  automation run-once 列表 admitted 跳转 **1 项通过**。
+- Packaging：清理生成的忽略 `build/` 后重建 wheel（`mediaflow-2.0.0.dev0-py3-none-any.whl`，
+  SHA-256 `db8089a3df20eb02846e29f6b7e6f39d78a4728edb0d5f8571a59304259e324a`），ZIP 内
+  不含 `operator_ui`；`scripts/wheel_smoke_test.py` 对精确 wheel **PASS**，schema 58、
+  migration required NO、restore/verify/upgrade preflight 通过。
+- 构建资产扫描未发现旧 `/ui/app.js`、`operator_ui` 或迁移页文案。
+
+**剩余风险／未执行**
+
+- 未运行 Docker build 及四服务 smoke／restart／release-security／upgrade-recovery；四个脚本
+  已按本 Task Web 范围更新，但镜像和真实部署矩阵由 B 执行。
+- 未运行完整 Python／Web／E2E 回归、完整真实原生 spec 或全站视觉矩阵；B 按 T4 门禁执行。
+  AC-7 的 1536×1024 与 390×844 由 action-readability 自动覆盖，1280×600 矮窗口未单独人工
+  检查；旧地址的移动端 not-found 视觉也未单独人工检查。
+- 首次 wheel 构建发现本机未跟踪的 `build/lib` 仍残留已删除模块；删除该生成目录后重建才
+  得到干净 wheel。干净 checkout／CI 不包含该目录，B 应从干净候选或先清理生成目录构建。
+- `definitionSettings`／`supportedCommandPath` 的字符串改动只由 Web fixture 和完整构建消费；
+  Python 侧没有单独断言该 URL 字符串，B 可随自动化 journey 一并复核。
+- 未推送、未发布、未操作运行库或用户媒体。
+
 
 ## B Review Result
 
