@@ -1,6 +1,6 @@
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: B FIX REQUIRED；Developer 按本 Task 的两项阻塞和开发指导修正，交回 B 复核。
+Next Action: B 复核本轮修正；B-01/B-02 已修复并提交修正检查点。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
@@ -8,7 +8,8 @@ Next Action: B FIX REQUIRED；Developer 按本 Task 的两项阻塞和开发指�
 Test Level 及验收要求。激活检查点之后，Developer 已在
 `d90b91bab8171c28b634b75ff15556b9b2115a11` 提交实现、测试与交接报告。
 交接检查点为 `3186660167e82bf419051cdc8a072db4ed081604`；B 本轮独立复核决定
-FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。未推送、发布或部署。
+FIX REQUIRED，修正保留同一 Task ID/Base/Goal/Scope。Developer 已在
+`2ae26aec7f03b1bcce1fc2770837e26490bad80a` 提交两条阻塞的修正与回归。未推送、发布或部署。
 
 Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
 [Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
@@ -20,7 +21,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -213,7 +214,8 @@ Python/Node 并行时分开产物目录；保存候选 SHA、命令、结果／�
 
 Status: READY FOR B REVIEW
 Task Base: `d5803682ac3e37cae6d46f3064c4cf252dc8aa30`
-Implementation checkpoint: `d90b91bab8171c28b634b75ff15556b9b2115a11`
+Original implementation: `d90b91bab8171c28b634b75ff15556b9b2115a11`
+Fix implementation checkpoint: `2ae26aec7f03b1bcce1fc2770837e26490bad80a`
 Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 
 #### 实际变更
@@ -237,44 +239,63 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 - **按组保存与两种发布语义。** 每组保存只提交本组实际修改；从 Active 保存创建精确
   后继，从草稿保存绑定所选修订的当前编辑版本；其他组、其他打开草稿和未提交输入
   不被提交。三项运行参数继续使用原有 focused checked Save 一次发布。高级草稿保存
-  后仍须验证并显式激活；激活使用精确已验证版本，并在界面上明确普通显式激活只发布
-  该版本、不重跑或替代 Storage／规则对象检查证据。
+  后仍须验证并显式激活；激活恢复原 `checked: true` 边界，只发布精确已验证版本，
+  由后端重新核对适用 Storage 检查、识别策略测试和目标预检；拒绝时不发布并保留
+  草稿与旧 Active。
+- **按组放弃只影响本组。** “放弃本组修改”只把当前组字段恢复为编辑会话的比较值，
+  保留其他组输入、初始比较值和原编辑权威；切回其他组仍可准确保存其实际修改。
 - **失败、并发与输入保留。** 已知拒绝、旧 Active／草稿、未知写入、在途命令、迟到
-  响应和离开均有明确状态；未知写入先只读核实，不自动重发。保存期间仍可编辑其他
-  输入，迟到响应只确认已提交快照；未提交／在途输入保留为未保存。未保存输入或未知
-  写入按 principal 存入 sessionStorage，显式断开／身份切换由共享 cleaner 清除，重认证
-  或重载可恢复；不存凭据、令牌或发布授权。
+  响应和离开均有明确状态；未知写入先只读核实，不自动重发。checked 激活被发布前
+  检查拒绝时显示“发布前检查未满足”、后端返回的具体缺项／下一步，并保留精确草稿、
+  验证状态与旧 Active；不自动重发或改走兼容激活。保存期间仍可编辑其他输入，迟到
+  响应只确认已提交快照；未提交／在途输入保留为未保存。未保存输入或未知写入按
+  principal 存入 sessionStorage，显式断开／身份切换由共享 cleaner 清除，重认证或重载
+  可恢复；不存凭据、令牌或发布授权。
 - **验证与交接。** 更新设置页、自动化采用区、Rules 就绪和页面过渡的既有选择器与
   fake／真实 Python 测试；新增 typed form 模型、session 保留、Node 设置旅程及真实
-  Python 高级设置旅程。
+  Python 高级设置旅程。本轮新增双组放弃回归（Vitest + Node E2E）、checked 激活
+  blocker 回归和真实 Python“缺检查被拒→满足现有检查→checked 激活”旅程；fake 按
+  真实接口拒绝未 checked 的激活请求。
 
-#### 实际验证（最终候选）
+#### 实际验证（最终候选 `2ae26aec`）
 
-- 根目录：`python3 scripts/check_governance.py` PASS；`git diff --check` 通过。
+- 根目录：`python3 scripts/check_governance.py` PASS；`git diff --check` 通过；
+  `ruff format --check`／`ruff check` 覆盖改动的 `storage_settings_browser_proof.py` 通过。
 - Python 受影响单测：`test_system_settings_management.py` 24、`test_configuration_status.py` 6、
   `test_v2_settings_rule_readiness.py` 11、`test_automation_settings_management.py` 56、
   `test_configuration_package_exchange.py` 13，全部通过（110 项）。
 - Web 质量：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
-  通过；最终候选 affected Vitest 67 项通过（configuration + AutomationSettingsPage）。
+  通过；构建产物为 `index-EfCqwWlB.js`、`index-DsUx6wXB.css`。最终候选 affected Vitest
+  69 项通过（configuration + AutomationSettingsPage，4 文件）。
 - Node E2E（构建产物 + 隔离 fake）：`configuration-settings.spec.ts`
-  `rules-readiness.spec.ts` `page-transition.spec.ts` 共 33 项通过。
-- 真实 Python／API／SQLite：`automation-settings.python.spec.ts` 18 项通过，含新增
-  高级 typed Save→验证→激活、双浏览器同草稿并发、写成功后丢响应只读核对。
-- `scripts/storage_settings_browser_proof.py` PASS：首次空基线创建／恢复／验证／激活
-  返回 Storage，且无 token／sessionStorage 泄漏。
-- 本轮测试命令实际耗时约 10–12 分钟，约为本轮开发总时间的 12%，低于 30% 上限；
-  未运行全量 Python/Web/Node 门禁，T4 全量归 B。
+  `rules-readiness.spec.ts` `page-transition.spec.ts` 共 34 项通过（新增双组放弃旅程；
+  fake 拒绝未 checked 的激活，并断言激活请求体为 `{expectedVersion, checked:true}`）。
+- 真实 Python／API／SQLite：`automation-settings.python.spec.ts` 18 项通过，含更新后的
+  高级 typed Save→验证→缺检查被拒→为精确修订满足真实只读 Storage 检查／识别策略
+  测试／目标预检→页面 checked 激活成功；另含双浏览器同草稿并发、写成功后丢响应
+  只读核对。
+- `scripts/storage_settings_browser_proof.py` PASS：首次空基线创建／恢复／验证／
+  checked 激活返回 Storage（已断言激活请求 `checked:true`），且无 token／sessionStorage
+  泄漏。
+- 本轮测试及构建命令累计约 3–4 分钟，低于本轮开发总时间（约 30+ 分钟）的 30%；
+  其中一次真实 Python 用例失败是测试辅助读取了错误的 detail 字段，修正测试后全量
+  通过，无产品失败。未运行全量 Python/Web/Node 门禁，T4 全量归 B。
 
 #### 已知风险与限制
 
-- 高级草稿激活从原页面的 `checked: true` 改为验证后的普通显式激活
-  （`checked: false`），因为真实后端 checked 激活要求针对该精确修订的 Storage／规则
-  检查证据，而设置页不提供、也不应静默重跑这些证据；focused 三项运行设置仍保持
-  checked Save。界面已明确披露该边界；请 B 重点核对这一语义。
+- **产品缺口（交 B 判定）。** V2 设置页没有运行精确修订 Storage check／识别策略
+  测试／目标预检的界面；在带启用库的实例里，高级草稿会按原权威被 checked 激活
+  拒绝。页面已显示具体缺项和后端下一步并保留草稿／旧 Active；真实 Python 用例用
+  现有公开只读检查 API 为该精确修订满足检查后，页面 checked 激活成功。首次空基线
+  无适用检查，Web 可完成。本 Task 未新增检查执行 UI、endpoint/store 或降低检查；
+  是否另开独立 Task 补齐该缺口由 B 核对决定。
+- 被拒提示中的“具体缺项”沿用后端 bounded `nextAction`（英文、可能含 Storage ID），
+  以保持精确；请 B 核对这是否满足普通操作员可读性，或需另定中文映射。
 - 未保存输入／未知写入使用 principal-scoped sessionStorage 保留；需 B 核对
   401／403、同 principal 重认证、显式断开、身份切换和浏览器持久化泄漏。
-- Node fake 已按真实公开形状实现设置投影与草稿生命周期，但仍为隔离 harness；
-  T4 全量、真实视觉验收、完整 RBAC／并发矩阵和可能的既有失败由 B 独立执行。
+- Node fake 已按真实公开形状实现设置投影、草稿生命周期和 checked 拒绝，但不模拟
+  Storage／规则检查证据；真实发布证据来自真实 Python／API／SQLite 旅程。T4 全量、
+  真实视觉验收、完整 RBAC／并发矩阵和可能的既有失败由 B 独立执行。
 - 本轮未修改需求、架构、旅程、SLICE、Roadmap 或 Progress；未推送、发布或部署。
 
 ### B Review Result
