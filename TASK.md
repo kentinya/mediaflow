@@ -524,8 +524,9 @@ Reviewer: B — B55.1-02
   tests/e2e/operations-inventory.python.spec.ts
   tests/e2e/action-readability.python.spec.ts --grep
   'the Notifications page reads|a settled Task publishes|a disabled shared secondary action'`：
-  **3 passed（5.6s）**。首次定向运行因旧定位器仍指向已退役入口而失败，按实际当前入口
-  修正后得到上述最终结果；期间没有放宽 timeout、增加 retry 或跳过断言。
+  **3 passed（5.6s）**。首次定向运行仍暴露该用例内过期的当前界面定位（导出按钮
+  挂起文案与 Rules 抽屉 Save 选择器），按实际当前控件修正后得到上述最终结果；期间
+  没有放宽 timeout、增加 retry 或跳过断言。
 - 本轮定向测试及排查运行累计墙钟约 38 秒，低于本轮总耗时 30%。
 
 **剩余风险／未执行**
