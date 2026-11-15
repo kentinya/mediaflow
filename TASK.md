@@ -1,6 +1,10 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+本独立修复已由 B PASS；以下保留完整接受记录，随后压缩为固定检查点指针。
+
 # Task PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
 
-Next Action: B REVIEW；Developer 已更新 Storage 首次设置回归的可见状态定位，受影响用例与完整 Storage spec 通过，待 B 独立复核并补齐全量 Node E2E。
+Next Action: B FINISH；独立复核 PASS，全部授权验收满足；记录固定接受检查点后恢复无活动实施 Task，并最小同步设置页操作说明。
 
 用户先要求只读调查，随后要求“规划一个独立修复 Task”，规划草案提交于
 `9820cffa5dc4804634cc67ef96c3868aea75858e`。用户现明确“激活Task”，正式授权本 Task
@@ -26,7 +30,7 @@ Authority: 用户授权的现有设置页独立修复范围；生命周期、角
 Task ID: PATCH-20261115-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
 Difficulty: High
 Test Level: T4
@@ -132,30 +136,30 @@ Webhook 定义／投递记录的重复。仅修设置页过量展示，保留它
 
 ### Acceptance Criteria
 
-- [ ] 正常已配置进入时，主内容只有一个“系统设置”标题；紧凑状态后直接找到运行设置，
+- [x] 正常已配置进入时，主内容只有一个“系统设置”标题；紧凑状态后直接找到运行设置，
       无重复英文位置行、只读文件搜索、UUID 墙、规则七类清单或大面积正常采用卡片。
-- [ ] 标题／刷新／按钮／分组字段与现有页面协调；桌面 1440×900、窄屏 390×844、
+- [x] 标题／刷新／按钮／分组字段与现有页面协调；桌面 1440×900、窄屏 390×844、
       矮视口 1280×600 同视口改前改后截图及实际操作通过。长名称、长值、展开诊断和
       多条错误可读，无页面横向溢出、遮挡、突兀撑高／反复淡入；仅“不溢出”不算美观通过。
-- [ ] 高级字段完整、中文、分组、有类型与单位；所有现有允许值保留，boolean 两值正确
+- [x] 高级字段完整、中文、分组、有类型与单位；所有现有允许值保留，boolean 两值正确
       显示／往返；整数小数／空白／尾随字符／非有限值拒绝且不发送改写后的值。
-- [ ] 有 Active 默认查看其精确 JSON；草稿明确选择才打开，读取失败无旧对象冒充，
+- [x] 有 Active 默认查看其精确 JSON；草稿明确选择才打开，读取失败无旧对象冒充，
       JSON／配置包来源与种类清楚，脱敏和部署权威排除保持。
-- [ ] 三项运行设置一次保存只发布原三项实际修改；高级每组保存仅修改所选草稿／精确
+- [x] 三项运行设置一次保存只发布原三项实际修改；高级每组保存仅修改所选草稿／精确
       后继的本组改动，仍待验证和显式激活。无关设置、其他打开草稿和工作 pins 不变。
-- [ ] 已配置启用库的实例，修改日志保留天数后，仅用本页操作即可完成精确草稿的适用
+- [x] 已配置启用库的实例，修改日志保留天数后，仅用本页操作即可完成精确草稿的适用
       检查与 checked 激活；检查失败能在网页纠正／重查，保留草稿与旧生效配置。原生
       验收不得通过测试脚本直接调用检查 API，代替缺失的用户操作。
-- [ ] 空基线创建／恢复／验证／激活 Web 可完成；Viewer、缺权限、已有损坏 Active 和
+- [x] 空基线创建／恢复／验证／激活 Web 可完成；Viewer、缺权限、已有损坏 Active 和
       setup-required 返回保持准确；无后台隐式建草稿、媒体 Task、通知或 Storage 写入。
-- [ ] 发布目标与实际采用分别真实；正常整体结论、活实例 pending/override/missing、
+- [x] 发布目标与实际采用分别真实；正常整体结论、活实例 pending/override/missing、
       有界历史／不可用和热生效／需重启可辨。刷新／后续读取失败不抹掉已知成功。
-- [ ] 校验失败、401/403、409、持久化／运行时准备失败、请求前拒绝、实际写成功后丢
+- [x] 校验失败、401/403、409、持久化／运行时准备失败、请求前拒绝、实际写成功后丢
       响应均保留正确状态与输入；未知结果先只读核对，不把核对失败当允许重提。
       三项设置表单与其他管理员改动保持原冲突合并语义。
-- [ ] 切组／切修订／后台刷新／保存期间输入、迟到响应、返回／重认证不串内容、不丢
+- [x] 切组／切修订／后台刷新／保存期间输入、迟到响应、返回／重认证不串内容、不丢
       未提交输入、不重复写；未保存离开有明确决定，在途提交保护有效。
-- [ ] 诊断仍有精确版本、命令就绪、七类规则计数／缺口／混合快照及实例证据；来源规则
+- [x] 诊断仍有精确版本、命令就绪、七类规则计数／缺口／混合快照及实例证据；来源规则
       族、Storage 等合法返回准确且返回后读取实际权威。键盘、焦点、展开控件与
       reduced-motion 可用；规则／自动化／通知／两种库页面无共享样式或入口回归。
 
@@ -458,7 +462,7 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
 
 ---
 
-### B Review Result — round 3
+### Previous B Review Result — round 3
 
 ```text
 Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
@@ -579,6 +583,84 @@ Handoff checkpoint: 本 `TASK.md` 提交（仅文档；实现为上列 SHA）
   后者上一轮已通过且本轮无产品或 harness 变更。
 - 未修改 requirements、architecture、journey、SLICE、Roadmap 或 Progress；未推送、
   发布或部署。
+
+---
+
+## PATCH-20261115-1 — B PASS
+
+```text
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Decision: B PASS — 2026-11-15
+Reviewed Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+Reviewed Handoff Head: 8ba01d676bb47ae37966e639265d87959afb8395
+Final implementation / test Head: 5c40583f4b2e558b522ca11d1f87e4d798e1b073
+Product implementation Head: 6947b0f2f417aca68cf99c7634d288978386a0e2
+Authorized bug acceptance complete: YES
+Remaining blockers: NONE
+Next: FINISH STANDALONE TASK; NO NEW TASK
+```
+
+### Independent scope and final fix review
+
+B 复核完整固定 Base..交接 Head 的 21 文件改动，包含历次修正。main，起始工作区
+干净；治理和完整范围 whitespace PASS。最终交接提交只改 Task；相对上轮已审查
+`e2f7797b` 仅 Task 与一条 Storage E2E 用例变化，产品、后端、测试夹具、原生 harness、
+依赖清单／锁文件、构建与安装输入未变。资产与 wheel 的 SHA-256 全部与上轮匹配，
+证明见 `b-round4/reuse-identity.json`；具体资产身份见 `b-round3/build-identity.json`。
+
+B-01 固定 checked 激活、B-02 按组放弃、B-03 网页完成适用发布检查均保持修复。
+B-04 最终只替换已不存在的 heading／按钮定位，改为配置摘要中的当前可见语义。
+地址、返回、首次创建一次、只读导航、无伪造表格与原草稿恢复等原断言完整保留。
+B 独立运行原失败用例通过，再运行整个 Node E2E：286 项全部通过，无 skip／重试。
+原失败继续保留在 `b-round3/node-full.log`、错误上下文与 trace，未覆盖或删除。
+
+### All authorized outcomes reassessed
+
+| 授权结果 | B 的实际核对与证据 |
+|---|---|
+| 可读性、层级与去重 | 一个中文内容标题，紧凑状态后直接是三项运行参数；移除重复位置、搜索占位和规则清单，采用情况收敛；三视口前后截图人工检查通过 |
+| 样式、窄屏与交互 | 1440×900、390×844、1280×600 同视口对比，按钮／字段／分组协调；检查失败与诊断可读，无页面横向溢出；键盘与 reduced-motion 通过 |
+| 完整类型字段 | 六组保留后端允许字段及生效边界；boolean 真／假／未配置可辨，整数、小数、空白、尾随字符与非有限值由模型／页面／浏览器回归覆盖，不改写非法输入 |
+| 精确配置读取 | 有 Active 默认读取其 JSON；草稿明确选择，内容／来源与配置包分别标注；损坏或读取失败无旧对象冒充；部署身份与秘密排除保持 |
+| 两种发布语义 | 三项运行设置一次 focused checked Save；高级每组只保存本组 edits 到精确后继／所选草稿，保存不等于生效；双浏览器并发与原 pins 保持 |
+| 普通高级设置完整发布 | 真实 Python：日志保留天数修改→草稿→验证→三个存储检查→离线策略测试→目标预检失败→纠正示例重查→checked 激活，全程网页操作 |
+| 首次设置与返回 | 真实无 Active 实例从 Storage 进入，显式创建／恢复／验证／checked 激活并返回；空 Active 与健康 Active 区分，导航不创建媒体工作或 Storage 写入 |
+| 发布与实际采用 | 真实常驻服务采用、重启、override／pending／missing、共享容量和原 pins 通过；字段的即时／重启边界清楚，不用发布成功冒充进程采用 |
+| 失败与恢复 | 全量后端和 Web 覆盖 invalid、RBAC、冲突、持久化／运行时准备失败；真实写成功后丢响应只读核对且不自动重放，输入和正确耐久状态保留 |
+| 输入与上下文 | 切组、单组放弃、在途后输入、重认证／重载、迟到响应与离开决定由模型／页面／真实并发测试覆盖，不串身份／修订／组 |
+| 诊断与其他入口 | 精确版本、命令就绪、规则七族、混合快照和实例证据保留；Rules／Storage 返回与全部主页面回归通过，无共享样式／入口阻塞 |
+
+### Exact gates, evidence reuse and limits
+
+证据在本机稳定忽略目录 `.git/validation-evidence/patch-20261115-1/`；未上传远程 CI。
+依据 workflow §6，复用 B 自己对相同执行输入的结果，而非采用 Developer 的 PASS 标签。
+
+| 门禁 | 实际结果及身份 |
+|---|---|
+| 本轮原失败用例 | 1 passed，1.69 秒；`b-round4/storage-focused.log` |
+| 本轮完整 Node E2E | **286 passed**，209.94 秒，默认单 worker、无新增 retry／timeout；`b-round4/node-full.log` |
+| 本轮受影响质量 | ESLint／Prettier 单个变更 spec 及完整 typecheck PASS，8.75 秒；`b-round4/changed-test-quality.log` |
+| 完整 Python（复用） | 2692 项，2685 通过、7 项既有隔离外部／耐久测试跳过；`b-round3/python-full.log`；包含 resident、RBAC、pins、持久化和 C→A 身份回归 |
+| 完整 Web（复用） | 103 文件、1635 项通过；`b-round3/web-full.log`；其源、测试、配置与依赖未变 |
+| 真实 Python Web（复用） | 设置 18 项通过、另独立关键发布 1 项通过及 trace；`b-round3/native-full.log`、`native-checks.log`／`native-checks/` |
+| 真实首次设置（复用） | 创建／恢复／验证／checked 激活／Storage 返回、空 Active 与健康 Active、无隐式媒体操作及 token 不持久化通过；`b-round3/storage-native.log` |
+| 质量、示例、依赖（复用） | ruff format/check、compileall、pip check、两份示例、Web lint/format/typecheck、禁用依赖无匹配通过；本轮另检查变更 spec |
+| 构建、wheel、安装（复用） | build、wheel、源目录外安装与真实消费者 smoke 通过；资产 `index-BikKo9f0.js`／`index-Cvv7FA31.css` 和精确 wheel 均未变 |
+| 视觉与键盘（复用） | 三视口精确 Base／候选截图、失败／诊断、键盘 Enter、reduced-motion；`b-round3/visual-result.json` 和 PNG；本轮再次核对截图与资产身份 |
+
+7 项外部／耐久测试因专用隔离环境未配置跳过；不访问生产配置、媒体或外部服务。
+Docker 镜像和线上部署未执行；本 Task 未改容器、后端、schema、执行引擎或部署边界，
+不能把开发验收称作上线验证。wheel smoke 首次误填版本路径的原命令失败继续保留，
+随后精确 wheel smoke 通过；完整说明见上一轮记录。
+
+已知实现边界：发布检查适用性前端映射现有后端规则，后端仍是最终发布权威；策略
+检查为合成文件名离线测试，目标预检一次一个示例，示例输入不跨刷新保留。设置字段
+输入保留及已接受安全边界不变。这些不阻碍本次授权结果，不创建可选后续 Task。
+
+当前需求／架构／完整旅程与实现一致，不扩充或改写其契约。PASS 后只补设置操作说明，
+恢复根 Task 的无活动实施指针；SLICE54、Roadmap、Progress 及其接受身份保持。
+现有角色经验已覆盖本次可复用做法，无需新增过程工具或重复经验。未推送、发布或部署。
 
 ---
 
