@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: 2b2e7c1824fa5681864455714d0f97b26555c7dc
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVE — FIRST TASK PLANNING AUTHORIZED
+Development Authorization: TASK55.1 IMPLEMENTATION AUTHORIZED
 Risk: High
 Accepted Test Level: T4
-Next Action: USER AUTHORIZES TASK55.1 IMPLEMENTATION
+Next Action: DEVELOPER STARTS TASK55.1 IMPLEMENTATION
 ```
 
 ## Authority and baseline
@@ -21,6 +21,7 @@ Next Action: USER AUTHORIZES TASK55.1 IMPLEMENTATION
 本合同统一规划 V1 产品及早期 V2 迁移兼容的完整退出。用户现要求“激活Slice并代替B规划
 第一个Task”，据此激活本 Slice，并授权 A 代 B 规划首个 Task 及提交本地检查点。角色
 例外仅限首个 Task 规划；后续 Developer 实施、B 独立验收和 A 终审继续按工作流进行。
+用户随后要求“激活Task”，据此将已规划的 Task55.1 激活为正式实施 Task，按其原有范围执行。
 用户补充要求保留稳定 V2 的正式配置键／权限名及现有有效数据；本合同据此取消无关改名，
 将现有 V2 配置、合法任务、结果及原 pins 的继续使用列为必需结果。
 生命周期、测试分工及 Git 规则只以 [Development Workflow](docs/development-workflow.md) 为准。
@@ -279,6 +280,6 @@ Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
 ## Closure Packet and A Final Review
 
 尚未实施，Implementation Head NOT SET。Required Outcomes／最终测试／Closure Packet／
-A Final Review 均未完成；Status 为 ACTIVE。Task55.1 规划已完成，获实施授权后进入
-Developer 阶段。
+A Final Review 均未完成；Status 为 ACTIVE。Task55.1 已获实施授权，下一步由 Developer
+按正式 Task 实施。
 历史接受事实不被本规划替代；通过后再统一将 TARGET 协调为 CURRENT，不提前声明退役。

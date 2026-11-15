@@ -1,11 +1,6 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: USER AUTHORIZES TASK55.1 IMPLEMENTATION。
-
-Slice55 已激活。下方是用户授权 A 代 B 完成的首个 Task 规划草案；本次止于规划。
-实施获授权时，将本通知替换为正式 Task 标题／元数据，保留 Task ID、Base、目标和范围。
-
-## Task55.1 — 完整移除旧 Web 与迁移入口（PLANNING DRAFT）
+Next Action: DEVELOPER STARTS TASK55.1 IMPLEMENTATION。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -21,13 +16,18 @@ Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit user authorization, planning only
 Reviewer: B — independent implementation review pending
-Implementation Authorization: NOT YET AUTHORIZED
+Implementation Authorization: AUTHORIZED BY USER — TASK55.1 ONLY
 ```
 
 规划前治理 PASS；仓库 `/Users/songzhidong/mediaflow`，分支 main，上述 Task Base 为已提交
 ACTIVE 合同检查点，工作区干净、Git／文档可写；无前置脏文件。Slice Base 仍为
 `2b2e7c1824fa5681864455714d0f97b26555c7dc`，Implementation Head NOT SET。
 A 代 B 的角色例外仅适用于这次规划，后续审查按工作流执行。
+
+用户于 2026-11-15 要求“激活Task”，本 Task 据此成为正式实施 Task。激活前 HEAD 为
+`719004df2ef62d54b8a82f27434329ab14167ca8`，分支 main、工作区干净，治理检查 PASS。
+Task ID、Base、目标、范围、验收和测试分工沿用已提交规划；Status 为 PLANNED，
+Developer 开始实际实施时转为 IN PROGRESS。
 
 ## Goal
 
@@ -206,7 +206,7 @@ docker build -t mediaflow:slice55-task55.1 .
 
 ## Developer Completion Report
 
-待实施。获授权后仅实现本 Task，完成 affected tests，提交不可变检查点并交接
+待 Developer 实施。完成本 Task 和 affected tests，提交不可变检查点并交接
 READY FOR B REVIEW；报告变更、实际结果、剩余问题。Implementation Head 尚未产生。
 
 ## B Review Result

@@ -40,7 +40,7 @@ only in [the development workflow](development-workflow.md).
 | 52 — Explore, Navigation and Automation Entry Experience | Resolve the seven UX issues: coordinated whole-page Explore layout, complete scrollable detail and browsing without accumulating document length; smooth transitions, actual read feedback and content handoff across all nine main pages, including library refresh-message flashes; retire the old Automation Open/definition/editor Web journey while preserving current cards, commands and records | PASS / CLOSED | Accepted51/current baseline `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8`; independently accepted by A on 2026-11-08 through `f5409da41191c6e4bbf238bb7def601229fc59dc`; first-Task planning role exception retained, subsequent B review independent |
 | 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | PASS / CLOSED | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
 | 54 — Organizing Rules Dialogs and Readability | Seven Rules families use coordinated Add/Copy/Edit dialogs, readable settings and object-local tests; only Overview retains the complete-flow check, preserving exact checked publication and edit-link recovery | PASS / CLOSED | Accepted53 baseline `e43a40674eb14aa12615a440a348fe675cd50c4e`; independent A Final Review on 2026-11-11 through `aef044e51dc91655372bf5fe39c6116da976c3b4`; first-Task planning role exception retained |
-| 55 — Complete V1 and Migration Residue Retirement | Completely remove V1 UI/entrances and legacy V2 handoff, old schedules/tickets/grants/configuration/state/session formats, non-kernel organizing/recovery and schema migration machinery; ship one current native V2 contract without compatibility or hidden paths, preserving current journeys and safety | ACTIVE | Accepted54 and standalone corrections through `2b2e7c1824fa5681864455714d0f97b26555c7dc`; user authorized complete retirement and migration-residue investigation, then Slice activation and A-for-B first-Task planning on 2026-11-15; implementation awaits Task authorization |
+| 55 — Complete V1 and Migration Residue Retirement | Completely remove V1 UI/entrances and legacy V2 handoff, old schedules/tickets/grants/configuration/state/session formats, non-kernel organizing/recovery and schema migration machinery; ship one current native V2 contract without compatibility or hidden paths, preserving current journeys and safety | ACTIVE | Accepted54 and standalone corrections through `2b2e7c1824fa5681864455714d0f97b26555c7dc`; user authorized complete retirement and migration-residue investigation, then Slice activation, A-for-B first-Task planning and Task55.1 implementation on 2026-11-15 |
 
 ## Current boundary
 
@@ -50,10 +50,10 @@ Scope includes complete source/runtime/artifact retirement with no compatibility
 conversion, hidden flag or fallback, plus current native V2 regression. The user activated the Slice and authorized A to plan
 the first Task for B; TARGET requirements/journey/architecture do not claim delivered behavior.
 
-[TASK.md](../TASK.md) contains the planning-only Task55.1 draft, prepared by A for B under
-explicit user authorization. Next action: **USER AUTHORIZES TASK55.1 IMPLEMENTATION**. Slice54 remains PASS / CLOSED at its original Base/accepted Head;
+[TASK.md](../TASK.md) is the formal Task55.1, planned by A for B and activated under explicit
+user authorization. Next action: **DEVELOPER STARTS TASK55.1 IMPLEMENTATION**. Slice54 remains PASS / CLOSED at its original Base/accepted Head;
 its fixed closure and all earlier acceptance, original failures, role exceptions, evidence limits
-and deferrals remain in Progress/Git. Implementation awaits Task authorization; no push, release or deployment is authorized.
+and deferrals remain in Progress/Git. Product implementation follows Task55.1; push, release and deployment retain their existing authorization boundaries.
 
 ## Accepted boundary references
 

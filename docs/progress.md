@@ -9,10 +9,10 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 [Slice55](../SLICE.md) is **ACTIVE** after the user's 2026-11-15 complete V1/migration-residue
-retirement, activation and A-for-B first-Task planning authorization. Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`,
+retirement, Slice activation, A-for-B first-Task planning and Task55.1 implementation authorization. Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`,
 Implementation Head NOT SET; no product implementation or acceptance is claimed.
-[TASK.md](../TASK.md) contains the planning-only Task55.1 draft, prepared by A for B under
-explicit user authorization. Next action: **USER AUTHORIZES TASK55.1 IMPLEMENTATION**. This pointer adds no closure-ledger entry.
+[TASK.md](../TASK.md) is the formal Task55.1, planned by A for B and activated under explicit
+user authorization. Next action: **DEVELOPER STARTS TASK55.1 IMPLEMENTATION**. This pointer adds no closure-ledger entry.
 
 Latest accepted Slice remains54, independently closed on 2026-11-11 at original Base
 `e43a40674eb14aa12615a440a348fe675cd50c4e` through implementation
