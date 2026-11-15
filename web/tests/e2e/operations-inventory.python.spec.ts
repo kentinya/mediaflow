@@ -3283,7 +3283,10 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
   ).toBeVisible();
   await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=source$/,
+  );
+  await expect(page.getByText("路径: /", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "资源库操作 Unified media source" }),
   ).toBeVisible();
@@ -3312,7 +3315,10 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
   expect(writes).toEqual([]);
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=source$/,
+  );
+  await expect(page.getByText("路径: /", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "资源库操作 Unified media source" }),
   ).toBeVisible();
