@@ -1,6 +1,12 @@
-# Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
+# NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: B 在固定候选复核投递恢复响应丢失时显示“恢复结果未知”且与正文一致，明确拒绝仍显示“恢复没有应用”，随后继续本轮剩余 T4 验收。
+Next Action: 本独立修复已完成；不授权后续实施。
+
+以下为 PATCH-20261114-3 的固定完整验收记录。
+
+## Task PATCH-20261114-3 — 通知页可读性、统一卡片与操作状态修复
+
+Next Action: 本独立修复已由 B 验收 PASS；恢复无活动 Task 指针，不规划后续工作。
 
 用户于 2026-11-14 在规划检查点 `a3418bd7df4ed939943c6f73e8abe90db03a4d6c`
 后明确“激活Task”，本 Task 正式启用并授权实施。原 ID／Base／目标／范围／测试分工
@@ -15,7 +21,7 @@ Developer 实施；Slice54 及原接受边界、SLICE／Roadmap／Progress 保�
 Task ID: PATCH-20261114-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 51480dc318837e4f1e4f9c60c17b8e708abb6409
 Implementation Head: 07624ec95b948f211bd93ed77596ebdea7e9992f
 Evidence Head: 07624ec95b948f211bd93ed77596ebdea7e9992f
@@ -109,26 +115,26 @@ Base..规划检查点仅有 `TASK.md` 规划变更，没有独立产品变化；
 
 ### Acceptance Criteria
 
-- [ ] 六页的中文文案、标题／内容边界、状态、控件、按钮和信息密度与现有系统协调；
+- [x] 六页的中文文案、标题／内容边界、状态、控件、按钮和信息密度与现有系统协调；
   添加／查看／编辑及投递详情使用上述卡片，长地址与引用可读，事件、就绪和实际结果一眼可辨。
   技术诊断可查；实际失败、未知、已保存／已生效不因美化而混淆。
-- [ ] 桌面 1440×1000、390×844 和矮窗口 1440×700 的完整页面与卡片对照通过；
+- [x] 桌面 1440×1000、390×844 和矮窗口 1440×700 的完整页面与卡片对照通过；
   主动作和退出稳定可达，长文本／全部字段可操作；实际加载中间态、错误、重试读取、空态、
   正常／hover／focus／disabled／busy、键盘 Tab／Escape／回焦和 reduced-motion 均检查。
-- [ ] 无草稿／无权限／草稿不可编辑时，鼠标和键盘不能绕过不可用入口继续填写无效表单，
+- [x] 无草稿／无权限／草稿不可编辑时，鼠标和键盘不能绕过不可用入口继续填写无效表单，
   原链接直达提供准确解释及合法下一步；打开、关闭和刷新零配置写入、零测试发送、零媒体变更。
-- [ ] 添加／编辑／复制／启停仍完整可用，保存草稿与发布生效明确区分；读回真实 Active。
+- [x] 添加／编辑／复制／启停仍完整可用，保存草稿与发布生效明确区分；读回真实 Active。
   测试仅经显式操作发送一次、绑定当前已保存上下文；编辑、版本改变或对象切换后旧证据／
   确认失效；未保存当前值不能借旧成功继续发布，迟到响应不串上下文。
-- [ ] 所有退出方式共同遵守未保存／在途保护；继续编辑保留输入和准确地址，明确放弃才丢弃。
+- [x] 所有退出方式共同遵守未保存／在途保护；继续编辑保留输入和准确地址，明确放弃才丢弃。
   已保存草稿重开可读回。普通往返和深链／刷新／重认证准确打开对象，不自动重提命令。
-- [ ] 投递筛选（含死信）、分页和原列表返回保持；结果、失败原因、已知接收效果、是否会再发
+- [x] 投递筛选（含死信）、分页和原列表返回保持；结果、失败原因、已知接收效果、是否会再发
   及下一步清楚。过期租约／死信只恢复所选记录，显式确认与可能重复发送提示保留；
   已完成或自动重试记录不虚构人工恢复动作，不改变媒体结果。
-- [ ] 无效字段、缺失密钥引用、测试失败、401／403、读取失败、真实并发 409，以及命令已完成
+- [x] 无效字段、缺失密钥引用、测试失败、401／403、读取失败、真实并发 409，以及命令已完成
   但响应丢失均有准确反馈和恢复；旧 Active／成功兄弟／已知效果保留，未知不冒充失败，
   不自动重放、不重新绑定接收目标、不携带其他定义发布，完整绑定／脱敏断言保持。
-- [ ] 公共 modal／Shell／按钮直接消费者回归通过，既有通知 API／领域／持久化协议不变；
+- [x] 公共 modal／Shell／按钮直接消费者回归通过，既有通知 API／领域／持久化协议不变；
   B 完成固定 Base..candidate 审查、真实 Python 原生旅程及适用 T4 门禁后才可 PASS。
 
 ### Required Tests
@@ -751,6 +757,100 @@ pending 后，状态和恢复入口按持久值更新，但标题不会自动改
 
 本轮定向 Vitest、构建、Node E2E 与静态检查合计约 30 秒；实现、差异审查与证据核对占
 主要时间，测试时间低于本轮总时间 30%。
+
+## PATCH-20261114-3 — B PASS
+
+Decision: **PASS — 2026-11-15**。独立 bug 的全部验收项满足，阻塞项为零；不新增 Task。
+
+### Reviewed identity and scope
+
+- Task Base：`51480dc318837e4f1e4f9c60c17b8e708abb6409`。
+- 完整独立审查范围：上述 Base 到交接 Head
+  `6c4b9a5d390ffc5d1f54537966d4d9f99599a3ad`，共 19 个文件。
+- 最终产品／证据候选：`07624ec95b948f211bd93ed77596ebdea7e9992f`；
+  `git diff --name-only 07624ec9..6c4b9a5d` 仅有 TASK.md，执行输入一致。
+- 本轮开始于 main／上述交接 Head，工作区与暂存区干净，治理检查通过。
+  B 只更新 TASK.md。未改产品代码、现行产品文档、SLICE／Roadmap／Progress。
+- 累计差异包含六个通知表面、通知专属呈现／卡片生命周期、必要嵌套路由及局部 Shell／
+  modal 接入、自动测试和真实 Python 浏览证明。没有 Python 生产、API、schema、Worker、
+  签名、退避、租约或恢复协议变更。公共焦点回退不再尝试聚焦 body，直接消费者回归通过。
+
+### Complete delivered journey
+
+用户从侧栏“通知”进入，可区分已生效与仅草稿、启用状态、接收地址、可读事件与密钥引用
+就绪状态；在原列表背景上的居中卡片添加、查看和编辑。表单字段按用途分组，技术身份和
+诊断可展开。与 Base 的六页同视口对照及自动化参考相比，标题、状态、内容、说明和动作
+层次清楚，长地址可读，390px／矮窗口内主动作和退出可达。此次核对覆盖 1440×1000、
+390×844、1440×700；64 字符标识、360 字符地址、全部四事件的真实创建和编辑无页面横向
+溢出。Tab、Escape、回焦、继续编辑／明确放弃和 reduced-motion 均通过。
+
+保存只写草稿，明确检查／发布才改变 Active。普通保存期间继续输入，迟到的成功只证明
+提交时的值已保存，较新输入仍显示未保存并可明确再次保存。新建成功和发布成功会离开表单，
+这两种命令在途时全部字段锁定、提交值不变，各只有一次命令。双浏览器真实 409、另一窗口
+发布、读取后保留／采用服务端值、准确地址上的继续编辑和再次保存均通过；没有静默覆盖
+本地输入或重新绑定原请求。无权限深链只读，编辑期间权限被撤销后的真实 PUT 403 收起
+可编辑表单并说明权限原因，Active 不变、transport 零次。
+
+真实 Python API／临时 SQLite／Worker 证明中，只读访问不写配置、不发送测试、不新增
+投递；READ 深链不改变草稿版本。签名测试经明确按钮只发送一次，transport 恰一次且不
+创建投递。明确发布使 Active 从版本 1 到 2，仅改变所选 Webhook；其他定义、无关配置、
+Tasks／Jobs 保持。媒体效果不因投递读取或恢复改变。
+
+用户从投递记录筛选死信，打开详情，看到失败原因、已知接收效果、再次发送含义和下一步，
+明确确认后仅恢复所选记录，再返回原死信筛选。本轮独立复核了上一轮唯一阻塞：真实恢复
+已经返回 200 且 SQLite 变为 pending，随后只丢弃返回浏览器的响应，此时卡片正确显示
+黄色“恢复结果未知”，正文说明可能已执行并指引读取；不再出现“恢复没有应用”。明确
+读取后显示待投递、死信恢复入口消失，整个旅程仅一次 POST。另一浏览器先恢复、旧窗口
+再提交的真实 409 则显示红色“恢复没有应用”及状态已更新原因，不混成未知结果。
+
+真实保存、发布、签名测试成功后丢响应也均明确提示未知，并通过读取／接收端核对，不
+自动重放。已知恢复成功后后续 GET 失败仍保留已知成功，旧读取被标识，明确重试读取后
+显示 pending。无效输入、缺失引用、测试失败、401／403、读失败、空态、分页、复制／
+启停、对象／版本切换、深链／历史／刷新／重认证和公共组件消费者由全量回归与原生旅程
+共同覆盖；未删减既有精确身份、兄弟定义拒绝、完整绑定、脱敏或非重放断言。
+
+### Actual final acceptance
+
+证据根目录：`.git/validation-evidence/patch-20261114-3/b-round6/`。
+这是本机忽略产物，不随 Git 提交，不宣称远程 CI 可访问。
+
+| 门禁 | 实际结果与证据 |
+|---|---|
+| Python 全量 | `.venv/bin/python -m unittest discover -s tests`：2692 项，2685 通过、7 skipped，306.741 秒；`python-full.log` |
+| Web 全量（cwd web） | `npm run test -- run`：100 文件／1601 项通过，165.46 秒；`web-full.log` |
+| Node E2E（cwd web） | `npm run test:e2e -- --output=test-results/patch-20261114-3-b-round6-node`：274 项通过，3.3 分钟；`node-full.log` |
+| Web 质量／新构建 | `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 均通过；`web-build.log`；资产 `index-xYA76ha9.js`／`index-B0R4k6Jb.css` |
+| Python 质量 | `.venv/bin/ruff format --check .`（385 文件）、`.venv/bin/ruff check .`、compileall mediaflow/tests/scripts、pip check 均通过 |
+| 配置／依赖 | strategy 与 phase13.2 示例 config validate 通过；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配、exit 1 |
+| 原生完整旅程 | `.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts .git/validation-evidence/patch-20261114-3/b-round6/native` 通过；`native/evidence.json`、六张截图、`native.log` |
+| 独立补充旅程 | `recovery_unknown.py`、`recovery_refused.py`、`permission_change.py`、`reproduce.py`、`create_pending.py`、`publish_pending.py`、`remaining.py`、`long_visual.py` 均通过；同目录对应 JSON／日志／截图 |
+| 构建安装 | `.venv/bin/python -m pip wheel . --no-deps -w dist` 和 `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-2.0.0.dev0-py3-none-any.whl` 均通过；`wheel-build.log`／`wheel-smoke.log` |
+
+精确 wheel SHA-256：`df2f773dbabe9d555433533e71e6232f925cbfac5b58898c9808177b76a0f8d7`。
+源码外临时虚拟环境安装、CLI／配置／数据库／升级及已安装消费者 smoke 通过。
+
+视觉产物 `comparison-{list,detail,new,editor,deliveries,delivery}.jpg`：左侧复用上一轮由
+不可变 Base 的 git archive 新构建所得截图，右侧为本轮最终候选的新截图；不是拿旧候选
+截图冒充最终候选。自动化参考、长内容和恢复未知／确定拒绝截图也已独立查看。
+
+### Limits and retained history
+
+- 7 项跳过为可选外部 Storage／隔离耐久环境未启用，保持原门槛，不以生产接收端、凭据或
+  用户媒体补测。Docker 广域矩阵不适用：本 Task 没有改变容器或部署路径。
+- 日志保留 SQLite／临时目录／socket ResourceWarning、jsdom scrollTo 提示及构建 chunk
+  体积提示；没有因此忽略失败或添加重试。全部适用门禁退出 0。
+- 读取确认 pending 后，先前未知命令的提示仍保留；当前持久状态和恢复入口已更新。
+  提示没有把后来的状态归因于原命令，也没有误称失败，不阻塞本 Task。
+- 本轮第一次构建重定向使用了错误的证据目录，修正目录后构建通过；未改产品。原有
+  web/.git 下其他任务目录保留。本轮没有产品测试失败。上一轮 Python 文档格式首次失败、
+  脚本定位调整与历次返工事实保留在 `409ac88f:TASK.md`，本轮完整 Python 已重新通过。
+- 完整 Developer 各轮报告和最终交接保留在 `6c4b9a5d:TASK.md`；此前 FIX REQUIRED
+  记录没有改写或降级，当前 PASS 基于上述最终候选和独立复核。
+- 收尾第一次治理检查因根部仍是活动 Task 标题、状态已转 PASS 而拒绝；按 §3.1 恢复
+  NO ACTIVE IMPLEMENTATION TASK 标题后复查，不修改治理脚本或增加例外。
+
+依据工作流 §3.1 完成本独立修复，只恢复根 TASK.md 的无活动实施通知与固定验收指针。
+Slice54 继续保持原 PASS / CLOSED，SLICE／Roadmap／Progress 未变，无推送、发布或部署。
 
 ## Latest accepted Task — PATCH-20261114-2
 
