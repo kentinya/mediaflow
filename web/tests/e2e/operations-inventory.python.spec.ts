@@ -3232,6 +3232,92 @@ test("Task55.1 tab=settings is an ordinary unknown Automation tab", async ({
   expect(api.filter((call) => call.method !== "GET")).toEqual([]);
 });
 
+/**
+ * Task55.1 / Slice55 RO-1: the real existing mixed references that block a
+ * ResourceLibrary removal lead to the current management surface for each
+ * referenced kind. The source fixture has eight recognition rules and two
+ * automation definitions, so the dialog must expose both entries rather than
+ * sending every reference to the rules inventory. Reading either destination
+ * changes nothing and browser Back keeps the exact library context.
+ */
+test("Task55.1 mixed ResourceLibrary references open their current management entries", async ({
+  page,
+}) => {
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+      writes.push(`${request.method()} ${request.url()}`);
+    }
+  });
+
+  await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "文件", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "资源库操作 Unified media source" })
+    .click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(dialog.getByText(/仍被 10/)).toBeVisible();
+  await expect(dialog.getByText(/整理规则 · movie-library/)).toBeVisible();
+  await expect(
+    dialog.getByText(/自动化定义 · harness-scheduled/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText(/自动化定义 · harness-continuation/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "删除资源库", exact: true }),
+  ).toBeDisabled();
+
+  await dialog
+    .getByRole("button", { name: "前往整理规则处理识别规则引用" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
+  await expect(
+    page.getByRole("heading", { name: "整理规则", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(
+    page.getByRole("button", { name: "资源库操作 Unified media source" }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "资源库操作 Unified media source" })
+    .click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const automationDialog = page.getByRole("dialog", { name: "删除资源库" });
+  await automationDialog
+    .getByRole("button", {
+      name: "前往自动化管理处理自动化定义引用",
+    })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
+  ).toBeVisible();
+  const definitionRow = page.getByRole("row", {
+    name: /Harness scheduled review/,
+  });
+  await expect(definitionRow).toBeVisible();
+  await expect(
+    definitionRow.getByRole("button", { name: "编辑" }),
+  ).toBeVisible();
+  expect(writes).toEqual([]);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(
+    page.getByRole("button", { name: "资源库操作 Unified media source" }),
+  ).toBeVisible();
+});
+
 // -- PATCH-20261029-3: All-view creation-time range only --------------------
 
 type TimeFilterSeed = {

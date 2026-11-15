@@ -1827,13 +1827,130 @@ describe("Files entry state and ResourceLibrary strip", () => {
     ).toBe(true);
   });
 
-  it("refuses to confirm removal while the library is still referenced", async () => {
+  it.each([
+    {
+      label: "only recognition rule references",
+      items: [
+        {
+          section: "recognitionRules",
+          id: "movie-rule",
+          field: "resourceLibraryId",
+        },
+        {
+          section: "recognitionRules",
+          id: "tv-rule",
+          field: "resourceLibraryId",
+        },
+      ],
+      rulesAction: true,
+      automationAction: false,
+    },
+    {
+      label: "only automation definition references",
+      items: [
+        {
+          section: "automationTaskDefinitions",
+          id: "nightly-definition",
+          field: "resourceLibraryId",
+        },
+      ],
+      rulesAction: false,
+      automationAction: true,
+    },
+    {
+      label: "mixed recognition rule and automation definition references",
+      items: [
+        {
+          section: "recognitionRules",
+          id: "movie-rule",
+          field: "resourceLibraryId",
+        },
+        {
+          section: "automationTaskDefinitions",
+          id: "nightly-definition",
+          field: "resourceLibraryId",
+        },
+      ],
+      rulesAction: true,
+      automationAction: true,
+    },
+  ])(
+    "refuses removal and offers the matching current management entries for $label",
+    async ({ items, rulesAction, automationAction }) => {
+      const user = userEvent.setup();
+      const libraries = [libraryItem("lib-a", "local-1")];
+      vi.stubGlobal(
+        "fetch",
+        stripFetchMock({
+          status: activeStatus(libraries),
+          onRemovalPreview: () =>
+            jsonResponse({
+              resourceLibrary: {
+                id: "lib-a",
+                name: "资源库A",
+                storageId: "local-1",
+                storagePath: "/lib-a",
+                enabled: true,
+              },
+              storage: {
+                id: "local-1",
+                name: "Storage local-1",
+                type: "local",
+                enabled: true,
+              },
+              references: {
+                total: items.length,
+                items,
+                truncated: false,
+              },
+              active: {
+                revisionId: "active-1",
+                version: 1,
+                digest: "digest-1",
+              },
+              sideEffects: "none",
+            }),
+        }),
+      );
+      authStore.setToken("test-token");
+      renderWithProviders(<StorageFilesPage />);
+
+      expect(await screen.findByText("notes.txt")).toBeVisible();
+      await user.click(
+        screen.getByRole("button", { name: "资源库操作 资源库A" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "删除资源库" }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: "删除资源库" });
+      expect(
+        within(dialog).getByText(new RegExp(`仍被 ${items.length}`)),
+      ).toBeVisible();
+      for (const item of items) {
+        expect(within(dialog).getByText(new RegExp(item.id))).toBeVisible();
+      }
+      const rulesEntry = within(dialog).queryByRole("button", {
+        name: "前往整理规则处理识别规则引用",
+      });
+      const automationEntry = within(dialog).queryByRole("button", {
+        name: "前往自动化管理处理自动化定义引用",
+      });
+      if (rulesAction) expect(rulesEntry).toBeVisible();
+      else expect(rulesEntry).toBeNull();
+      if (automationAction) expect(automationEntry).toBeVisible();
+      else expect(automationEntry).toBeNull();
+      expect(
+        within(dialog).getByRole("button", { name: "删除资源库" }),
+      ).toBeDisabled();
+    },
+  );
+
+  it("offers both management entries when reference evidence is truncated", async () => {
     const user = userEvent.setup();
-    const libraries = [libraryItem("lib-a", "local-1")];
     vi.stubGlobal(
       "fetch",
       stripFetchMock({
-        status: activeStatus(libraries),
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
         onRemovalPreview: () =>
           jsonResponse({
             resourceLibrary: {
@@ -1850,20 +1967,15 @@ describe("Files entry state and ResourceLibrary strip", () => {
               enabled: true,
             },
             references: {
-              total: 2,
+              total: 65,
               items: [
                 {
                   section: "recognitionRules",
                   id: "movie-rule",
                   field: "resourceLibraryId",
                 },
-                {
-                  section: "recognitionRules",
-                  id: "tv-rule",
-                  field: "resourceLibraryId",
-                },
               ],
-              truncated: false,
+              truncated: true,
             },
             active: {
               revisionId: "active-1",
@@ -1885,10 +1997,18 @@ describe("Files entry state and ResourceLibrary strip", () => {
       await screen.findByRole("menuitem", { name: "删除资源库" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "删除资源库" });
-    expect(within(dialog).getByText(/仍被 2/)).toBeVisible();
+    expect(within(dialog).getByText(/更多引用已省略/)).toBeVisible();
+    expect(within(dialog).getByText(/仅显示前 1\s*项引用/)).toBeVisible();
     expect(
-      within(dialog).getByRole("button", { name: "删除资源库" }),
-    ).toBeDisabled();
+      within(dialog).getByRole("button", {
+        name: "前往整理规则处理识别规则引用",
+      }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "前往自动化管理处理自动化定义引用",
+      }),
+    ).toBeVisible();
   });
 
   it("creates a folder through the toolbar command and refreshes the listing", async () => {

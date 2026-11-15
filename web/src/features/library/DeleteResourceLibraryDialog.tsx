@@ -3,6 +3,43 @@ import { Icon } from "../../shared/ui/Icons";
 import type { RemovalPreviewModel } from "../../entities/library/direct-files";
 import { ModalDialog, SAFETY_NOTE } from "./FileCommandDialogs";
 
+const REFERENCE_SECTIONS = [
+  "recognitionRules",
+  "automationTaskDefinitions",
+] as const;
+
+type ReferenceSection = (typeof REFERENCE_SECTIONS)[number];
+
+const REFERENCE_SECTION_LABELS: Readonly<Record<ReferenceSection, string>> = {
+  recognitionRules: "整理规则",
+  automationTaskDefinitions: "自动化定义",
+};
+
+const REFERENCE_ACTIONS: Readonly<
+  Record<
+    ReferenceSection,
+    {
+      readonly label: string;
+      readonly destination: "/rules" | "/operations/automation";
+    }
+  >
+> = {
+  recognitionRules: {
+    label: "前往整理规则处理识别规则引用",
+    destination: "/rules",
+  },
+  automationTaskDefinitions: {
+    label: "前往自动化管理处理自动化定义引用",
+    destination: "/operations/automation",
+  },
+};
+
+function referenceSection(value: string): ReferenceSection | null {
+  return (REFERENCE_SECTIONS as readonly string[]).includes(value)
+    ? (value as ReferenceSection)
+    : null;
+}
+
 /**
  * The explicit confirmation bound to the currently selected ResourceLibrary
  * and the exact previewed Active revision.  The dialog identifies the exact
@@ -35,6 +72,19 @@ export function DeleteResourceLibraryDialog({
   const blocked =
     loading || preview === null || referenced || mismatched || disabledLibrary;
   const libraryName = preview?.resourceLibrary.name ?? "";
+  const referenceSections = new Set(
+    (preview?.references.items ?? [])
+      .map((item) => referenceSection(item.section))
+      .filter((section): section is ReferenceSection => section !== null),
+  );
+  // Bounded evidence lists the kind of every shown reference. If more
+  // references exist than the bounded evidence can show, both known
+  // ResourceLibrary reference kinds remain possible; offer both current
+  // management entries instead of guessing from the visible prefix.
+  const truncated = preview?.references.truncated === true;
+  const actions: ReferenceSection[] = truncated
+    ? [...REFERENCE_SECTIONS]
+    : REFERENCE_SECTIONS.filter((section) => referenceSections.has(section));
   return (
     <ModalDialog
       title="删除资源库"
@@ -113,23 +163,52 @@ export function DeleteResourceLibraryDialog({
                 个托管配置对象引用，不能删除：
               </p>
               <ul>
-                {preview.references.items.map((item) => (
-                  <li key={`${item.section}:${item.id}`}>
-                    {item.section} · {item.id}
-                  </li>
-                ))}
-                {preview.references.truncated && <li>… 更多引用已省略</li>}
+                {preview.references.items.map((item) => {
+                  const section = referenceSection(item.section);
+                  return (
+                    <li key={`${item.section}:${item.id}`}>
+                      <strong>
+                        {section === null
+                          ? item.section
+                          : REFERENCE_SECTION_LABELS[section]}
+                      </strong>
+                      {" · "}
+                      {item.id}
+                    </li>
+                  );
+                })}
+                {truncated && <li>… 更多引用已省略</li>}
               </ul>
-              <button
-                type="button"
-                className="mf-link-button"
-                onClick={() => {
-                  onCancel();
-                  navigate({ to: "/rules" });
-                }}
-              >
-                前往整理规则处理这些引用
-              </button>
+              {truncated && (
+                <p className="mf-dialog-hint">
+                  仅显示前 {preview.references.items.length}
+                  项引用；请到对应管理入口核对完整引用。
+                </p>
+              )}
+              <div className="mf-actions">
+                {actions.map((section) => (
+                  <button
+                    key={section}
+                    type="button"
+                    className="mf-link-button"
+                    onClick={() => {
+                      onCancel();
+                      if (section === "recognitionRules") {
+                        void navigate({
+                          to: "/rules",
+                          search: { section: "recognitionRules" },
+                        });
+                        return;
+                      }
+                      void navigate({
+                        to: REFERENCE_ACTIONS[section].destination,
+                      });
+                    }}
+                  >
+                    {REFERENCE_ACTIONS[section].label}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="mf-removal-unreferenced" role="status">

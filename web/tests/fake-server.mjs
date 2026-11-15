@@ -1624,9 +1624,37 @@ function resourceLibrarySystemStatus(session) {
 }
 
 const E2E_FAKE_REFERENCES = new Map([["source", 1]]);
+const E2E_AUTOMATION_REFERENCE_ID = "automation-def-e2e-001";
+
+function resourceLibraryReferenceItems(resourceLibraryId, state) {
+  const item = (section, id) => ({
+    section,
+    id,
+    field: "resourceLibraryId",
+  });
+  if (state.referenceMode === "automation") {
+    return [item("automationTaskDefinitions", E2E_AUTOMATION_REFERENCE_ID)];
+  }
+  if (state.referenceMode === "mixed") {
+    return [
+      item("recognitionRules", "movie-library"),
+      item("automationTaskDefinitions", E2E_AUTOMATION_REFERENCE_ID),
+    ];
+  }
+  if (state.referenceMode === "rules") {
+    return [item("recognitionRules", "movie-library")];
+  }
+  if (state.referenceMode === "none") {
+    return [];
+  }
+  return (E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0) > 0
+    ? [item("recognitionRules", "movie-library")]
+    : [];
+}
 
 function removalPreviewDocument(resourceLibraryId, state) {
-  const total = E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0;
+  const items = resourceLibraryReferenceItems(resourceLibraryId, state);
+  const total = items.length;
   const extra = state.extra.find((item) => item.id === resourceLibraryId);
   const displayName = extra
     ? extra.name
@@ -1664,17 +1692,7 @@ function removalPreviewDocument(resourceLibraryId, state) {
     references:
       total === 0
         ? { total: 0, items: [], truncated: false }
-        : {
-            total,
-            items: [
-              {
-                section: "recognitionRules",
-                id: "movie-library",
-                field: "resourceLibraryId",
-              },
-            ],
-            truncated: false,
-          },
+        : { total, items, truncated: false },
     active: {
       status: "active",
       revisionId: "rev-e2e-2",
@@ -10635,7 +10653,11 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if ((E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0) > 0) {
+    const referenceItems = resourceLibraryReferenceItems(
+      resourceLibraryId,
+      state,
+    );
+    if (referenceItems.length > 0) {
       sendJson(res, 409, {
         error: {
           code: "configuration_object_referenced",
@@ -10643,8 +10665,10 @@ const server = createServer(async (req, res) => {
           details: {
             objectKind: "resource_library",
             objectId: resourceLibraryId,
-            referenceCount: 1,
-            references: ["recognitionRules:movie-library.resourceLibraryId"],
+            referenceCount: referenceItems.length,
+            references: referenceItems.map(
+              (item) => `${item.section}:${item.id}.${item.field}`,
+            ),
             durableState: "active_preserved",
             sideEffects: "none",
             retrySafe: true,
@@ -17531,6 +17555,7 @@ const server = createServer(async (req, res) => {
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
       externallyRemovedDirectories: [],
       whitespaceDirectory: url.searchParams.get("whitespace") === "1",
+      referenceMode: url.searchParams.get("references"),
     });
     res.setHeader(
       "Set-Cookie",

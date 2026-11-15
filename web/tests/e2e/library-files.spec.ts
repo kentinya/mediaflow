@@ -1384,29 +1384,143 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
     .getByRole("button", { name: "source", exact: true })
     .click();
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+      writes.push(`${request.method()} ${request.url()}`);
+    }
+  });
   await page.getByRole("button", { name: "资源库操作 source" }).click();
   await page.getByRole("menuitem", { name: "删除资源库" }).click();
   const dialog = page.getByRole("dialog", { name: "删除资源库" });
   await expect(dialog.getByText(/仍被 1/)).toBeVisible();
-  await expect(dialog.getByText(/movie-library/)).toBeVisible();
+  await expect(dialog.getByText(/整理规则 · movie-library/)).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "删除资源库", exact: true }),
   ).toBeDisabled();
-  await dialog.getByRole("button", { name: "取消", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", {
+      name: "前往自动化管理处理自动化定义引用",
+    }),
+  ).toHaveCount(0);
 
-  // The correction action reaches the current rules workspace, never the
-  // removed /review handoff, and the referenced library stays intact.
-  await page.getByRole("button", { name: "资源库操作 source" }).click();
-  await page.getByRole("menuitem", { name: "删除资源库" }).click();
-  const reopened = page.getByRole("dialog", { name: "删除资源库" });
-  await reopened
-    .getByRole("button", { name: "前往整理规则处理这些引用" })
+  // The correction action reaches the current recognition-rule inventory,
+  // never the removed /review handoff, and only reads the current entries.
+  await dialog
+    .getByRole("button", { name: "前往整理规则处理识别规则引用" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
+  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
+  expect(writes).toEqual([]);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+});
+
+test("automation-only ResourceLibrary references open the current Automation management entry", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?references=automation");
+  await openFiles(page);
+  await page
+    .locator(".mf-library-strip")
+    .getByRole("button", { name: "source", exact: true })
+    .click();
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+      writes.push(`${request.method()} ${request.url()}`);
+    }
+  });
+
+  await page.getByRole("button", { name: "资源库操作 source" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(
+    dialog.getByText(/自动化定义 · automation-def-e2e-001/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "删除资源库", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "前往整理规则处理识别规则引用" }),
+  ).toHaveCount(0);
+
+  await dialog
+    .getByRole("button", {
+      name: "前往自动化管理处理自动化定义引用",
+    })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
+  ).toBeVisible();
+  const row = page.getByRole("row", { name: /Nightly automation/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("button", { name: "编辑" })).toBeVisible();
+  expect(writes).toEqual([]);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+});
+
+test("mixed ResourceLibrary references expose both current management entries", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?references=mixed");
+  await openFiles(page);
+  await page
+    .locator(".mf-library-strip")
+    .getByRole("button", { name: "source", exact: true })
+    .click();
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+      writes.push(`${request.method()} ${request.url()}`);
+    }
+  });
+
+  await page.getByRole("button", { name: "资源库操作 source" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(dialog.getByText(/仍被 2/)).toBeVisible();
+  await expect(dialog.getByText(/整理规则 · movie-library/)).toBeVisible();
+  await expect(
+    dialog.getByText(/自动化定义 · automation-def-e2e-001/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "删除资源库", exact: true }),
+  ).toBeDisabled();
+
+  await dialog
+    .getByRole("button", { name: "前往整理规则处理识别规则引用" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
+  await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+
+  await page.getByRole("button", { name: "资源库操作 source" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const automationDialog = page.getByRole("dialog", { name: "删除资源库" });
+  await automationDialog
+    .getByRole("button", {
+      name: "前往自动化管理处理自动化定义引用",
+    })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  const row = page.getByRole("row", { name: /Nightly automation/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("button", { name: "编辑" })).toBeVisible();
+  expect(writes).toEqual([]);
+
   await page.goBack();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
