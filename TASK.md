@@ -359,6 +359,7 @@ Status: READY FOR B REVIEW。
 
 ```text
 Implementation candidate: ca9deea647ac3542e47ddbe12eda469c49e1793e
+Final test head: 52c50e8ef704b1dfaaa6be0309fe9f7fa7082853
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Reviewer: B — B55.1-01
 ```
@@ -389,7 +390,8 @@ Reviewer: B — B55.1-01
 - `npm run test:e2e -- tests/e2e/library-files.spec.ts`：**51 项通过**（38.1s）。
 - `npm run test:e2e -- --config=playwright.python.config.ts
   tests/e2e/operations-inventory.python.spec.ts --grep 'Task55\.1|retired Task collections'`：
-  **3 项通过**（3.9s），包含新增真实混合引用旅程。
+  **3 项通过**（3.4s，最终 test head `52c50e8e`），包含新增真实混合引用旅程；
+  两处返回点均重新核对 `resourceLibraryId=source` 与原路径 `/`。
 - `npm run test:e2e -- --config=playwright.python.config.ts
   tests/e2e/action-readability.python.spec.ts --grep 'Entry and representative business/dialog actions'`：
   **1 项通过**（12.0s）。
