@@ -1,6 +1,6 @@
 # Task 55.1 — 完整移除旧 Web 与迁移入口
 
-Next Action: B REVIEWS TASK55.1 B55.1-01 CORRECTION CANDIDATE。
+Next Action: DEVELOPER SYNCS CURRENT NATIVE TEST CONSUMERS; B COMPLETES RELEASE-SECURITY EVIDENCE。
 
 Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁移承接) RO-1，
 以及 RO-6 中本次 Web 退役所需的消费者／交付物；生命周期与测试分工见
@@ -10,12 +10,12 @@ Authority: committed [Slice55](SLICE.md#ro-1--只有当前-web-入口没有迁�
 Task ID: 55.1
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d62436be6f5848329a628356c13fdb28e760239a
 Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit user authorization, planning only
-Reviewer: B — B55.1-01 correction review pending
+Reviewer: B — B55.1-01 corrected; B55.1-02 acceptance incomplete
 Implementation Authorization: AUTHORIZED BY USER — TASK55.1 ONLY
 ```
 
@@ -405,6 +405,86 @@ Reviewer: B — B55.1-01
 - 引用证据截断时显示两个入口是明确的产品选择：后端当前只可能产生这两类资源库引用，
   但截断前缀不能证明隐藏引用的种类；该情况下双方都给出入口并保留总数与截断说明。
 - 未修改后端、数据库、权限、配置发布、Task 执行或用户数据；未推送、发布或部署。
+
+## B correction review — 2026-11-16
+
+**FIX REQUIRED — B55.1-02：当前消费者同步及必需验收未完成。**
+原 B55.1-01 已修复；本轮没有确认新的产品回归，不把既有测试失败描述成产品故障。
+
+```text
+Review Base: d62436be6f5848329a628356c13fdb28e760239a
+Product correction: ca9deea647ac3542e47ddbe12eda469c49e1793e
+Final implementation/test Head: 52c50e8ef704b1dfaaa6be0309fe9f7fa7082853
+Reviewed Head: f156c51fdbcb32de95707bea94e82d75fa01161b
+Branch: main
+Initial workspace: clean
+Evidence: .git/validation-evidence/f156c51f/b-review/ (local, ignored)
+```
+
+已独立审查完整 Base..Head 的 71 文件变更，包括旧页面／测试删除、当前生产者、路由、
+安全头、消费者及交付探针。真实已有“文件 → Unified media source → 资源库操作 →
+删除资源库”列出 8 个识别规则和 2 个自动化定义，两类纠正动作分别进入当前规则清单和
+自动化管理；返回保留 resourceLibraryId=source 和原路径，访问没有提交写命令。
+桌面、390×844、1280×600 截图已实际查看；矮窗可滚动到动作，键盘聚焦取消和 Escape
+关闭可用；旧 Task 地址在窄／矮窗显示普通 not-found，可主动返回当前导航。
+
+### Remaining acceptance blockers and Developer guidance
+
+1. **当前浏览器测试消费者仍依赖旧界面。** 完整原生两个 spec 为 51 passed / 3 failed。
+   用 Base 自身源码、构建资产、Python harness 重跑这三例，三例在相同位置失败，故不是
+   Task55.1 新引入。它们属于本 Task 明确要求核对的消费者，当前断言尚不能证明完整旅程：
+   - 设置 → 高级配置 → 当前 JSON → 导出脱敏包：测试仍点击已不存在的“查看 Active JSON”。
+   - 通知 → 查看事件与定义 → 编辑 Draft：测试仍等待英文 Notifications heading。
+   - Task 完成 → 通知投递列表 → 对应投递详情：测试仍点击旧 Open deliveries 链接。
+   Developer 仅同步这三个现有用例到实际当前入口和中文文案，走完各自后续步骤；保留
+   export 请求挂起期间的 disabled／可读性、真实 task.* 事件／Draft 与编辑入口边界、唯一
+   outbox 投递／详情及 Task 不重放等原业务断言。不要只改第一个定位器便交接，不删除
+   用例、不改生产界面迎合旧断言、不加重试或延长超时。执行这三个定向用例和修改文件
+   ESLint／Prettier、typecheck；提交同 Task 的测试消费者检查点。完整原生回归仍由 B 跑。
+2. **release-security 必需门禁未完成，由 B 负责。** 候选在手工整理 choice 返回
+   metadata_unverified／rejected_without_mutation；Base 精确源码镜像也同样失败。
+   脚本只 seed PersistentResultRecord，而当前 choice 的来源身份由 evidence／review／
+   preview 提供；因此尚未到达“确认整理 → 常驻 Worker 执行 → 导出与日志脱敏”的后半程。
+   这不是已证明的权限或整理产品缺陷，不要求 Developer 修改身份校验或扩张本次 Web
+   实施。B 继续用现有当前来源证据完成夹具核对和安全验收，保留本轮原始失败日志；
+   不将尚未执行的后半程算作通过。
+
+Task ID／Base／目标／High／T4 不变，不开始下一 Task。`docs/configuration.md` 仍有
+旧 tab=settings 会跳转的事实文案，可随当前 Web 说明同步；该文案不是独立产品阻塞。
+
+### Actual validation
+
+- 全量 Python unittest：2630 tests，OK，7 skipped；Web unit：103 文件／1655 passed；
+  Node E2E：285 passed。日志分别为 python-full.log、web-unit.log、node-e2e.log。
+- 治理、Ruff format/check、compileall、pip check、两个示例 config validate、Web
+  typecheck/lint/format/build 均通过；禁止依赖搜索无匹配。见 quality-results.json。
+- 真实 Python 定向 Task55.1 3 passed；完整两个原生 spec 51 passed / 3 failed，
+  native-full.log／native-artifacts 保留原始失败；Base 对照见 base-native.log／
+  base-native-artifacts。storage_settings_browser_proof.py PASS。
+- 从 git archive 候选构建 wheel，SHA256
+  88ee454521baf393fa06fc834b5c501b7506b1923383fbdbf03cefe50a4427e2；wheel smoke PASS。
+  ZIP／源码外隔离安装无 operator_ui；安装后真实 HTTP 四个旧路径均 404，当前 V2 200，
+  API 匿名 401（wheel-http-final.log）。V2 资产为本候选构建后复制到安装目录外配置根。
+- Docker 候选 mediaflow:slice55-task55.1，首次构建 image ID
+  sha256:62c72aa9fffa0c44478734fc55476c4b85ab5a206b809b86aab06c9833dcc485；
+  镜像无 operator_ui，四服务 smoke／API 重启及 restart-fault PASS。
+  release-security FAIL 如上，不能写成整个 Docker 矩阵通过。
+- Docker 使用已有 colima-mediaflow-review context 与其已挂载的隔离临时目录；早期
+  socket／挂载错误不是产品故障。Base 首次探测的归档引用不正确，结果未用于归因；
+  base-docker-security-exact.log 才是明确归档 Task Base 的对照结果。
+  源码外 HTTP 初次探针的构造器／空 repository 错误也已纠正，原日志保留。
+- 当前截图见 references-desktop/narrow/short/short-scrolled.png、retired-narrow/short.png。
+  本轮浏览器和临时 4185 服务已关闭。未推送、发布或操作用户运行库／媒体。
+- 可计时测试命令并行区间去重约 588 秒（timing.json），另有短暂人工交互和质量检查；
+  测试服务等待期间不计为测试运行。总复核在首个 00:54 构建日志前已开始，至 01:24
+  后仍在审查／记录，测试时间低于本轮总耗时的 50%。
+
+### All Slice outcomes reassessed
+
+RO-1 的产品退役和引用纠正已有实证；Task 的当前消费者／必需门禁仍待完成，尚不 PASS。
+RO-2 旧业务入口／执行、RO-3 当前配置、RO-4 schema／五态和 RO-5 session／响应收敛
+均仍待后续实现；RO-6 仅 Web 部分已交付，安全门禁及 Slice 其余消费者仍未全部完成。
+Slice55 保持 ACTIVE，Roadmap／Progress 不变，不提交 Closure Packet 或声明 Slice 关闭。
 
 ## Latest accepted Task — PATCH-20261115-1
 
