@@ -1,6 +1,223 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: 当前无活动实施 Task；本次独立修复已完成，不授权后续实施。
+Next Action: PATCH-20261115-1 已完成独立修复规划草案，等待用户授权实施；本文件不授权开发。
+
+## Planning draft — PATCH-20261115-1 — 设置页可读性、去重与表单一致性修复
+
+本节为 **PLANNING ONLY / NOT AUTHORIZED FOR IMPLEMENTATION**。用户先要求只读调查，
+随后要求“规划一个独立修复 Task”；本轮只规划并提交 Task 文档，不修改产品代码、
+不启动其他角色、不实施、不推送或部署。下列 PLANNED 是待激活草案的状态；根文档仍为
+NO ACTIVE IMPLEMENTATION TASK。后续明确授权实施时再提升为活动 Task，保留 ID/Base/边界。
+
+Authority: 用户授权的现有设置页独立修复范围；生命周期、角色与测试责任以
+[Development Workflow](docs/development-workflow.md) §3.1/§5/§6 为准。
+按 [Task 模板](Task/TEMPLATE.md) 规划；实施者须读
+[Developer experience](docs/agent-experience/developer-implementation-role.md)，B 须读
+[B experience](docs/agent-experience/task-planner-reviewer.md)。
+
+```text
+Task ID: PATCH-20261115-1
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Status: PLANNED
+Task Base: d5803682ac3e37cae6d46f3064c4cf252dc8aa30
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B
+Implementation Authorization: NOT AUTHORIZED — PLANNING ONLY
+```
+
+### Goal and complete journey
+
+用户从侧栏“系统设置”或业务页的配置恢复入口进入 `/ui-v2/configuration`，首先读懂
+当前设置与是否生效，直接修改已有支持的设置；需要时进入高级配置和诊断，完成现有
+草稿编辑、验证、显式激活、JSON 查看／导出或恢复，再准确返回来源页。
+成功、未生效、需重启、尚未采用、权限拒绝、并发冲突和结果未知各自清楚，失败保留
+可修正输入和真实耐久状态；不要求普通用户理解内部标识，也不丢失已有诊断与初始化能力。
+
+本 Task 修正既有表面和行为缺陷，不增加配置能力或改动配置权威。相关已接受 Slice
+40/41/43/47/50/52/54 只作引用；SLICE、Roadmap、Progress 及其接受身份保持。
+适用 `V2-UX-001–003/014/015`、`V2-SETUP-001/002`、`V2-CONFIG-001–004`、
+`V2-TASK-011`、`V2-AUTO-007/008`、`V2-RULES-001`、`REQ-CONFIG-005/011`、
+`REQ-WEB-006`；完整旅程见 [配置生命周期与首次设置](docs/product-experience.md#configuration-lifecycle)、
+[运行设置与采用](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)。
+既有契约见 [Configuration guide](docs/configuration.md)、
+[System runtime settings](docs/architecture.md#system-runtime-settings--user-amendment-2026-11-03)、
+[Empty business runtime](docs/architecture.md#current--empty-business-runtime-and-resident-configuration-lifecycle)。
+
+### Baseline and actual gaps
+
+规划前 `python3 scripts/check_governance.py` PASS。仓库 `/Users/songzhidong/mediaflow`，
+分支 main，HEAD 为 Task Base；暂存区与工作区干净，TASK.md 与 Git 可写。
+已读取当前治理、模板、B 经验、HEAD:SLICE、Task、Roadmap/Progress 和适用旅程／契约。
+既有 Slice54 为 PASS / CLOSED，无活动实施 Task；符合独立修复路径。
+
+调查通过浏览器只读观察现有部署的设置／规则／自动化／通知页，并核对当前源码。
+没有保存、验证、激活或写入部署；未核对部署构建与 HEAD 身份，未完成窄屏、故障注入或
+产品验收。以下源码定位和可见问题是实施基线，部署观察不能替代后续精确候选验收：
+
+| 缺口 | 根因／源码定位 |
+|---|---|
+| 首屏连续出现 Configuration、系统设置、配置生命周期；英文、UUID 与机制说明先于可编辑设置 | `ConfigurationPage.tsx` 页头及 Authority/revision/Next action 平铺；Shell 仍加位置行与只读文件搜索 |
+| 留白、刷新位置、相邻面板间距及满宽普通按钮与其他页不协调 | `mf-page`/`mf-page-header` 没有对应 CSS，通用 `mf-panel` 的纵向 flex 拉伸直接子按钮；高级 select/input 未接入表单样式 |
+| 重复规则概览、正常采用状态占据大量空间 | `RuleReadinessPanel` 再列七类数量／启用数／缺口；运行表单整体采用结论后又铺三张正常状态卡 |
+| 高级字段入口藏在查看 JSON／恢复草稿之后，字段路径＋通用值输入缺乏业务分组 | `settingFields` 丢弃后端 section 分组，所有类型使用同一个文本 input；高级编辑没有独立可发现入口 |
+| 布尔值空白，非法输入可能被静默改写 | `text()` 不接受 boolean；保存使用字符串等于 true，其余全部变 false；整数 parseInt、数字 Number 会截断或把空白转零 |
+| 有 Active 时默认仍选草稿，空 JSON 区先出现并可见验证／激活按钮 | selected 回退 setupDraft，json 初值为空，尚未 inspect 就渲染修订区和操作 |
+| 状态、刷新与保存反馈难以读懂或彼此不同步 | 配置状态与运行参数分别读取／刷新，通用成功也显示“需要继续处理”；version 与 sequence 未明确区分 |
+
+三项运行参数在自动化页已无第二份编辑器，不属于待删除重复；通知轮询／租约也不是
+Webhook 定义／投递记录的重复。仅修设置页过量展示，保留它们现有管理归属。
+
+### Implementation Scope and ordered steps
+
+1. **建立页面层级。** 默认主视图只有一个中文“系统设置”内容标题、简短说明、协调的
+   页面刷新和紧凑配置状态摘要，随后直接呈现三项运行设置。提供清晰的“高级配置”和
+   “诊断”次级区域／切换，沿用当前路由与 allowlisted 返回上下文，不新建设置中心。
+   进入、切换、刷新、返回和重连只读取；无 Active 时就近显示明确初始化或恢复操作，
+   无草稿／已有草稿／合法空 Active／损坏 Active／只读账号保持可辨。
+2. **统一视觉与去重。** 以当前规则页、自动化和通知页的标题、内容边界、字体、字段、
+   间距、按钮和状态反馈为基准。移除设置页重复位置行与无功能的文件搜索占位；Shell
+   修改仅限识别此表面，其他页面布局不变。普通按钮按内容布局，不由面板拉成整行；
+   表单宽度、分组留白和窄屏堆叠协调。规则七类计数／启用数／完整缺口移入诊断，
+   日常视图不再复刻规则概览；保留精确规则族链接、不可用／混合快照原因与原来源返回。
+   命令能力明细保留在诊断；移除已退出的独立预览展示项，不改共享分析／就绪计算。
+   正常采用情况优先给整体结论，实例／各项证据可展开；待采用、覆盖、缺服务或读失败
+   就近显示具体下一步，不折叠成成功。内部 ID、digest、authority、技术原因码仅诊断可查。
+3. **修复配置查看与初始化。** 有健康 Active 时，JSON 查看默认读取精确 Active；存在
+   草稿不自动改选它。无 Active 时可恢复已有草稿或明确创建首个草稿，读取不得创建。
+   损坏 Active 明示恢复，不拿草稿替代。未加载／读失败／无内容各有状态，不能把空白框
+   当配置，也不能在缺少精确修订／版本证据时启用发布。修订选择、编辑、验证和激活
+   始终绑定同一对象；显示可读的“生效配置／草稿”，明确配置序号与草稿编辑版本。
+   JSON 和脱敏配置包各自标注内容与来源，保留现有导出能力和包格式，操作结果可理解。
+4. **高级设置改为有类型的分组表单。** 高级入口不依赖先打开 JSON。保留现有后端
+   allowlist、section、字段值与生效边界，按语言／时区、路径、日志、重试、通知运行、
+   远程执行组织已支持字段；不硬填默认值，不展示不可编辑的部署数据库定位。
+   布尔使用开关／复选框，枚举使用合法选项，整数／小数严格校验有限值与已有范围，
+   字符串／路径使用对应字段；单位和热生效／需重启说明就近显示。
+   布尔 false/true/未配置必须可辨；非法布尔文本、整数小数、空白数字、NaN/Infinity、
+   尾随字符不能被转换成另一合法值再提交。后端仍为最终校验权威。
+   每组“保存到草稿”只提交该组实际修改字段，复用现有 settings edits API：从 Active
+   明确保存时创建精确后继，已有草稿编辑绑定所选版本；不隐式采用其他人的打开草稿。
+   多组输入切换保留；成功只确认已提交快照，未提交／在途后输入仍属未保存。
+5. **保留两种既有发布语义并修正反馈。** 三项运行参数继续通过现有 focused API 一次
+   保存发布，不重增草稿／验证／激活步骤，也不在高级表单重复编辑这三项或退休字段。
+   高级设置保存仍只是草稿；同一区域明确显示后续“验证草稿”“激活配置”和当前验证
+   是否有效，激活只针对精确已验证版本；不新增自动整份发布或悄悄发布其他草稿改动。
+   保存成功、草稿成功、生效成功和已发布但采用未完成分别反馈；两组读取在相关成功后
+   更新实际权威，页面刷新覆盖当前所显示状态，刷新不清除输入或重播命令。
+   已知拒绝说明阶段／旧 Active／草稿状态／修正动作；未知写入不声称未保存、不自动
+   重发，在核实失败或仍未知时保持阻止再次写入，保留现有请求核对和身份隔离。
+   异步读取／保存／验证的迟到结果不能跨修订、组、身份或新输入覆盖；在途操作有
+   防重复提交与离开保护，明确放弃输入与继续编辑可用，不要求用户操作内部令牌。
+6. **完成受影响验证并交接。** 改写旧英文标题／控件选择器时保留原业务断言；补充
+   下列回归与真实旅程。产品实现仅限设置页组件、必要表单模型／API 适配、精准 Shell
+   样式及受影响测试／隔离 harness。现有后端契约若不足，不自行加 endpoint/store 或
+   改发布语义，交 B 重新核对边界。经 B PASS 后才按现有事实最小核对操作说明；
+   规划阶段不修改需求、架构、旅程、SLICE、Roadmap 或 Progress。
+
+### Acceptance Criteria
+
+- [ ] 正常已配置进入时，主内容只有一个“系统设置”标题；紧凑状态后直接找到运行设置，
+      无重复英文位置行、只读文件搜索、UUID 墙、规则七类清单或大面积正常采用卡片。
+- [ ] 标题／刷新／按钮／分组字段与现有页面协调；桌面 1440×900、窄屏 390×844、
+      矮视口 1280×600 同视口改前改后截图及实际操作通过。长名称、长值、展开诊断和
+      多条错误可读，无页面横向溢出、遮挡、突兀撑高／反复淡入；仅“不溢出”不算美观通过。
+- [ ] 高级字段完整、中文、分组、有类型与单位；所有现有允许值保留，boolean 两值正确
+      显示／往返；整数小数／空白／尾随字符／非有限值拒绝且不发送改写后的值。
+- [ ] 有 Active 默认查看其精确 JSON；草稿明确选择才打开，读取失败无旧对象冒充，
+      JSON／配置包来源与种类清楚，脱敏和部署权威排除保持。
+- [ ] 三项运行设置一次保存只发布原三项实际修改；高级每组保存仅修改所选草稿／精确
+      后继的本组改动，仍待验证和显式激活。无关设置、其他打开草稿和工作 pins 不变。
+- [ ] 空基线创建／恢复／验证／激活 Web 可完成；Viewer、缺权限、已有损坏 Active 和
+      setup-required 返回保持准确；无后台隐式建草稿、媒体 Task、通知或 Storage 写入。
+- [ ] 发布目标与实际采用分别真实；正常整体结论、活实例 pending/override/missing、
+      有界历史／不可用和热生效／需重启可辨。刷新／后续读取失败不抹掉已知成功。
+- [ ] 校验失败、401/403、409、持久化／运行时准备失败、请求前拒绝、实际写成功后丢
+      响应均保留正确状态与输入；未知结果先只读核对，不把核对失败当允许重提。
+      三项设置表单与其他管理员改动保持原冲突合并语义。
+- [ ] 切组／切修订／后台刷新／保存期间输入、迟到响应、返回／重认证不串内容、不丢
+      未提交输入、不重复写；未保存离开有明确决定，在途提交保护有效。
+- [ ] 诊断仍有精确版本、命令就绪、七类规则计数／缺口／混合快照及实例证据；来源规则
+      族、Storage 等合法返回准确且返回后读取实际权威。键盘、焦点、展开控件与
+      reduced-motion 可用；规则／自动化／通知／两种库页面无共享样式或入口回归。
+
+### Required Tests
+
+遵循 [测试责任](docs/development-workflow.md#6-test-levels)。本规划文档的实际检查不等于
+下列产品门禁通过；Developer 只负责受影响计划，B 独立审查完整 Base..候选并完成 T4。
+
+#### Developer — affected tests
+
+仓库根目录：
+
+```sh
+python3 scripts/check_governance.py
+.venv/bin/python -m unittest discover -s tests -p 'test_system_settings_management.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_configuration_status.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_v2_settings_rule_readiness.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_automation_settings_management.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_configuration_package_exchange.py'
+git diff --check
+```
+
+Web 目录：新增 `configuration-settings.spec.ts` 覆盖页面分区、typed forms、读取及发布
+状态／失败／返回；扩展 `ConfigurationPage.test.tsx`，表单模型拆出时同步补其输入边界
+测试；不测试 CSS 数值代替可见验收。现有选择器按新中文操作更新，业务断言不得删减。
+
+```sh
+npm run test -- run src/features/configuration src/features/operations/AutomationSettingsPage.test.tsx src/features/operations/automation-settings-recovery.test.ts src/features/operations/automation-settings-session.test.ts src/entities/operations/automation-settings.test.ts src/shared/navigation/settings-return.test.ts src/shared/ui/AppShell.test.tsx src/routes/router.test.tsx
+npm run typecheck
+npm run lint
+npm run format:check
+npm run build
+npm run test:e2e -- tests/e2e/configuration-settings.spec.ts tests/e2e/rules-readiness.spec.ts tests/e2e/page-transition.spec.ts --output=test-results/patch-20261115-1-affected-node
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --output=test-results/patch-20261115-1-affected-python
+```
+
+真实 Python spec 复用隔离 API/SQLite 和真实常驻消费者，增加高级类型保存草稿→验证→
+显式激活、两个浏览器并发、实际写完成后丢响应与只读核对；测试不得把假返回当采用。
+首次设置／Storage 返回复用并更新旧文案选择器后运行：
+`.venv/bin/python scripts/storage_settings_browser_proof.py`（仓库根目录）。
+仅测试本 Task 影响的真实旅程，不要求 Developer 运行其余完整原生矩阵或全量套件。
+
+#### B — acceptance and full regression
+
+先对精确候选复现布尔双值／数字严格校验、Active 默认读取、首次空基线、并发与未知
+写入恢复；原生证据必须来自候选新构建、临时配置／SQLite／Local 根，不访问用户运行
+数据库、生产媒体或外部服务。独立核对所有验收项与截图，不能只接受 Developer 标签。
+
+运行 [shared full gates](docs/development-workflow.md#shared-full-regression-commands) 的
+完整 Python/Web/Node E2E、质量、示例、构建／wheel／安装门禁及本 Task 适用安全验证；
+另运行上述真实设置／首次设置旅程和 `test_automation_settings_resident.py`，证明发布与
+实际采用、进程等待／恢复、原 pins、零媒体变更、无关草稿不被发布与未知不重放。
+Python/Node 并行时分开产物目录；保存候选 SHA、命令、结果／跳过、原失败、截图及
+构建／wheel 身份到稳定忽略证据目录，不上传秘密，不把此前部署观察作当前验收。
+不改 Docker／部署边界则无需新增该类实现；已有门禁适用性与未执行限制由 B 明示。
+
+### Non-goals
+
+- 新设置、新配置中心／数据存储／通用表单平台、任意 JSON 编辑或新导入旅程。
+- 合并／替换 focused 与 generic API，改变草稿／显式激活权威、schema、RBAC、审计、
+  原子发布、消费者采用判定或退休字段行为；不新增自动重试／自动发布／隐式业务默认值。
+- 重设计规则／自动化／通知／存储／库页面，搬迁其对象管理、删除诊断能力或重开已关闭 Slice。
+- 更改常驻调度／队列／超时、媒体处理、Storage 操作、C→A 识别身份或历史 pins。
+- 使用生产配置／秘密／媒体作验收，推送、发布、部署、分派其他代理或自审通过。
+
+### Developer Completion Report
+
+未实施。激活后由 Developer 记录不可变 checkpoint、READY FOR B REVIEW、实际变更、
+受影响测试结果与已知风险；完整验收待 B，不自判 PASS。
+
+### B Review Result
+
+尚未进入实施或验收。此处不作产品 PASS；用户只授权规划，完成规划即停止。
+后续按 §3.1 由 B 独立审查完整 Task Base..候选，给 PASS 或同一 Task 的 FIX REQUIRED。
+
+规划文档检查：治理检查 PASS；`python3 -m unittest discover -s tests -p 'test_governance.py'`
+20 项通过；`git diff --check` 通过。仅 TASK.md 变更，产品测试与上述验收尚未执行。
+
+---
 
 ## Latest accepted Task — PATCH-20261114-3
 
