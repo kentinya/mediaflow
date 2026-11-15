@@ -90,8 +90,8 @@ export interface StorageActiveIdentity {
 /**
  * The setup authority the Storage workspace may offer as a recovery path.
  *
- * These flags come from the same configuration status the existing V1 setup
- * workflow uses, so Storage never becomes a second source of truth about
+ * These flags come from the same configuration status the current System
+ * Settings setup workflow uses, so Storage never becomes a second source of truth about
  * whether setup is outstanding. They are read-only facts about that journey:
  * none of them is a command, and the page must not create a Draft, run a check
  * or activate configuration just because this block is present.

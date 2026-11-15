@@ -2,7 +2,7 @@
 
 The V2 frontend is built by Node/Vite from ``web/`` (build-time tooling only).
 The Python application serves the deterministic built artifact at the
-documented ``/ui-v2/`` migration prefix without a Node production runtime.
+documented current ``/ui-v2/`` prefix without a Node production runtime.
 This module never touches repositories, Storage, Providers, Tasks, Jobs or
 execution services; it only reads files from the built artifact directory.
 

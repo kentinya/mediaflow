@@ -24,7 +24,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -789,25 +788,6 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 self.assertEqual(detail["deliveryId"], delivery.delivery_id)
             finally:
                 harness.close()
-
-    def test_web_uses_the_same_detail_and_exact_payload_recovery_endpoints(self) -> None:
-        script = APP_JS.decode("utf-8")
-        self.assertIn("/api/v1/notifications?limit=100&status=", script)
-        self.assertIn("renderDeliveryDetail(items[index].deliveryId, status)", script)
-        self.assertIn("Inspect delivery", script)
-        self.assertIn("/api/v1/notifications/${encodeURIComponent(deliveryId)}", script)
-        self.assertIn("expectedStatus: detail.status", script)
-        self.assertIn("expectedUpdatedAt: detail.updatedAt", script)
-        self.assertIn("requeue-dead-letter", script)
-        self.assertIn("resolve-stale", script)
-        self.assertIn("Requeue dead-letter delivery", script)
-        self.assertIn("Resolve stale delivery", script)
-        self.assertIn("Duplicate implication", script)
-        self.assertIn("duplicateImplication", script)
-        self.assertIn("expectedStatus: detail.status", script)
-        self.assertIn("Back to notifications", script)
-        self.assertIn("Opening a delivery shows its durable state", script)
-        self.assertIn("never requeues, never resolves and never creates a delivery", script)
 
 
 if __name__ == "__main__":

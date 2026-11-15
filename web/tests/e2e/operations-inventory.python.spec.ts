@@ -3086,18 +3086,13 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
 });
 
 /**
- * B46.4-04 / RO-4: the retired mixed Task/Job collections are closed against the
- * real backend, and every legal identity still lands on its own durable context.
- *
- * The ordinary identity below is produced by the real supported Files command
- * (`create_directory`) on the harness ResourceLibrary, so its provenance is a
- * genuine direct-file Task rather than a hand-written row.  Opening the retired
- * `/operations/tasks/<id>` deep link must resolve that durable origin and open
- * the exact library page with the operation context, never a second mixed list
- * and never a submitted command.  An admitted organizing run keeps going to the
- * center instead, and an unknown identity stays a bounded read-only answer.
+ * Task55.1 / Slice55 RO-1: the retired V1 static product and the old V2
+ * Library/Task/Job/Automation addresses are ordinary unknown routes against
+ * the real Python application. The current library and System Settings entries
+ * remain the only continuation, and an ordinary file Task still opens through
+ * its own library page without replay.
  */
-test("retired Task collections stay closed while each real identity reaches its own context", async ({
+test("Task55.1 retired Web addresses are ordinary not-found while current entries stay reachable", async ({
   page,
   request,
 }) => {
@@ -3117,7 +3112,6 @@ test("retired Task collections stay closed while each real identity reaches its 
   expect(typeof admitted.taskId).toBe("string");
   const ordinaryTaskId = admitted.taskId as string;
 
-  // The ordinary Task is real durable work under its own library authority.
   const origin = await request.get(
     BASE +
       `/api/v1/files/operation-origin/${encodeURIComponent(ordinaryTaskId)}`,
@@ -3132,61 +3126,110 @@ test("retired Task collections stay closed while each real identity reaches its 
     sideEffects: "none",
   });
 
+  // The four V1 static product addresses are plain 404s, with no V1 HTML/JS/
+  // CSS, redirect, notice page or special method handling.
+  for (const path of ["/ui", "/ui/", "/ui/app.js", "/ui/style.css"]) {
+    const response = await request.get(BASE + path);
+    expect(response.status(), path).toBe(404);
+    const body = await response.text();
+    expect(body).not.toContain("MediaFlow Operator");
+    expect(body).not.toContain("data-view=");
+  }
+  const v1Post = await request.post(BASE + "/ui", { data: {} });
+  expect(v1Post.status()).toBe(404);
+
   const api = recordApiCalls(page);
-  // A legacy deep link is one of the routes whose read needs the operator's own
-  // token, and the token is memory-only, so the identity is entered through the
-  // real reconnect boundary exactly like a bookmarked entry.
-  await page.goto(`/ui-v2/operations/tasks/${ordinaryTaskId}`);
+  for (const path of [
+    "/ui-v2/review",
+    "/ui-v2/review?returnTab=definitions",
+    "/ui-v2/library",
+    "/ui-v2/library/files",
+    `/ui-v2/operations/tasks/${ordinaryTaskId}`,
+    "/ui-v2/operations/tasks",
+    "/ui-v2/operations/jobs",
+    "/ui-v2/operations/jobs/job-005",
+    "/ui-v2/operations/automation/new",
+    "/ui-v2/operations/automation/definition/proof-definition",
+    "/ui-v2/operations/automation/editor/proof-definition",
+    "/ui-v2/operations/organize/new",
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByText("此页面已迁移")).toHaveCount(0);
+    await expect(page.getByText(/没有提交任何命令/)).toHaveCount(0);
+  }
+  // None of the retired addresses read an identity, a mixed collection or the
+  // old static product, and none submits a command.
+  expect(api).toEqual([]);
+
+  // Browser refresh/back on a retired address keeps the same ordinary
+  // not-found/auth behavior and never reopens the removed page.
+  await page.goto("/ui-v2/operations");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/ui-v2/resourcelib/files\\?resourceLibraryId=source&operationTaskId=${ordinaryTaskId}$`,
-    ),
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+  await page.goto("/ui-v2/review?returnTab=definitions");
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await page.goBack();
+  if (await page.getByLabel("API token").isVisible()) {
+    await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  }
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+
+  // The real ordinary Task remains inspectable through its current owning
+  // library page, carrying only its exact selected operation identity.
+  await page.goto(
+    `/ui-v2/resourcelib/files?resourceLibraryId=source&operationTaskId=${ordinaryTaskId}`,
   );
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
-  // The library page opens this exact operation, so the operator sees the real
-  // durable result instead of being asked to re-run or retry anything.
   const operations = page.getByRole("dialog", { name: /当前页面操作状态/ });
   await expect(operations).toBeVisible();
   await expect(
     operations.getByRole("heading", { name: "所选操作" }),
   ).toBeVisible();
-  // Resolving the origin reads only: no mixed collection read and no command.
+
+  // System Settings is the formal current configuration entry.
+  await page.goto("/ui-v2/configuration");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "系统设置", exact: true }),
+  ).toBeVisible();
+});
+
+test("Task55.1 tab=settings is an ordinary unknown Automation tab", async ({
+  page,
+}) => {
+  const api = recordApiCalls(page);
+  await page.goto("/ui-v2/operations/automation?tab=settings");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
+  ).toBeVisible();
+  // The retired tab has no dedicated recognition, allowlist or redirect: the
+  // ordinary Automation list fallback stays on its own route, the unknown tab
+  // is dropped by the same bounded continuation as any unknown tab, and no
+  // settings form is read or written.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
   expect(
-    api.filter(
-      (call) =>
-        call.path === "/api/v1/tasks" ||
-        call.path === "/api/v1/jobs" ||
-        call.path.startsWith("/api/v1/operations/tasks") ||
-        call.path.startsWith("/api/v1/operations/jobs") ||
-        (call.method === "POST" &&
-          (call.path.endsWith("/files/commands") ||
-            call.path.endsWith("/resume"))),
-    ),
+    api.filter((call) => call.path.includes("/api/v1/system/settings")),
   ).toEqual([]);
-
-  // The retired collections are closed, unauthenticated-safe entry pages: an
-  // old bookmark renders the bounded closure notice without reading a mixed
-  // collection or asking for a credential it will never use.
-  await page.goto("/ui-v2/operations/tasks");
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(
-    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
-  ).toBeVisible();
-  await page.goto("/ui-v2/operations/jobs");
-  await expect(
-    page.getByRole("heading", { name: "旧列表已并入任务中心" }),
-  ).toBeVisible();
-
-  // A missing identity is a bounded read-only answer, never a guessed library.
-  await page.goto("/ui-v2/operations/tasks/does-not-exist");
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(
-    page.getByRole("heading", { name: "正在确认该 Task 的归属" }),
-  ).toBeVisible();
-  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
+  expect(api.filter((call) => call.method !== "GET")).toEqual([]);
 });
 
 // -- PATCH-20261029-3: All-view creation-time range only --------------------

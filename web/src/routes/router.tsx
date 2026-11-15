@@ -10,7 +10,6 @@ import {
 import { EntryPage } from "../features/entry/EntryPage";
 import { ExplorePage } from "../features/explore/ExplorePage";
 import { parseExploreDetailToken } from "../entities/explore/explore";
-import { MigrationPage } from "../features/migration/MigrationPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { StorageManagementPage } from "../features/storage/StorageManagementPage";
 import { RulesWorkspacePage } from "../features/rules/RulesWorkspacePage";
@@ -18,12 +17,6 @@ import { RulesEditPage } from "../features/rules/RulesEditPage";
 import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
-import {
-  LegacyJobDetailPage,
-  LegacyJobListPage,
-  LegacyTaskDetailPage,
-  LegacyTaskListPage,
-} from "../features/operations/LegacyTaskRoutes";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
@@ -64,25 +57,6 @@ function NotFoundRoute() {
   );
 }
 
-/**
- * The retired Library routes have no compatibility alias or redirect: a visit
- * lands on one bounded recovery state that links explicitly to both supported
- * pages and starts no work (no read, admission or mutation).
- */
-function RetiredLibraryRoute() {
-  return (
-    <StatusBanner variant="warning" title="此页面已迁移">
-      <p>
-        旧的媒体库页面已拆分为两个独立入口：资源库文件页和媒体库文件页。此地址不再提供内容，也没有执行任何操作。
-      </p>
-      <div className="mf-actions">
-        <Link to="/resourcelib/files">打开资源库文件页</Link>
-        <Link to="/medialib/files">打开媒体库文件页</Link>
-      </div>
-    </StatusBanner>
-  );
-}
-
 const rootRoute = createRootRoute({
   component: RootRoute,
   notFoundComponent: NotFoundRoute,
@@ -110,18 +84,6 @@ const exploreRoute = createRoute({
     return { detail: `${parsed.mediaType}-${parsed.providerId}` };
   },
   component: ExplorePage,
-});
-
-const retiredLibraryRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "library",
-  component: RetiredLibraryRoute,
-});
-
-const retiredLibraryFilesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "library/files",
-  component: RetiredLibraryRoute,
 });
 
 const mediaLibraryFilesRoute = createRoute({
@@ -155,30 +117,6 @@ const operationsRoute = createRoute({
   component: OperationsLanding,
 });
 
-const taskListRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/tasks",
-  component: LegacyTaskListPage,
-});
-
-const taskDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/tasks/$taskId",
-  component: LegacyTaskDetailPage,
-});
-
-const jobListRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/jobs",
-  component: LegacyJobListPage,
-});
-
-const jobDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/jobs/$jobId",
-  component: LegacyJobDetailPage,
-});
-
 const organizeIntentRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/organize/intent/$intentId",
@@ -195,15 +133,6 @@ const automationListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation",
   component: AutomationListPage,
-});
-
-// The legacy create address now opens the same list-overlay creation
-// experience as the canonical lifecycle address. It is kept as a bounded
-// continuation, not a second Draft form.
-const automationNewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/automation/new",
-  component: () => <AutomationListPage createDialogOpen />,
 });
 
 const automationLifecycleRoute = createRoute({
@@ -298,12 +227,6 @@ const deliveryDetailRoute = createRoute({
   component: DeliveryDetailPage,
 });
 
-const reviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "review",
-  component: MigrationPage,
-});
-
 const configurationRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "configuration",
@@ -331,19 +254,12 @@ const rulesEditRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   entryRoute,
   exploreRoute,
-  retiredLibraryRoute,
-  retiredLibraryFilesRoute,
   mediaLibraryFilesRoute,
   resourceLibraryFilesRoute,
   operationsRoute,
-  taskListRoute,
-  taskDetailRoute,
-  jobListRoute,
-  jobDetailRoute,
   organizeIntentRoute,
   organizeDiscoveryRoute,
   automationListRoute,
-  automationNewRoute,
   automationLifecycleRoute,
   automationLifecycleNewRoute,
   automationOccurrencesRoute,
@@ -354,7 +270,6 @@ const routeTree = rootRoute.addChildren([
     notificationEditorRoute,
   ]),
   deliveryListRoute.addChildren([deliveryDetailRoute]),
-  reviewRoute,
   configurationRoute,
   storageManagementRoute,
   rulesRoute,

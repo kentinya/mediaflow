@@ -20,7 +20,6 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -156,26 +155,6 @@ class ConfigurationSnapshotTests(unittest.TestCase):
             },
         )
         self.assertGreaterEqual(len(repository.audit), 7)
-
-    def test_ui_has_explicit_read_only_system_refresh(self) -> None:
-        html = INDEX_HTML.decode()
-        script = APP_JS.decode()
-        self.assertIn('data-view="system"', html)
-        self.assertIn("/api/v1/system/status", script)
-        self.assertIn("fetch('/health'", script)
-        self.assertIn("/api/v1/management/readiness", script)
-        self.assertIn("/api/v1/workers/readiness", script)
-        self.assertIn("Process alive", script)
-        self.assertIn("Management ready", script)
-        self.assertIn("Worker ready", script)
-        self.assertIn("Refresh system status", script)
-        self.assertIn("secrets are intentionally hidden", script)
-        self.assertIn("Retry safe", script)
-        self.assertIn("Side effects", script)
-        self.assertIn("Next action", script)
-        self.assertIn("textContent", script)
-        for forbidden in ("Edit configuration", "Apply configuration", "Test storage"):
-            self.assertNotIn(forbidden, html + script)
 
     def test_production_api_bootstrap_injects_snapshot_without_storage(self) -> None:
         from mediaflow.final_cli import final_main

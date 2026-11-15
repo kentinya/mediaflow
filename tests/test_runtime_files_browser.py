@@ -22,7 +22,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 9, 4, 12, tzinfo=UTC)
@@ -489,19 +488,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertEqual(error["error"]["code"], "configuration_unavailable")
                 self.assertEqual(error["error"]["details"]["authority"], "MANAGED")
                 self.assertEqual(error["error"]["details"]["sideEffects"], "none")
-
-
-class RuntimeFilesBrowserUiTests(unittest.TestCase):
-    def test_files_is_the_only_bounded_live_directory_entry_point(self) -> None:
-        html = INDEX_HTML.decode("utf-8")
-        script = APP_JS.decode("utf-8")
-        self.assertIn('data-view="files"', html)
-        self.assertNotIn('data-view="file-index"', html)
-        self.assertIn("/api/v1/storage/files?", script)
-        self.assertNotIn("/api/v1/file-index", script)
-        self.assertNotIn("indexMembership", script)
-        self.assertIn("Storage root", script)
-        self.assertIn("Retry page", script)
 
 
 if __name__ == "__main__":

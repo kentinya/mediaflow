@@ -125,7 +125,7 @@ export function DeleteResourceLibraryDialog({
                 className="mf-link-button"
                 onClick={() => {
                   onCancel();
-                  navigate({ to: "/review" });
+                  navigate({ to: "/rules" });
                 }}
               >
                 前往整理规则处理这些引用

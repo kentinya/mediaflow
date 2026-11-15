@@ -289,22 +289,31 @@ function heldSettingsRead(): {
 }
 
 describe("Automation engine settings surface", () => {
-  it("redirects the retired Automation settings tab to System Settings without a write", async () => {
+  it("treats the retired settings tab as an ordinary unknown tab without a redirect", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url.includes("/operations/automation/settings")) {
-        return jsonResponse(settingsDocument());
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse({
+          items: [],
+          total: 0,
+          limit: 20,
+          truncated: false,
+          metrics: { available: false },
+          sideEffects: "none",
+        });
       }
       return undefined;
     });
-    const { router } = (() => {
-      authStore.setToken(TOKEN);
-      return renderApp("/ui-v2/operations/automation?tab=settings");
-    })();
-    const panel = await screen.findByRole("region", { name: "系统运行设置" });
-    expect(panel).toBeTruthy();
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/configuration");
-    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations/automation?tab=settings");
+    await screen.findByRole("heading", { name: "自动化" });
+    // The unknown tab is not recognized, allowlisted or redirected: the same
+    // Automation list fallback renders and no settings route or write occurs.
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations/automation"),
+    );
+    expect(
+      calls.some((call) => call.url.includes("/api/v1/system/settings")),
+    ).toBe(false);
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 

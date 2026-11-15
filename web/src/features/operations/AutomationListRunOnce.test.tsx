@@ -371,7 +371,7 @@ describe("Automation list Run once", () => {
     expect(await within(row(table)).findByText("已提交")).toBeVisible();
     expect(within(row(table)).getByText(/任务已受理，尚未完成/)).toBeVisible();
     const link = within(row(table)).getByRole("link", { name: "查看任务" });
-    expect(link.getAttribute("href")).toContain("/operations/tasks/task-1");
+    expect(link.getAttribute("href")).toContain("/operations?run=task-1");
     // The admission response ended the busy state; it did not wait for the
     // Worker and it did not navigate away.
     expect(router.state.location.pathname).toBe("/operations/automation");
@@ -403,7 +403,7 @@ describe("Automation list Run once", () => {
     expect(await target.findByText("已提交")).toBeVisible();
     expect(
       target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-    ).toContain("/operations/tasks/first-task");
+    ).toContain("/operations?run=first-task");
 
     // The first success hint is still inside its display window. A second
     // explicit click must present the second attempt, never the earlier Task.
@@ -456,7 +456,7 @@ describe("Automation list Run once", () => {
     expect(await target.findByText("已提交")).toBeVisible();
     expect(
       target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-    ).toContain("/operations/tasks/first-task");
+    ).toContain("/operations?run=first-task");
 
     await user.click(target.getByRole("button", { name: "运行一次" }));
     expect(await target.findByText("暂未收到回复")).toBeVisible();
@@ -487,7 +487,7 @@ describe("Automation list Run once", () => {
     expect(await target.findByText("已提交")).toBeVisible();
     expect(
       target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-    ).toContain("/operations/tasks/second-task");
+    ).toContain("/operations?run=second-task");
     const reconcile = calls.find(
       (call) =>
         call.method === "GET" &&
@@ -536,14 +536,14 @@ describe("Automation list Run once", () => {
     expect(await target.findByText("已提交")).toBeVisible();
     expect(
       target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-    ).toContain("/operations/tasks/first-task");
+    ).toContain("/operations?run=first-task");
 
     await user.click(target.getByRole("button", { name: "运行一次" }));
     await waitFor(() => expect(mainPosts).toBe(2));
     await waitFor(() =>
       expect(
         target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-      ).toContain("/operations/tasks/second-task"),
+      ).toContain("/operations?run=second-task"),
     );
     expect(
       target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
@@ -552,7 +552,7 @@ describe("Automation list Run once", () => {
     expect(other.getByText("已提交")).toBeVisible();
     expect(
       other.getByRole("link", { name: "查看任务" }).getAttribute("href"),
-    ).toContain("/operations/tasks/other-task");
+    ).toContain("/operations?run=other-task");
     expect(
       calls.filter(
         (call) => call.method === "POST" && call.url.endsWith("/run-once"),
@@ -617,7 +617,7 @@ describe("Automation list Run once", () => {
       within(row(table))
         .getByRole("link", { name: "查看任务" })
         .getAttribute("href"),
-    ).toContain("/operations/tasks/task-reconciled");
+    ).toContain("/operations?run=task-reconciled");
   });
 
   it("shows a proved refusal with a safe next action and never retries it automatically", async () => {

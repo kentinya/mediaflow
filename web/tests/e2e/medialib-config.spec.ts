@@ -545,6 +545,18 @@ test("a referenced library cannot be removed and offers the handoff", async ({
   await page.getByRole("button", { name: "取消", exact: true }).click();
   await expect(card(page, "115网盘")).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
+
+  // The correction action reaches the real current rules management entry.
+  // It carries no removed /review address and the referenced library remains.
+  await openRemovalDialog(page, "115网盘");
+  await page.getByRole("button", { name: "前往整理规则处理这些引用" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
+  await expect(
+    page.getByRole("heading", { name: "整理规则", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files/);
+  await expect(card(page, "115网盘")).toBeVisible();
 });
 
 test("a stale removal confirmation keeps the dialog open for safe re-review", async ({

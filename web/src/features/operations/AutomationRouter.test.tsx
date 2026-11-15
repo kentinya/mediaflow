@@ -817,101 +817,22 @@ describe("V2 Automation journey", () => {
     });
   });
 
-  it("opens the same create dialog from the legacy create deep link", async () => {
-    const user = userEvent.setup();
-    const formAuthority = {
-      active: {
-        revisionId: ACTIVE_REVISION,
-        version: 3,
-        revisionSequence: 2,
-        status: "active",
-        digest: "a".repeat(64),
-      },
-      fields: [
-        "id",
-        "name",
-        "enabled",
-        "resourceLibraryId",
-        "mode",
-        "itemLimit",
-        "intervalSeconds",
-        "cron",
-        "timezone",
-      ],
-      defaults: {},
-      resourceLibraries: [
-        {
-          id: "source",
-          name: "Source",
-          enabled: true,
-          storageId: "source-storage",
-          storagePath: "Media",
-        },
-      ],
-      enums: {
-        modes: ["automatic-organization"],
-        scheduleTypes: ["interval", "cron"],
-      },
-      limits: {
-        id: 64,
-        name: 120,
-        sourceScope: 1024,
-        timezone: 64,
-        itemLimit: { minimum: 1, maximum: 10000 },
-        intervalSeconds: {
-          minimum: 0,
-          exclusiveMinimum: true,
-          maximum: 31536000,
-        },
-      },
-      actions: {
-        create: true,
-        edit: true,
-        copy: true,
-        toggle: true,
-        remove: true,
-      },
-    };
+  it("answers the retired Automation create address with the ordinary not-found page", async () => {
     const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         return jsonResponse({ principal_id: "automation-operator" });
       }
-      if (
-        call.url ===
-          "/api/v1/operations/automation/task-definitions?sort=name&limit=20" &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(listDocument());
-      }
-      if (
-        call.url === "/api/v1/operations/automation/definitions" &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(formAuthority);
-      }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations/automation/new");
+    renderApp("/ui-v2/operations/automation/new");
 
-    // The legacy address no longer renders a second multi-step Draft flow:
-    // the ordinary list stays as the background and the same create card is
-    // the only form.
-    await screen.findByRole("heading", { name: "新建自动化任务" });
-    await screen.findByLabelText(/任务名称/);
-    expect(screen.getByRole("heading", { name: "自动化" })).toBeVisible();
     expect(
-      screen.queryByRole("heading", { name: "Create Automation definition" }),
+      await screen.findByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "新建自动化任务" }),
     ).toBeNull();
-    expect(screen.queryByText("Start successor Draft")).toBeNull();
-    expect(screen.queryByLabelText("Definition ID")).toBeNull();
-    expect(screen.queryByLabelText("Enabled")).toBeNull();
-
-    // Opening and cancelling publishes nothing.
-    await user.click(screen.getByRole("button", { name: "取消" }));
-    await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/operations/automation"),
-    );
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 

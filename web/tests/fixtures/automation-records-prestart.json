@@ -30,7 +30,7 @@
         "unresolvedItems": 0
       },
       "handoff": {
-        "definitionSettings": "/ui-v2/operations/automation/definition/healthy",
+        "definitionSettings": "/ui-v2/operations/automation/lifecycle/healthy",
         "durableState": "formal_execution_exists",
         "explanation": "a durable organizing Task exists for this run; its plan, per-item results and every recovery command belong to that exact Task Center run",
         "formalExecution": true,
@@ -156,7 +156,7 @@
         "unresolvedItems": 0
       },
       "handoff": {
-        "definitionSettings": "/ui-v2/operations/automation/definition/missing",
+        "definitionSettings": "/ui-v2/operations/automation/lifecycle/missing",
         "durableState": "formal_execution_exists",
         "explanation": "a durable organizing Task exists for this run; its plan, per-item results and every recovery command belong to that exact Task Center run",
         "formalExecution": true,

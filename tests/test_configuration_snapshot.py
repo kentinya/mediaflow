@@ -1726,31 +1726,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(job["configuration_snapshot_id"], active.revision_id)
                 self.assertEqual(api._runtime_binding.metadata_policies[0].language, "ja-JP")
 
-    def test_actual_operator_ui_assets_expose_configuration_and_failure_recovery(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
-            try:
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=(
-                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
-                    ),
-                )
-                status, headers, page = request_raw(api, "/ui/")
-                self.assertEqual(status, 200)
-                self.assertIn("text/html", headers["Content-Type"])
-                self.assertIn(b"Configuration", page)
-                status, headers, script = request_raw(api, "/ui/app.js")
-                self.assertEqual(status, 200)
-                self.assertIn("javascript", headers["Content-Type"])
-                self.assertIn(b"/api/v1/configuration", script)
-                self.assertIn(b"failureCategory", script)
-                self.assertIn(b"nextAction", script)
-                self.assertNotIn(b"Authorization: Bearer", page + script)
-            finally:
-                repository.close()
-
     def test_api_recovery_starts_from_locator_when_workflow_bootstrap_is_broken(self) -> None:
         class Server:
             app = None
@@ -1922,8 +1897,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             job_result = None
             active_result = None
             detail_result = None
-            ui_result = None
-            script_result = None
             lifecycle = []
 
             def __enter__(self):
@@ -1933,8 +1906,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return None
 
             def serve_forever(self):
-                self.ui_result = request_raw(self.app, "/ui/")
-                self.script_result = request_raw(self.app, "/ui/app.js")
                 status, draft = request(
                     self.app,
                     "/api/v1/configuration/drafts",
@@ -2039,8 +2010,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     server.lifecycle,
                     [(201, "draft"), (200, "draft"), (200, "draft"), (200, "validated")],
                 )
-                self.assertEqual(server.ui_result[0], 200)
-                self.assertEqual(server.script_result[0], 200)
                 self.assertEqual(server.detail_result[0], 200)
                 self.assertIn("changedSections", server.detail_result[1]["diff"])
                 self.assertIn(

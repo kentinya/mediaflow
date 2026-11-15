@@ -315,47 +315,23 @@ test("a paused media transfer's retired resume is refused with no replay", async
   expect(transfer.status).toBe("PAUSED");
 });
 
-test("a paused transfer's retired administrative deep link reaches its own library without replaying it", async ({
+test("a paused transfer's retired Task deep link is an ordinary not-found without replaying it", async ({
   page,
 }) => {
-  // Slice46 RO-4 / B46.4-04: the mixed Task collection is closed, so an old
-  // `/operations/tasks/<id>` deep link must resolve the exact ordinary identity
-  // to its proven MediaLibrary origin and land on that library's page carrying
-  // the operation context — never a second mixed list, a guessed library or an
-  // automatic command.
+  // Task55.1: the retired `/operations/tasks/<id>` address has no resolver,
+  // alias or library guess. The paused transfer remains durable and unchanged,
+  // and the old address starts no identity read or command.
   const taskId = await admitPausedMediaTransfer(page);
-  const resumeRequests: string[] = [];
+  const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/resume")) {
-      resumeRequests.push(request.url());
-    }
-  });
-  const mixedReads: string[] = [];
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (
-      url.pathname === "/api/v1/tasks" ||
-      url.pathname === "/api/v1/jobs" ||
-      url.pathname.startsWith("/api/v1/operations/tasks") ||
-      url.pathname.startsWith("/api/v1/operations/jobs")
-    ) {
-      mixedReads.push(url.pathname);
-    }
+    if (request.url().includes("/api/")) apiRequests.push(request.url());
   });
   await page.goto(`/ui-v2/operations/tasks/${taskId}`);
-  await connectAs(page);
-
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/ui-v2/medialib/files\\?mediaLibraryId=movies&operationTaskId=${taskId}$`,
-    ),
-  );
   await expect(
-    page.getByRole("heading", { name: "媒体库", exact: true }),
+    page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  expect(mixedReads).toEqual([]);
-  // Resolving the origin reads; it never resumes the paused transfer.
-  expect(resumeRequests).toEqual([]);
+  await expect(page.getByLabel("API token")).toHaveCount(0);
+  expect(apiRequests).toEqual([]);
   const [transfer] = await durableMediaTransfers(page);
   expect(transfer.status).toBe("PAUSED");
 });

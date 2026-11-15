@@ -1198,9 +1198,9 @@ export function OperationsLanding() {
                   }
                   onOpenLinkedAnalysis={(taskId, itemId) =>
                     void navigate({
-                      to: "/operations/tasks/$taskId",
-                      params: { taskId },
+                      to: "/operations",
                       search: {
+                        run: taskId,
                         returnOps: operationsReturnContextFromSearch({
                           ...listSearch(selectedId),
                           ...runDetailStateSearch(detailState),

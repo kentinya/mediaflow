@@ -111,12 +111,12 @@ describe("AppShell", () => {
       ).toBe(false),
     );
 
-    // The closed task list is a real child of the task center: it keeps the
-    // exact same surface/DOM and never replays the main-page transition.
+    // A query-only change inside the same task-center identity keeps the exact
+    // same surface/DOM and never replays the main-page transition.
     await act(async () => {
-      await router.navigate({ to: "/operations/tasks" });
+      await router.navigate({ to: "/operations", search: { view: "ended" } });
     });
-    expect(screen.getByRole("heading", { name: "任务中心" })).toBeVisible();
+    expect(router.history.location.pathname).toBe("/ui-v2/operations");
     expect(document.querySelector('[data-main-page="operations"]')).toBe(
       shellSurface,
     );
@@ -183,7 +183,7 @@ describe("AppShell", () => {
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/ui-v2/operations"),
     );
-    // The entry starts once and settles; a same-page deep link keeps the
+    // The entry starts once and settles; a same-page search update keeps the
     // exact same surface and never re-adds the entry start class.
     await waitFor(() =>
       expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
@@ -191,9 +191,9 @@ describe("AppShell", () => {
       ),
     );
     await act(async () => {
-      await router.navigate({ to: "/operations/tasks" });
+      await router.navigate({ to: "/operations", search: { view: "ended" } });
     });
-    expect(router.history.location.pathname).toBe("/ui-v2/operations/tasks");
+    expect(router.history.location.pathname).toBe("/ui-v2/operations");
     expect(document.querySelector("[data-main-page]")).toBe(surface);
     expect(surface?.dataset.pageTransition).toBe("enter");
     expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
@@ -286,7 +286,6 @@ describe("AppShell", () => {
     // including legacy/deep-link and post-login continuations.
     const routes: Array<readonly [string, string]> = [
       ["/ui-v2/operations/automation", "Automation"],
-      ["/ui-v2/operations/automation/new", "Create Automation definition"],
       ["/ui-v2/operations/automation/lifecycle", "New Automation definition"],
       [
         "/ui-v2/operations/automation/lifecycle/nightly",

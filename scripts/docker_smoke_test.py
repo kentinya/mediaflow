@@ -257,9 +257,16 @@ def smoke(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
 
-            status, body = http_request(f"{base}/ui/")
-            if status != 200 or b"MediaFlow Operator" not in body:
-                raise RuntimeError("authenticated Operator Web shell was not reachable")
+            status, body = http_request(f"{base}/ui-v2/")
+            if status != 200 or b'<div id="root">' not in body:
+                raise RuntimeError("current V2 Web shell was not reachable")
+            # The retired V1 static product is an ordinary unknown route.
+            for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
+                status, _ = http_request(f"{base}{retired_path}")
+                if status != 404:
+                    raise RuntimeError(
+                        f"retired V1 Web path {retired_path} returned HTTP {status}, expected 404"
+                    )
             status, tasks = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
             if status != 200:
                 raise RuntimeError(f"authenticated API Tasks list returned HTTP {status}")

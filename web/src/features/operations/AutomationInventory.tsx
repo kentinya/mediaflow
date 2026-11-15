@@ -510,8 +510,8 @@ export function AutomationDefinitionRow({
               </p>
               <Link
                 className="mf-button mf-button-secondary"
-                to="/operations/tasks/$taskId"
-                params={{ taskId: runOnceFeedback.taskId }}
+                to="/operations"
+                search={{ run: runOnceFeedback.taskId }}
               >
                 查看任务
               </Link>

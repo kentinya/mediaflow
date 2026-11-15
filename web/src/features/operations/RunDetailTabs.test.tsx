@@ -461,7 +461,6 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
         status: "pending",
         task_id: "task-001",
         item_id: "item-2",
-        resolution_path: "/review",
       },
       audits: [],
       recovery_requests: [],

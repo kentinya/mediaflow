@@ -261,7 +261,7 @@ test("a disabled published definition runs once from the list without a file pic
   await page.setViewportSize({ width: 1536, height: 1024 });
   const href = await taskLink.getAttribute("href");
   if (!href) throw new Error("admitted row has no Task Center link");
-  const id = new URL(href, page.url()).pathname.split("/").pop() ?? "";
+  const id = new URL(href, page.url()).searchParams.get("run") ?? "";
   expect(id).toMatch(/[0-9a-f-]{36}/);
   await page.unroute("**/api/v1/operations/automation/definitions/*/run-once");
 
@@ -270,7 +270,7 @@ test("a disabled published definition runs once from the list without a file pic
   // a second execution step.
   await taskLink.click();
   await expect(page).toHaveURL(
-    new RegExp(`/operations/tasks/${id.replaceAll("-", "\\-")}$`),
+    new RegExp(`/operations\\?run=${id.replaceAll("-", "\\-")}$`),
   );
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),

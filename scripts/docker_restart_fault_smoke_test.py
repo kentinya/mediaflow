@@ -1012,15 +1012,15 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             if "automatic_replay_refused" not in uncertain.get("refusal_reason", ""):
                 raise RuntimeError("uncertain item lost its automatic replay refusal")
 
-            status, ui = http_request(f"{base}/ui/")
-            if status != 200 or b"MediaFlow Operator" not in ui:
-                raise RuntimeError("Operator Web shell is not reachable")
-            status, app_js = http_request(f"{base}/ui/app.js")
-            if status != 200:
-                raise RuntimeError(f"Operator Web app returned HTTP {status}")
-            for marker in (b"showTask", b"showTaskItem", b"renderNotifications"):
-                if marker not in app_js:
-                    raise RuntimeError(f"Operator Web lacks durable recovery view {marker!r}")
+            status, ui = http_request(f"{base}/ui-v2/")
+            if status != 200 or b'<div id="root">' not in ui:
+                raise RuntimeError("current V2 Web shell is not reachable")
+            for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
+                status, _ = http_request(f"{base}{retired_path}")
+                if status != 404:
+                    raise RuntimeError(
+                        f"retired V1 Web path {retired_path} returned HTTP {status}, expected 404"
+                    )
 
             before_reads = {
                 "tasks": len(collection_ids(base, token, "/api/v1/tasks?limit=100")),

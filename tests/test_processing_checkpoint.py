@@ -33,7 +33,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
@@ -677,7 +676,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     400,
                 )
 
-    def test_read_projection_is_zero_mutation_and_operator_web_is_api_driven(self) -> None:
+    def test_read_projection_is_zero_mutation(self) -> None:
         class SpyRepository:
             def __init__(self, context):
                 self.context = context
@@ -699,10 +698,6 @@ class ProcessingCheckpointTests(unittest.TestCase):
                 checkpoint = ProcessingCheckpointService(spy).get(item.item_id)
                 self.assertEqual(spy.calls, 1)
                 self.assertEqual(checkpoint.permitted_action_ids, ())
-                self.assertIn("Task item checkpoint", APP_JS.decode())
-                self.assertIn("/api/v1/tasks/${encodeURIComponent(taskId)}/items/", APP_JS.decode())
-                self.assertIn("Effect certainty", APP_JS.decode())
-                self.assertIn("Retry safety", APP_JS.decode())
 
 
 if __name__ == "__main__":

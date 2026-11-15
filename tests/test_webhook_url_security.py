@@ -34,7 +34,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -730,18 +729,6 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                 )
             finally:
                 harness.close()
-
-    def test_web_and_api_share_the_redacted_endpoint_surface(self) -> None:
-        script = APP_JS.decode("utf-8")
-        # The guided Web/API journey and the Notifications surface both explain
-        # that a hidden endpoint URL must be corrected, and neither form nor
-        # Advanced JSON can echo a submitted credential value.
-        self.assertIn("'***REDACTED***'", script)
-        self.assertIn("Endpoint URL is hidden because the stored URL carries credentials", script)
-        self.assertIn("enter a clean HTTPS endpoint URL to correct it", script)
-        self.assertIn("stored endpoint URL is hidden because it carries credentials", script)
-        self.assertIn("Save Webhook Definition", script)
-        self.assertNotIn(SENTINEL, script)
 
 
 if __name__ == "__main__":

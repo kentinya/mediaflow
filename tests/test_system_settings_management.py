@@ -21,7 +21,6 @@ from mediaflow.domain.system_settings import (
     validate_settings_edit,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -54,21 +53,6 @@ def request(
     environment.update(headers or {})
     payload = b"".join(api(environment, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(payload)
-
-
-def _js_function_body(script: str, name: str) -> str:
-    """Return one JS function body from the served asset by brace matching."""
-
-    opening = script.index("{", script.index(f"function {name}("))
-    depth = 0
-    for index in range(opening, len(script)):
-        if script[index] == "{":
-            depth += 1
-        elif script[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return script[opening + 1 : index]
-    raise AssertionError("JavaScript block has an unbalanced body")
 
 
 class DummyTaskRepository:
@@ -630,20 +614,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertIsNone(prior.document.get("locale"))
             self.assertEqual(prior.document["automation"]["maximumActiveJobs"], 100)
 
-    def test_web_and_api_settings_parity_success_failure_and_recovery(self) -> None:
-        script = APP_JS.decode("utf-8")
-        web_view = _js_function_body(script, "renderSettings")
-        # The served Web client must pin the same identity contract the API
-        # defines: mutable Draft version for Draft edits, exact Active identity
-        # for successor creation, and reopening of the returned Draft.
-        self.assertIn("/api/v1/system/settings", web_view)
-        self.assertIn("expectedVersion: data.draftVersion", web_view)
-        self.assertNotIn("expectedVersion: data.revisionVersion", web_view)
-        self.assertIn("expectedActiveRevisionId: data.revisionId", web_view)
-        self.assertIn("expectedActiveVersion: data.revisionVersion", web_view)
-        self.assertIn("expectedActiveDigest: data.revisionDigest", web_view)
-        self.assertIn("renderSettings(settingsRevisionId)", web_view)
-
+    def test_settings_api_success_failure_and_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
             revisions_before = len(repo.list_revisions(limit=100))
@@ -742,29 +713,6 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(service.active().revision_id, active.revision_id)
             self.assertEqual(service.active().document["automation"]["maximumActiveJobs"], 100)
             self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before + 1)
-
-    def test_web_ui_assets_expose_system_settings(self) -> None:
-        html = INDEX_HTML.decode("utf-8")
-        script = APP_JS.decode("utf-8")
-
-        self.assertIn('data-view="settings"', html)
-        self.assertIn("System Settings", script)
-        self.assertIn("/api/v1/system/settings", script)
-        self.assertIn("renderSettings", script)
-        self.assertIn("Bootstrap-owned", script)
-        self.assertIn("typedSettingControl", script)
-        self.assertIn("input.type = 'checkbox'", script)
-        self.assertIn("input.type = 'number'", script)
-        self.assertIn("meta.valueType === 'enum'", script)
-        self.assertIn("pendingByPath", script)
-        self.assertIn("settingsRevisionId", script)
-        self.assertIn("expectedActiveRevisionId", script)
-        # Draft edits send the mutable Draft version, never the revision sequence.
-        self.assertIn("expectedVersion: data.draftVersion", script)
-        self.assertNotIn("expectedVersion: data.revisionVersion", script)
-        self.assertIn("['Draft version', data.draftVersion || '-']", script)
-        self.assertIn("Validate and activate this Draft", script)
-        self.assertIn("Add at least one setting edit before saving.", script)
 
     def test_runtime_projection_preserves_extended_settings(self) -> None:
         from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration

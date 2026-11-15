@@ -62,46 +62,6 @@ async function openOperations(page: Page) {
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
 }
 
-// Slice46 RO-4 / B46.4-04: the former independent Task/Job collections are
-// closed.  These helpers drive the real closed entries so a visit proves the
-// contraction instead of a second mixed list, and the center itself is opened
-// through its own route.
-async function openClosedTaskCollection(page: Page, token = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/operations/tasks");
-  if (await page.getByLabel("API token").isVisible()) {
-    await page.getByLabel("API token").fill(token);
-    await page.getByRole("button", { name: "Connect" }).click();
-  }
-  await expect(
-    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
-  ).toBeVisible();
-}
-
-async function openClosedJobCollection(page: Page, token = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/operations/jobs");
-  if (await page.getByLabel("API token").isVisible()) {
-    await page.getByLabel("API token").fill(token);
-    await page.getByRole("button", { name: "Connect" }).click();
-  }
-  await expect(
-    page.getByRole("heading", { name: "旧列表已并入任务中心" }),
-  ).toBeVisible();
-}
-
-/** Resolve one legacy identity and assert where it really lands. */
-async function openLegacyIdentity(
-  page: Page,
-  kind: "tasks" | "jobs",
-  identity: string,
-  token = VIEWER_TOKEN,
-) {
-  await page.goto(`/ui-v2/operations/${kind}/${identity}`);
-  if (await page.getByLabel("API token").isVisible()) {
-    await page.getByLabel("API token").fill(token);
-    await page.getByRole("button", { name: "Connect" }).click();
-  }
-}
-
 /** Open one exact run in the Task Center through its own URL state. */
 async function openCenterRun(page: Page, runId: string) {
   await connect(page);
@@ -205,60 +165,33 @@ test("a reload drops the memory-only token and returns to the connection boundar
   expect(html).not.toContain(VIEWER_TOKEN);
 });
 
-test("the closed Task collection keeps its filter state without a mixed list", async ({
+test("the retired Task/Job collections and identities are ordinary not-found routes", async ({
   page,
 }) => {
-  await connect(page);
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(request.url()));
-  await openClosedTaskCollection(page);
-
-  // The retired entry states the contraction and never reads a second mixed
-  // Task collection or offers a generic failure recovery.
-  expect(
-    requested.filter((url) => url.includes("/api/v1/operations/tasks")),
-  ).toHaveLength(0);
-  await expect(
-    page.getByRole("link", { name: "打开任务中心" }),
-  ).toHaveAttribute("href", "/ui-v2/operations");
-  await expect(
-    page.getByRole("link", { name: "打开资源库文件页" }),
-  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
-});
-
-test("the closed Job collection never reads a second mixed population", async ({
-  page,
-}) => {
-  await connect(page);
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(request.url()));
-  await openClosedJobCollection(page);
-  expect(
-    requested.filter((url) => url.includes("/api/v1/operations/jobs")),
-  ).toHaveLength(0);
-  await expect(
-    page.getByRole("link", { name: "打开任务中心" }),
-  ).toHaveAttribute("href", "/ui-v2/operations");
-});
-
-test("an organizing legacy deep link resolves to the exact Task run", async ({
-  page,
-}) => {
-  await connect(page);
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(request.url()));
-  await openLegacyIdentity(page, "tasks", "task-001");
-  // The supported Task identity opens that exact Task inside the center. The
-  // retired Job admission is never used as the run identity, and reading the
-  // legacy link submits no command and reads no second collection.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-001/);
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
-  expect(
-    requested.filter(
-      (url) =>
-        url.includes("/api/v1/tasks") && !url.includes("/api/v1/operations/"),
-    ),
-  ).toHaveLength(0);
+  const apiRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) apiRequests.push(request.url());
+  });
+  for (const path of [
+    "/ui-v2/operations/tasks",
+    "/ui-v2/operations/tasks?status=failed&command=preview",
+    "/ui-v2/operations/tasks/task-001",
+    "/ui-v2/operations/jobs",
+    "/ui-v2/operations/jobs/job-005",
+    "/ui-v2/operations/jobs/does-not-exist",
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByText("任务列表已并入任务中心")).toHaveCount(0);
+    await expect(page.getByText("旧列表已并入任务中心")).toHaveCount(0);
+    await expect(page.getByText("该旧记录已不可用")).toHaveCount(0);
+  }
+  // The retired addresses resolve no identity, read no mixed collection and
+  // submit no command.
+  expect(apiRequests).toEqual([]);
 });
 
 test("the center's own run detail separates the aggregate from items and results", async ({
@@ -332,31 +265,6 @@ test("the operations read and the rendered page stay free of a hostile historica
   ).toBe(false);
 });
 
-test("a retired Job deep link stays a bounded read-only unavailable state", async ({
-  page,
-}) => {
-  const mutating: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() !== "GET") mutating.push(request.url());
-  });
-  await connect(page);
-  // Pre-Task Job admissions are retired: the old identity is never resolved
-  // into a new Task, a guessed context or a replayable command.
-  await openLegacyIdentity(page, "jobs", "job-005");
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs\/job-005$/);
-  await expect(
-    page.getByRole("heading", { name: "该旧记录已不可用" }),
-  ).toBeVisible();
-  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "打开任务中心" })).toBeVisible();
-  // The same bounded answer applies to an unknown old identity.
-  await openLegacyIdentity(page, "jobs", "does-not-exist");
-  await expect(
-    page.getByRole("heading", { name: "该旧记录已不可用" }),
-  ).toBeVisible();
-  expect(mutating).toEqual([]);
-});
-
 test("a terminal run exposes no control and no request is sent", async ({
   page,
 }) => {
@@ -379,19 +287,20 @@ test("a terminal run exposes no control and no request is sent", async ({
   expect(posts).toHaveLength(0);
 });
 
-test("Operations failures stay inside the shell and offer a valid next action", async ({
+test("a retired Task identity is never resolved into a guessed current context", async ({
   page,
 }) => {
-  await connect(page);
-  // An unauthenticated deep entry to a missing identity reconnects and then
-  // renders the bounded read-only unavailable state inside the shell instead of
-  // a second mixed list or a generic failure recovery.
-  await openLegacyIdentity(page, "tasks", "does-not-exist");
+  const apiRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) apiRequests.push(request.url());
+  });
+  await page.goto("/ui-v2/operations/tasks/does-not-exist");
   await expect(
-    page.getByRole("heading", { name: "正在确认该 Task 的归属" }),
+    page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "打开任务中心" })).toBeVisible();
+  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByText(/没有提交任何命令/)).toHaveCount(0);
+  expect(apiRequests).toEqual([]);
 });
 
 test("an unknown Operations route renders the not-found boundary", async ({

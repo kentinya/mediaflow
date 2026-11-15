@@ -258,8 +258,8 @@ export function AutomationRunOncePage() {
                 </StatusBanner>
                 <Link
                   className="mf-button mf-button-primary"
-                  to="/operations/tasks/$taskId"
-                  params={{ taskId: model.taskId }}
+                  to="/operations"
+                  search={{ run: model.taskId }}
                 >
                   查看整理任务
                 </Link>

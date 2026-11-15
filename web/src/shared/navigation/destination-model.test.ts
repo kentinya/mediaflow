@@ -17,23 +17,19 @@ describe("destination model", () => {
       "探索",
       "Library",
       "任务中心",
-      "Review & Recovery",
       "Configuration",
       "Organizing Rules",
       "Storage Management",
     ]);
     expect(
-      destinations.filter((item) => item.availability === "migration"),
-    ).toHaveLength(2);
+      destinations.filter((item) => item.availability !== "implemented"),
+    ).toHaveLength(0);
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Files",
-      "Task list",
       "Edit rule object",
-      "Task detail",
       "Manual intent",
       "整理发现",
       "Automation",
-      "Create Automation definition",
       "New Automation definition",
       "Automation lifecycle",
       "Automation occurrences",
@@ -75,6 +71,11 @@ describe("destination model", () => {
     expect(isDestinationPath("/operations/automation/editor/def-1")).toBe(
       false,
     );
+    expect(isDestinationPath("/operations/automation/new")).toBe(false);
+    expect(isDestinationPath("/operations/tasks")).toBe(false);
+    expect(isDestinationPath("/operations/tasks/task-1")).toBe(false);
+    expect(isDestinationPath("/operations/jobs/job-1")).toBe(false);
+    expect(isDestinationPath("/review")).toBe(false);
     expect(
       destinationForPath("/operations/automation/preview/def-1/preview-1"),
     ).toBeUndefined();
@@ -90,14 +91,12 @@ describe("destination model", () => {
       ["/rules", "rules"],
       ["/rules/edit/recognitionTypes/C", "rules"],
       ["/operations/automation", "automation"],
-      ["/operations/automation/new", "automation"],
       ["/operations/automation/lifecycle/nightly", "automation"],
       ["/operations/automation/occurrences/def-1", "automation"],
       ["/operations/automation/run-once/discovery-1", "automation"],
       ["/operations", "operations"],
-      ["/operations/tasks", "operations"],
-      ["/operations/tasks/task-1", "operations"],
       ["/operations/organize/intent/intent-1", "operations"],
+      ["/operations/organize/discovery/discovery-1", "operations"],
       ["/operations/notifications", "notifications"],
       ["/operations/notifications/webhooks/new", "notifications"],
       ["/operations/notifications/webhooks/webhook-1", "notifications"],
@@ -109,15 +108,13 @@ describe("destination model", () => {
     }
     // The grouping is presentation-only and normalizes one trailing slash.
     expect(shellPageForPath("/storage/")).toBe("storage");
-    // No sidebar page owns the entry, review handoff, retired library or an
+    // No sidebar page owns the entry, retired library, retired Task/Job or an
     // unknown address; they keep their existing route handling unchanged.
     for (const path of [
       "/",
       "/review",
       "/library",
       "/library/files",
-      "/operations/automation/definition/def-1",
-      "/operations/automation/editor/def-1",
       "/unknown",
     ]) {
       expect(shellPageForPath(path), path).toBeUndefined();
@@ -168,11 +165,19 @@ describe("destination model", () => {
       false,
     );
     // Other dynamic destinations keep rejecting the same characters.
-    expect(isDestinationPath("/operations/tasks/proof+type")).toBe(false);
-    expect(isDestinationPath("/operations/tasks/proof type")).toBe(false);
-    expect(isDestinationPath("/operations/tasks/proof@type")).toBe(false);
-    // Ordinary task IDs keep working.
-    expect(isDestinationPath("/operations/tasks/task-1")).toBe(true);
+    expect(isDestinationPath("/operations/organize/intent/proof+type")).toBe(
+      false,
+    );
+    expect(isDestinationPath("/operations/organize/intent/proof type")).toBe(
+      false,
+    );
+    expect(isDestinationPath("/operations/organize/intent/proof@type")).toBe(
+      false,
+    );
+    // Ordinary journey identities keep working.
+    expect(isDestinationPath("/operations/organize/intent/intent-1")).toBe(
+      true,
+    );
   });
 
   it("derives a unique path allowlist from the destinations contract", () => {
@@ -181,6 +186,8 @@ describe("destination model", () => {
     expect(allDestinationPaths).toContain("/resourcelib/files");
     expect(allDestinationPaths).toContain("/medialib/files");
     expect(allDestinationPaths).not.toContain("/library/file-index");
+    expect(allDestinationPaths).not.toContain("/operations/tasks");
+    expect(allDestinationPaths).not.toContain("/operations/automation/new");
     for (const path of destinationPaths) {
       expect(isDestinationPath(path)).toBe(true);
     }
@@ -188,6 +195,9 @@ describe("destination model", () => {
     expect(isDestinationPath("/medialib/files")).toBe(true);
     expect(isDestinationPath("/library/files")).toBe(false);
     expect(isDestinationPath("/library")).toBe(false);
+    expect(isDestinationPath("/review")).toBe(false);
+    expect(isDestinationPath("/operations/tasks")).toBe(false);
+    expect(isDestinationPath("/operations/automation/new")).toBe(false);
     expect(isDestinationPath("/")).toBe(false);
     expect(isDestinationPath("/dashboard/")).toBe(false);
     expect(isDestinationPath("/unknown")).toBe(false);
@@ -474,30 +484,6 @@ describe("destination model", () => {
       );
     });
 
-    it("keeps only the submitted Operations collection filters", () => {
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/tasks",
-          "status=failed&command=preview&token=secret&cursor=abc",
-        ),
-      ).toBe("status=failed&command=preview");
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/tasks",
-          "token=secret&unknown=x",
-        ),
-      ).toBeNull();
-    });
-
-    it("keeps only the bounded parent-list context on an Operations detail route", () => {
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/tasks/$taskId",
-          "q_status=failed&q_command=preview&status=failed&token=secret",
-        ),
-      ).toBe("q_status=failed&q_command=preview");
-    });
-
     it("keeps the bounded selected-run detail context through continuation", () => {
       expect(
         allowlistedDestinationSearch(
@@ -509,14 +495,6 @@ describe("destination model", () => {
         "run=task-1&tab=records&istat=waiting&rkind=log&item=item-01" +
           "&icur=abc-_123&rcur=def-_456&idir=backward&rdir=backward",
       );
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/tasks/$taskId",
-          "q_status=failed&tab=records&istat=success&rkind=result&item=item-9",
-        ),
-      ).toBe(
-        "q_status=failed&tab=records&istat=success&rkind=result&item=item-9",
-      );
     });
 
     it("drops tampered detail values instead of replaying them", () => {
@@ -527,19 +505,6 @@ describe("destination model", () => {
             "&icur=../../etc/passwd&idir=sideways&token=secret",
         ),
       ).toBeNull();
-    });
-
-    it("keeps a bounded task-center return path on exact Task evidence links", () => {
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/tasks/$taskId",
-          "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
-            "&tab=detail&item=item-9&token=secret",
-        ),
-      ).toBe(
-        "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
-          "&item=item-9",
-      );
     });
 
     it("carries the Organize journey return contexts through continuation", () => {
@@ -723,13 +688,54 @@ describe("destination model", () => {
       );
     });
 
-    it("drops credential-like values from an Operations collection link", () => {
+    it("treats the retired settings tab as any other unknown Automation tab", () => {
+      // Only the two current list tabs survive a reload/reconnect. The retired
+      // settings tab is dropped by the same unknown-tab fallback as any other
+      // value, including its return marker; no settings-specific token exists.
+      for (const value of ["settings", "admin", "unknown", ""]) {
+        expect(
+          allowlistedDestinationSearch(
+            "/operations/automation",
+            `tab=${value}&sort=name`,
+          ),
+          value,
+        ).toBe("sort=name");
+      }
       expect(
         allowlistedDestinationSearch(
-          "/operations/tasks",
-          "status=Bearer%20abc&command=preview",
+          "/operations/automation",
+          "tab=definitions&returnTab=settings&sort=name",
         ),
-      ).toBe("command=preview");
+      ).toBe("tab=definitions&sort=name");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/automation",
+          "tab=records&returnTab=records",
+        ),
+      ).toBe("tab=records&returnTab=records");
+    });
+
+    it("does not carry any retired Task/Job collection state", () => {
+      // The retired collections are not destinations, so their former query
+      // state can never re-enter an authentication continuation or a current
+      // page URL. Only a current destination path is accepted by the allowlist.
+      for (const path of [
+        "/operations/tasks",
+        "/operations/tasks/task-1",
+        "/operations/jobs",
+        "/operations/jobs/job-1",
+        "/review",
+        "/library",
+        "/library/files",
+      ] as const) {
+        expect(
+          allowlistedDestinationSearch(
+            path as never,
+            "status=failed&command=preview&returnOps=run%3Dtask-1",
+          ),
+          path,
+        ).toBeNull();
+      }
     });
   });
 });

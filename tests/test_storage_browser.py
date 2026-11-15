@@ -27,7 +27,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -807,20 +806,6 @@ class StorageBrowserApiTests(unittest.TestCase):
                 self.assertEqual(failed["error"]["code"], "storage_browser_invalid_path")
                 self.assertEqual(failed["error"]["details"]["sideEffects"], "none")
                 self.assertNotIn("../secret", json.dumps(failed))
-
-
-class StorageBrowserWebTests(unittest.TestCase):
-    def test_setup_picker_and_execution_environment_guidance_are_present(self) -> None:
-        script = APP_JS.decode("utf-8")
-        self.assertIn("storage-browser", script)
-        self.assertIn("renderStorageBrowserPicker", script)
-        self.assertIn("Next page", script)
-        self.assertIn("Retry page", script)
-        self.assertIn("Storage-relative breadcrumb", script)
-        self.assertIn("not the File Catalog", script)
-        self.assertIn("bind-mount", script)
-        self.assertIn("Docker socket", script)
-        self.assertNotIn("innerHTML", script)
 
 
 if __name__ == "__main__":

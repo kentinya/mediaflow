@@ -21,7 +21,6 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -578,28 +577,8 @@ class PackageExchangeApiTests(unittest.TestCase):
             self.assertNotIn("MEDIAFLOW_API_TOKEN", combined)
 
 
-class PackageExchangeWebParityTests(unittest.TestCase):
-    def test_served_web_asset_uses_the_same_package_endpoints(self) -> None:
-        script = APP_JS.decode()
-        self.assertIn("'Package exchange (Advanced/support)'", script)
-        self.assertIn("/api/v1/configuration/packages", script)
-        self.assertIn("/api/v1/configuration/packages/export/configuration", script)
-        self.assertIn("/api/v1/configuration/packages/export/results?limit=100", script)
-        self.assertIn("Export selected configuration package", script)
-        self.assertIn("Import package as Draft/recovery candidate", script)
-        self.assertIn("Export result package", script)
-        self.assertIn("currentDraft", script)
-        self.assertIn("Current Draft", script)
-        self.assertNotIn("literal-secret-value", script)
-
+class PackageExchangeRequestContractTests(unittest.TestCase):
     def test_web_endpoint_contract_replays_shared_api_success_and_conflict(self) -> None:
-        script = APP_JS.decode()
-        self.assertIn(
-            "'/api/v1/configuration/packages/export/configuration' + query",
-            script,
-        )
-        self.assertIn("JSON.stringify({package: parsed})", script)
-        self.assertIn("/api/v1/configuration/packages/export/results?limit=100", script)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, service, repository, _ = setup_api(root)

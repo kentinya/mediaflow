@@ -1090,24 +1090,25 @@ describe("MediaLibrary Files journey", () => {
 });
 
 describe("retired Library routes", () => {
-  it("offers bounded recovery links for both supported pages and starts no work", async () => {
+  it("answers the old Library addresses with the ordinary not-found page", async () => {
     const fetchMock = stubFetch(async () =>
       jsonResponse({ error: { code: "unexpected" } }, 500),
     );
     authStore.setToken(TOKEN);
 
-    for (const path of ["/ui-v2/library", "/ui-v2/library/files"]) {
+    for (const path of [
+      "/ui-v2/library",
+      "/ui-v2/library/files",
+      "/ui-v2/library/files?path=Movies",
+    ]) {
       cleanup();
       renderApp(path);
       expect(
-        await screen.findByRole("heading", { name: "此页面已迁移" }),
+        await screen.findByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
       expect(
-        screen.getByRole("link", { name: "打开资源库文件页" }),
-      ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
-      expect(
-        screen.getByRole("link", { name: "打开媒体库文件页" }),
-      ).toHaveAttribute("href", "/ui-v2/medialib/files");
+        screen.queryByRole("heading", { name: "此页面已迁移" }),
+      ).toBeNull();
     }
     // A retired route starts no API work of any kind.
     expect(fetchMock).not.toHaveBeenCalled();

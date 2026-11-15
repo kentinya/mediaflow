@@ -7,8 +7,8 @@ import {
 
 /**
  * The setup authority as the real projection reports it for an instance that
- * already has a managed Active: setup is closed, and the fixed V1 route is
- * still advertised for the recovery paths that need it.
+ * already has a managed Active: setup is closed, and the fixed System Settings
+ * route is still advertised for the recovery paths that need it.
  */
 const settledSetup = {
   setupRequired: false,

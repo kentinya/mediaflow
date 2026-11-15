@@ -2,9 +2,10 @@
  * V2 Automation workspace — reference-aligned inventory.
  *
  * Two sibling tabs share one shell: `任务列表` (the bounded definition
- * inventory) and `执行记录` (read-only admitted-run records). The three shared
- * runtime settings live in System Settings; an old `?tab=settings` link is
- * redirected there without publishing or admitting work. Every number and row
+ * inventory) and `执行记录` (read-only admitted-run records). Runtime settings
+ * live in the separate System Settings route; a `tab` value outside the two
+ * closed tabs is the ordinary list fallback, never a redirect or hidden page.
+ * Every number and row
  * comes from a backend read; nothing is filtered, aggregated or authorized in
  * the browser.
  *
@@ -593,16 +594,6 @@ export function AutomationListPage({
     // Restore only on the transition into a context-bearing URL.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams[AUTOMATION_RETURN_KEY]]);
-  // The Automation settings tab was retired in favour of the existing System
-  // Settings page.  A bookmarked/deep old link reaches that page directly and
-  // produces no publication, admission or media effect here.
-  const legacySettingsTab = searchText(searchParams, "tab") === "settings";
-  useEffect(() => {
-    if (!legacySettingsTab) {
-      return;
-    }
-    void navigate({ to: "/configuration", replace: true });
-  }, [legacySettingsTab, navigate]);
   const tab = tabFromSearch(searchText(searchParams, "tab"));
   const cursor = searchText(searchParams, "cursor") || null;
   const direction =
@@ -2447,8 +2438,8 @@ function DefinitionsTab({
               {feedback.state === "admitted" && (
                 <Link
                   className="mf-button mf-button-secondary"
-                  to="/operations/tasks/$taskId"
-                  params={{ taskId: feedback.taskId }}
+                  to="/operations"
+                  search={{ run: feedback.taskId }}
                 >
                   查看任务
                 </Link>

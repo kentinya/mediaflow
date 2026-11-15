@@ -1394,6 +1394,22 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
   ).toBeDisabled();
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // The correction action reaches the current rules workspace, never the
+  // removed /review handoff, and the referenced library stays intact.
+  await page.getByRole("button", { name: "资源库操作 source" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const reopened = page.getByRole("dialog", { name: "删除资源库" });
+  await reopened
+    .getByRole("button", { name: "前往整理规则处理这些引用" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
+  await expect(
+    page.getByRole("heading", { name: "整理规则", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
 });
 
 test("a stale removal confirmation keeps the dialog open with a re-review action", async ({

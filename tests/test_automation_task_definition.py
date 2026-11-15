@@ -18,7 +18,6 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import ASSETS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -69,27 +68,6 @@ def _api(runtime, managed, document, *, include_viewer: bool = True):
         configuration_service=managed,
         bootstrap_document=document,
     )
-
-
-def _js_function_body(script: str, name: str) -> str:
-    """Return one JavaScript function body from the served asset by brace matching."""
-
-    opening = script.index("{", script.index(f"function {name}("))
-    return _js_braced_body(script, opening)
-
-
-def _js_braced_body(script: str, opening: int) -> str:
-    """Return the body whose opening brace is at ``opening``."""
-
-    depth = 0
-    for index in range(opening, len(script)):
-        if script[index] == "{":
-            depth += 1
-        elif script[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return script[opening + 1 : index]
-    raise AssertionError("JavaScript block has an unbalanced body")
 
 
 class AutomationTaskDefinitionDomainTests(unittest.TestCase):
@@ -1050,119 +1028,6 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["definition"]["id"], "task")
                 self.assertEqual(detail["configuration"]["digest"], active.digest)
-
-
-class AutomationTaskDefinitionWebTests(unittest.TestCase):
-    def test_automation_surface_and_guided_actions_are_reachable(self) -> None:
-        html = ASSETS["/ui"][1].decode("utf-8")
-        script = ASSETS["/ui/app.js"][1].decode("utf-8")
-        self.assertIn('data-view="automation"', html)
-        self.assertIn("renderAutomation", script)
-        self.assertIn("showAutomationDetail", script)
-
-        automation = _js_function_body(script, "renderAutomation")
-        self.assertIn("await api('/api/v1/automation/task-definitions');", automation)
-        self.assertIn("'Automation Task Definitions'", automation)
-        self.assertIn("'Active configuration'", automation)
-        self.assertIn("'Configuration version'", automation)
-        self.assertIn("'Configuration digest'", automation)
-        self.assertIn("'Definitions'", automation)
-        self.assertIn("'Open managed Configuration'", automation)
-        for field in (
-            "item.resourceLibraryId",
-            "item.sourceScope",
-            "item.mode || item.runMode",
-            "item.intervalSeconds",
-            "item.cron",
-            "item.timezone",
-            "item.itemLimit",
-        ):
-            self.assertIn(field, automation)
-        for forbidden in (
-            "method: 'POST'",
-            "method: 'PUT'",
-            "method: 'DELETE'",
-            "/copy",
-            "/enable",
-            "/disable",
-        ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, automation)
-
-        detail = _js_function_body(script, "showAutomationDetail")
-        self.assertIn("'Automation Task Definition detail'", detail)
-        self.assertIn("'Source scope'", detail)
-        self.assertIn("'Run mode'", detail)
-        self.assertIn("'Active configuration'", detail)
-        self.assertIn("'Active configuration digest'", detail)
-        self.assertIn("'Run Preview / DryRun'", detail)
-        self.assertIn("confirmAutomationPreview(item)", detail)
-        self.assertIn("previews?limit=10`", detail)
-        self.assertIn("'No Preview has been run for this definition yet.'", detail)
-        self.assertIn(
-            "'Opening or refreshing this view is read-only. Preview runs only when "
-            "you explicitly confirm it.'",
-            detail,
-        )
-        self.assertNotIn("method: 'POST'", detail)
-        for forbidden in ("method: 'PUT'", "method: 'DELETE'"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, detail)
-
-        confirm = _js_function_body(script, "confirmAutomationPreview")
-        self.assertIn("'Confirm Preview'", confirm)
-        self.assertIn("It creates no Job, Task, grant, or configuration revision.", confirm)
-        self.assertIn(
-            "`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/preview`",
-            confirm,
-        )
-        self.assertIn("method: 'POST'", confirm)
-
-        preview_view = _js_function_body(script, "showAutomationPreview")
-        self.assertIn("'Automation Preview'", preview_view)
-        self.assertIn("Stale evidence:", preview_view)
-        self.assertIn("This is not execution authority.", preview_view)
-        self.assertIn("'Definition fingerprint'", preview_view)
-        self.assertIn("'Truncated by limit'", preview_view)
-        self.assertIn("'Per-item evidence'", preview_view)
-        self.assertIn("'Run a fresh Preview'", preview_view)
-        self.assertIn("/previews/${encodeURIComponent(previewId)}", preview_view)
-        self.assertNotIn("method: 'POST'", preview_view)
-
-        show_revision = _js_function_body(script, "showConfigurationRevision")
-        self.assertIn(
-            "renderGuidedObjectList(data, guided, 'automationTaskDefinitions', "
-            "'Automation Task Definitions');",
-            show_revision,
-        )
-
-        object_list = _js_function_body(script, "renderGuidedObjectList")
-        automation_branch_start = object_list.index("if (kind === 'automationTaskDefinitions') {")
-        delete_guard = object_list.index(
-            "if (kind !== 'automationTaskDefinitions') row.append(actionButton('Delete'",
-            automation_branch_start,
-        )
-        automation_branch = object_list[automation_branch_start:delete_guard]
-        self.assertIn(
-            "Copy Automation Task Definition ${item.id}? The copy starts disabled.",
-            automation_branch,
-        )
-        self.assertIn("'Confirm copy'", automation_branch)
-        self.assertIn(
-            "${action === 'enable' ? 'Enable' : 'Disable'} ${item.id}? "
-            "This changes only the Draft.",
-            automation_branch,
-        )
-        self.assertIn("`Confirm ${action}`", automation_branch)
-        self.assertNotIn("'Delete'", automation_branch)
-        self.assertIn("automationTaskDefinitions: 'AutomationTaskDefinition'", object_list)
-        self.assertIn("guidedJson ? 'Add' : 'Add Local'", object_list)
-
-        object_form = _js_function_body(script, "renderGuidedObjectForm")
-        self.assertIn("automationTaskDefinition ? 'Automation Task Definition'", object_form)
-        self.assertIn("'Save Automation Task Definition'", object_form)
-        self.assertIn("Edit one bounded Automation Task Definition.", object_form)
-        self.assertIn("policy and destination choices stay in configuration.", object_form)
 
 
 if __name__ == "__main__":

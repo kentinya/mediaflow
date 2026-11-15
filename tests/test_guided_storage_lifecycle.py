@@ -20,7 +20,6 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.runtime_configuration import load_managed_runtime_configuration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -601,29 +600,6 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertEqual(after.status, before.status)
                 self.assertEqual(after.version, before.version)
                 self.assertEqual(after.digest, before.digest)
-
-    def test_operator_web_exposes_the_same_typed_storage_actions(self) -> None:
-        script = APP_JS.decode()
-        for label in (
-            "Local",
-            "SMB",
-            "OpenList",
-            "AWS S3",
-            "Cloudflare R2",
-            "S3-compatible",
-            "tokenEnv",
-            "usernameEnv",
-            "passwordEnv",
-            "accessKeyEnv",
-            "secretKeyEnv",
-            "sessionTokenEnv",
-            "Credential readiness",
-        ):
-            with self.subTest(label=label):
-                self.assertIn(label, script)
-        self.assertIn("/objects/storages/${encodeURIComponent(item.id)}/${action}", script)
-        self.assertIn("The copy starts disabled", script)
-        self.assertIn("Save guided object", script)
 
 
 if __name__ == "__main__":

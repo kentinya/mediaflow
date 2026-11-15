@@ -18646,30 +18646,6 @@ const server = createServer(async (req, res) => {
     res.end("GET required");
     return;
   }
-  if (url.pathname === "/ui") {
-    // A minimal stand-in for the real V1 operator console: it owns the
-    // existing setup workflow and is the only place first-Draft creation,
-    // guided setup, validation and checked activation happen. The e2e proof
-    // uses it to show the Storage handoff reaches the real workflow and that
-    // returning afterwards re-reads the current Storage authority. The
-    // interactive console itself is proved by the Python operator-UI tests.
-    const body = Buffer.from(`<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"><title>MediaFlow V1 Web UI</title></head>
-  <body>
-    <main>
-      <h1>MediaFlow V1 Web UI</h1>
-      <p>Current Web continuation.</p>
-      <h2>Setup required</h2>
-      <button data-view="configuration" id="create-first-draft">Create first Draft</button>
-      <button data-view="configuration" id="resume-setup-draft" hidden>Resume setup Draft</button>
-      <a id="back-to-storage" href="/ui-v2/storage">Return to Storage management</a>
-    </main>
-  </body>
-</html>`);
-    sendFile(res, body, CONTENT_TYPES[".html"]);
-    return;
-  }
   if (url.pathname === "/ui-v2" || url.pathname === "/ui-v2/") {
     const index = await readArtifact("index.html");
     if (index === null) {

@@ -36,7 +36,8 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 ## V2 development status
 
 `main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
-business authority. The retained V1 `/ui` is a historical surface; V1 is unsupported on this line.
+business authority. `/ui-v2/` is the only current Web root; the retired V1 `/ui` product is not served
+on this line, and its old addresses are ordinary not-found routes. V1 remains released on `release/v1`.
 [Documentation](docs/README.md) maps document
 responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
@@ -172,7 +173,8 @@ mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
 Open `/ui-v2/` and connect a configured API-principal token. Reload requires reconnecting.
-The retained `/ui/` belongs to the unsupported historical V1 surface on this development line.
+Retired V1 `/ui` assets, `/review`, the old Library addresses and the former Task/Job/automation
+create and edit addresses are ordinary unknown routes; none redirects into the current product.
 The development listener is trusted-loopback only; production exposure/TLS/proxy rules belong to
 [Deployment](docs/deployment.md). Frontend test commands and B-owned full gates are centralized in
 [Development Workflow](docs/development-workflow.md#6-test-levels); Playwright requires Chromium.

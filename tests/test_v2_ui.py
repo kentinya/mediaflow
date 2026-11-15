@@ -10,7 +10,6 @@ from urllib.parse import unquote
 
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML, STYLE_CSS
 from mediaflow.interfaces.service_api import MediaFlowApi
 from mediaflow.interfaces.v2_ui import load_v2_assets, reset_v2_ui_cache, v2_ui_asset
 
@@ -28,13 +27,16 @@ class ExplodingRepository:
 def request(api, path: str, method: str = "GET"):
     status = []
     headers = []
+    query = ""
+    if "?" in path:
+        path, query = path.split("?", 1)
     environ = {
         "REQUEST_METHOD": method,
         # WSGI servers expose PATH_INFO after percent-decoding the request
         # path; model that here so encoded spaces/slashes exercise the same
         # boundary as production.
         "PATH_INFO": unquote(path),
-        "QUERY_STRING": "",
+        "QUERY_STRING": query,
         "CONTENT_LENGTH": "0",
         "REMOTE_ADDR": "127.0.0.1",
         "wsgi.input": io.BytesIO(),
@@ -108,21 +110,13 @@ class V2UiStaticTests(unittest.TestCase):
     def test_v2_static_responses_carry_the_existing_safe_headers(self) -> None:
         _, headers, _ = request(self.api, "/ui-v2/")
         self.assertEqual(headers["Cache-Control"], "no-store")
-        # Slice 51: only the V2 artifact response gains the exact TMDB image
-        # source; every other directive and header is unchanged, and the V1
-        # static response below keeps its historical policy.
+        # The current V2 artifact response carries the exact TMDB image source;
+        # every other directive and header keeps the shared static hardening.
         self.assertEqual(
             headers["Content-Security-Policy"],
             "default-src 'self'; connect-src 'self'; "
             "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
             "object-src 'none'; base-uri 'none'; "
-            "frame-ancestors 'none'; form-action 'none'",
-        )
-        _, v1_headers, _ = request(self.api, "/ui")
-        self.assertEqual(
-            v1_headers["Content-Security-Policy"],
-            "default-src 'self'; connect-src 'self'; "
-            "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
             "frame-ancestors 'none'; form-action 'none'",
         )
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
@@ -154,20 +148,28 @@ class V2UiStaticTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
         self.assertEqual(api_status_without_token(), 401)
 
-    def test_v1_ui_routes_remain_available_and_unchanged(self) -> None:
-        expected = {
-            "/ui": ("text/html; charset=utf-8", INDEX_HTML),
-            "/ui/": ("text/html; charset=utf-8", INDEX_HTML),
-            "/ui/app.js": ("text/javascript; charset=utf-8", APP_JS),
-            "/ui/style.css": ("text/css; charset=utf-8", STYLE_CSS),
-        }
-        for path, (content_type, body) in expected.items():
-            status, headers, served = request(self.api, path)
-            self.assertEqual(status, 200)
-            self.assertEqual(headers["Content-Type"], content_type)
-            self.assertEqual(served, body)
-        status, _, _ = request(self.api, "/ui/app.js", method="POST")
-        self.assertEqual(status, 405)
+    def test_retired_v1_ui_routes_are_ordinary_unknown_routes(self) -> None:
+        # The V1 static product is gone: every retired path is the same ordinary
+        # 404 as any unknown sibling, including a query, an encoded spelling and
+        # a non-GET method. The static boundary never reaches the repository or
+        # publishes a redirect, notice page or alternate static product.
+        for path in (
+            "/ui",
+            "/ui/",
+            "/ui/app.js",
+            "/ui/style.css",
+            "/ui?tab=settings",
+            "/ui/app.js?cache=1",
+            "/ui/../ui/app.js",
+        ):
+            with self.subTest(path=path):
+                status, headers, body = request(self.api, path)
+                self.assertEqual(status, 404)
+                self.assertNotIn("text/html", headers.get("Content-Type", ""))
+                self.assertNotIn(b"MediaFlow", body)
+        for method in ("POST", "PUT", "DELETE", "PATCH"):
+            status, _, _ = request(self.api, "/ui", method=method)
+            self.assertEqual(status, 404)
 
     def test_missing_artifact_fails_closed_with_safe_404(self) -> None:
         empty = Path(self._temporary.name) / "empty"

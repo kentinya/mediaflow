@@ -24,7 +24,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -276,32 +275,6 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertTrue(server.readiness[1]["managementReady"])
         self.assertTrue(server.readiness[1]["setupRequired"])
         self.assertIsNone(server.configuration[1]["active"])
-
-    def test_operator_web_exposes_create_resume_setup_entry(self) -> None:
-        html = INDEX_HTML.decode("utf-8")
-        script = APP_JS.decode("utf-8")
-        self.assertIn('data-view="configuration"', html)
-        self.assertIn("Create first Draft", script)
-        self.assertIn("Resume setup Draft", script)
-        self.assertIn("/api/v1/configuration/drafts/first", script)
-        self.assertIn("/api/v1/management/readiness", script)
-        self.assertIn("readiness.setupRequired || readiness.recoveryRequired", script)
-        self.assertIn("setupRequired", script)
-
-    def test_operator_web_offers_a_return_to_the_storage_workspace(self) -> None:
-        """The setup journey can hand the operator back to Storage.
-
-        Completing setup inside Settings must not strand the operator
-        there: once a managed Active exists, the Configuration view offers a
-        return to the V2 Storage workspace that reads that exact Active. The
-        link is a fixed same-origin application route, so it cannot become an
-        arbitrary redirect, and it carries no token or revision identifier.
-        """
-
-        script = APP_JS.decode("utf-8")
-        self.assertIn("backToStorageLink", script)
-        self.assertIn("Return to Storage management", script)
-        self.assertIn("'/ui-v2/storage'", script)
 
     def test_storage_workspace_reports_a_resumable_setup_draft(self) -> None:
         """An unfinished setup is resumable, and Storage reports it honestly.

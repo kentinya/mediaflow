@@ -409,10 +409,6 @@ test.describe("readable V2 actions", () => {
       { label: "Storage", path: "/storage" },
       { label: "Rules", path: "/rules" },
       { label: "Automation", path: "/operations/automation" },
-      {
-        label: "Automation settings",
-        path: "/operations/automation?tab=settings",
-      },
       { label: "Automation create", path: "/operations/automation/lifecycle" },
       {
         label: "Automation edit",

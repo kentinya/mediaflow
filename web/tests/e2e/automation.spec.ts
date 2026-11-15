@@ -246,40 +246,20 @@ test("a fractional integer is sent as-is and rejected without coercion", async (
   await expect(jobs).toHaveValue("3.5");
 });
 
-test("the legacy create deep link opens the same list-overlay create card", async ({
+test("the retired Automation create address is an ordinary not-found page", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation/new");
-
-  // The old multi-step Draft form is gone: the ordinary list remains as the
-  // background and the same Chinese create card is the only form.
+  await page.goto("/ui-v2/operations/automation/new");
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("API token")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
-  ).toBeVisible();
-  await expect(page.getByLabel(/任务名称/)).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Create Automation definition" }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("Definition ID")).toHaveCount(0);
-  await expect(page.getByLabel("Enabled")).toHaveCount(0);
-  await expect(
-    page.getByText("创建后未启用，可在列表中启用或运行一次。"),
-  ).toBeVisible();
-
-  // Opening and cancelling reads only: no Draft, create, enable or run was
-  // submitted, and the URL returns to the ordinary list context.
+  // Viewing the old address issues no read or command.
   const evidence = await automationEvidence(page);
-  expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
-    0,
-  );
-  await page.getByRole("button", { name: "取消" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
-  await expect(
-    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
-  ).toBeVisible();
+  expect(evidence.items).toHaveLength(0);
 });
 
 test("occurrence history links the exact Task without emitting work", async ({

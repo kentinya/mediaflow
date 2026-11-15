@@ -28,7 +28,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document
 
@@ -605,10 +604,6 @@ class StorageSetupCheckTests(unittest.TestCase):
                 finally:
                     objects._setup_check_executor.shutdown(wait=True)
             repository.close()
-
-            self.assertIn("storage-check", APP_JS.decode("utf-8"))
-            self.assertIn("Declared capabilities", APP_JS.decode("utf-8"))
-            self.assertIn("Run read-only Storage check", APP_JS.decode("utf-8"))
 
 
 if __name__ == "__main__":

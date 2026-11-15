@@ -15,7 +15,6 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.pagination import decode_cursor
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -99,16 +98,6 @@ class OperationalLoggingTests(unittest.TestCase):
                 ):
                     with self.subTest(query=query):
                         self.assertEqual(request(api, query)[0], 400)
-
-    def test_operator_ui_log_view_is_read_only(self) -> None:
-        html, script = INDEX_HTML.decode(), APP_JS.decode()
-        self.assertIn('data-view="logs"', html)
-        self.assertIn("/api/v1/logs?limit=100&level=", script)
-        self.assertIn("Refresh logs", script)
-        self.assertIn("renderLogs(level, data.previous_cursor)", script)
-        self.assertIn("renderLogs(level, data.next_cursor)", script)
-        self.assertNotIn("logs/prune", script)
-        self.assertNotIn("innerHTML", script)
 
     def test_persistence_failure_never_escapes_logger(self) -> None:
         class FailingRepository:

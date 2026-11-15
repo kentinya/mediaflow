@@ -42,12 +42,16 @@ describe("AuthBoundary", () => {
     ).toBeVisible();
   });
 
-  it("records no intention for a retired Library route", async () => {
-    renderApp("/ui-v2/library/files");
-    expect(
-      await screen.findByRole("heading", { name: "此页面已迁移" }),
-    ).toBeVisible();
-    expect(authStore.getIntendedPath()).toBeNull();
+  it("records no intention for a retired route", async () => {
+    for (const path of ["/ui-v2/library/files", "/ui-v2/review"]) {
+      cleanup();
+      renderApp(path);
+      expect(
+        await screen.findByRole("heading", { name: "Route not found" }),
+      ).toBeVisible();
+      expect(authStore.getIntendedPath()).toBeNull();
+      expect(screen.queryByLabelText("API token")).toBeNull();
+    }
   });
 
   it("redirects an unauthenticated Explore deep entry and preserves /explore", async () => {

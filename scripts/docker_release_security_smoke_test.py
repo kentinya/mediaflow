@@ -7,8 +7,8 @@ deployment environment, inspects image history/filesystem and the rendered
 Compose topology, starts the four-service stack on temporary paths, verifies
 non-root execution and read-only/read-write mount boundaries, exercises
 Bearer-token/RBAC denial and redaction across authenticated API/Web/export
-projections, proves the built V2 artifact, its Python static serving, V1/V2
-coexistence and the absence of Node/frontend tooling at runtime, and confirms
+projections, proves the built V2 artifact, its Python static serving, the retired V1
+routes staying unknown and the absence of Node/frontend tooling at runtime, and confirms
 that no canary value reaches an output surface.
 
 It never reads production configuration, media, credentials or Storage and
@@ -112,14 +112,8 @@ STATIC_SAFE_HEADERS = (
     ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
 )
 
-#: The exact CSP each static surface must answer with. V2 adds only the trusted
-#: poster host accepted by the Explore contract; V1 keeps its historical policy
-#: unchanged, so the image permission can never silently widen the old surface.
-V1_STATIC_CSP = (
-    "default-src 'self'; connect-src 'self'; "
-    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
-    "frame-ancestors 'none'; form-action 'none'"
-)
+#: The exact CSP the current V2 static artifact must answer with. It adds only
+#: the trusted poster host accepted by the Explore contract.
 V2_STATIC_CSP = (
     "default-src 'self'; connect-src 'self'; "
     "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
@@ -142,7 +136,7 @@ def request_full(url: str, *, method: str = "GET") -> tuple[int, dict[str, str],
 
 
 def assert_v2_static_serving(base: str, canaries) -> None:
-    """Prove live V1/V2 static coexistence, safe headers and fail-closed V2 errors."""
+    """Prove current V2 static serving, safe headers and fail-closed errors."""
 
     def probe(
         url: str,
@@ -197,10 +191,10 @@ def assert_v2_static_serving(base: str, canaries) -> None:
     probe(f"{base}/ui-v2/missing-asset-abc123.js", expected=404, csp=None)
     probe(f"{base}/ui-v2/..%2f..%2fetc%2fpasswd", expected=404, csp=None)
 
-    # The live V1 surface keeps its own exact policy beside V2.
-    probe(f"{base}/ui/", content_type="text/html", csp=V1_STATIC_CSP)
-    probe(f"{base}/ui/app.js", content_type="text/javascript", csp=V1_STATIC_CSP)
-    probe(f"{base}/ui/style.css", content_type="text/css", csp=V1_STATIC_CSP)
+    # The retired V1 static product is an ordinary unknown route: no V1 bytes,
+    # redirect, notice page or special static headers survive.
+    for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
+        probe(f"{base}{retired_path}", expected=404, csp=None)
 
     status, _, _ = request_full(f"{base}/api/v1/auth/principal")
     if status != 401:
@@ -800,9 +794,6 @@ def assert_projection_exports(
     canaries,
 ) -> None:
     paths = (
-        "/ui/",
-        "/ui/app.js",
-        "/ui/style.css",
         "/api/v1/configuration",
         "/api/v1/configuration/packages",
         "/api/v1/configuration/packages/export/configuration",
@@ -813,8 +804,6 @@ def assert_projection_exports(
     )
     for path in paths:
         token = auditor if path == "/api/v1/security-audit" else admin
-        if not path.startswith("/ui/"):
-            token = admin
         status, body = request_bytes(f"{base}{path}", token=token)
         assert_no_canaries(body, canaries, f"API/Web projection {path}")
         if status != 200:
@@ -1427,7 +1416,7 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                 print("Verifying non-root execution, mounts and process commands...")
                 assert_runtime_boundaries(command, environment)
 
-                print("Proving V1/V2 static coexistence and safe V2 headers...")
+                print("Proving current V2 static serving and retired V1 routes...")
                 assert_v2_static_serving(base, canaries)
 
                 print("Probing authentication, RBAC and zero-side-effect denial...")

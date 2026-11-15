@@ -40,7 +40,6 @@ interface FilesSearchContextValue {
 function isAutomationListSurface(pathname: string): boolean {
   return (
     pathname === "/operations/automation" ||
-    pathname === "/operations/automation/new" ||
     pathname === "/operations/automation/lifecycle" ||
     pathname.startsWith("/operations/automation/lifecycle/")
   );

@@ -52,24 +52,13 @@ const destinationData = [
     description: "查看任务、运行、恢复状态和 Worker 工作情况。",
   },
   {
-    id: "review",
-    label: "Review & Recovery",
-    path: "/review",
-    title: "Review & Recovery | MediaFlow",
-    availability: "migration" as const,
-    description:
-      "Recognition, metadata, conflict and recovery journeys remain in the current Web UI.",
-    v1Path: "/ui" as const,
-  },
-  {
     id: "configuration",
     label: "Configuration",
     path: "/configuration",
-    title: "Configuration | MediaFlow",
-    availability: "migration" as const,
+    title: "系统设置 | MediaFlow",
+    availability: "implemented" as const,
     description:
-      "Managed configuration administration is not yet migrated to this V2 surface.",
-    v1Path: "/ui" as const,
+      "Inspect the exact Active, edit typed runtime settings and validate or activate a Draft.",
   },
   {
     id: "rules",
@@ -108,14 +97,6 @@ const childDestinationData = [
     description: "Browse live Storage through ResourceLibrary boundaries.",
   },
   {
-    id: "operations-tasks",
-    label: "Task list",
-    path: "/operations/tasks",
-    title: "Tasks | MediaFlow",
-    availability: "implemented" as const,
-    description: "List, filter and page durable Tasks.",
-  },
-  {
     id: "rules-edit",
     label: "Edit rule object",
     path: "/rules/edit/$family/$objectId",
@@ -123,15 +104,6 @@ const childDestinationData = [
     availability: "implemented" as const,
     description: "Refresh-safe typed editor for one Active rules object.",
     dynamicPrefix: "/rules/edit/" as const,
-  },
-  {
-    id: "operations-task-detail",
-    label: "Task detail",
-    path: "/operations/tasks/$taskId",
-    title: "Task detail | MediaFlow",
-    availability: "implemented" as const,
-    description: "Task aggregate, independent TaskItems and Results.",
-    dynamicPrefix: "/operations/tasks/" as const,
   },
   {
     id: "operations-organize-intent",
@@ -161,15 +133,6 @@ const childDestinationData = [
     availability: "implemented" as const,
     description:
       "Scheduled Automation Task Definitions, unattended authority and occurrences.",
-  },
-  {
-    id: "operations-automation-new",
-    label: "Create Automation definition",
-    path: "/operations/automation/new",
-    title: "Create Automation definition | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Bounded successor-Draft form for one scheduled Automation definition.",
   },
   {
     id: "operations-automation-lifecycle-new",
@@ -267,8 +230,6 @@ const childDestinationData = [
   },
 ] as const;
 
-export type DestinationAvailability = "implemented" | "migration";
-
 /**
  * The canonical typed set of operator-route paths, derived from the single
  * `destinationData` literal so the continuation allowlist and its runtime
@@ -283,9 +244,8 @@ export interface Destination {
   readonly label: string;
   readonly path: DestinationPath;
   readonly title: string;
-  readonly availability: DestinationAvailability;
+  readonly availability: "implemented";
   readonly description: string;
-  readonly v1Path?: "/ui";
   /** Present only for parameterized routes. A concrete instance is exactly
    * one non-empty path segment after this prefix. */
   readonly dynamicPrefix?: string;
@@ -314,8 +274,8 @@ export const destinations: readonly Destination[] = destinationData;
 
 /**
  * The one shared V2 shell navigation model. Labels are intentionally separate
- * from the existing route/product labels so the migration can adopt the
- * reference IA without changing route authority or page headings.
+ * from the existing route/product labels so the reference IA stays stable
+ * without changing route authority or page headings.
  */
 export const shellDestinations: readonly ShellDestination[] = [
   {
@@ -432,13 +392,6 @@ export function shellPageForPath(pathname: string): ShellPageId | undefined {
   if (path === "/storage") return "storage";
   if (path === "/configuration") return "settings";
   if (path === "/rules" || path.startsWith("/rules/edit/")) return "rules";
-  // The retired definition/editor addresses keep no navigation identity.
-  if (
-    path.startsWith("/operations/automation/definition/") ||
-    path.startsWith("/operations/automation/editor/")
-  ) {
-    return undefined;
-  }
   if (
     path === "/operations/automation" ||
     path.startsWith("/operations/automation/")
@@ -554,7 +507,7 @@ export function isDestinationPath(value: string): value is DestinationPath {
 }
 
 /** The three closed Automation workspace tabs. */
-const AUTOMATION_TAB_TOKENS = new Set(["definitions", "records", "settings"]);
+const AUTOMATION_TAB_TOKENS = new Set(["definitions", "records"]);
 
 /** A backend-submitted Operations status filter is a bounded lowercase token. */
 const STATUS_FILTER_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
@@ -845,26 +798,6 @@ export function allowlistedDestinationSearch(
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/tasks") {
-    // Only the backend-submitted filter values travel in the URL, so a
-    // reconnect resumes the same bounded collection read and never replays
-    // credential-like, authority-bearing or arbitrary state.
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setFilterToken(
-      allowed,
-      "status",
-      current.get("status"),
-      STATUS_FILTER_TOKEN,
-    );
-    setFilterToken(
-      allowed,
-      "command",
-      current.get("command"),
-      COMMAND_FILTER_TOKEN,
-    );
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
   if (path === "/operations/automation") {
     // The Automation workspace carries only its own bounded list state, so a
     // reload/reconnect and an edit-card or Task Center round trip restore the
@@ -879,7 +812,7 @@ export function allowlistedDestinationSearch(
       allowed,
       "returnTab",
       current.get("returnTab"),
-      /^(?:definitions|records|settings)$/,
+      /^(?:definitions|records)$/,
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
@@ -1022,33 +955,6 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/tasks/$taskId") {
-    // A detail route carries only its bounded parent-list filter context back.
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setFilterToken(
-      allowed,
-      "q_status",
-      current.get("q_status"),
-      STATUS_FILTER_TOKEN,
-    );
-    setFilterToken(
-      allowed,
-      "q_command",
-      current.get("q_command"),
-      COMMAND_FILTER_TOKEN,
-    );
-    if (path === "/operations/tasks/$taskId") {
-      // The Task detail additionally owns the run detail context (tab,
-      // filters, cursors, inspected item) that its tabs restore on
-      // reconnect. A task-center-originated file evidence link also keeps its
-      // bounded return context so the durable evidence page has a direct path
-      // back to the exact filtered Task/type problem list after reconnect.
-      setJourneyOperationsContext(allowed, current);
-      setRunDetailTokens(allowed, current);
-    }
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
   if (
     path === "/operations/organize/intent/$intentId" ||
     path === "/operations/organize/discovery/$discoveryId"
@@ -1068,7 +974,6 @@ export function allowlistedDestinationSearch(
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (
-    path === "/operations/automation/new" ||
     path === "/operations/automation/lifecycle" ||
     path === "/operations/automation/lifecycle/$definitionId" ||
     path === "/operations/automation/occurrences/$definitionId" ||
@@ -1088,7 +993,7 @@ export function allowlistedDestinationSearch(
         allowed,
         "returnTab",
         current.get("returnTab"),
-        /^(?:definitions|records|settings)$/,
+        /^(?:definitions|records)$/,
       );
       return allowed.toString().length > 0 ? allowed.toString() : null;
     }

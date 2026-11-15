@@ -186,24 +186,25 @@ The production artifact flow is one image, two stages, one Python runtime:
   exact directory in the image configuration. No Node executable, npm,
   `node_modules`, frontend source, Vite/dev server, SSR process, CDN runtime
   or second HTTP service exists in, or is required by, the runtime image.
-- The existing API service serves `/ui-v2/`, the current Explore, Library and
-  Operations route families, the Review & Recovery and Configuration migration
-  landings (unknown client routes fall back to the entry document), and the
-  referenced hashed assets from that directory through the Python static-serving
-  boundary, with deterministic bytes/content types and the existing
+- The existing API service serves `/ui-v2/`, the current Explore, Library,
+  Operations, Automation, Notifications, Rules, Storage and System Settings
+  route families (unknown client routes fall back to the entry document), and
+  the referenced hashed assets from that directory through the Python
+  static-serving boundary, with deterministic bytes/content types and the
   `Cache-Control: no-store`, CSP, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy` and `Permissions-Policy` headers. Requests are GET-only;
   unknown, traversal-like or missing assets fail closed with 404 without
   exposing paths, credentials or raw exceptions. Static requests never access
   repositories, Providers, Tasks or Storage and never create work.
-- The V1 `/ui`, `/ui/`, `/ui/app.js` and `/ui/style.css` remain available from
-  the same Python process and port, and `/api/v1/*` Bearer authentication and
-  RBAC behavior are unchanged beside V2 static serving.
+- The retired V1 `/ui`, `/ui/`, `/ui/app.js` and `/ui/style.css` are ordinary
+  unknown routes with no redirect, notice page or alternate static product;
+  `/api/v1/*` Bearer authentication and RBAC behavior are unchanged beside V2
+  static serving.
 - `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
   deployment environment file overrides the image default, but the documented
   layout needs no override and no host mount of `web/dist`. If the configured
   directory has no built artifact, `/ui-v2/*` fails closed with 404 while the
-  API and V1 `/ui` keep serving.
+  API keeps serving and the retired `/ui` addresses stay unknown.
 
 ## CURRENT — Resident services across empty setup and publication (Slice 40)
 
@@ -421,9 +422,10 @@ before any release claim:
   mutation.
 - The running API service is probed live for V2 static serving: the entry
   document, the `/ui-v2/explore` deep route, every referenced hashed JS/CSS
-  asset and the V1 `/ui` assets with their safe headers; a V2 POST request and
-  missing/traversal-like asset paths fail closed; and an unauthenticated
-  `/api/v1/auth/principal` request stays denied beside V2 serving.
+  asset with its safe headers, and the retired `/ui` addresses as ordinary
+  404s; a V2 POST request and missing/traversal-like asset paths fail closed;
+  and an unauthenticated `/api/v1/auth/principal` request stays denied beside
+  V2 serving.
 - Bounded response/export scans cover Web assets, configuration status,
   managed configuration and result exports, audit/log projections, system
   status and service logs. Durable SQLite evidence is scanned directly. Failures
@@ -446,8 +448,8 @@ curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
   "http://127.0.0.1:8080/api/v1/tasks?limit=100"
 ```
 
-Open `http://127.0.0.1:8080/ui/` in a browser and enter the API token in the
-Operator console.
+Open `http://127.0.0.1:8080/ui-v2/` in a browser and connect with an API-principal token.
+The retired `/ui` addresses render the ordinary not-found route.
 
 Restart one service without replacing state:
 

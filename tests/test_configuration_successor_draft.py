@@ -375,51 +375,5 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 200)
 
 
-class SuccessorDraftWebUITests(unittest.TestCase):
-    def test_successor_draft_button_in_render_configuration(self) -> None:
-        with open("mediaflow/interfaces/operator_ui.py", encoding="utf-8") as f:
-            script = f.read()
-        # renderConfiguration must contain successor-draft action
-        self.assertIn("Create successor Draft from Active", script)
-
-    def test_advanced_json_labels_in_operator_ui(self) -> None:
-        with open("mediaflow/interfaces/operator_ui.py", encoding="utf-8") as f:
-            script = f.read()
-        # Revision detail must label whole-document JSON editor as Advanced
-        self.assertIn("Advanced: Edit Draft JSON", script)
-        # Import/export section must be labelled Advanced
-        self.assertIn("Advanced JSON (import/export)", script)
-
-    def test_typed_forms_exist_for_all_object_families(self) -> None:
-        with open("mediaflow/interfaces/operator_ui.py", encoding="utf-8") as f:
-            script = f.read()
-        # guidedObjectFields must be referenced for every kind
-        for kind in (
-            "storages",
-            "resourceLibraries",
-            "mediaLibraries",
-            "recognitionTypes",
-            "recognitionRules",
-            "recognitionTypePolicies",
-            "metadataPolicies",
-            "namingPolicies",
-            "classificationPolicies",
-            "organizePolicies",
-            "automationTaskDefinitions",
-        ):
-            with self.subTest(kind=kind):
-                self.assertIn("guidedObjectFields(kind, item", script)
-
-    def test_render_guided_object_list_has_copy_enable_disable_for_all_applicable_kinds(
-        self,
-    ) -> None:
-        with open("mediaflow/interfaces/operator_ui.py", encoding="utf-8") as f:
-            script = f.read()
-        # Copy endpoint must be reachable for every kind (organizePolicies has copy too)
-        self.assertIn("/objects/${kind}/${encodeURIComponent(item.id)}/copy", script)
-        # Enable/disable endpoint must be reachable for kinds that have enabled field
-        self.assertIn("/objects/${kind}/${encodeURIComponent(item.id)}/${action}", script)
-
-
 if __name__ == "__main__":
     unittest.main()

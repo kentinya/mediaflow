@@ -334,9 +334,9 @@ inventory, detail and Edit. Local and other provider path validators retain thei
 The V2 Storage workspace accepts and displays both values through Save, Active inventory, detail and
 Edit, including entries saved before this correction. A failed list read remains a read/presentation
 failure and does not imply that Save rolled back; verify current Active state before any explicit
-new submission. For genuine setup-required state, the Storage page offers the existing V1
-Configuration first-setup handoff and returns to refreshed Storage truth. No direct database edit,
-configuration reset or physical-file migration is required.
+new submission. For genuine setup-required state, the Storage page offers the current System
+Settings (`/ui-v2/configuration`) first-Draft handoff and returns to refreshed Storage truth. No
+direct database edit, configuration reset or physical-file migration is required.
 
 ### OpenList metadata and content reads
 

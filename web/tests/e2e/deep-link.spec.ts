@@ -21,7 +21,7 @@ import { expect, test, type Page } from "@playwright/test";
  * - A 403 stays visibly distinct and retains the authenticated principal.
  * - Unavailable and malformed reads offer an explicit bounded retry.
  * - Unknown routes retain shell context and meaningful titles.
- * - V1 handoff never leaks the token into URL, DOM or persistent stores.
+ * - Retired addresses never leak the token into URL, DOM or persistent stores.
  */
 
 const VIEWER_TOKEN = "e2e-viewer-token";
@@ -171,34 +171,32 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   ).toBeVisible();
 });
 
-test("a retired Library route offers bounded recovery links and starts no work", async ({
+test("retired Library addresses are ordinary not-found routes with no work", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  // A retired route is not an allowlisted destination, so it renders its own
-  // bounded recovery state without an authentication continuation or any
-  // redirect to the two supported pages.
-  await page.goto("/ui-v2/library");
-
-  // The retired route renders one bounded recovery state with explicit links
-  // to both supported pages; nothing is redirected or auto-submitted.
-  await expect(
-    page.getByRole("heading", { name: "此页面已迁移" }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
-  await expect(
-    page.getByRole("link", { name: "打开资源库文件页" }),
-  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
-  await expect(
-    page.getByRole("link", { name: "打开媒体库文件页" }),
-  ).toHaveAttribute("href", "/ui-v2/medialib/files");
+  for (const path of [
+    "/ui-v2/library",
+    "/ui-v2/library?resourceLibraryId=movies",
+    "/ui-v2/library/files",
+    "/ui-v2/library/files?path=Movies",
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    expect(page.url()).toContain(path.split("?")[0]);
+    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByText("此页面已迁移")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Return to Explore" }),
+    ).toBeVisible();
+  }
   // A retired route starts no read, admission or mutation of any kind.
   expect(apiRequests).toHaveLength(0);
 });
 
-test("no supported page emits a retired Library or preparation address", async ({
-  page,
-}) => {
+test("no supported page emits a retired route address", async ({ page }) => {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -210,10 +208,16 @@ test("no supported page emits a retired Library or preparation address", async (
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  expect(await page.locator('a[href^="/ui-v2/library"]').count()).toBe(0);
-  expect(
-    await page.locator('a[href^="/ui-v2/operations/organize/new"]').count(),
-  ).toBe(0);
+  for (const prefix of [
+    "/ui-v2/review",
+    "/ui-v2/library",
+    "/ui-v2/operations/tasks",
+    "/ui-v2/operations/jobs",
+    "/ui-v2/operations/automation/new",
+    "/ui-v2/operations/organize/new",
+  ]) {
+    expect(await page.locator(`a[href^="${prefix}"]`).count()).toBe(0);
+  }
 });
 
 test("the retired preparation receiving address is an ordinary not-found", async ({
@@ -502,40 +506,21 @@ test("unknown route preserves shell context and a meaningful title", async ({
   await expect(page.getByText("nonexistent-route")).toHaveCount(0);
 });
 
-test("the supported Review compatibility handoff does not leak the token", async ({
+test("the retired Review address is an ordinary not-found route", async ({
   page,
 }) => {
+  const apiRequests = apiRequestsOf(page);
   await page.goto("/ui-v2/review");
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", {
-      name: "Review & Recovery is not available in V2 yet",
-    }),
+    page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  expect(page.url()).toMatch(/\/ui-v2\/review$/);
-  await page.getByRole("link", { name: "Open current Web UI" }).click();
-  await expect(page).toHaveURL(/\/ui$/);
-  // The token must not appear in the compatibility handoff's content, URL,
-  // browser stores or cookies. No fixture cookie supplied authorization.
-  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
-  expect(page.url()).not.toContain(VIEWER_TOKEN);
-  const storage = await page.evaluate(async () => ({
-    local: window.localStorage.length,
-    session: window.sessionStorage.length,
-    cookie: document.cookie,
-    indexedDb:
-      typeof window.indexedDB.databases === "function"
-        ? (await window.indexedDB.databases()).length
-        : -1,
-  }));
-  expect(storage.local).toBe(0);
-  expect(storage.session).toBe(0);
-  expect(storage.cookie).toBe("");
-  expect(storage.indexedDb).toBe(0);
-  const cookies = await page.context().cookies();
-  expect(cookies.every((cookie) => !cookie.value.includes(VIEWER_TOKEN))).toBe(
-    true,
-  );
+  await expect(page).toHaveURL(/\/ui-v2\/review$/);
+  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(
+    page.getByText("Review & Recovery is not available"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveCount(0);
+  expect(apiRequests).toHaveLength(0);
 });

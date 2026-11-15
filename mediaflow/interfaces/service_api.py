@@ -199,7 +199,6 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.infrastructure.webhook import UrllibWebhookTransport
-from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 from mediaflow.interfaces.pagination import (
     CursorDirection,
     DecodedCursor,
@@ -219,15 +218,9 @@ _AUTOMATION_DEFINITION_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 # Historical Task/Job/TaskItem/Result keys that must never leave the API: claim
 # and fence evidence, internal scope hints and fingerprint values.  The V2
 # Operations projection uses an explicit allowlist on top of this filter.
-# The shared static security headers. The V2 artifact response adds exactly
-# one directive: its posters are loaded directly from the fixed TMDB image
-# host and nothing else. V1 static responses, connect/script/style sources,
-# object/base/frame/form restrictions and every other header stay identical.
-_STATIC_CSP = (
-    "default-src 'self'; connect-src 'self'; "
-    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
-    "frame-ancestors 'none'; form-action 'none'"
-)
+# The current V2 static security policy. Its posters are loaded directly from
+# the fixed TMDB image host and nothing else; every other directive keeps the
+# shared static hardening.
 _V2_STATIC_CSP = (
     "default-src 'self'; connect-src 'self'; "
     "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
@@ -516,7 +509,7 @@ class MediaFlowApi:
             else None
         )
         # The V2 rules workspace reuses that same application service, so a typed
-        # Save cannot diverge from V1/API/CLI normalization, validation, audit,
+        # Save cannot diverge from current API/CLI normalization, validation, audit,
         # concurrency or checked activation semantics; it only composes the focused
         # object change and delegates publication.
         self._rules_workspace = (
@@ -696,7 +689,7 @@ class MediaFlowApi:
         self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
         self._automation_occurrences.attach_checkpoint_service(self._checkpoint_service)
         # The V2 Automation workspace reuses the same managed-object authority as
-        # V1/API/CLI, so one checked Save cannot diverge from normalization,
+        # the current API/CLI, so one checked Save cannot diverge from normalization,
         # validation, audit, concurrency or checked activation semantics; it only
         # composes the focused definition change and delegates publication.
         self._automation_workspace = (
@@ -759,11 +752,6 @@ class MediaFlowApi:
                     200,
                     {"status": "ok", "processAlive": True},
                 )
-            if path in OPERATOR_UI_ASSETS:
-                if method != "GET":
-                    return self._error(start_response, 405, "method_not_allowed", "GET required")
-                content_type, body = OPERATOR_UI_ASSETS[path]
-                return self._static_response(start_response, content_type, body)
             if path == V2_UI_PREFIX or path.startswith(V2_UI_PREFIX + "/"):
                 if method != "GET":
                     return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -8138,7 +8126,7 @@ class MediaFlowApi:
         content_type: str,
         body: bytes,
         *,
-        content_security_policy: str = _STATIC_CSP,
+        content_security_policy: str,
     ) -> list[bytes]:
         start_response(
             "200 OK",
@@ -9996,7 +9984,7 @@ class MediaFlowApi:
             if key in document:
                 # A persisted identity column that is not a provably
                 # Storage-relative identity fails closed in the compatibility
-                # read too; the V1 operator UI renders source_display, not this.
+                # read too; bounded consumers render source_display, not this.
                 document[key] = bounded_identity_path(document[key])
         if checkpoint is not None:
             document["checkpoint"] = checkpoint
@@ -15352,7 +15340,7 @@ class MediaFlowApi:
             "explanation": route["explanation"],
             "taskCenter": task_center,
             "definitionSettings": (
-                f"/ui-v2/operations/automation/definition/"
+                f"/ui-v2/operations/automation/lifecycle/"
                 f"{overview.definition_id or overview.origin_definition_id}"
                 if (overview.definition_id or overview.origin_definition_id)
                 else None
@@ -15635,7 +15623,7 @@ class MediaFlowApi:
                 ),
                 "supported_command": command,
                 "supported_command_path": (
-                    f"/ui-v2/operations/automation/definition/{definition_id}"
+                    f"/ui-v2/operations/automation/lifecycle/{definition_id}"
                     if definition_id
                     else None
                 ),

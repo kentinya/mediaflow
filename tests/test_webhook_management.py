@@ -17,7 +17,6 @@ from mediaflow.domain.configuration_management import (
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -684,27 +683,6 @@ class WebhookManagementTests(unittest.TestCase):
                         self.assertNotIn("top-secret-value", json.dumps(outcome))
                     finally:
                         harness.close()
-
-    def test_web_and_api_parity_surfaces_use_the_same_endpoint(self) -> None:
-        script = APP_JS.decode("utf-8")
-        html = INDEX_HTML.decode("utf-8")
-        self.assertIn('data-view="notifications"', html)
-        self.assertIn(
-            "renderGuidedObjectList(data, guided, 'webhooks', 'Webhook Definitions')", script
-        )
-        self.assertIn("Save Webhook Definition", script)
-        self.assertIn("Test signed endpoint", script)
-        self.assertIn("objects/webhooks", script)
-        self.assertIn("webhook_definition", script)
-        self.assertIn("secret readiness", script)
-        # The UI must call the exact-revision test route with version and digest,
-        # and must never claim a delivery was created.
-        self.assertIn("/test", script)
-        self.assertIn("expectedVersion: activeWebhookTarget.version", script)
-        self.assertIn("expectedDigest: activeWebhookTarget.digest", script)
-        self.assertIn("never enqueues a delivery", script)
-        self.assertIn("never creates a delivery", script)
-        self.assertIn("Viewing or refreshing never sends a test", script)
 
 
 if __name__ == "__main__":
