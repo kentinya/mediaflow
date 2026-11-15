@@ -11,10 +11,10 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
 
-[Slice55](../SLICE.md) 与 `V2-RETIRE-001–010` 是用户于 2026-11-15 授权的规划，未激活、
-实施或接受。下文 CURRENT 的 V1共存、兼容读取／schema补齐和旧路径支持只在最终验收
+[Slice55](../SLICE.md) 与 `V2-RETIRE-001–010` 于 2026-11-15 获用户授权激活，首个 Task
+由 A 代 B 规划；尚未实施或接受。下文 CURRENT 的 V1共存、兼容读取／schema补齐和旧路径支持只在最终验收
 后由本 TARGET 替代；此前接受身份、冻结 V1、Git 和 docs/history 不改写。
 
 ```text

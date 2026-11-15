@@ -1,11 +1,11 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: USER ACTIVATES SLICE55; B THEN PLANS THE FIRST TASK。
+Next Action: A PLANS THE FIRST TASK FOR B UNDER EXPLICIT USER AUTHORIZATION。
 
-[Slice55](SLICE.md) 已按用户要求规划 V1 与迁移残留完全退役，状态 PLANNED；本轮仅文档
-规划，不激活、不实施、不创建 B Task。Base 为 `2b2e7c1824fa5681864455714d0f97b26555c7dc`，
-Implementation Head NOT SET。用户激活 Slice 后由 B 在已提交合同内规划首个 Task；本通知
-不构成实施授权。下方已接受独立修复身份／结果／证据保持，不重开 Slice54 或旧 Task。
+[Slice55](SLICE.md) 已由用户激活为 ACTIVE；用户同时授权 A 代 B 规划首个 Task。
+Base 为 `2b2e7c1824fa5681864455714d0f97b26555c7dc`，Implementation Head NOT SET。
+先提交激活合同，再以该已提交范围规划 Task；本通知不构成 Task 实施授权。
+下方已接受修复的身份、结果和证据继续保留。
 
 ## Latest accepted Task — PATCH-20261115-1
 

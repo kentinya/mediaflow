@@ -8,11 +8,11 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
 
 用户于 2026-11-15 明确要求 V1 完全退役、不做兼容也不隐藏，并在调查迁移残留后授权
-规划 [Slice55](../SLICE.md)。下列要求是 **TARGET / PLANNED**，尚未实施或接受；已有
-CURRENT／历史验收不因规划改变。它们取代被明确列出的共存、兼容读取和旧迁移义务，
+规划并激活 [Slice55](../SLICE.md)，同时授权 A 代 B 规划首个 Task。下列要求是
+**TARGET / ACTIVE**，尚未实施或接受；已有 CURRENT／历史验收保持原事实身份。它们取代被明确列出的共存、兼容读取和旧迁移义务，
 保留当前 V2 用户结果与安全；不改写冻结 V1 定义、release/v1 或历史记录。
 
 | ID | Requirement | Acceptance meaning |

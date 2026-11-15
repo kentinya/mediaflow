@@ -11,9 +11,10 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 PLANNED)
+## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
 
-用户于 2026-11-15 授权规划 [Slice55](../SLICE.md)，目标为 V1 与迁移兼容完整退出，
+用户于 2026-11-15 授权规划并激活 [Slice55](../SLICE.md)，由 A 代 B 规划首个 Task，
+目标为 V1 与迁移兼容完整退出，
 不隐藏、不做别名／跳转／转换。`V2-RETIRE-001–010` 尚未实现或接受；以下是目标旅程，
 明确替代下文当前旅程中的 V1 共存、旧链接、旧配置／状态／会话读取与旧迁移承诺。
 此前 CURRENT 及历史验收在本 Slice 接受前保持事实身份。

@@ -4,22 +4,23 @@
 Slice ID: 55
 Name: Complete V1 and Migration Residue Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 2b2e7c1824fa5681864455714d0f97b26555c7dc
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY — IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: SLICE ACTIVE — FIRST TASK PLANNING AUTHORIZED
 Risk: High
 Accepted Test Level: T4
-Next Action: USER ACTIVATES SLICE; B THEN PLANS THE FIRST TASK
+Next Action: A PLANS THE FIRST TASK FOR B UNDER EXPLICIT USER AUTHORIZATION
 ```
 
 ## Authority and baseline
 
 用户先要求调查 V1 遗留，明确“V1版本的完全彻底的退役不做兼容，也不隐藏”，随后限定
 “先调查不改文档和代码”，并补充调查迁移残留。两轮只读调查后，用户现要求“规划一个Slice”。
-本合同统一规划 V1 产品及早期 V2 迁移兼容的完整退出；仅授权文档规划与本地检查点，
-不激活、不实施、不规划 B Task、不分派代理、不推送、不部署。
+本合同统一规划 V1 产品及早期 V2 迁移兼容的完整退出。用户现要求“激活Slice并代替B规划
+第一个Task”，据此激活本 Slice，并授权 A 代 B 规划首个 Task 及提交本地检查点。角色
+例外仅限首个 Task 规划；后续 Developer 实施、B 独立验收和 A 终审继续按工作流进行。
 用户补充要求保留稳定 V2 的正式配置键／权限名及现有有效数据；本合同据此取消无关改名，
 将现有 V2 配置、合法任务、结果及原 pins 的继续使用列为必需结果。
 生命周期、测试分工及 Git 规则只以 [Development Workflow](docs/development-workflow.md) 为准。
@@ -60,9 +61,9 @@ Task 调度、结果／审计和同版本非重放继续完整。`/api/v1/*` 是
 
 ## Requirement and journey mapping
 
-TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-planned)，
-[目标旅程](docs/product-experience.md#target--complete-v1-and-migration-residue-retirement-slice55-planned) 与
-[目标架构](docs/architecture.md#target--complete-v1-and-migration-residue-retirement-slice55-planned)。
+TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-active)，
+[目标旅程](docs/product-experience.md#target--complete-v1-and-migration-residue-retirement-slice55-active) 与
+[目标架构](docs/architecture.md#target--complete-v1-and-migration-residue-retirement-slice55-active)。
 当前合同尚未实现；下列修订只在本 Slice 验收后成为 CURRENT：
 
 | 被修订的当前边界 | 本 Slice 目标 | 保留的义务 |
@@ -257,7 +258,7 @@ REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到
 
 ## Validation ownership and final validation
 
-风险 High，产品实施与最终验收 T4。B 在激活后按完整行为规划连贯 Task、实际 Base、
+风险 High，产品实施与最终验收 T4。首个 Task 由 A 按用户授权代 B 规划，后续 B 按完整行为规划连贯 Task、实际 Base、
 Difficulty／Test Level 与精确 affected／acceptance 命令；本文件不预建 Task 或执行步骤配额。
 Developer 仅跑新增／修改／直接受影响测试及必要当前原生链路，按工作流交不可变检查点；
 B 独立完成每 Task 必需验收、[shared full gates](docs/development-workflow.md#shared-full-regression-commands)
@@ -277,5 +278,6 @@ Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
 ## Closure Packet and A Final Review
 
 尚未实施，Implementation Head NOT SET。Required Outcomes／最终测试／Closure Packet／
-A Final Review 均未完成；Status 保持 PLANNED。用户激活 Slice、B 规划／激活 Task 后才可实施。
+A Final Review 均未完成；Status 为 ACTIVE。下一步按用户授权由 A 代 B 规划首个 Task，
+Task 获得实施授权后进入 Developer 阶段。
 历史接受事实不被本规划替代；通过后再统一将 TARGET 协调为 CURRENT，不提前声明退役。
