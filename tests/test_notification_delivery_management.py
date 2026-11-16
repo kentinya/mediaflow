@@ -598,7 +598,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 sibling = publish(harness.repository, event_id="sibling-1")
                 jobs_before = ()
                 tasks_before = harness.repository.list_tasks()
-                schedules_before = harness.repository.list_schedule_states()
+                schedules_before = harness.repository.list_automation_definition_due_states()
                 deliveries_before = harness.repository.list_deliveries()
                 audits_before = harness.repository.list_security_audit(limit=500)
                 status, detail = request(
@@ -630,7 +630,10 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 )
                 self.assertEqual((), jobs_before)
                 self.assertEqual(harness.repository.list_tasks(), tasks_before)
-                self.assertEqual(harness.repository.list_schedule_states(), schedules_before)
+                self.assertEqual(
+                    harness.repository.list_automation_definition_due_states(),
+                    schedules_before,
+                )
                 updated = harness.repository.get_delivery(dead.delivery_id)
                 self.assertEqual(updated.status, NotificationDeliveryStatus.PENDING)
                 # The sibling delivery is untouched (still pending, never claimed).

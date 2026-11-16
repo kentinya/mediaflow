@@ -34,13 +34,7 @@ class AutomationDefinitionOccurrenceService:
 
     def __init__(self, repository) -> None:
         self._repository = repository
-        self._unattended_grants = None
         self._checkpoint_service = None
-
-    def attach_unattended_grant_service(self, service) -> None:
-        """Attach the shared read-only grant projection without changing callers."""
-
-        self._unattended_grants = service
 
     def attach_checkpoint_service(self, service) -> None:
         """Use the shared per-item checkpoint projection for attention rows."""
@@ -66,14 +60,12 @@ class AutomationDefinitionOccurrenceService:
         definitions,
         *,
         configuration: Mapping[str, object] | None = None,
-        include_grants: bool = True,
     ) -> list[dict[str, object]]:
         """Project a bounded definition page with bulk state lookups.
 
         SQLite supplies one bounded due-state query and one bounded latest-row
-        query for the page. Grant state is read in bounded ID chunks. Small
-        test doubles without those optional bulk methods retain the
-        single-definition fallback.
+        query for the page. Small test doubles without those optional bulk
+        methods retain the single-definition fallback.
         """
 
         values = list(definitions)
@@ -104,12 +96,6 @@ class AutomationDefinitionOccurrenceService:
                 latest_values = {item.definition_id: item for item in list_latest(tuple(ids))}
             except TypeError:
                 latest_values = {}
-        grants = {}
-        if include_grants and self._unattended_grants is not None:
-            grants = self._unattended_grants.project_many(
-                values,
-                configuration=configuration,
-            )
         outcome_summaries = self._outcome_summaries(tuple(latest_values.values()))
         return [
             self.project_definition(
@@ -117,7 +103,6 @@ class AutomationDefinitionOccurrenceService:
                 configuration=configuration,
                 _state=states.get(definition_id),
                 _latest=latest_values.get(definition_id),
-                _grant=grants.get(definition_id),
                 _outcome_summary=outcome_summaries.get(
                     getattr(latest_values.get(definition_id), "occurrence_id", "")
                 ),
@@ -132,7 +117,6 @@ class AutomationDefinitionOccurrenceService:
         configuration: Mapping[str, object] | None = None,
         _state=_UNSET,
         _latest=_UNSET,
-        _grant=_UNSET,
         _outcome_summary=_UNSET,
     ) -> dict[str, object]:
         """Add current due/last-occurrence state to a safe definition document."""
@@ -208,16 +192,6 @@ class AutomationDefinitionOccurrenceService:
         document["lastFailureCategory"] = occurrence["lastFailureCategory"]
         document["outcomeSummary"] = _outcome_summary
         document["itemOutcomeSummary"] = _outcome_summary
-        if self._unattended_grants is not None:
-            if _grant is _UNSET:
-                grant = self._unattended_grants.project(
-                    definition,
-                    configuration=configuration,
-                )
-            else:
-                grant = _grant
-            document["unattendedExecutionGrant"] = grant
-            document["grant"] = grant
         if configuration is not None:
             document["activeConfiguration"] = {
                 key: configuration.get(key)

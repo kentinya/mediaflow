@@ -75,11 +75,6 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.domain.unattended_execution import (
-    UnattendedExecutionGrant,
-    UnattendedExecutionGrantAudit,
-    UnattendedExecutionGrantStatus,
-)
 from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
@@ -522,62 +517,6 @@ with SQLiteTaskRepository(DATABASE) as repository:
         }
     except Exception as error:
         skip("automation job", f"{type(error).__name__}: {error}")
-
-    if table_exists(repository, "unattended_execution_grants"):
-        try:
-            repository.create_unattended_execution_grant(
-                UnattendedExecutionGrant(
-                    "rehearsal-grant",
-                    DEFINITION_ID,
-                    "library-base",
-                    "Movies",
-                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
-                    5,
-                    UnattendedExecutionGrantStatus.ACTIVE,
-                    "operator",
-                    NOW,
-                    FINGERPRINT,
-                    "snap-base",
-                    DIGEST,
-                    7,
-                    preview_id="rehearsal-preview",
-                ),
-                UnattendedExecutionGrantAudit(
-                    "rehearsal-grant-audit",
-                    "rehearsal-grant",
-                    "granted",
-                    NOW,
-                    "operator",
-                    {"reason": "schema upgrade rehearsal"},
-                ),
-            )
-            REPORT["seeded"]["unattended_execution_grants"] = 1
-            REPORT["seeded"]["unattended_execution_grant_audit"] = 1
-            REPORT["facts"]["grant"] = {
-                "grant_id": "rehearsal-grant",
-                "definition_id": DEFINITION_ID,
-                "resource_library_id": "library-base",
-                "source_scope": "Movies",
-                "run_mode": "automatic-organization",
-                "max_items_per_run": 5,
-                "status": "active",
-                "granting_principal": "operator",
-                "definition_fingerprint": FINGERPRINT,
-                "configuration_snapshot_id": "snap-base",
-                "configuration_snapshot_digest": DIGEST,
-                "configuration_snapshot_version": 7,
-                "preview_id": "rehearsal-preview",
-            }
-            REPORT["facts"]["grant_audit"] = {
-                "audit_id": "rehearsal-grant-audit",
-                "grant_id": "rehearsal-grant",
-                "action": "granted",
-                "actor": "operator",
-            }
-        except Exception as error:
-            skip("unattended execution grant", f"{type(error).__name__}: {error}")
-    else:
-        inapplicable("unattended execution grant", "table is absent in this revision")
 
     if table_exists(repository, "automation_definition_due_state"):
         try:

@@ -4824,7 +4824,6 @@ const AUTOMATION_MISBOUND_PREVIEW_ID = "automation-preview-misbound-e2e-001";
 const AUTOMATION_OCCURRENCE_ID = "automation-occurrence-e2e-001";
 const AUTOMATION_JOB_ID = "automation-job-e2e-001";
 const AUTOMATION_TASK_ID = "automation-task-e2e-001";
-const AUTOMATION_GRANT_ID = "automation-grant-e2e-001";
 
 /**
  * The typed create-form authority the real Python API serves under
@@ -4902,7 +4901,6 @@ function automationState(session) {
       previewCreated: false,
       previewStale: false,
       workerPollSeconds: 2,
-      granted: false,
       activated: false,
       hostileReadiness: false,
       createdDefinition: null,
@@ -5058,7 +5056,6 @@ function automationPermissions(token) {
     operator,
     manage: operator,
     activate: operator,
-    grant: operator,
     dryRun: operator,
     execute: operator,
   };
@@ -5573,15 +5570,9 @@ function notificationDeliveryDetailDocument(state, token, deliveryId) {
   };
 }
 
-// Match the current Python operator projection. Historical grant fixtures remain
-// available to their administrative routes, but normal definitions use Enabled
-// execution readiness and never advertise an independent grant workflow.
+// Match the current Python operator projection: definitions use Enabled
+// execution readiness and never advertise an independent authority workflow.
 function automationExecutionDefinition(document) {
-  delete document.unattendedExecutionGrant;
-  delete document.grantEligibility;
-  for (const key of ["grantState", "grant", "revoke"]) {
-    delete document.actions[key];
-  }
   const state =
     document.definitionState === "draft-only"
       ? "draft-only"
@@ -5608,7 +5599,7 @@ function automationExecutionDefinition(document) {
 }
 
 function automationDefinitionActions(state, token) {
-  const { manage, grant, execute } = automationPermissions(token);
+  const { manage, execute } = automationPermissions(token);
   return {
     detail: automationAction({
       available: true,
@@ -5639,35 +5630,6 @@ function automationDefinitionActions(state, token) {
       nextAction:
         "start Run once and inspect progress, independent results and recovery in its linked task",
     }),
-    grantState: automationAction({
-      available: true,
-      method: "GET",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant-state`,
-      durableOutcome: null,
-      nextAction: "read the current unattended grant state and its eligibility",
-    }),
-    grant: automationAction({
-      available: grant,
-      reason: grant
-        ? null
-        : "the connected API principal cannot grant unattended execution authority",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant`,
-      requiresConfirmation: true,
-      durableOutcome:
-        "a persistent scoped unattended execution grant is stored and audited",
-      nextAction:
-        "run a fresh exact Preview, review its eligibility and explicitly confirm the unattended grant",
-    }),
-    revoke: automationAction({
-      available: grant,
-      reason: grant
-        ? null
-        : "the connected API principal cannot revoke unattended execution authority",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/revoke`,
-      durableOutcome:
-        "the grant is revoked; future unattended mutation is prevented without rewriting completed effects",
-      nextAction: "revoke the grant when its exact bounds are no longer wanted",
-    }),
     copy: automationAction({
       available: manage && state.draftCreated,
       reason: manage
@@ -5696,8 +5658,7 @@ function automationDefinitionActions(state, token) {
 }
 
 function automationDefinitionDocument(state, token) {
-  const eligible =
-    state.previewCreated && !state.previewStale && !state.granted;
+  const eligible = state.previewCreated && !state.previewStale;
   const draftState = state.draftCreated
     ? {
         present: true,
@@ -5721,36 +5682,6 @@ function automationDefinitionDocument(state, token) {
         updatedAt: null,
         validatedAt: null,
         validationErrors: [],
-      };
-  const grant = state.granted
-    ? {
-        status: "active",
-        active: true,
-        grantId: AUTOMATION_GRANT_ID,
-        definitionId: AUTOMATION_DEFINITION_ID,
-        definitionChangedSinceGrant: false,
-        nextAction:
-          "inspect the next occurrence or revoke this grant before changing its exact bounds",
-        maxItemsPerRun: 12,
-        previewId: AUTOMATION_PREVIEW_ID,
-        grantingPrincipal: "e2e-operator",
-        grantedAt: MANUAL_RECORDED_AT,
-        revokedAt: null,
-        reason: null,
-        currentPermission: {
-          principalId: "e2e-operator",
-          status: "valid",
-          allowed: true,
-        },
-      }
-    : {
-        status: "none",
-        active: false,
-        grantId: null,
-        definitionId: AUTOMATION_DEFINITION_ID,
-        definitionChangedSinceGrant: false,
-        nextAction:
-          "review the exact definition bounds and explicitly grant unattended execution",
       };
   return automationExecutionDefinition({
     id: AUTOMATION_DEFINITION_ID,
@@ -5787,7 +5718,6 @@ function automationDefinitionDocument(state, token) {
         attentionTruncated: false,
       },
     },
-    unattendedExecutionGrant: grant,
     activeConfiguration: {
       revisionId: state.activated
         ? AUTOMATION_DRAFT_REVISION
@@ -5797,47 +5727,14 @@ function automationDefinitionDocument(state, token) {
       status: "active",
     },
     draftState,
-    grantEligibility: {
-      eligible,
-      status: eligible ? "eligible" : "ineligible",
-      previewId: AUTOMATION_PREVIEW_ID,
-      previewStatus: "previewed",
-      current: state.previewCreated && !state.previewStale,
-      zeroMutation: true,
-      maxItemsPerRun: 12,
-      currentPermission: {
-        principalId: "e2e-operator",
-        status: "valid",
-        allowed: true,
-      },
-      explanation:
-        state.previewCreated && !state.previewStale
-          ? "the exact current Preview and current permission satisfy the persisted grant bounds"
-          : "no current exact Preview supports unattended authority; run a fresh exact Preview",
-      durableState: "no grant or media mutation has been created",
-      retrySafe: true,
-      nextAction:
-        "review the exact bounds and explicitly confirm the unattended grant",
-      error: eligible
-        ? null
-        : {
-            code: "unattended_execution_preview_required",
-            status: 409,
-            message:
-              "no current exact Preview supports unattended authority; run a fresh exact Preview",
-            durableState: "no grant or media mutation has been created",
-            retrySafe: true,
-            nextAction: "run a fresh exact Preview",
-          },
-    },
     actions: automationDefinitionActions(state, token),
   });
 }
 
 /**
  * A definition that exists only inside the open successor Draft (newly
- * created or copied): truthful draft-only state, empty occurrence history,
- * no grant and no Active-definition actions until checked activation.
+ * created or copied): truthful draft-only state, empty occurrence history and
+ * no Active-definition actions until checked activation.
  */
 function automationDraftOnlyDefinitionDocument(state, token, definition) {
   const { manage } = automationPermissions(token);
@@ -5867,15 +5764,6 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
       nextAction: null,
       lastFailureCategory: null,
       outcomeSummary: null,
-    },
-    unattendedExecutionGrant: {
-      status: "none",
-      active: false,
-      grantId: null,
-      definitionId: definition.id,
-      definitionChangedSinceGrant: false,
-      nextAction:
-        "review the exact definition bounds and explicitly grant unattended execution",
     },
     activeConfiguration: {
       revisionId: state.activated
@@ -5921,31 +5809,6 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
         durableOutcome:
           "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
         nextAction: "activate the Draft before starting Run once",
-      }),
-      grantState: automationAction({
-        available: true,
-        method: "GET",
-        path: `/api/v1/automation/task-definitions/${definition.id}/grant-state`,
-        durableOutcome: null,
-        nextAction:
-          "read the current unattended grant state and its eligibility",
-      }),
-      grant: automationAction({
-        available: false,
-        reason: notActiveReason,
-        path: `/api/v1/automation/task-definitions/${definition.id}/grant`,
-        requiresConfirmation: true,
-        durableOutcome:
-          "a persistent scoped unattended execution grant is stored and audited",
-        nextAction: "activate the Draft before granting unattended authority",
-      }),
-      revoke: automationAction({
-        available: false,
-        reason: notActiveReason,
-        path: `/api/v1/automation/task-definitions/${definition.id}/revoke`,
-        durableOutcome:
-          "the grant is revoked; future unattended mutation is prevented without rewriting completed effects",
-        nextAction: "activate the Draft before granting unattended authority",
       }),
       copy: automationAction({
         available: manage && state.draftCreated,
@@ -6230,8 +6093,6 @@ function automationPreviewItem() {
 }
 
 function automationPreviewActions(state, token, previewId) {
-  const { grant } = automationPermissions(token);
-  const current = state.previewCreated && !state.previewStale;
   const base = `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`;
   return {
     detail: automationAction({
@@ -6255,33 +6116,11 @@ function automationPreviewActions(state, token, previewId) {
       durableOutcome: null,
       nextAction: "reopen the durable definition behind this Preview",
     }),
-    grantState: automationAction({
-      available: true,
-      method: "GET",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant-state`,
-      durableOutcome: null,
-      nextAction: "read the current unattended grant state and its eligibility",
-    }),
-    grant: automationAction({
-      available: grant && current,
-      reason: grant
-        ? current
-          ? null
-          : "this Preview is historical, truncated or incomplete and cannot support unattended authority; run a fresh exact Preview"
-        : "the connected API principal cannot grant unattended execution authority",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant`,
-      requiresConfirmation: true,
-      durableOutcome:
-        "a persistent scoped unattended execution grant bound to this exact Preview is stored and audited",
-      nextAction:
-        "review the grant eligibility and explicitly confirm the unattended grant",
-    }),
   };
 }
 
 function automationPreviewDocument(state, token, previewId) {
   const current = state.previewCreated && !state.previewStale;
-  const eligible = current && !state.granted;
   return {
     previewId,
     definitionId: AUTOMATION_DEFINITION_ID,
@@ -6320,39 +6159,6 @@ function automationPreviewDocument(state, token, previewId) {
     updatedAt: MANUAL_RECORDED_AT,
     itemTotal: 1,
     itemsTruncated: false,
-    grantEligibility: {
-      eligible,
-      status: eligible ? "eligible" : "ineligible",
-      previewId,
-      previewStatus: current ? "previewed" : "stale",
-      current,
-      zeroMutation: true,
-      maxItemsPerRun: 12,
-      currentPermission: {
-        principalId: "e2e-operator",
-        status: "valid",
-        allowed: true,
-      },
-      explanation: current
-        ? "the exact current Preview and current granting-principal permission satisfy the persisted grant bounds"
-        : "no current exact Preview supports unattended authority; run a fresh exact Preview",
-      durableState: "no grant or media mutation has been created",
-      retrySafe: true,
-      nextAction: eligible
-        ? "review the exact bounds and explicitly confirm the unattended grant"
-        : "run a fresh exact Preview",
-      error: eligible
-        ? null
-        : {
-            code: "unattended_execution_preview_required",
-            status: 409,
-            message:
-              "no current exact Preview supports unattended authority; run a fresh exact Preview",
-            durableState: "no grant or media mutation has been created",
-            retrySafe: true,
-            nextAction: "run a fresh exact Preview",
-          },
-    },
     actions: automationPreviewActions(state, token, previewId),
   };
 }
@@ -16144,21 +15950,19 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
-    // The hostile fixture advertises a grant transport whose identity segment
-    // is not URI-safe, so the frontend must render the bounded malformed
-    // state and never a control.
+    // The hostile fixture advertises a definition transport whose identity
+    // segment is not URI-safe, so the frontend must render the bounded
+    // malformed state and never a control.
     const state = automationState(session);
     const document = automationPreviewDocument(
       state,
       token,
       AUTOMATION_HOSTILE_PREVIEW_ID,
     );
-    document.actions.grant = automationAction({
-      path: "/api/v1/automation/task-definitions/<task>/grant",
-      requiresConfirmation: true,
-      durableOutcome:
-        "a persistent scoped unattended execution grant is stored",
-      nextAction: "review the grant eligibility",
+    document.actions.definition = automationAction({
+      path: "/api/v1/automation/task-definitions/<task>",
+      durableOutcome: null,
+      nextAction: "reopen the durable definition behind this Preview",
     });
     sendJson(res, 200, document);
     return;
@@ -16250,113 +16054,6 @@ const server = createServer(async (req, res) => {
     sendJson(res, 201, {
       previewId: AUTOMATION_PREVIEW_ID,
       definitionId: AUTOMATION_DEFINITION_ID,
-    });
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant` &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const fields = parsed.document;
-    const state = automationState(session);
-    if (fields.confirmation !== true) {
-      sendJson(res, 400, {
-        error: { code: "unattended_execution_grant_invalid" },
-      });
-      return;
-    }
-    if (
-      fields.previewId !== AUTOMATION_PREVIEW_ID ||
-      !state.previewCreated ||
-      state.previewStale
-    ) {
-      sendJson(res, 409, {
-        error: { code: "unattended_execution_preview_required" },
-      });
-      return;
-    }
-    state.granted = true;
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: AUTOMATION_DEFINITION_ID,
-      objectType: "automation_grant",
-      path: "/api/v1/automation/task-definitions/:definitionId/grant",
-      body: boundedAutomationBody(fields),
-    });
-    sendJson(res, 201, {
-      grant: {
-        status: "active",
-        active: true,
-        grantId: AUTOMATION_GRANT_ID,
-        definitionId: AUTOMATION_DEFINITION_ID,
-        definitionChangedSinceGrant: false,
-        nextAction:
-          "inspect the next occurrence or revoke this grant before changing its exact bounds",
-        maxItemsPerRun: 12,
-        previewId: AUTOMATION_PREVIEW_ID,
-        grantingPrincipal: "e2e-operator",
-        grantedAt: MANUAL_RECORDED_AT,
-        revokedAt: null,
-        reason: null,
-        currentPermission: {
-          principalId: "e2e-operator",
-          status: "valid",
-          allowed: true,
-        },
-      },
-    });
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/revoke` &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const state = automationState(session);
-    state.granted = false;
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: AUTOMATION_DEFINITION_ID,
-      objectType: "automation_revoke",
-      path: "/api/v1/automation/task-definitions/:definitionId/revoke",
-      body: boundedAutomationBody(parsed.document),
-    });
-    sendJson(res, 200, {
-      grant: {
-        status: "revoked",
-        active: false,
-        grantId: AUTOMATION_GRANT_ID,
-        definitionId: AUTOMATION_DEFINITION_ID,
-        definitionChangedSinceGrant: false,
-        nextAction:
-          "review the exact definition bounds and explicitly grant unattended execution again",
-        maxItemsPerRun: 12,
-        previewId: AUTOMATION_PREVIEW_ID,
-        grantingPrincipal: "e2e-operator",
-        grantedAt: MANUAL_RECORDED_AT,
-        revokedAt: MANUAL_RECORDED_AT,
-        reason: null,
-        currentPermission: {
-          principalId: "e2e-operator",
-          status: "valid",
-          allowed: true,
-        },
-      },
     });
     return;
   }
@@ -17734,7 +17431,6 @@ const server = createServer(async (req, res) => {
       previewCreated: false,
       previewStale: false,
       workerPollSeconds: 2,
-      granted: false,
       activated: false,
       createdDefinition: null,
       copiedDefinition: null,

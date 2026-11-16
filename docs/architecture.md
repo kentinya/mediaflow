@@ -1874,7 +1874,7 @@ Save, and `maximumActiveJobs` counts queued/claimed organizing Tasks rather than
 
 The API is a versioned WSGI application over shared application/repository services. It provides
 authenticated configuration, files, tasks, reviews, manual organize, recovery, automation,
-schedules, notifications, logs, Explore, security audit and system status routes. RBAC is applied
+notifications, logs, Explore, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same

@@ -13,11 +13,7 @@
   "automation": {
     "maximumActiveJobs": 100,
     "workerPollSeconds": 2,
-    "schedulerPollSeconds": 5,
-    "schedules": [
-      {"id": "daily-organize", "command": "organize", "intervalSeconds": 86400, "limit": 20, "enabled": false},
-      {"id": "cn-morning-organize", "command": "organize", "cron": "0 8 * * *", "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
-    ]
+    "schedulerPollSeconds": 5
   },
   "notifications": {
     "pollSeconds": 5,

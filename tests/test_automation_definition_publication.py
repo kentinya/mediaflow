@@ -7,10 +7,10 @@ These tests prove the vertical the native V2 Automation workspace depends on:
   and checked atomic activation boundaries;
 * the successor changes only the selected definition, so sibling definitions and
   unrelated configuration never ride along;
-* a new/copied definition starts disabled with no unattended authority, enabling
-  starts no work and disabling neither cancels admitted work nor revokes a grant;
-* removal revokes applicable future unattended authority before publishing and
-  retains grants, audits and occurrence history;
+* a new/copied definition starts disabled, enabling starts no work and
+  disabling neither cancels admitted work nor stops an in-flight run;
+* removal publishes the removal successor as the durable live stop and retains
+  occurrence, run and audit history;
 * reads and schedule calculation create no Draft, call no Provider, start no work
   and mutate no Storage.
 """
@@ -34,7 +34,6 @@ from mediaflow.application.automation_workspace_commands import (
 )
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.domain.configuration_management import (
     AutomationDefinitionSaveError,
     ConfigurationVersionConflict,
@@ -208,13 +207,7 @@ class AutomationPublicationTests(unittest.TestCase):
             "media-target": RecordingStorage("media-target"),
         }
         self.objects._storage_adapters.update(self.adapters)
-        self.grants = UnattendedExecutionGrantService(
-            self.runtime,
-            permission_authority=None,
-        )
-        self.commands = AutomationWorkspaceCommandService(
-            self.objects, unattended_grants=self.grants
-        )
+        self.commands = AutomationWorkspaceCommandService(self.objects)
 
         document = example_document(self.root)
         draft = self.managed.import_draft(document, actor="bootstrap")
@@ -306,7 +299,6 @@ class AutomationPublicationTests(unittest.TestCase):
             "automationExecutionIntents", {}
         )["nightly"]
         self.assertEqual(intent["principalId"], ADMIN)
-        self.assertIsNone(self.grants.get_for_definition("nightly"))
         self.assertEqual(self.provider_calls, [])
         self.assertEqual(self.adapters["source-storage"].mutations, [])
 
@@ -547,7 +539,6 @@ class AutomationPublicationTests(unittest.TestCase):
         stored = enabled.document[AUTOMATION_DEFINITION_SECTION][0]
         self.assertIs(stored["enabled"], True)
         self.assertEqual(len(()), jobs_before)
-        self.assertIsNone(self.grants.get_for_definition("nightly"))
 
         disabled = self.commands.set_enabled(
             "nightly", enabled=False, actor=ADMIN, **self.authority()
@@ -563,41 +554,36 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(copied["id"], "nightly-copy")
         self.assertIs(copied["enabled"], False)
         self.assertEqual(copied["resourceLibraryId"], "source")
-        self.assertIsNone(self.grants.get_for_definition("nightly-copy"))
 
     def test_recreating_a_removed_id_does_not_revive_authority(self) -> None:
         self.save(definition("nightly"))
         self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
         self.assertEqual(self.ids(), [])
         self.save(definition("nightly", name="Recreated"))
-        # A recreated definition starts disabled and has no grant of its own.
+        # A recreated definition starts disabled with no revived authority.
         self.assertIs(self.definitions()[0]["enabled"], False)
-        self.assertIsNone(self.grants.get_for_definition("nightly"))
 
     # -- removal ---------------------------------------------------------
 
-    def test_removal_revokes_future_authority_and_retains_history(self) -> None:
+    def test_removal_stops_future_scheduling_and_retains_history(self) -> None:
+        """A published Enabled definition's removal is the durable live stop.
+
+        The removal successor publishes exactly the intended change and retains
+        occurrence, run and audit history; the published Enabled definition was
+        the execution intent, so removing it stops every future scheduled
+        effect without any separate revocation surface.
+        """
+
         self.save(definition("nightly", mode="automatic-organization"))
         self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-        grant = self._seed_active_grant("nightly")
-        self.assertEqual(grant.status.value, "active")
 
         revision = self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
         self.assertEqual(
             [item["id"] for item in revision.document.get(AUTOMATION_DEFINITION_SECTION, [])],
             [],
         )
-        revoked = self.grants.get_for_definition("nightly")
-        self.assertIsNotNone(revoked)
-        self.assertEqual(revoked.status.value, "revoked")
-        # The grant and its audit survive the removal: removal is not deletion.
-        self.assertEqual(self.grants.get(grant.grant_id).status.value, "revoked")
-        self.assertTrue(
-            any(
-                item.action == "revoked"
-                for item in self.grants.list_audit(grant.grant_id, limit=10)
-            )
-        )
+        self.assertEqual(self.ids(), [])
+        self.assertEqual((), self.runtime.list_tasks())
 
     def test_removal_preserves_siblings_and_unrelated_configuration(self) -> None:
         self.save(definition("first"))
@@ -613,38 +599,20 @@ class AutomationPublicationTests(unittest.TestCase):
         )
         self.assertEqual(revision.document["storages"], before.document["storages"])
 
-    def test_removal_reports_truthfully_when_authority_state_is_unavailable(self) -> None:
-        self.save(definition("nightly", mode="automatic-organization"))
-        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-
-        class _FailingGrants:
-            def get_for_definition(self, definition_id):
-                raise RuntimeError("simulated grant persistence failure")
-
-        commands = AutomationWorkspaceCommandService(
-            self.objects, unattended_grants=_FailingGrants()
-        )
-        before = self.managed.active()
-        published = commands.remove_object("nightly", actor=ADMIN, **self.authority())
-        self.assertNotEqual(before.revision_id, published.revision_id)
-        self.assertEqual(self.ids(), [])
-        self.assertEqual((), self.runtime.list_tasks())
-
     def test_concurrent_save_wins_and_removal_preserves_authority(self) -> None:
-        """A legitimate concurrent focused Save between revocation and publication
-        must not leave the definition Active with its grant already revoked.
+        """A legitimate concurrent focused Save between preparation and publication
+        must not leave the Active in an uncertain state.
 
         The review reproduced exactly this interleaving at the ``before_publish``
-        seam: the revocation committed, then the concurrent Save published, then
-        the removal activation failed — and the error construction itself raised
-        ``TypeError`` for unsupported kwargs. The corrected ordering reads the
-        live authority state back and reports it bounded without an unhandled
-        exception, and the grant stays active.
+        seam: the concurrent Save published, then the removal activation failed
+        — and the error construction itself raised ``TypeError`` for unsupported
+        kwargs. The corrected ordering reads the live publication state back and
+        reports it bounded without an unhandled exception, and the definition
+        stays published and Enabled.
         """
 
         self.save(definition("nightly", mode="automatic-organization"))
         self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-        self._seed_active_grant("nightly")
         active_before = self.managed.active()
         assert active_before is not None
 
@@ -666,133 +634,7 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertIn("authorityState", caught.exception.details)
         # The definition is still published and its authority is still live.
         self.assertEqual(self.ids(), ["nightly", "other"])
-        current = self.grants.get_for_definition("nightly")
-        self.assertIsNotNone(current)
-        self.assertEqual(current.status.value, "active")
         self.assertEqual(caught.exception.details["authorityState"], "active")
-
-    def test_concurrent_regrant_between_revocation_and_publication_is_fenced(self) -> None:
-        """A legitimate confirmed regrant interleaved before publication cannot
-        leave live authority on a removed definition.
-
-        The review reproduced this with the real API: revoke -> regrant (201) ->
-        removal publish succeeded with the latest grant still ``active``. The
-        corrected removal re-verifies applicable authority at publication time
-        and revokes any residual grant, so a successful removal never leaves
-        live authority behind.
-        """
-
-        self.save(definition("nightly", mode="automatic-organization"))
-        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-
-        def concurrent_regrant(_successor):
-            import time
-
-            time.sleep(0.05)
-            # The removal has already revoked the original grant inside this
-            # seam. A legitimate confirmed regrant then goes live, exactly as
-            # the real API reproduction did (grant -> 201).
-            self._seed_active_grant("nightly", grant_id="grant-nightly-regrant")
-            return None
-
-        authority = self.authority()
-        authority["before_publish"] = concurrent_regrant
-        revision = self.commands.remove_object("nightly", actor=ADMIN, **authority)
-        self.assertEqual(
-            [item["id"] for item in revision.document.get(AUTOMATION_DEFINITION_SECTION, [])],
-            [],
-        )
-        final = self.grants.get_for_definition("nightly")
-        self.assertIsNotNone(final)
-        self.assertEqual(final.status.value, "revoked")
-
-    def test_removal_reports_truthfully_when_residual_revoke_fails(self) -> None:
-        """A published removal whose residual re-revoke fails reports its
-        durable state instead of silently claiming full revocation."""
-
-        self.save(definition("nightly", mode="automatic-organization"))
-        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-        self._seed_active_grant("nightly")
-
-        class _RegrantingGrants:
-            """Restores live authority after the removal's residual proof.
-
-            The reordered removal reads the grant boundary twice: the
-            fail-closed pre-publication preflight and the post-publication
-            residual revocation. This wrapper hooks ``get_for_definition`` for
-            that second boundary: it persists one fresh ACTIVE grant row first,
-            exactly like a legitimate concurrent regrant that won against the
-            residual revocation. The removal must then report its durable
-            state instead of claiming full revocation.
-            """
-
-            def __init__(self, inner, definition, runtime) -> None:
-                self._inner = inner
-                self._definition = definition
-                self._runtime = runtime
-                self._reads = 0
-
-            def get_for_definition(self, definition_id):
-                # The reordered removal reads the current grant twice: the
-                # fail-closed pre-publication preflight and the residual
-                # re-revoke lookup. On the second read a legitimate concurrent
-                # regrant has just gone live: re-grant live authority right
-                # before the read, so the residual revocation races against a
-                # real active grant.
-                self._reads += 1
-                if self._reads == 2:
-                    # Second read = the removal's residual re-revoke lookup:
-                    # the grant was active at the preflight, the publication
-                    # succeeded, and now the residual proof reads it. Re-grant
-                    # live authority before the service reads.
-                    from datetime import UTC, datetime
-
-                    from mediaflow.domain.unattended_execution import (
-                        UnattendedExecutionGrant,
-                        UnattendedExecutionGrantAudit,
-                        UnattendedExecutionGrantStatus,
-                    )
-
-                    grant = UnattendedExecutionGrant(
-                        "grant-nightly-residual",
-                        definition_id,
-                        self._definition.resource_library_id,
-                        self._definition.source_scope,
-                        self._definition.run_mode,
-                        self._definition.item_limit,
-                        UnattendedExecutionGrantStatus.ACTIVE,
-                        "regranted",
-                        datetime.now(UTC),
-                        self._definition.definition_fingerprint,
-                        "revision-regrant",
-                        "d" * 64,
-                        1,
-                    )
-                    audit = UnattendedExecutionGrantAudit(
-                        "grant-nightly-residual-audit",
-                        grant.grant_id,
-                        "granted",
-                        datetime.now(UTC),
-                        "regranted",
-                        {},
-                    )
-                    self._runtime.create_unattended_execution_grant(grant, audit)
-                return self._inner.get_for_definition(definition_id)
-
-            def revoke(self, **kwargs):
-                if self._reads >= 2:
-                    # The residual revocation loses its persistence race
-                    # against the re-grant: the durable revoke write fails.
-                    raise RuntimeError("simulated residual revocation persistence failure")
-                return self._inner.revoke(**kwargs)
-
-        wrapper = _RegrantingGrants(self.grants, self._definition_value("nightly"), self.runtime)
-        commands = AutomationWorkspaceCommandService(self.objects, unattended_grants=wrapper)
-        published = commands.remove_object("nightly", actor=ADMIN, **self.authority())
-        self.assertEqual(published.revision_id, self.managed.active().revision_id)
-        self.assertEqual(self.ids(), [])
-        # Any retained grant row is historical and cannot revive removed work.
-        self.assertEqual((), self.runtime.list_tasks())
 
     def test_missing_definition_reads_and_commands_report_not_found(self) -> None:
         before = self.managed.active()
@@ -826,7 +668,7 @@ class AutomationPublicationTests(unittest.TestCase):
         candidate = self.commands.copy_projection("nightly")
         self.assertIs(candidate["definition"]["enabled"], False)
         impact = self.commands.removal_impact("nightly")
-        self.assertEqual(impact["unattendedAuthority"]["status"], "none")
+        self.assertEqual(impact["authority"]["status"], "none")
 
         preview = self.commands.schedule_preview(
             {
@@ -1461,26 +1303,21 @@ class AutomationPublicationTests(unittest.TestCase):
     def test_removal_persistence_failure_preserves_authority(self) -> None:
         """P1 regression: a persistence/concurrency failure inside the removal
         publication boundary is a known failed removal — the Active definition
-        and its live unattended authority are preserved and reported, so an
-        already-admitted Job is not failed by the removal command itself.
+        and its live published Enabled state are preserved and reported, so an
+        already-admitted Task is not failed by the removal command itself.
 
         The review reproduced this with a real second SQLite writer holding
-        ``BEGIN IMMEDIATE`` between runtime preparation and activation: the
-        prior removal implementation let ``OperationalError: database is
-        locked`` escape after its revocation had already committed, so the
-        definition stayed Active but its grant was revoked and the admitted
-        Job then failed in the real Worker with
-        ``unattended_execution_grant_revoked``. The corrected removal revokes
-        only after a *proven* publication, so a failed activation never
-        touches authority at all — no compensation write is needed or
-        attempted, and the lock on the shared database can never strand a
-        revoked grant behind an Active definition.
+        ``BEGIN IMMEDIATE`` between runtime preparation and activation: a
+        removal that revokes or rewrites authority before a proven publication
+        can strand the definition Active while its execution intent broke. The
+        corrected removal publishes the removal successor as the durable live
+        stop, so a failed activation never touches authority at all — the
+        lock on the shared database can never leave the published Enabled
+        definition in an uncertain state.
         """
 
         self.save(definition("nightly", mode="automatic-organization"))
         self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-        self._seed_active_grant("nightly")
-        admitted = self._definition_value("nightly")
         writer: list = []
 
         def contention(_successor):
@@ -1495,8 +1332,8 @@ class AutomationPublicationTests(unittest.TestCase):
             # them separate, and the same-file production arrangement is
             # proven by tests.test_v2_automation_lifecycle.
             # SameFileRemovalAuthorityTests. This test proves the application
-            # ordering itself: the activation fails and no grant write was
-            # attempted through the grant boundary at all.
+            # ordering itself: the activation fails and no authority write was
+            # attempted at all.
             connection = sqlite3.connect(str(self.root / "configuration.sqlite3"), timeout=0.05)
             connection.execute("BEGIN IMMEDIATE")
             writer.append(connection)
@@ -1520,36 +1357,25 @@ class AutomationPublicationTests(unittest.TestCase):
         )
         # The definition is still published...
         self.assertEqual(self.ids(), ["nightly"])
-        # ...and its live authority survived the failed removal, so the
-        # already-admitted Job is not failed by this command.
-        current = self.grants.get_for_definition("nightly")
-        self.assertIsNotNone(current)
-        self.assertEqual(current.status.value, "active")
-        # The live authority state is reported in the recovery document.
-        self.assertIn(
-            caught.exception.details.get("authorityState"),
-            {"active", "none", "unavailable"},
-        )
-        # The admitted definition still authorizes against the live grant: a
-        # job carrying its identity, bounds, scope and the granted snapshot
-        # authorizes without the worker refusing revoked authority the failed
-        # removal would have left behind.  (The grant in this fixture has no
-        # Preview linkage, so only the grant's own match/snapshot bounds are
-        # asserted here — the exact-Preview admission journey is covered by
-        # the dedicated Preview/grant suites.)
+        # ...and its live Enabled state survived the failed removal, so the
+        # already-admitted Task is not failed by this command.
         active_now = self.managed.active()
         assert active_now is not None
-        grant = self.grants._get_active(admitted.definition_id)
-        self.assertIsNotNone(grant)
-        self.assertEqual(grant.status.value, "active")
+        stored = next(
+            item
+            for item in active_now.document[AUTOMATION_DEFINITION_SECTION]
+            if item["id"] == "nightly"
+        )
+        self.assertIs(stored["enabled"], True)
+        # The live authority state is reported in the recovery document.
+        self.assertEqual(caught.exception.details.get("authorityState"), "active")
 
-    def test_removal_persistence_failure_before_revocation_preserves_authority(self) -> None:
-        """A Draft-edit persistence failure precedes any revocation: the live
+    def test_removal_persistence_failure_before_publication_preserves_authority(self) -> None:
+        """A Draft-edit persistence failure precedes any publication: the live
         authority is untouched and the bounded error reports that truth."""
 
         self.save(definition("nightly", mode="automatic-organization"))
         self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
-        self._seed_active_grant("nightly")
 
         def failing_mutate(*args, **kwargs):
             raise RuntimeError("simulated configuration store failure")
@@ -1560,7 +1386,14 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "automation_definition_persistence_failed")
         self.assertEqual(caught.exception.details["durableState"], "active_preserved")
         self.assertEqual(self.ids(), ["nightly"])
-        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+        active_now = self.managed.active()
+        assert active_now is not None
+        stored = next(
+            item
+            for item in active_now.document[AUTOMATION_DEFINITION_SECTION]
+            if item["id"] == "nightly"
+        )
+        self.assertIs(stored["enabled"], True)
 
     def test_historical_definition_never_substitutes_an_open_draft(self) -> None:
         """P1 regression: retained history resolves from published evidence.
@@ -1791,48 +1624,6 @@ class AutomationPublicationTests(unittest.TestCase):
 
         stored = next(item for item in self.definitions() if item["id"] == definition_id)
         return AutomationTaskDefinition.from_document(stored)
-
-    def _seed_active_grant(self, definition_id: str, *, grant_id: str = "grant-nightly"):
-        """Persist one real active unattended grant through the durable repository.
-
-        The grant admission path requires a persisted exact Preview, which is a
-        separate journey; removal only has to durably revoke whatever live
-        authority exists, so the durable row is seeded directly here.
-        """
-
-        from mediaflow.domain.unattended_execution import (
-            UnattendedExecutionGrant,
-            UnattendedExecutionGrantAudit,
-            UnattendedExecutionGrantStatus,
-        )
-
-        active = self.managed.active()
-        definition = self._definition_value(definition_id)
-        grant = UnattendedExecutionGrant(
-            grant_id,
-            definition_id,
-            definition.resource_library_id,
-            definition.source_scope,
-            definition.run_mode,
-            definition.item_limit,
-            UnattendedExecutionGrantStatus.ACTIVE,
-            "admin",
-            datetime.now(UTC),
-            definition.definition_fingerprint,
-            active.revision_id,
-            active.digest,
-            active.version,
-        )
-        audit = UnattendedExecutionGrantAudit(
-            f"{grant_id}-audit",
-            grant.grant_id,
-            "granted",
-            datetime.now(UTC),
-            "admin",
-            {"definitionId": definition_id},
-        )
-        self.runtime.create_unattended_execution_grant(grant, audit)
-        return grant
 
 
 if __name__ == "__main__":

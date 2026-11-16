@@ -12,7 +12,6 @@ from threading import Barrier, Thread
 from unittest.mock import patch
 
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.domain.automation import CronSchedule, IntervalSchedule
 from mediaflow.domain.execution_authorization import ExecutionAuthorizationStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -70,16 +69,6 @@ class ExecutionAuthorizationTests(unittest.TestCase):
         literal["api"]["remoteExecution"]["token"] = "must-not-be-configured"
         with self.assertRaises(ValueError):
             load_runtime_configuration(literal)
-
-    def test_schedules_cannot_gain_execute_authority(self) -> None:
-        # A schedule can only ever declare the supported organize command; the
-        # retired DryRun/Preview command is not a schedule command.
-        with self.assertRaises(ValueError):
-            IntervalSchedule("unsafe", "preview", 60)
-        with self.assertRaises(ValueError):
-            CronSchedule("unsafe", "preview", "* * * * *", "UTC")
-        # Organize is the one accepted schedule command.
-        self.assertEqual(IntervalSchedule("ok", "organize", 60).command.value, "organize")
 
     def test_issue_persists_digest_only_and_audit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

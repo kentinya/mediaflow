@@ -572,7 +572,6 @@ class RunOnceJourneyTests(_RunOnceFixture):
             # No schedule/authority state changed.
             self.assertEqual(before.revision_id, value.managed.active().revision_id)
             self.assertIsNone(value.repository.get_automation_definition_due_state("nightly"))
-            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
 
     def test_finalize_freezes_the_manifest_and_enters_durable_analysis(self) -> None:
         self.media("Movies/One.2001.mkv")
@@ -778,7 +777,6 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
 
     def test_cancel_during_analysis_discards_the_late_plan_and_stays_terminal(self) -> None:
         """B's cancel race: the accepted cancellation discards the late plan.
@@ -845,7 +843,6 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
 
     def test_pause_that_loses_a_handover_never_publishes_the_old_owners_plan(self) -> None:
         """A stale owner only exits; the successor controls the plan publication."""
@@ -1598,7 +1595,6 @@ class HistoricalModeTests(_RunOnceFixture):
         snapshot = SchedulerConfigurationSnapshot(
             "snapshot-1",
             "a" * 64,
-            (),
             100,
             (
                 # A recorded pre-amendment definition.  It is built as a raw
@@ -1617,13 +1613,12 @@ class HistoricalModeTests(_RunOnceFixture):
                     item_limit=10,
                 ),
             ),
-            configuration_snapshot_version=1,
-            resource_library_ids=("library",),
-            enabled_resource_library_ids=("library",),
+            1,
+            ("library",),
+            ("library",),
         )
         scheduler = IntervalScheduler(
             repository,
-            (),
             maximum_active_jobs=100,
             automation_task_definitions=snapshot.automation_task_definitions,
             configuration_snapshot_id=snapshot.snapshot_id,

@@ -1644,14 +1644,12 @@ import {
 } from "../../entities/operations/discovery";
 import {
   normalizeAutomationDefinitionsPage,
-  normalizeAutomationGrantState,
   normalizeAutomationMetrics,
   normalizeAutomationOccurrencesPage,
   normalizeAutomationPreview,
   normalizeAutomationRecordsPage,
   normalizeAutomationPreviewItemsPage,
   type AutomationDefinitionsPage,
-  type AutomationGrantStateModel,
   type AutomationMetricsModel,
   type AutomationOccurrencesPage,
   type AutomationRecordsPage,
@@ -5842,80 +5840,6 @@ export async function createAutomationPreview(
       const source = readRecord(payload, "automation_preview_created");
       return { previewId: String(source["previewId"] ?? "") };
     },
-    fetchImpl,
-  );
-}
-
-export interface GrantAutomationAuthorityOptions {
-  /** The exact published revision whose definition bounds this authority. */
-  readonly definitionId: string;
-  readonly revisionId?: string | null;
-  readonly expectedVersion?: number | null;
-  readonly reason?: string | null;
-}
-
-export async function grantAutomationAuthority(
-  token: string | null,
-  options: GrantAutomationAuthorityOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<AutomationGrantStateModel>> {
-  if (!isSafeIdentifier(options.definitionId)) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  const body: Record<string, unknown> = { confirmation: true };
-  if (options.revisionId !== null && options.revisionId !== undefined) {
-    body.revisionId = options.revisionId;
-  }
-  if (
-    options.expectedVersion !== null &&
-    options.expectedVersion !== undefined
-  ) {
-    body.expectedVersion = options.expectedVersion;
-  }
-  if (options.reason) {
-    body.reason = options.reason;
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/grant`,
-    body,
-    (value) =>
-      normalizeAutomationGrantState(
-        readRecord(value, "grant_result")["grant"],
-        "grant",
-      ),
-    fetchImpl,
-  );
-}
-
-export interface RevokeAutomationAuthorityOptions {
-  readonly definitionId: string;
-  readonly reason?: string | null;
-}
-
-export async function revokeAutomationAuthority(
-  token: string | null,
-  options: RevokeAutomationAuthorityOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<AutomationGrantStateModel>> {
-  if (!isSafeIdentifier(options.definitionId)) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  const body: Record<string, unknown> = {};
-  if (options.reason) {
-    body.reason = options.reason;
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/revoke`,
-    body,
-    (value) =>
-      normalizeAutomationGrantState(
-        readRecord(value, "revoke_result")["grant"],
-        "grant",
-      ),
     fetchImpl,
   );
 }

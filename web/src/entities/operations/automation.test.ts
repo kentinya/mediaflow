@@ -8,8 +8,6 @@ import {
   normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
   normalizeAutomationDraftState,
-  normalizeAutomationEligibility,
-  normalizeAutomationGrantState,
   normalizeAutomationMetrics,
   normalizeAutomationPreview,
   normalizeAutomationRecordsPage,
@@ -33,11 +31,11 @@ function offeredAction(
     available: true,
     reason: null,
     method: "POST",
-    path: "/api/v1/automation/task-definitions/auto-task/grant",
-    requiresConfirmation: true,
+    path: "/api/v1/automation/task-definitions/auto-task/copy",
+    requiresConfirmation: false,
     sideEffects: "none",
-    durableOutcome: "a persistent scoped unattended execution grant is stored",
-    nextAction: "review the grant eligibility and explicitly confirm",
+    durableOutcome: "a copied definition is stored inside the open Draft",
+    nextAction: "open the successor Draft and copy the definition inside it",
     ...overrides,
   };
 }
@@ -80,14 +78,6 @@ function listDefinitionPayload(
       lastFailureCategory: null,
       outcomeSummary: null,
     },
-    unattendedExecutionGrant: {
-      status: "none",
-      active: false,
-      grantId: null,
-      definitionId: id,
-      definitionChangedSinceGrant: false,
-      nextAction: "review the exact bounds and explicitly grant",
-    },
     draftState: {
       present: false,
       reason: "no open successor Draft contains this definition",
@@ -119,27 +109,6 @@ function listDefinitionPayload(
         reason: "not Active yet",
         method: "POST",
         path: `${operationsRoute}/run-once`,
-        requiresConfirmation: false,
-      },
-      grantState: {
-        available: true,
-        reason: null,
-        method: "GET",
-        path: `${automationRoute}/grant-state`,
-        requiresConfirmation: false,
-      },
-      grant: {
-        available: false,
-        reason: "not Active yet",
-        method: "POST",
-        path: `${automationRoute}/grant`,
-        requiresConfirmation: true,
-      },
-      revoke: {
-        available: false,
-        reason: "not Active yet",
-        method: "POST",
-        path: `${automationRoute}/revoke`,
         requiresConfirmation: false,
       },
       copy: {
@@ -261,17 +230,17 @@ function definitionsPagePayload(
 }
 
 describe("normalizeAutomationAction transport binding", () => {
-  it("binds the grant action to the exact definition route and confirmation", () => {
+  it("binds the copy action to the exact definition route", () => {
     const model = normalizeAutomationAction(
       offeredAction(),
-      "actions.grant",
-      "definition-grant",
+      "actions.copy",
+      "definition-copy",
       "auto-task",
     );
     expect(model.available).toBe(true);
-    expect(model.requiresConfirmation).toBe(true);
+    expect(model.requiresConfirmation).toBe(false);
     expect(model.path).toBe(
-      "/api/v1/automation/task-definitions/auto-task/grant",
+      "/api/v1/automation/task-definitions/auto-task/copy",
     );
   });
 
@@ -280,10 +249,10 @@ describe("normalizeAutomationAction transport binding", () => {
       expect(() =>
         normalizeAutomationAction(
           offeredAction({
-            path: `/api/v1/automation/task-definitions/${identity}/grant`,
+            path: `/api/v1/automation/task-definitions/${identity}/copy`,
           }),
-          "actions.grant",
-          "definition-grant",
+          "actions.copy",
+          "definition-copy",
           identity,
         ),
       ).toThrow(AutomationNormalizationError);
@@ -299,28 +268,28 @@ describe("normalizeAutomationAction transport binding", () => {
       parameter?: string | null;
     }> = [
       {
-        // The definition read route without /grant is never the mutation.
+        // The definition read route without /copy is never the mutation.
         path: "/api/v1/automation/task-definitions/auto-task",
-        kind: "definition-grant",
+        kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // Another object's route is never this action's transport.
-        path: "/api/v1/automation/task-definitions/other-task/grant",
-        kind: "definition-grant",
+        path: "/api/v1/automation/task-definitions/other-task/copy",
+        kind: "definition-copy",
         identity: "auto-task",
       },
       {
-        // A safe method never carries a mutating confirmation.
-        path: "/api/v1/automation/task-definitions/auto-task/grant",
+        // A safe method never carries the copy mutation.
+        path: "/api/v1/automation/task-definitions/auto-task/copy",
         method: "GET",
-        kind: "definition-grant",
+        kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // A wrong fixed suffix is malformed too.
-        path: "/api/v1/automation/task-definitions/auto-task/grants",
-        kind: "definition-grant",
+        path: "/api/v1/automation/task-definitions/auto-task/copys",
+        kind: "definition-copy",
         identity: "auto-task",
       },
       {
@@ -402,75 +371,6 @@ describe("automation state block fail-closed contracts", () => {
         updatedAt: null,
         validatedAt: null,
         validationErrors: [],
-      }),
-    ).toThrow(AutomationNormalizationError);
-  });
-
-  it("rejects a grant state with none status but grant authority evidence", () => {
-    expect(() =>
-      normalizeAutomationGrantState({
-        status: "none",
-        active: true,
-        grantId: "grant-1",
-        definitionId: "auto-task",
-        definitionChangedSinceGrant: false,
-        nextAction: "review",
-      }),
-    ).toThrow(AutomationNormalizationError);
-    const model = normalizeAutomationGrantState({
-      status: "active",
-      active: true,
-      grantId: "grant-1",
-      definitionId: "auto-task",
-      definitionChangedSinceGrant: false,
-      nextAction: "inspect occurrences",
-      maxItemsPerRun: 5,
-      previewId: "preview-1",
-      grantingPrincipal: "admin",
-      grantedAt: "2026-01-01T00:00:00+00:00",
-      revokedAt: null,
-      reason: null,
-      currentPermission: {
-        principalId: "admin",
-        status: "valid",
-        allowed: true,
-      },
-    });
-    expect(model.active).toBe(true);
-    expect(model.currentPermission?.allowed).toBe(true);
-  });
-
-  it("rejects eligibility whose status label contradicts the decision", () => {
-    expect(() =>
-      normalizeAutomationEligibility({
-        eligible: true,
-        status: "ineligible",
-        previewId: "preview-1",
-        current: true,
-        zeroMutation: true,
-        maxItemsPerRun: 5,
-        currentPermission: null,
-        explanation: "ok",
-        durableState: "no grant",
-        retrySafe: true,
-        nextAction: "confirm",
-        error: null,
-      }),
-    ).toThrow(AutomationNormalizationError);
-    expect(() =>
-      normalizeAutomationEligibility({
-        eligible: false,
-        status: "ineligible",
-        previewId: null,
-        current: false,
-        zeroMutation: false,
-        maxItemsPerRun: null,
-        currentPermission: null,
-        explanation: "no preview",
-        durableState: "no grant",
-        retrySafe: true,
-        nextAction: "run a fresh Preview",
-        error: null,
       }),
     ).toThrow(AutomationNormalizationError);
   });
@@ -576,7 +476,6 @@ function previewDocument(
     updatedAt: "2026-01-01T00:00:00+00:00",
     itemTotal: 1,
     itemsTruncated: false,
-    grantEligibility: null,
     actions: {
       detail: {
         available: true,
@@ -605,26 +504,6 @@ function previewDocument(
         durableOutcome: null,
         nextAction: "reopen the durable definition behind this Preview",
       },
-      grantState: {
-        available: true,
-        reason: null,
-        method: "GET",
-        path: "/api/v1/automation/task-definitions/auto-task/grant-state",
-        sideEffects: "none",
-        durableOutcome: null,
-        nextAction: "read the current unattended grant state",
-      },
-      grant: {
-        available: true,
-        reason: null,
-        method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/grant",
-        requiresConfirmation: true,
-        sideEffects: "none",
-        durableOutcome:
-          "a persistent scoped unattended execution grant is stored",
-        nextAction: "review the grant eligibility and explicitly confirm",
-      },
     },
   };
   mutate?.(value);
@@ -641,7 +520,7 @@ describe("normalizeAutomationPreview", () => {
     expect(model.counts.discovered).toBe(2);
     expect(model.items).toHaveLength(1);
     expect(model.items[0]?.recognition.recognitionTypeId).toBe("A");
-    expect(model.actions.grant.requiresConfirmation).toBe(true);
+    expect(model.actions.definition.available).toBe(true);
   });
 
   it("fails closed on unknown statuses, malformed items and hostile transports", () => {
@@ -661,9 +540,9 @@ describe("normalizeAutomationPreview", () => {
       },
       (value) => {
         const actions = value["actions"] as Record<string, unknown>;
-        actions["grant"] = {
-          ...(actions["grant"] as object),
-          path: "/api/v1/automation/task-definitions/<task>/grant",
+        actions["definition"] = {
+          ...(actions["definition"] as object),
+          path: "/api/v1/automation/task-definitions/<task>",
         };
       },
       (value) => {
@@ -855,35 +734,6 @@ describe("normalizeAutomationDefinitionsPage", () => {
           "a durable bounded discovery of the definition scope is admitted",
         nextAction: "activate the Draft before starting Run once",
       },
-      grantState: {
-        available: true,
-        reason: null,
-        method: "GET",
-        path: "/api/v1/automation/task-definitions/auto-task/grant-state",
-        sideEffects: "none",
-        durableOutcome: null,
-        nextAction: "read the current grant state",
-      },
-      grant: {
-        available: false,
-        reason: "not Active yet",
-        method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/grant",
-        requiresConfirmation: true,
-        sideEffects: "none",
-        durableOutcome:
-          "a persistent scoped unattended execution grant is stored",
-        nextAction: "activate the Draft before granting unattended authority",
-      },
-      revoke: {
-        available: false,
-        reason: "not Active yet",
-        method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/revoke",
-        sideEffects: "none",
-        durableOutcome: "the grant is revoked",
-        nextAction: "activate the Draft before granting unattended authority",
-      },
       copy: {
         available: true,
         reason: null,
@@ -930,14 +780,6 @@ describe("normalizeAutomationDefinitionsPage", () => {
         lastFailureCategory: null,
         outcomeSummary: null,
       },
-      unattendedExecutionGrant: {
-        status: "none",
-        active: false,
-        grantId: null,
-        definitionId: "auto-task",
-        definitionChangedSinceGrant: false,
-        nextAction: "review the exact bounds and explicitly grant",
-      },
       draftState: {
         present: false,
         reason: "no open successor Draft contains this definition",
@@ -958,7 +800,6 @@ describe("normalizeAutomationDefinitionsPage", () => {
     };
     const detail = {
       ...activeDefinition,
-      unattendedExecutionGrant: undefined,
       executionReadiness: readiness,
     };
     expect(

@@ -16,11 +16,10 @@ It deliberately composes the existing authorities instead of duplicating them:
   definition stays byte-identical — so publication cannot carry unrelated Draft
   edits, and the previously reviewed Storage/strategy/destination semantics of
   the Active snapshot are preserved unchanged;
-* removal durably revokes applicable future unattended authority *before* the
-  removal successor is published, so no window exists in which the definition is
-  gone while its scheduled mutation authority is still live.  A revocation that
-  precedes a failed publication is fail-closed and reported truthfully; grants,
-  audits, occurrences, Jobs/Tasks/Results and admitted pins are never erased.
+* removal publishes the removal successor as the durable live stop: the
+  published Enabled definition is what gates future scheduling, so removing it
+  stops every future scheduled effect while occurrences, Jobs/Tasks/Results,
+  audits and admitted pins are never erased.
 
 Reads (form opening, projections, schedule calculation) create no Draft, call no
 Provider, start no scan/Job/Task/occurrence and mutate no Storage, and no
@@ -252,11 +251,10 @@ def _occurrence_pin(occurrence: object) -> dict[str, object]:
 class AutomationWorkspaceCommandService:
     """One checked Save or lifecycle command per intended definition change."""
 
-    def __init__(self, objects: ConfigurationObjectService, *, unattended_grants=None) -> None:
+    def __init__(self, objects: ConfigurationObjectService) -> None:
         self._objects = objects
         self._managed = objects._managed
         self._repository = objects._repository
-        self._unattended_grants = unattended_grants
         # Bound by the API layer: a zero-argument reader that returns the
         # definition's newest durable occurrence (or None).  It is used only
         # for read-only historical resolution, never for authority.
@@ -474,12 +472,14 @@ class AutomationWorkspaceCommandService:
                 "items": [item.document() for item in evidence.items],
                 "truncated": evidence.truncated,
             },
-            "unattendedAuthority": self._authority_projection(definition_id),
+            "authority": {
+                "status": self._live_authority_status(definition_id),
+            },
             "active": self._safe_active(active),
             "sideEffects": "none",
             "nextAction": (
-                "confirm the removal to stop future scheduling and revoke future unattended "
-                "mutation authority while retaining grants, audits and run history"
+                "confirm the removal to stop this published definition's future scheduling "
+                "while retaining occurrence, run and audit history"
             ),
         }
 
@@ -1421,8 +1421,8 @@ class AutomationWorkspaceCommandService:
         """Publish one explicit enabled-state successor for an exact Active definition.
 
         Enabling only makes the definition eligible for future Scheduler
-        evaluation: it starts no scan, Job, Task, occurrence or grant, and it
-        neither cancels admitted work nor revokes an existing grant.
+        evaluation: it starts no scan, Job, Task or occurrence, and it neither
+        cancels admitted work nor stops an in-flight run.
         """
 
         if not isinstance(enabled, bool):
@@ -1493,10 +1493,10 @@ class AutomationWorkspaceCommandService:
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
         reason: str | None = None,
     ) -> ManagedConfigurationRevision:
-        """Remove one definition and durably revoke its future unattended authority.
+        """Remove one published definition and stop its future scheduling.
 
         Ordering is deliberate and fault-tolerant at the exact production
-        persistence boundary, where configuration and runtime/grant state live
+        persistence boundary, where configuration and runtime state live
         in the *same* SQLite file and any foreign writer can hold the write
         lock:
 
@@ -1509,15 +1509,13 @@ class AutomationWorkspaceCommandService:
            pointer swap is one SQLite transaction that did not commit, so the
            definition and its live authority are preserved by construction and
            the bounded error reports the live authority read after the fact;
-        3. only a *proven successful* publication is followed by the durable
-           revocation of applicable future unattended authority, so a known
-           failed removal can never leave the definition Active while its
-           authority was already revoked.  A revocation that cannot prove the
-           revoked state is reported truthfully on the already-published
-           removal instead of being hidden.
+        3. a proven successful publication is itself the durable live stop:
+           the published Enabled definition gates future scheduling, so no
+           later command can leave the definition Active while scheduling
+           continues.
 
-        Grants, audits, occurrences, Jobs/Tasks/Results and admitted pins are
-        never erased.  A genuinely ambiguous activation commit — where the
+        Occurrences, Jobs/Tasks/Results, audits and admitted pins are never
+        erased.  A genuinely ambiguous activation commit — where the
         repository raised but the durable pointer state cannot be read back as
         either the prior Active or the attempted successor — is reported as
         unknown with the live authority truth attached; the operator
@@ -1600,8 +1598,7 @@ class AutomationWorkspaceCommandService:
         except ConfigurationActivationConflict as error:
             # A known rejected activation: the Active pointer never moved, so
             # the definition and its live authority are preserved by
-            # construction.  No revocation has happened on this path, so no
-            # compensating grant write is needed or attempted.
+            # construction.
             live_authority = self._authority_state_now(definition_id)
             raise AutomationDefinitionSaveError(
                 "automation_definition_removal_not_published",
@@ -1617,7 +1614,7 @@ class AutomationWorkspaceCommandService:
                 authority_state=live_authority,
                 next_action=(
                     "refresh the current Active configuration; the definition is still "
-                    f"published and its future unattended authority is {live_authority}. "
+                    f"published and its current Enabled state is {live_authority}. "
                     "Review current Enabled and permission state before another command"
                 ),
             ) from error
@@ -1657,8 +1654,8 @@ class AutomationWorkspaceCommandService:
                 next_action=(
                     (
                         "resolve the configuration persistence failure, then confirm the "
-                        "removal again; the definition is still published and its future "
-                        f"unattended authority is {live_authority}"
+                        "removal again; the definition is still published and its current "
+                        f"Enabled state is {live_authority}"
                     )
                     if unconflicted
                     else (
@@ -1669,16 +1666,8 @@ class AutomationWorkspaceCommandService:
                 ),
             ) from error
 
-        # Removal is the durable live stop. Best-effort revocation only updates
-        # retained legacy evidence; it cannot gate the published outcome.
-        self._revoke_future_authority(
-            definition_id,
-            actor=actor,
-            reason=reason or "the Automation Task Definition was removed",
-            allow_unavailable=True,
-        )
-        # Old grants are historical only. Removal itself is the live stop;
-        # an unavailable historical revocation cannot gate or undo publication.
+        # Removal is the durable live stop: the published successor gates all
+        # future scheduling, and retained history stays untouched.
         return published
 
     def _safe_active_summary(self) -> dict[str, object] | None:
@@ -2020,28 +2009,11 @@ class AutomationWorkspaceCommandService:
             )
 
     # ------------------------------------------------------------------
-    # Authority revocation
+    # Current publication authority projection
     # ------------------------------------------------------------------
 
-    def _authority_projection(self, definition_id: str) -> dict[str, object]:
-        if self._unattended_grants is None:
-            return {"status": "unavailable", "active": False, "grantId": None}
-        try:
-            grant = self._unattended_grants.get_for_definition(definition_id)
-        except Exception:
-            return {"status": "unavailable", "active": False, "grantId": None}
-        if grant is None:
-            return {"status": "none", "active": False, "grantId": None}
-        return {
-            "status": grant.status.value,
-            "active": grant.status.value == "active",
-            "grantId": grant.grant_id,
-            "maxItemsPerRun": grant.max_items_per_run,
-            "previewId": grant.preview_id,
-        }
-
     def _live_authority_status(self, definition_id: str) -> str:
-        """Current published schedule state; historical grants cannot override it."""
+        """The definition's current published Enabled state."""
         try:
             active = self._managed.active()
             if active is None:
@@ -2058,72 +2030,6 @@ class AutomationWorkspaceCommandService:
             return "active" if definition and definition.get("enabled") is True else "none"
         except Exception:
             return "unavailable"
-
-    def _revoke_future_authority(
-        self,
-        definition_id: str,
-        *,
-        actor: str,
-        reason: str | None,
-        allow_unavailable: bool = False,
-    ) -> dict[str, object]:
-        """Durably revoke the definition's future unattended mutation authority.
-
-        With ``allow_unavailable`` the two availability-failure codes are
-        returned as bounded states instead of aborting the command: a removal
-        that already published must report its authority proof truthfully on
-        the published outcome rather than pretending the publication itself
-        failed.  A grant whose state cannot be read is never treated as no
-        authority.
-        """
-
-        if self._unattended_grants is None:
-            return {"state": "unavailable", "grantId": None}
-        try:
-            current = self._unattended_grants.get_for_definition(definition_id)
-        except Exception as error:
-            if allow_unavailable:
-                return {"state": "unavailable", "grantId": None}
-            raise AutomationDefinitionSaveError(
-                "automation_definition_authority_unavailable",
-                "the definition's unattended authority state could not be read, so the removal "
-                "was not attempted; the Active definition remains in use",
-                status=503,
-                definition_id=definition_id,
-                stage="authority",
-                durable_state="active_preserved",
-                side_effects="none",
-                authority_state="unavailable",
-                next_action=(
-                    "restore unattended grant state availability, then confirm the removal again"
-                ),
-            ) from error
-        if current is None:
-            return {"state": "none", "grantId": None}
-        if current.status.value == "revoked":
-            return {"state": "already_revoked", "grantId": current.grant_id}
-        try:
-            revoked = self._unattended_grants.revoke(
-                definition_id=definition_id,
-                actor=actor,
-                reason=reason or "the Automation Task Definition was removed",
-            )
-        except Exception as error:
-            if allow_unavailable:
-                return {"state": "unavailable", "grantId": None}
-            raise AutomationDefinitionSaveError(
-                "automation_definition_authority_revoke_failed",
-                "future unattended authority could not be revoked, so the removal was not "
-                "published; the Active definition remains in use",
-                status=503,
-                definition_id=definition_id,
-                stage="authority",
-                durable_state="active_preserved",
-                side_effects="none",
-                authority_state="unchanged",
-                next_action="restore unattended grant persistence, then confirm the removal again",
-            ) from error
-        return {"state": revoked.status.value, "grantId": revoked.grant_id}
 
     # ------------------------------------------------------------------
     # Lookup and bounded helpers

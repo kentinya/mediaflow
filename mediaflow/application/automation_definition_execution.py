@@ -14,6 +14,10 @@ from mediaflow.application.automation import (
     AutomationConfigurationUnavailable,
     AutomationWorkflowFailed,
 )
+from mediaflow.application.automation_execution_authority import (
+    AutomationExecutionAuthority,
+    AutomationExecutionIntentError,
+)
 from mediaflow.application.media_organizer import (
     IncompleteOrganizingScope,
     MediaOrganizerBatchResult,
@@ -22,10 +26,6 @@ from mediaflow.application.media_organizer import (
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner, normalize_resource_root
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
-from mediaflow.application.unattended_execution import (
-    UnattendedExecutionGrantError,
-    UnattendedExecutionGrantService,
-)
 from mediaflow.domain.automation import (
     AutomationFailureEvidence,
     AutomationTaskDefinition,
@@ -56,7 +56,7 @@ class DefinitionScopedExecutionService:
         provider_factory: ProviderFactory | None = None,
         strategy_factory: StrategyFactory | None = None,
         history_factory: HistoryFactory | None = None,
-        unattended_grant_service: UnattendedExecutionGrantService | None = None,
+        execution_authority: AutomationExecutionAuthority | None = None,
         logger=None,
     ) -> None:
         self._repository = repository
@@ -65,7 +65,7 @@ class DefinitionScopedExecutionService:
         self._provider_factory = provider_factory
         self._strategy_factory = strategy_factory
         self._history_factory = history_factory
-        self._unattended_grants = unattended_grant_service
+        self._execution_authority = execution_authority
         self._logger = logger
 
     def run(
@@ -92,7 +92,7 @@ class DefinitionScopedExecutionService:
         resource = self._resolve_resource_library(definition)
         scope_root = self._resolve_scope_root(resource, definition, task, run_once=run_once)
 
-        if self._unattended_grants is None:
+        if self._execution_authority is None:
             raise self._failure(
                 "automation_execution_authority_unavailable",
                 "the definition-scoped execution authority is unavailable; no work was started",
@@ -101,12 +101,12 @@ class DefinitionScopedExecutionService:
                 "or Run once command execute",
             )
         try:
-            self._unattended_grants.authorize_task(
+            self._execution_authority.authorize_task(
                 task,
                 definition,
                 run_once=run_once,
             )
-        except UnattendedExecutionGrantError as error:
+        except AutomationExecutionIntentError as error:
             raise self._failure(
                 error.code,
                 error.durable_state,
@@ -487,11 +487,11 @@ class DefinitionScopedExecutionService:
             exclude_failed_history=True,
             mutation_authority=(
                 (
-                    lambda _plan, _boundary: self._unattended_grants.assert_live_task(
+                    lambda _plan, _boundary: self._execution_authority.assert_live_task(
                         task, definition, run_once=run_once
                     )
                 )
-                if execute and self._unattended_grants is not None
+                if execute and self._execution_authority is not None
                 else None
             ),
         )

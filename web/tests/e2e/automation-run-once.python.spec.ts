@@ -16,8 +16,9 @@ import { expect, test, type Page } from "@playwright/test";
  * *without a file picker* — the backend derives the whole scope from the
  * definition — freezes a complete bounded manifest and stores an exact
  * zero-mutation Preview; a disabled schedule is runnable once and the run never
- * enables the schedule, grants authority or advances due state; the manifest is
- * durable across a real runtime restart. No production media, credential,
+ * enables the schedule, issues an independent authority or advances due state;
+ * the manifest is durable across a real runtime restart. No production media,
+ * credential,
  * external Storage or Provider is involved; the token is a throwaway harness
  * value.
  */
@@ -57,7 +58,7 @@ interface LifecycleState {
     readonly enabled: boolean;
     readonly mode: string;
   }>;
-  readonly grant: { readonly status: string } | null;
+  readonly authority: { readonly status: string } | null;
 }
 
 async function runOnceState(

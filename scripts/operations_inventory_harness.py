@@ -191,11 +191,6 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.domain.unattended_execution import (  # noqa: E402
-    UnattendedExecutionGrant,
-    UnattendedExecutionGrantAudit,
-    UnattendedExecutionGrantStatus,
-)
 from mediaflow.final_cli import final_main  # noqa: E402
 from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
     build_configuration_snapshot,
@@ -879,9 +874,9 @@ def build_managed_fixture(
         },
         {
             # The remaining-scope continuation fixture's own reviewed scope.  A
-            # mutation-authorized continuation needs a *live reusable* authority,
-            # and only a definition-bound unattended grant provides one, so the
-            # fixture uses the real production shape instead of a stored flag.
+            # mutation-authorized continuation re-checks the published Enabled
+            # definition and the current configured permission, so the fixture
+            # uses the real production shape.
             "id": CONTINUATION_DEFINITION_ID,
             "name": "Harness continuation review",
             "enabled": True,
@@ -1559,7 +1554,7 @@ def run_scheduled_definition_tick(
     # Only the inventory's own scheduled definition is due here.  The Active may
     # publish further managed definitions (for example the continuation fixture's
     # definition-bound occurrence, which the continuation journey admits through
-    # its own real grant), and emitting them here would change the deterministic
+    # its own live intent), and emitting them here would change the deterministic
     # four-run population this fixture exists to prove.
     due_definitions = tuple(
         value
@@ -1568,11 +1563,9 @@ def run_scheduled_definition_tick(
     )
     scheduler = IntervalScheduler(
         repository,
-        (),
         configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
-            (),
             runtime.automation_maximum_active_jobs,
             due_definitions,
             active.version,
@@ -4061,8 +4054,8 @@ CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
 
 #: The managed definition whose exact reviewed scope holds the continuation
 #: fixture.  A mutation-authorized remaining-scope continuation is admitted only
-#: with a live definition-bound grant, so the fixture publishes the real
-#: definition and persists the real grant instead of relying on a stored flag.
+#: with a live published Enabled definition and current permission, so the
+#: fixture publishes the real definition.
 CONTINUATION_DEFINITION_ID = "harness-continuation"
 CONTINUATION_SCOPE = "C/Continuation"
 
@@ -4207,10 +4200,11 @@ def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -
     """Create one real paused Task that was admitted as a mutation.
 
     Its ``execute_authorized`` boolean records the original admission, but no
-    live reusable execution authority exists for it: it has no definition-linked
-    occurrence Job and therefore no unattended grant.  The backend must refuse a
-    native Continue and name the exact-Preview/explicit-intent journey instead of
-    continuing under the stored boolean.
+    live reusable execution intent exists for it: it has no definition-linked
+    occurrence Job and its paused chain does not name a live Enabled
+    publication.  The backend must refuse a native Continue and name the
+    exact-Preview/explicit-intent journey instead of continuing under the
+    stored boolean.
     """
 
     active = state.managed.active
@@ -4729,8 +4723,8 @@ def automation_lifecycle_state(
 ) -> dict[str, object]:
     """Report the durable definition/authority state for the lifecycle proof.
 
-    Bounded reads only: the Active definitions, the definition's live
-    unattended-grant state and the linked occurrence count. No Storage,
+    Bounded reads only: the Active definitions, the definition's current
+    published Enabled state and the linked occurrence count. No Storage,
     Provider or work is touched.
     """
 
@@ -4756,20 +4750,20 @@ def automation_lifecycle_state(
         if active is not None
         else []
     )
-    grants = getattr(state.api, "_unattended_grants", None)
     occurrences = getattr(state.api, "_automation_occurrences", None)
-    grant_state = None
-    if grants is not None:
-        try:
-            grant = grants.get_for_definition(target_id)
-        except Exception:
-            grant = None
-        if grant is not None:
-            grant_state = {
-                "status": grant.status.value,
-                "grantId": grant.grant_id,
-                "definitionId": grant.definition_id,
-            }
+    authority_state = None
+    if active is not None:
+        stored = next(
+            (
+                item
+                for item in active.document.get("automationTaskDefinitions", [])
+                if isinstance(item, dict) and item.get("id") == target_id
+            ),
+            None,
+        )
+        authority_state = {
+            "status": "active" if stored is not None and stored.get("enabled") is True else "none",
+        }
     occurrence_total = 0
     if occurrences is not None:
         try:
@@ -4779,67 +4773,9 @@ def automation_lifecycle_state(
     return {
         "activeRevisionId": active.revision_id if active is not None else None,
         "definitions": definitions,
-        "grant": grant_state,
+        "authority": authority_state,
         "occurrenceTotal": occurrence_total,
     }
-
-
-def seed_automation_definition_grant(
-    state: AppState, definition_id: str | None = None
-) -> dict[str, object]:
-    """Persist one real active unattended grant for the removal proof.
-
-    The grant admission journey requires a persisted exact Preview; this
-    isolated harness writes the durable grant row directly through the runtime
-    repository, exactly as the grant service would, so the browser can then
-    prove that a real removal revokes live authority and keeps its audit.
-    """
-
-    from mediaflow.domain.automation import AutomationTaskDefinition
-
-    active = state.managed.configuration_service.active()
-    if active is None:
-        return {"error": "no Active configuration"}
-    target_id = harness_definition_id(state, definition_id)
-    stored = next(
-        (
-            item
-            for item in active.document.get("automationTaskDefinitions", [])
-            if item.get("id") == target_id
-        ),
-        None,
-    )
-    if stored is None:
-        return {"error": "definition not found"}
-    domain = AutomationTaskDefinition.from_document(stored)
-    now = datetime.now(UTC)
-    grant = UnattendedExecutionGrant(
-        "harness-grant-1",
-        domain.definition_id,
-        domain.resource_library_id,
-        domain.source_scope,
-        domain.run_mode,
-        domain.item_limit,
-        UnattendedExecutionGrantStatus.ACTIVE,
-        "harness-admin",
-        now,
-        domain.definition_fingerprint,
-        active.revision_id,
-        active.digest,
-        active.version,
-    )
-    state.repository.create_unattended_execution_grant(
-        grant,
-        UnattendedExecutionGrantAudit(
-            "harness-grant-audit-1",
-            grant.grant_id,
-            "granted",
-            now,
-            "harness-admin",
-            {"definitionId": domain.definition_id},
-        ),
-    )
-    return {"grantId": grant.grant_id, "status": grant.status.value}
 
 
 def open_automation_definition_draft(
@@ -5071,35 +5007,22 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     The isolated browser journey runs several sequential tests against one
     temporary configuration store. Each test must start from a known definition
     population, so this control route performs a real focused successor
-    publication that removes every definition and revokes their unattended
-    authority — the same production boundary the browser exercises, not a
-    database edit. The removed definitions' Scheduler due-state rows are
-    cleared through the runtime repository, so a later journey recreating the
-    same definition ID starts with a fresh due state exactly as a genuinely
-    new definition would.
+    publication that removes every definition — the same production boundary
+    the browser exercises, not a database edit. The removed definitions'
+    Scheduler due-state rows are cleared through the runtime repository, so a
+    later journey recreating the same definition ID starts with a fresh due
+    state exactly as a genuinely new definition would.
     """
 
     configuration_service = state.managed.configuration_service
     active = configuration_service.active()
     if active is None:
         return {"error": "no Active configuration"}
-    grants = getattr(state.api, "_unattended_grants", None)
     definition_ids = [
         str(item.get("id"))
         for item in active.document.get("automationTaskDefinitions", [])
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     ]
-    if grants is not None:
-        for definition_id in definition_ids:
-            try:
-                if grants.get_for_definition(definition_id) is not None:
-                    grants.revoke(
-                        definition_id=definition_id,
-                        actor="harness-admin",
-                        reason="harness reset",
-                    )
-            except Exception:
-                pass
     draft = configuration_service.create_successor_draft(
         actor="harness",
         expected_active_revision_id=active.revision_id,
@@ -5240,11 +5163,9 @@ def seed_automation_record_page(state: AppState, *, runs: int = 26) -> dict[str,
     for _ in range(max(1, min(60, int(runs)))):
         scheduler = IntervalScheduler(
             state.repository,
-            (),
             configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
                 active.revision_id,
                 active.digest,
-                (),
                 runtime.automation_maximum_active_jobs,
                 tuple(runtime.automation_task_definitions),
                 active.version,
@@ -5350,12 +5271,10 @@ def run_automation_scheduler_tick(
         return {"error": f"runtime configuration did not load: {type(error).__name__}"}
     scheduler = IntervalScheduler(
         state.repository,
-        (),
-        execution_authority=state.api._unattended_grants,
+        execution_authority=state.api._automation_execution_authority,
         configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
-            (),
             runtime.automation_maximum_active_jobs,
             tuple(runtime.automation_task_definitions),
             active.version,
@@ -6497,11 +6416,6 @@ def application(environ, start_response):
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
             document = automation_run_once_state(STATE, discovery_id=discovery_id)
-        elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
-            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
-            document = seed_automation_definition_grant(
-                STATE, definition_id=(query.get("definitionId") or [None])[0]
-            )
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":
             document = reset_automation_definitions(STATE)
         elif path == "/__harness__/restore-source-media" and method == "POST":

@@ -764,7 +764,7 @@ class _SourceHistoryJourneyTests(unittest.TestCase):
             provider_factory=lambda ids: value.provider_registry,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=value.api._unattended_grants,
+            execution_authority=value.api._automation_execution_authority,
         )
         scheduling = TaskSchedulingService(value.repository, capacity=10)
         worker_id = f"run-once-worker-{len(value.repository.list_tasks())}"
@@ -949,21 +949,89 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
 
 class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
     def test_due_occurrence_excludes_the_failed_source_and_records_honest_no_work(self):
+
         from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.automation_execution_intent import resolve_principal
         from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
-        from mediaflow.domain.automation import AutomationCommand, IntervalSchedule
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
         from mediaflow.final_cli import _automatic_task_runner
 
         one = self.media("One.2001.mkv")
-        with history_journey(self, operation="COPY", definitions=None) as value:
+        with history_journey(self, operation="COPY", definitions="nightly") as value:
+            active = value.managed.active()
+            # A definition whose exact due cadence matches the legacy fixture:
+            # published enabled in one checked create command.
+            status, _created = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/definitions",
+                {
+                    "expectedRevisionId": active.revision_id,
+                    "expectedVersion": active.revision_sequence or active.version,
+                    "expectedDigest": active.digest,
+                    "object": {
+                        "id": "due-history",
+                        "name": "Due history",
+                        "resourceLibraryId": "library",
+                        "mode": "automatic-organization",
+                        "intervalSeconds": 60,
+                        "itemLimit": 5,
+                    },
+                    "enabled": True,
+                },
+            )
+            assert status == 200, _created
+            active = value.managed.active()
+            definition = AutomationTaskDefinition.from_document(
+                next(
+                    item
+                    for item in active.document["automationTaskDefinitions"]
+                    if item["id"] == "due-history"
+                )
+            )
+            # The enable publication is a new immutable Active revision: the
+            # Worker's pinned runtime must resolve exactly that revision.
+            from mediaflow.infrastructure.runtime_configuration import (
+                load_managed_runtime_configuration,
+                with_managed_snapshot,
+            )
+
+            runtime = with_managed_snapshot(
+                load_managed_runtime_configuration(
+                    active.document,
+                    bootstrap_database_path=value.managed.bootstrap_database_path,
+                ),
+                snapshot_id=active.revision_id,
+                digest=active.digest,
+                version=active.version,
+            )
             scheduling = TaskSchedulingService(value.repository, capacity=10)
             scheduler = IntervalScheduler(
                 value.repository,
-                (IntervalSchedule("legacy-interval", AutomationCommand.ORGANIZE, 60, 5),),
+                configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+                    active.revision_id,
+                    active.digest,
+                    100,
+                    (definition,),
+                    active.version,
+                    ("library",),
+                    ("library",),
+                ),
                 scheduling_service=scheduling,
+                execution_authority=value.api._automation_execution_authority,
             )
-            emitted = list(scheduler.tick(self.clock.now))
+            # The first tick emits the definition's due occurrence; one
+            # interval later the next occurrence is due again.
+            emitted = list(scheduler.tick(value.clock.now))
             self.assertEqual(1, len(emitted))
+            self.assertEqual(
+                "admin",
+                resolve_principal(value.managed, emitted[0], definition).principal_id,
+            )
+            value.clock.advance(60)
 
             from mediaflow.application.organizer import OrganizerExecutor
 
@@ -992,7 +1060,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 automatic_runner=runner,
             )
             with (
-                patch("mediaflow.final_cli._configuration", return_value=value.runtime),
+                patch("mediaflow.final_cli._configuration", return_value=runtime),
                 patch(
                     "mediaflow.application.automation_definition_execution.OrganizerExecutor",
                     _ExplodingExecutor,
@@ -1002,7 +1070,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             (failed_task,) = [
                 task
                 for task in value.repository.list_tasks()
-                if task.command == "organize" and task.item_limit == 5
+                if task.command == "organize" and task.item_limit == definition.item_limit
             ]
             self.assertEqual("completed", failed_task.status.value, failed_task.error)
             (failed_item,) = value.repository.list_items(failed_task.task_id)
@@ -1013,7 +1081,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             self.clock.advance(60)
             emitted = list(scheduler.tick(self.clock.now))
             self.assertEqual(1, len(emitted))
-            with patch("mediaflow.final_cli._configuration", return_value=value.runtime):
+            with patch("mediaflow.final_cli._configuration", return_value=runtime):
                 worker.run_next()
             (excluded_task,) = [
                 task

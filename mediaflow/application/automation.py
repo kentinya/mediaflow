@@ -18,11 +18,8 @@ from mediaflow.domain.automation import (
     AutomationSchedulerRepository,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
-    CronSchedule,
-    IntervalSchedule,
     ProcessingWorker,
     ProcessingWorkerRepository,
-    ScheduleDefinition,
     SchedulerConfigurationSnapshot,
     WorkerReadiness,
     WorkerStatus,
@@ -628,7 +625,6 @@ class IntervalScheduler:
     def __init__(
         self,
         repository: AutomationSchedulerRepository,
-        schedules: tuple[ScheduleDefinition, ...],
         notifications: NotificationPublisher | None = None,
         *,
         maximum_active_jobs: int = 100,
@@ -662,7 +658,6 @@ class IntervalScheduler:
         self._scheduled_principal = bounded_text(
             scheduled_principal, "scheduler admission principal", maximum=128
         )
-        self._schedules = schedules
         self._notifications = notifications
         self._maximum_active_jobs = maximum_active_jobs
         self._configuration_snapshot_id = configuration_snapshot_id
@@ -670,11 +665,6 @@ class IntervalScheduler:
         self._configuration_snapshot_resolver = configuration_snapshot_resolver
         self._automation_task_definitions = tuple(automation_task_definitions)
         self._configuration_snapshot_version = configuration_snapshot_version
-        self._cron = {
-            item.schedule_id: CronExpression.parse(item.expression)
-            for item in schedules
-            if isinstance(item, CronSchedule)
-        }
 
     def tick(self, now: datetime | None = None) -> tuple[object, ...]:
         current = now or datetime.now(UTC)
@@ -691,12 +681,12 @@ class IntervalScheduler:
             )
         except Exception as error:
             # Managed definitions record a durable fail-closed reason below.  A
-            # legacy-only scheduler retains its historical error propagation.
+            # scheduler with no known definition retains its historical error
+            # propagation.
             if not self._automation_task_definitions:
                 raise
             resolved = None
             resolution_error = error
-        schedules = self._schedules
         maximum_active_jobs = self._maximum_active_jobs
         snapshot: tuple[str, str] | None
         snapshot_version: int | None = self._configuration_snapshot_version
@@ -704,23 +694,16 @@ class IntervalScheduler:
         resource_library_ids: tuple[str, ...] = ()
         enabled_resource_library_ids: tuple[str, ...] = ()
         if isinstance(resolved, SchedulerConfigurationSnapshot):
-            schedules = resolved.schedules
             maximum_active_jobs = resolved.maximum_active_jobs
             snapshot = (resolved.snapshot_id, resolved.snapshot_digest)
             snapshot_version = resolved.configuration_snapshot_version or snapshot_version or 1
             managed_definitions = resolved.automation_task_definitions
             resource_library_ids = resolved.resource_library_ids
             enabled_resource_library_ids = resolved.enabled_resource_library_ids
-            cron = {
-                item.schedule_id: CronExpression.parse(item.expression)
-                for item in schedules
-                if isinstance(item, CronSchedule)
-            }
         else:
             snapshot = resolved
             if snapshot is not None and snapshot_version is None:
                 snapshot_version = 1
-            cron = self._cron
         managed_authority = (
             bool(self._automation_task_definitions)
             or bool(managed_definitions)
@@ -732,45 +715,6 @@ class IntervalScheduler:
         ) and current.tzinfo is None:
             raise ValueError("scheduler tick time must include a timezone")
         queued = []
-        for schedule in schedules:
-            if not schedule.enabled:
-                continue
-            state = self._repository.get_schedule_state(schedule.schedule_id)
-            if state is None:
-                initial = self._initial_run(schedule, current, cron)
-                state = self._repository.initialize_schedule_state(
-                    schedule.schedule_id, initial, current
-                )
-            if state.next_run_at > current:
-                continue
-            next_run = self._next_run(schedule, current, cron)
-            admitted_task = self._admit_schedule_task(
-                schedule,
-                state.next_run_at,
-                next_run,
-                current,
-                snapshot,
-                maximum_active_jobs,
-            )
-            if admitted_task is None:
-                continue
-            queued.append(admitted_task)
-            if self._notifications:
-                try:
-                    self._notifications.publish(
-                        NotificationEvent(
-                            f"schedule:{schedule.schedule_id}:task:{admitted_task.task_id}",
-                            NotificationEventType.SCHEDULE_EMITTED,
-                            current,
-                            {
-                                "command": schedule.command.value,
-                                "taskId": admitted_task.task_id,
-                                "scheduleId": schedule.schedule_id,
-                            },
-                        )
-                    )
-                except Exception:
-                    pass
         if managed_authority:
             queued.extend(
                 self._tick_automation_definitions(
@@ -785,55 +729,6 @@ class IntervalScheduler:
                 )
             )
         return tuple(queued)
-
-    def _admit_schedule_task(
-        self,
-        schedule: ScheduleDefinition,
-        occurrence_at: datetime,
-        next_run: datetime,
-        now: datetime,
-        snapshot: tuple[str, str] | None,
-        capacity: int,
-    ) -> object | None:
-        """Admit one due legacy schedule as a kernel Task.
-
-        The Task, its scheduling slot, the schedule advance and its audit row
-        commit in one transaction.  There is no second Job row or legacy
-        execution path: every due occurrence is the Task the Worker consumes.
-        """
-
-        command = schedule.command
-        if not isinstance(command, AutomationCommand):
-            command = AutomationCommand(str(command))
-        from mediaflow.application.task_scheduling import build_scheduled_task_admission
-        from mediaflow.domain.task_persistence import RunDisplayContext
-        from mediaflow.domain.task_scheduling import TaskTrigger
-
-        task, state = build_scheduled_task_admission(
-            command.value,
-            execute_authorized=True,
-            trigger=TaskTrigger.SCHEDULE,
-            principal=self._scheduled_principal,
-            item_limit=schedule.limit,
-            configuration_snapshot_id=snapshot[0] if snapshot else None,
-            configuration_snapshot_digest=snapshot[1] if snapshot else None,
-            now=now,
-        )
-        admitted = self._repository.admit_due_schedule_task(
-            schedule.schedule_id,
-            task,
-            state,
-            command=command.value,
-            occurrence_at=occurrence_at,
-            next_run_at=next_run,
-            now=now,
-            capacity=capacity,
-            display=RunDisplayContext(
-                origin_definition_name=schedule.schedule_id,
-                origin_kind="legacy-schedule",
-            ),
-        )
-        return None if admitted is None else admitted.task
 
     def _tick_automation_definitions(
         self,
@@ -1150,31 +1045,6 @@ class IntervalScheduler:
         if schedule[0] == "interval":
             return now + timedelta(seconds=schedule[1])
         return CronExpression.parse(schedule[1]).next_after(now, ZoneInfo(schedule[2]))
-
-    def _initial_run(
-        self,
-        schedule: ScheduleDefinition,
-        now: datetime,
-        cron: dict[str, CronExpression] | None = None,
-    ) -> datetime:
-        if isinstance(schedule, IntervalSchedule):
-            return now
-        minute = now.astimezone(UTC).replace(second=0, microsecond=0)
-        return (cron or self._cron)[schedule.schedule_id].next_at_or_after(
-            minute, ZoneInfo(schedule.timezone)
-        )
-
-    def _next_run(
-        self,
-        schedule: ScheduleDefinition,
-        now: datetime,
-        cron: dict[str, CronExpression] | None = None,
-    ) -> datetime:
-        if isinstance(schedule, IntervalSchedule):
-            return now + timedelta(seconds=schedule.interval_seconds)
-        return (cron or self._cron)[schedule.schedule_id].next_after(
-            now, ZoneInfo(schedule.timezone)
-        )
 
     def run(
         self,

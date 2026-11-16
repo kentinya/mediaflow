@@ -25,7 +25,6 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -113,7 +112,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             self.managed,
             metadata_provider_registry_factory=self._forbidden_provider_factory,
         )
-        self.grants = UnattendedExecutionGrantService(self.runtime, permission_authority=None)
         draft = self.managed.import_draft(self.document, actor="tester")
         validated = self.managed.validate(draft.revision_id, actor="tester")
         self.managed.activate(
@@ -386,7 +384,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         status, impact = self.request("GET", f"{BASE}/nightly/removal-impact")
         self.assertEqual(status, 200)
         self.assertEqual(impact["definition"]["id"], "nightly")
-        self.assertEqual(impact["unattendedAuthority"]["status"], "none")
+        self.assertEqual(impact["authority"]["status"], "none")
         self.assertEqual(len(self.repository.list_revisions()), revisions_before)
 
     def test_schedule_preview_is_zero_mutation(self) -> None:
@@ -451,13 +449,22 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(removed["removed"]["id"], "nightly-copy")
         self.assertEqual(self.ids(), ["nightly"])
 
-    def test_removal_revokes_live_authority_and_retains_history(self) -> None:
-        from datetime import UTC, datetime
+    def test_removal_stops_future_scheduling_and_retains_occurrence_history(self) -> None:
+        """A published Enabled definition's removal is the durable live stop.
 
-        from mediaflow.domain.unattended_execution import (
-            UnattendedExecutionGrant,
-            UnattendedExecutionGrantAudit,
-            UnattendedExecutionGrantStatus,
+        One real due occurrence is emitted first; the removal then publishes
+        the removal successor and the retained occurrence, its admitted Task
+        and the durable due-state row stay readable exactly as they were —
+        removal is never history deletion.
+        """
+
+        from datetime import UTC, datetime, timedelta
+
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.automation_execution_intent import resolve_principal
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
         )
 
         self.request(
@@ -468,45 +475,44 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                 "object": _definition(mode="automatic-organization"),
             },
         )
+        status, _enabled = self.request("POST", f"{BASE}/nightly/enable", self.authority())
+        self.assertEqual(status, 200)
         active = self.managed.active()
         stored = active.document["automationTaskDefinitions"][0]
-        from mediaflow.domain.automation import AutomationTaskDefinition
-
         domain = AutomationTaskDefinition.from_document(stored)
-        grant = UnattendedExecutionGrant(
-            "grant-nightly",
-            "nightly",
-            domain.resource_library_id,
-            domain.source_scope,
-            domain.run_mode,
-            domain.item_limit,
-            UnattendedExecutionGrantStatus.ACTIVE,
-            "admin",
-            datetime.now(UTC),
-            domain.definition_fingerprint,
-            active.revision_id,
-            active.digest,
-            active.version,
-        )
-        self.runtime.create_unattended_execution_grant(
-            grant,
-            UnattendedExecutionGrantAudit(
-                "grant-audit", grant.grant_id, "granted", datetime.now(UTC), "admin", {}
+        now = datetime.now(UTC)
+        scheduler = IntervalScheduler(
+            self.runtime,
+            configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                100,
+                (domain,),
+                active.version,
+                ("source",),
+                ("source",),
             ),
+            execution_authority=self.api._automation_execution_authority,
         )
-        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+        (task,) = scheduler.tick(now)
+        self.assertIsNotNone(self.runtime.get_latest_automation_definition_occurrence("nightly"))
+        self.assertEqual(
+            "admin",
+            resolve_principal(self.managed, task, domain).principal_id,
+        )
+
         status, _body = self.request("DELETE", f"{BASE}/nightly", self.authority())
         self.assertEqual(status, 200)
         self.assertEqual(self.ids(), [])
-        revoked = self.grants.get_for_definition("nightly")
-        self.assertIsNotNone(revoked)
-        self.assertEqual(revoked.status.value, "revoked")
-        # The audit survives: removal is not history deletion.
-        self.assertTrue(
-            any(
-                item.action == "revoked"
-                for item in self.grants.list_audit("grant-nightly", limit=10)
-            )
+        # The retained occurrence and its admitted Task stay durable history.
+        occurrence = self.runtime.get_latest_automation_definition_occurrence("nightly")
+        self.assertIsNotNone(occurrence)
+        self.assertEqual(occurrence.task_id, task.task_id)
+        self.assertIsNotNone(self.runtime.get_task(task.task_id))
+        # The removed definition emits nothing further.
+        self.assertEqual(
+            (),
+            scheduler.tick(now + timedelta(hours=2)),
         )
 
     def test_retained_history_is_readable_after_removal(self) -> None:
@@ -539,14 +545,13 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(legacy["definition"]["definitionState"], "historical")
 
-        status, grant_state = self.request(
-            "GET", "/api/v1/automation/task-definitions/nightly/grant"
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(grant_state["historicalState"], "removed")
+        # The retired grant surface answers like any unknown route.
+        status, _unknown = self.request("GET", "/api/v1/automation/task-definitions/nightly/grant")
+        self.assertEqual(status, 404)
 
     def test_retained_history_is_read_only(self) -> None:
-        """A removed definition must not be grantable or previewable."""
+        """A removed definition admits no mutation and its retired grant
+        surface is an ordinary unknown route."""
 
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
         status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
@@ -577,7 +582,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             "/api/v1/operations/automation/task-definitions/nightly",
             "/api/v1/operations/automation/task-definitions/nightly/occurrences",
             "/api/v1/automation/task-definitions/nightly",
-            "/api/v1/automation/task-definitions/nightly/grant",
         )
 
         def assert_historical() -> None:
@@ -597,9 +601,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             self.assertEqual(status, 200, legacy)
             self.assertEqual(legacy["definition"]["definitionState"], "historical")
             self.assertEqual(legacy["definition"]["historicalState"], "removed")
-            status, grant_state = self.request("GET", routes[3])
-            self.assertEqual(status, 200, grant_state)
-            self.assertEqual(grant_state["historicalState"], "removed")
 
         status, _created = self.request(
             "POST",
@@ -692,12 +693,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             self.assertEqual(status, 503, body)
             self.assertNotIn("definition", body)
             status, _legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
-            self.assertEqual(status, 503)
-            # The V1 grant surface must fail closed identically rather than
-            # resolve a substituted identity from unreadable evidence.
-            status, _grant = self.request(
-                "GET", "/api/v1/automation/task-definitions/nightly/grant"
-            )
             self.assertEqual(status, 503)
         finally:
             repository.list_command_audits_before = real_before
@@ -1012,7 +1007,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         routes = (
             "/api/v1/operations/automation/task-definitions/nightly",
             "/api/v1/automation/task-definitions/nightly",
-            "/api/v1/automation/task-definitions/nightly/grant",
             "/api/v1/operations/automation/task-definitions/nightly/occurrences",
             f"{BASE}/nightly",
             f"{BASE}/nightly/copy-candidate",
@@ -1114,7 +1108,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 
         for route in (
             "/api/v1/automation/task-definitions/nightly",
-            "/api/v1/automation/task-definitions/nightly/grant",
             "/api/v1/automation/task-definitions/nightly/occurrences",
             "/api/v1/operations/automation/task-definitions/nightly",
             f"{BASE}/nightly",
@@ -1275,51 +1268,20 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 
     def test_removal_persistence_failure_reports_preserved_authority(self) -> None:
         """P1 regression: a known failed removal inside the real publication
-        boundary preserves the live grant and reports the durable truth.
+        boundary preserves the published definition and reports the durable
+        truth.
 
         A second real SQLite writer holds ``BEGIN IMMEDIATE`` between the
         runtime preparation and the activation — ordinary production write
         contention — so the removal's activation fails with a database lock.
-        The removal must not leave the definition Active with its grant
-        revoked: the prior live authority is durably restored and reported."""
-
-        from datetime import UTC, datetime
-
-        from mediaflow.domain.automation import AutomationTaskDefinition
-        from mediaflow.domain.unattended_execution import (
-            UnattendedExecutionGrant,
-            UnattendedExecutionGrantAudit,
-            UnattendedExecutionGrantStatus,
-        )
+        The removal must not leave the Active in an uncertain state: the prior
+        published definition and its current Enabled state are durably
+        preserved and reported."""
 
         self.request(
             "POST",
             BASE,
             {**self.authority(), "object": _definition(mode="automatic-organization")},
-        )
-        active = self.managed.active()
-        stored = active.document["automationTaskDefinitions"][0]
-        domain = AutomationTaskDefinition.from_document(stored)
-        grant = UnattendedExecutionGrant(
-            "grant-nightly",
-            "nightly",
-            domain.resource_library_id,
-            domain.source_scope,
-            domain.run_mode,
-            domain.item_limit,
-            UnattendedExecutionGrantStatus.ACTIVE,
-            "admin",
-            datetime.now(UTC),
-            domain.definition_fingerprint,
-            active.revision_id,
-            active.digest,
-            active.version,
-        )
-        self.runtime.create_unattended_execution_grant(
-            grant,
-            UnattendedExecutionGrantAudit(
-                "grant-audit", grant.grant_id, "granted", datetime.now(UTC), "admin", {}
-            ),
         )
         # One ordinary production writer holds the configuration write lock
         # between runtime preparation and activation.
@@ -1363,10 +1325,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             error["details"]["durableState"],
             {"active_preserved", "commit_state_unknown"},
         )
-        # The definition is still published and its authority is live: the
-        # failed removal did not break the admitted work.
+        # The definition is still published with its current Enabled state.
         self.assertEqual(self.ids(), ["nightly"])
-        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+        self.assertEqual(error["details"]["authorityState"], "none")
 
     def test_stale_authority_conflicts_without_publishing(self) -> None:
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
@@ -1496,10 +1457,10 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 class SameFileRemovalAuthorityTests(unittest.TestCase):
     """The production database arrangement: one shared SQLite file.
 
-    Configuration and runtime/grant state live in the same database file in
+    Configuration and runtime state live in the same database file in
     production, so any foreign writer holding that file's write lock blocks
-    every write — including a compensating grant write. These tests drive the
-    real API and the real Worker assembly on that exact arrangement.
+    every write. These tests drive the real API and the real Worker assembly
+    on that exact arrangement.
     """
 
     def setUp(self) -> None:
@@ -1523,7 +1484,7 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         self.addCleanup(self.runtime.close)
         self.document = _document(self.root)
         # The exact production arrangement: one database file for the managed
-        # configuration authority AND the runtime/grant state, so the bootstrap
+        # configuration authority AND the runtime state, so the bootstrap
         # locator must resolve to the same file the repositories open.
         self.document["persistence"]["databasePath"] = str(self.database)
         self.managed = ManagedConfigurationService(
@@ -1533,7 +1494,6 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         self.objects = ConfigurationObjectService(
             self.managed,
         )
-        self.grants = UnattendedExecutionGrantService(self.runtime, permission_authority=None)
         draft = self.managed.import_draft(self.document, actor="tester")
         validated = self.managed.validate(draft.revision_id, actor="tester")
         self.managed.activate(
@@ -1576,61 +1536,18 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         assert active is not None
         return [item["id"] for item in active.document.get("automationTaskDefinitions", [])]
 
-    def _seed_active_grant(self, definition_id: str) -> None:
-        from datetime import UTC, datetime
-
-        from mediaflow.domain.automation import AutomationTaskDefinition
-        from mediaflow.domain.unattended_execution import (
-            UnattendedExecutionGrant,
-            UnattendedExecutionGrantAudit,
-            UnattendedExecutionGrantStatus,
-        )
-
-        active = self.managed.active()
-        stored = active.document["automationTaskDefinitions"][0]
-        domain = AutomationTaskDefinition.from_document(stored)
-        grant = UnattendedExecutionGrant(
-            f"grant-{definition_id}",
-            definition_id,
-            domain.resource_library_id,
-            domain.source_scope,
-            domain.run_mode,
-            domain.item_limit,
-            UnattendedExecutionGrantStatus.ACTIVE,
-            "admin",
-            datetime.now(UTC),
-            domain.definition_fingerprint,
-            active.revision_id,
-            active.digest,
-            active.version,
-        )
-        self.runtime.create_unattended_execution_grant(
-            grant,
-            UnattendedExecutionGrantAudit(
-                f"grant-{definition_id}-audit",
-                grant.grant_id,
-                "granted",
-                datetime.now(UTC),
-                "admin",
-                {},
-            ),
-        )
-
-    def test_known_failed_removal_preserves_the_live_grant_on_the_shared_file(self) -> None:
+    def test_known_failed_removal_preserves_the_published_enabled_definition_on_the_shared_file(
+        self,
+    ) -> None:
         """P1 regression: a foreign writer's write lock on the SAME SQLite file
-        that holds both configuration and grants cannot revoke the live
-        authority of a known failed removal.
+        cannot break a known failed removal's durable truth.
 
-        The review reproduced this with the production arrangement: real exact
-        Preview, confirmed grant, real Scheduler admission, then a second
-        SQLite writer holding ``BEGIN IMMEDIATE`` between runtime preparation
-        and activation. The prior compensation design wrote its restore into
-        the same locked database and the admitted Job failed in the real
-        Worker with ``unattended_execution_grant_revoked``. The corrected
-        removal revokes only AFTER a proven publication, so a failed
-        activation never touches authority at all: the definition stays
-        published, the grant stays active, and the admitted Job's authority
-        still authorizes.
+        A real published Enabled definition is removed while a second SQLite
+        writer holds ``BEGIN IMMEDIATE`` between runtime preparation and
+        activation. The removal publishes only after a proven activation, so a
+        failed activation never touches the definition: it stays published and
+        Enabled, and the current publication state is reported truthfully on
+        the bounded error.
         """
 
         from mediaflow.domain.automation import AutomationTaskRunMode
@@ -1646,10 +1563,9 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, _enabled = self.request("POST", f"{BASE}/nightly/enable", self.authority())
         self.assertEqual(status, 200)
-        self._seed_active_grant("nightly")
 
         # One ordinary production writer holds the ONE production database's
-        # write lock — the same file holds configuration, grants and Jobs —
+        # write lock — the same file holds configuration and runtime state —
         # between runtime preparation and the activation transaction.
         holder: list = []
 
@@ -1693,16 +1609,17 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         )
         # The definition is still published...
         self.assertEqual(self.ids(), ["nightly"])
-        # ...and its live authority survived the failed removal untouched.
-        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
-        # The admitted Job's authority still authorizes against the live grant
-        # through the grant service's own match/snapshot boundary.
-
+        # ...and its live Enabled authority survived the failed removal
+        # untouched: the current Active still carries the Enabled definition.
         active_now = self.managed.active()
         assert active_now is not None
-        grant = self.grants._get_active("nightly")
-        self.assertIsNotNone(grant)
-        self.assertEqual(grant.status.value, "active")
+        stored = next(
+            item
+            for item in active_now.document["automationTaskDefinitions"]
+            if item["id"] == "nightly"
+        )
+        self.assertIs(stored["enabled"], True)
+        self.assertEqual(error["details"]["authorityState"], "active")
 
 
 if __name__ == "__main__":

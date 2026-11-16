@@ -1678,7 +1678,7 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
         return document
 
     def _automatic_long_runs(self, value):
-        """The real granted definition, its scheduler and its Worker handoff."""
+        """The live enabled definition, its scheduler and its Worker handoff."""
 
         from datetime import UTC as _UTC
         from datetime import datetime as _datetime
@@ -1687,17 +1687,14 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
         from mediaflow.application.automation_definition_execution import (
             DefinitionScopedExecutionService,
         )
-        from mediaflow.application.automation_run_once import AutomationRunOnceService
+        from mediaflow.application.automation_execution_authority import (
+            AutomationExecutionAuthority,
+        )
+        from mediaflow.application.automation_execution_intent import resolve_principal
         from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
         from mediaflow.application.strategy_test import strategy_runner_from_configuration
         from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.application.unattended_execution import (
-            UnattendedExecutionGrantService,
-        )
-        from mediaflow.final_cli import (
-            _ConfiguredPermissionAuthority,
-            _scheduler_snapshot_from_runtime,
-        )
+        from mediaflow.final_cli import _scheduler_snapshot_from_runtime
         from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
         from mediaflow.infrastructure.runtime_configuration import with_managed_snapshot
 
@@ -1707,48 +1704,6 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             snapshot_id=active.revision_id,
             digest=active.digest,
             version=active.version,
-        )
-        # The exact Run once the operator reviewed: real discovery admission, real
-        # bounded walk, the explicit Finalize, then the shared zero-mutation
-        # analysis of that frozen scope.
-        analysis = value.discovery.admit_definition_run_once(
-            definition_id="shared", actor="local-admin"
-        )
-        for step in range(12):
-            value.discovery.claim_and_run(
-                worker_id=f"grant-walk-{step}", claim_token=f"walk-{step}"
-            )
-            analysis = value.repository.get_media_discovery(analysis.discovery_id)
-            if analysis.status.value not in {"queued", "running", "waiting_stability"}:
-                break
-        self.assertEqual("completed", analysis.status.value, analysis.progress.message)
-        AutomationRunOnceService(value.discovery, value.previews, clock=self.clock).finalize(
-            analysis.discovery_id,
-            actor="local-admin",
-            expected_version=analysis.version,
-        )
-        value.discovery.claim_and_run(worker_id="grant-analysis", claim_token="analysis")
-        analysis = value.repository.get_media_discovery(analysis.discovery_id)
-        self.assertIsNotNone(analysis.preview_id, analysis.progress.message)
-        self.assertEqual(
-            "previewed", value.repository.get_manual_preview(analysis.preview_id).status.value
-        )
-        origin = analysis.definition_origin
-        definition = runtime.automation_task_definitions[0]
-        grants = UnattendedExecutionGrantService(
-            value.repository,
-            discovery_service=value.discovery,
-            preview_service=value.previews,
-            permission_authority=_ConfiguredPermissionAuthority(lambda: runtime),
-        )
-        grants.grant(
-            definition,
-            configuration_snapshot_id=origin.configuration_revision_id,
-            configuration_snapshot_digest=origin.configuration_revision_digest,
-            configuration_snapshot_version=origin.configuration_revision_version,
-            actor="local-admin",
-            confirmation=True,
-            storage_id="source",
         )
 
         def factory(external=None, storage_ids=None):
@@ -1765,14 +1720,20 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             provider_factory=provider_factory,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=grants,
+            execution_authority=AutomationExecutionAuthority(
+                value.repository,
+                permission_authority=lambda principal_id, permission: True,
+                publication_principal_resolver=lambda task, definition: resolve_principal(
+                    value.managed, task, definition
+                ),
+            ),
         )
         scheduling = TaskSchedulingService(value.repository, capacity=100)
         IntervalScheduler(
             value.repository,
-            (),
             configuration_snapshot_resolver=lambda: _scheduler_snapshot_from_runtime(runtime),
             scheduling_service=scheduling,
+            execution_authority=service._execution_authority,
         ).tick(_datetime.now(_UTC))
 
         from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION

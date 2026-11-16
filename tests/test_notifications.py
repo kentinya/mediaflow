@@ -18,7 +18,6 @@ from mediaflow.application.automation import IntervalScheduler
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.automation import IntervalSchedule
 from mediaflow.domain.metadata import MediaCandidate, MediaType, ProviderCapabilities
 from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
@@ -321,22 +320,49 @@ class NotificationTests(unittest.TestCase):
     def test_scheduler_emission_enters_outbox_for_the_admitted_task(self) -> None:
         """A real due occurrence publishes its schedule event for one Task."""
 
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            AutomationTaskRunMode,
+            SchedulerConfigurationSnapshot,
+        )
+
         definitions = (webhook(events=(NotificationEventType.SCHEDULE_EMITTED,)),)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                schedule = IntervalSchedule("hourly", "organize", 3600)
+                definition = AutomationTaskDefinition(
+                    "hourly",
+                    "Hourly organize",
+                    "library",
+                    None,
+                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    3600,
+                    None,
+                    None,
+                    5,
+                    True,
+                )
                 publisher = NotificationPublisher(repository, definitions)
-                (task,) = IntervalScheduler(repository, (schedule,), publisher).tick(NOW)
+                scheduler = IntervalScheduler(
+                    repository,
+                    publisher,
+                    scheduling_service=TaskSchedulingService(repository, capacity=10),
+                    configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+                        "revision-hourly",
+                        "a" * 64,
+                        10,
+                        (definition,),
+                        1,
+                        ("library",),
+                        ("library",),
+                    ),
+                )
+                (task,) = scheduler.tick(NOW)
                 (delivery,) = repository.list_deliveries()
                 self.assertEqual(delivery.event_type, NotificationEventType.SCHEDULE_EMITTED)
-                self.assertEqual(
-                    json.loads(delivery.body)["data"],
-                    {
-                        "command": "organize",
-                        "scheduleId": "hourly",
-                        "taskId": task.task_id,
-                    },
-                )
+                body = json.loads(delivery.body)["data"]
+                self.assertEqual(body["taskId"], task.task_id)
+                self.assertEqual(body["definitionId"], "hourly")
                 self.assertIsNotNone(
                     repository.get_task_scheduling(task.task_id),
                     "the schedule event must name the one admitted organizing Task",

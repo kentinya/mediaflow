@@ -482,8 +482,6 @@ export interface AutomationRemovalImpactModel {
   readonly definitionState: "active" | "draft-only";
   readonly referenceTotal: number;
   readonly authorityStatus: string;
-  readonly authorityActive: boolean;
-  readonly grantId: string | null;
 }
 
 export function normalizeAutomationRemovalImpact(
@@ -492,10 +490,7 @@ export function normalizeAutomationRemovalImpact(
   const source = readRecord(payload, "automation_removal_impact");
   const definition = readRecord(source["definition"], "definition");
   const references = readRecord(source["references"], "references");
-  const authority = readRecord(
-    source["unattendedAuthority"],
-    "unattendedAuthority",
-  );
+  const authority = readRecord(source["authority"], "authority");
   return {
     definitionId: text(definition, "id"),
     definitionName: optionalText(definition, "name"),
@@ -506,8 +501,6 @@ export function normalizeAutomationRemovalImpact(
     ] as const),
     referenceTotal: count(references, "total"),
     authorityStatus: text(authority, "status"),
-    authorityActive: flag(authority, "active"),
-    grantId: optionalText(authority, "grantId"),
   };
 }
 

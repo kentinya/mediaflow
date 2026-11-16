@@ -330,10 +330,8 @@ describe("normalizeAutomationRemovalImpact", () => {
       },
       definitionState: "active",
       references: { total: 0, items: [], truncated: false },
-      unattendedAuthority: {
+      authority: {
         status: "active",
-        active: true,
-        grantId: "grant-1",
       },
       active: {
         revisionId: "rev-1",
@@ -345,7 +343,6 @@ describe("normalizeAutomationRemovalImpact", () => {
     });
     expect(model.referenceTotal).toBe(0);
     expect(model.authorityStatus).toBe("active");
-    expect(model.grantId).toBe("grant-1");
   });
 
   it("fails closed on a contradictory definition state", () => {
@@ -354,7 +351,7 @@ describe("normalizeAutomationRemovalImpact", () => {
         definition: { id: "nightly", name: "N", enabled: false },
         definitionState: "removed",
         references: { total: 0 },
-        unattendedAuthority: { status: "none", active: false, grantId: null },
+        authority: { status: "none" },
         active: {
           revisionId: "r",
           version: 1,

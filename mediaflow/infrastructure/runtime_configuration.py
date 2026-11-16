@@ -11,11 +11,7 @@ from mediaflow.application.strategy_test import (
     strategy_runner_from_configuration,
 )
 from mediaflow.domain.automation import (
-    AutomationCommand,
     AutomationTaskDefinition,
-    CronSchedule,
-    IntervalSchedule,
-    ScheduleDefinition,
 )
 from mediaflow.domain.library import (
     DEFAULT_EXCLUDE_RULES,
@@ -64,7 +60,6 @@ class RuntimeConfiguration:
     history_path: str
     database_path: str
     api_token_env: str | None = None
-    automation_schedules: tuple[ScheduleDefinition, ...] = ()
     worker_poll_seconds: float = 2.0
     scheduler_poll_seconds: float = 5.0
     webhooks: tuple[WebhookDefinition, ...] = ()
@@ -439,6 +434,9 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         # Retired compatibility key: an immutable historical document may still
         # carry it, but it is ignored and never becomes an effective setting.
         "staleJobAgeSeconds",
+        # Retired schedules key: recognized only so a system-generated empty
+        # slot in a normal V2 document stays readable; any schedule definition
+        # rejects below and no schedule semantics survive.
         "schedules",
         "taskDefinitions",
     }
@@ -456,15 +454,18 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     scheduler_poll = _positive_number(
         automation.get("schedulerPollSeconds", 5), "schedulerPollSeconds"
     )
-    raw_schedules = automation.get("schedules", [])
-    if not isinstance(raw_schedules, list) or not all(
-        isinstance(item, dict) for item in raw_schedules
-    ):
-        raise ValueError("automation schedules must be an array of objects")
-    schedules = tuple(_schedule(item) for item in raw_schedules)
-    schedule_ids = [item.schedule_id for item in schedules]
-    if len(schedule_ids) != len(set(schedule_ids)):
-        raise ValueError("automation schedule IDs must be unique")
+    raw_schedules = automation.get("schedules")
+    if raw_schedules is not None:
+        # The legacy schedules product is retired.  A system-generated empty
+        # slot in a normal V2 document carries no schedule semantics and stays
+        # readable with its original digest; any schedule definition rejects
+        # through normal validation and is never converted or executed.
+        if not isinstance(raw_schedules, list):
+            raise ValueError("automation schedules must be an array")
+        if any(not isinstance(item, dict) for item in raw_schedules):
+            raise ValueError("automation schedules must be an array of objects")
+        if raw_schedules:
+            raise ValueError("automation schedules are retired; use automationTaskDefinitions")
     root_definitions = document.get("automationTaskDefinitions")
     root_definitions_present = "automationTaskDefinitions" in document
     nested_definitions = automation.get("taskDefinitions", [])
@@ -549,7 +550,6 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         history_path,
         database_path,
         api_token_env,
-        schedules,
         worker_poll,
         scheduler_poll,
         webhooks,
@@ -1086,44 +1086,6 @@ def _positive_number(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ValueError(f"automation {label} must be a positive number")
     return float(value)
-
-
-def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
-    command_value = _required(value, "command")
-    try:
-        command = AutomationCommand(command_value)
-    except ValueError as error:
-        raise ValueError("automation schedule command must be organize") from error
-    if command not in {AutomationCommand.ORGANIZE}:
-        raise ValueError("automation schedule command must be organize")
-    limit = value.get("limit")
-    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
-        raise ValueError("automation schedule limit must be a positive integer")
-    enabled = value.get("enabled", True)
-    if not isinstance(enabled, bool):
-        raise ValueError("automation schedule enabled must be boolean")
-    has_interval = "intervalSeconds" in value
-    has_cron = "cron" in value
-    if has_interval == has_cron:
-        raise ValueError("automation schedule requires exactly one of intervalSeconds or cron")
-    if has_interval:
-        if "timezone" in value:
-            raise ValueError("interval schedule must not configure timezone")
-        return IntervalSchedule(
-            _required(value, "id"),
-            command,
-            _positive_number(value.get("intervalSeconds"), "schedule intervalSeconds"),
-            limit,
-            enabled,
-        )
-    return CronSchedule(
-        _required(value, "id"),
-        command,
-        _required(value, "cron"),
-        _required(value, "timezone"),
-        limit,
-        enabled,
-    )
 
 
 def _webhook(value: dict) -> WebhookDefinition:

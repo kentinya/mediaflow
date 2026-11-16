@@ -311,18 +311,17 @@ class RetainedRunOncePlanTests(unittest.TestCase):
                 self.assertTrue(latest.zero_mutation)
 
 
-class RetainedAuthorizationPrecedentTests(unittest.TestCase):
-    """The unattended grant keeps its analysis precedent without the product.
+class RetiredAuthoritySurfaceTests(unittest.TestCase):
+    """The independent grant product is retired without weakening safety.
 
-    The retired independent Preview used to be the required evidence before an
-    unattended grant.  That role is now carried by the shared zero-mutation
-    organize analysis a definition-bound Run once produces.  This proves the
-    real API/Run-once assembly refuses a confirmed grant until that shared
-    analysis exists, then admits it — with zero Storage mutation throughout and
-    no grant row before the analysis is real.
+    The retired independent Preview used to be required evidence before an
+    unattended grant.  Current authority is the published Enabled definition
+    plus the current configured permission, re-checked at admission and again
+    at every effect boundary; the retired grant transports answer as ordinary
+    unknown routes and no authority table exists to seed.
     """
 
-    def test_grant_requires_the_shared_analysis_then_admits_it(self):
+    def test_retired_grant_transports_are_unknown_routes(self):
         from tests.test_v2_automation_operations import (
             _DEFINITION,
             AutomationOperatorJourneyTests,
@@ -332,62 +331,48 @@ class RetainedAuthorizationPrecedentTests(unittest.TestCase):
         journey = AutomationOperatorJourneyTests()
         with journey._journey() as value:
             api = value.api
-            # A confirmed grant with no shared analysis is refused before any
-            # grant row, audit row or Storage effect.
-            status, refused = _request(
+            for method, body in (
+                ("POST", {"revisionId": value.active.revision_id, "confirmation": True}),
+                ("POST", {"reason": "no longer wanted"}),
+            ):
+                status, refused = _request(
+                    api,
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
+                    method=method,
+                    body=body,
+                )
+                self.assertEqual(404, status, refused)
+                self.assertEqual("not_found", refused["error"]["code"])
+            status, state = _request(
                 api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
-                method="POST",
-                body={"revisionId": value.active.revision_id, "confirmation": True},
+                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state",
             )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("unattended_execution_analysis_required", refused["error"]["code"])
-            self.assertEqual((), value.repository.list_unattended_execution_grants())
+            self.assertEqual(404, status)
+            self.assertEqual((), value.repository.list_tasks())
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
 
-            # The retained legacy grant-state route agrees with its legacy admission;
-            # ordinary V2 detail no longer consumes that eligibility.
-            status, detail = _request(
-                api, f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state"
-            )
-            self.assertEqual(200, status)
-            eligibility = detail["grantEligibility"]
-            self.assertFalse(eligibility["eligible"])
-            self.assertNotIn("previewId", eligibility)
+    def test_a_shared_analysis_still_creates_no_execution_authority(self):
+        from tests.test_v2_automation_operations import (
+            AutomationOperatorJourneyTests,
+        )
 
-            # A real definition-bound Run once produces the shared analysis.
+        journey = AutomationOperatorJourneyTests()
+        with journey._journey() as value:
             preview_id = journey._run_shared_analysis(value)
             self.assertTrue(preview_id)
-            status, detail = _request(
-                api, f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state"
-            )
-            self.assertEqual(200, status)
-            self.assertTrue(detail["grantEligibility"]["eligible"])
-
-            # The same confirmed grant now succeeds, still with zero mutation.
-            status, granted = _request(
-                api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
-                method="POST",
-                body={"revisionId": value.active.revision_id, "confirmation": True},
-            )
-            self.assertEqual(201, status, granted)
-            self.assertEqual("active", granted["grant"]["status"])
+            # The frozen shared analysis carries no authority at all.
+            self.assertEqual(_authority_rows(value.repository), {})
+            self.assertEqual((), value.repository.list_tasks())
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
-            self.assertEqual(1, len(value.repository.list_unattended_execution_grants()))
 
 
 class RetiredPreviewScheduleTests(unittest.TestCase):
     def test_preview_schedule_command_is_rejected(self):
-        from mediaflow.domain.automation import AutomationCommand, CronSchedule, IntervalSchedule
+        from mediaflow.domain.automation import AutomationCommand
 
         self.assertNotIn("preview", {item.value for item in AutomationCommand})
-        with self.assertRaises(ValueError):
-            IntervalSchedule("legacy", "preview", 60)
-        with self.assertRaises(ValueError):
-            CronSchedule("legacy", "preview", "* * * * *", "UTC")
 
     def test_old_schedule_document_value_is_rejected_not_defaulted(self):
         from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -396,12 +381,16 @@ class RetiredPreviewScheduleTests(unittest.TestCase):
         document["automation"] = {
             "schedules": [{"id": "legacy", "command": "preview", "intervalSeconds": 60}]
         }
-        with self.assertRaisesRegex(ValueError, "must be organize"):
+        with self.assertRaisesRegex(ValueError, "retired"):
             load_runtime_configuration(document)
 
+    def test_empty_schedules_slot_stays_a_normal_v2_document(self):
+        from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 
-if __name__ == "__main__":
-    unittest.main()
+        document = json.loads(EXAMPLES.read_text(encoding="utf-8"))
+        document["automation"]["schedules"] = []
+        loaded = load_runtime_configuration(document)
+        self.assertEqual(loaded.automation_task_definitions, ())
 
 
 SNAPSHOT = ("revision-1", "a" * 64)
@@ -412,7 +401,6 @@ SNAPSHOT = ("revision-1", "a" * 64)
 _AUTHORITY_TABLES = (
     "manual_executions",
     "manual_execution_authorizations",
-    "unattended_execution_grants",
 )
 
 
@@ -420,8 +408,16 @@ def _authority_rows(repository) -> dict[str, int]:
     """Non-zero execution-authority rows, so an empty dict proves none exist."""
 
     counts: dict[str, int] = {}
+    existing_tables = {
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
     for table in _AUTHORITY_TABLES:
         # Fixed table names from ``_AUTHORITY_TABLES``, never operator input.
+        if table not in existing_tables:
+            continue
         total = repository._connection.execute(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608
         ).fetchone()[0]
@@ -552,7 +548,6 @@ class SharedAnalysisCliTests(unittest.TestCase):
                 self.assertEqual((), repository.list_classification_reviews())
                 self.assertEqual((), repository.list_recognition_reviews())
                 self.assertEqual({}, _authority_rows(repository))
-                self.assertEqual((), repository.list_unattended_execution_grants())
                 # The complete fixed plan evidence is retained.
                 results = repository.list_results(task.task_id)
                 self.assertEqual(1, len(results))
@@ -805,7 +800,6 @@ class SharedAnalysisCliTests(unittest.TestCase):
                 # evidence, no execution backlog and no authority.
                 self.assertEqual((), repository.list_confirmations())
                 self.assertEqual({}, _authority_rows(repository))
-                self.assertEqual((), repository.list_unattended_execution_grants())
                 self.assertTrue(web_plan["zeroMutation"])
                 # Both entries saw the same one primary file and one sidecar.
                 self.assertEqual(1, len(web_plan["attachments"]))

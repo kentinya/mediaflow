@@ -63,7 +63,6 @@ def snapshot(
     return SchedulerConfigurationSnapshot(
         revision_id,
         digest,
-        (),
         maximum_active_jobs,
         definitions,
         version,
@@ -137,7 +136,6 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 active = snapshot((interval, cron, future), version=4)
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: active,
                 )
                 emitted = scheduler.tick(tick_at)
@@ -178,7 +176,6 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 emitted = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot((value,)),
                 ).tick(tick_at)
                 self.assertEqual(len(emitted), 1)
@@ -194,7 +191,6 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 current = [snapshot((value,))]
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
                 scheduler.tick(NOW)
@@ -228,7 +224,6 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 spring_snapshot = snapshot((spring,))
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: spring_snapshot,
                 )
                 spring_before_transition = datetime(2026, 3, 8, 6, 0, tzinfo=UTC)
@@ -246,7 +241,6 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 fall_snapshot = snapshot((fall,))
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: fall_snapshot,
                 )
                 scheduler.tick(datetime(2026, 11, 1, 4, 0, tzinfo=UTC))
@@ -269,7 +263,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: capacity_one,
                 )
                 first_tick = scheduler.tick(NOW)
@@ -300,7 +293,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "resource.sqlite3")) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot(
                         (missing, healthy),
                         resources=("resource",),
@@ -325,7 +317,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 current = [snapshot((enabled,), revision_id="rev-1", version=1)]
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
                 self.assertEqual(len(scheduler.tick(NOW)), 1)
@@ -360,7 +351,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 unavailable = IntervalScheduler(
                     repository,
-                    (),
                     automation_task_definitions=(value,),
                     configuration_snapshot_resolver=lambda: (_ for _ in ()).throw(
                         RuntimeError("private provider token must not be persisted")
@@ -376,7 +366,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "bad.sqlite3")) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot((bad_schedule,)),
                 )
                 self.assertEqual(scheduler.tick(NOW), ())
@@ -389,7 +378,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 current = [snapshot((value,))]
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
                 self.assertEqual(len(scheduler.tick(NOW)), 1)
@@ -425,7 +413,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot((recorded,)),
                 )
                 self.assertEqual(scheduler.tick(NOW), ())
@@ -457,7 +444,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 # and reopen preserves exactly that one Task and occurrence.
                 admitted = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: active,
                 ).tick(NOW)
                 self.assertEqual(len(admitted), 1)
@@ -498,7 +484,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                     with SQLiteTaskRepository(database) as repository:
                         scheduler = IntervalScheduler(
                             repository,
-                            (),
                             configuration_snapshot_resolver=lambda: active,
                         )
                         barrier.wait(timeout=5)
@@ -528,7 +513,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
                 first_task = scheduler.tick(NOW)[0]
@@ -558,7 +542,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 scheduler = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot((value,)),
                 )
                 for minute in range(3):
@@ -611,7 +594,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                         len(
                             IntervalScheduler(
                                 repository,
-                                (),
                                 configuration_snapshot_resolver=lambda: snapshot((value,)),
                             ).tick(NOW)
                         ),

@@ -83,10 +83,6 @@ def make_deployment_configuration() -> dict:
     if resources:
         resources[0]["storagePath"] = ""
         resources[0]["displayRootPath"] = "/media/incoming"
-    schedules = document.get("automation", {}).get("schedules", [])
-    for schedule in schedules:
-        if isinstance(schedule, dict):
-            schedule["enabled"] = False
     webhooks = document.get("notifications", {}).get("webhooks", [])
     if not webhooks and isinstance(document.get("webhooks"), list):
         webhooks = document["webhooks"]

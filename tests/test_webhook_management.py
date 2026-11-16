@@ -498,7 +498,7 @@ class WebhookManagementTests(unittest.TestCase):
                 self.assertEqual(harness.repository.list_deliveries(), deliveries_before)
                 self.assertEqual((), jobs_before)
                 self.assertEqual(harness.repository.list_tasks(), tasks_before)
-                self.assertEqual(harness.repository.list_schedule_states(), ())
+                self.assertEqual(harness.repository.list_automation_definition_due_states(), ())
             finally:
                 harness.close()
 

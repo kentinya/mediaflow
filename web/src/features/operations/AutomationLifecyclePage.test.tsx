@@ -158,7 +158,7 @@ function removalImpact() {
     },
     definitionState: "active",
     references: { total: 0, items: [], truncated: false },
-    unattendedAuthority: { status: "none", active: false, grantId: null },
+    authority: { status: "none" },
     active: ACTIVE,
     sideEffects: "none",
   };

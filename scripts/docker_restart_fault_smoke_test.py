@@ -107,8 +107,7 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
     # supported COPY operation rather than granting an impossible MOVE.
     for policy in document.get("organizePolicies", []):
         policy["operation"] = "COPY"
-    automation = document.setdefault("automation", {})
-    automation["schedules"] = []
+    document.setdefault("automation", {})
     document["automationTaskDefinitions"] = [
         {
             "id": DEFINITION_ID,
@@ -233,7 +232,7 @@ def definition_projection(base: str, token: str) -> dict:
 
 
 def prepare_definition_intent(base: str, token: str, identity: dict[str, object]) -> dict:
-    """Checked Enabled publication supplies intent without analysis or a grant."""
+    """Checked Enabled publication supplies the scheduled execution intent."""
     status, published = json_request(
         base,
         f"/api/v1/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/enable",
@@ -248,8 +247,8 @@ def prepare_definition_intent(base: str, token: str, identity: dict[str, object]
     if status != 200 or (published.get("definition") or {}).get("enabled") is not True:
         raise RuntimeError(f"checked enable failed: {published}")
     definition = definition_projection(base, token)
-    if (definition.get("grant") or {}).get("active") is True:
-        raise RuntimeError("fresh checked enable unexpectedly required a historical grant")
+    if definition.get("enabled") is not True:
+        raise RuntimeError("checked enable did not publish an Enabled definition")
     return {"definitionId": DEFINITION_ID, "active": active_identity(base, token)}
 
 
@@ -924,8 +923,6 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 raise RuntimeError("service restarts changed the durable occurrence evidence")
             if final_definition.get("enabled") is not True:
                 raise RuntimeError("service restarts lost the checked Enabled intent")
-            if (final_definition.get("grant") or {}).get("active") is True:
-                raise RuntimeError("scheduled execution unexpectedly created a historical grant")
             if list(target_root.rglob("*.mkv")) != outputs or (
                 outputs[0].read_bytes() != source_bytes or source_file.read_bytes() != source_bytes
             ):

@@ -605,7 +605,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 snapshot = SchedulerConfigurationSnapshot(
                     "revision-summary",
                     "b" * 64,
-                    (),
                     1,
                     (definition,),
                     1,
@@ -614,7 +613,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 )
                 emitted = IntervalScheduler(
                     repository,
-                    (),
                     configuration_snapshot_resolver=lambda: snapshot,
                     automation_task_definitions=(definition,),
                 ).tick(NOW)
@@ -656,9 +654,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 before_read_only_state = (
                     tuple(task.task_id for task in repository.list_tasks()),
                     tuple(job.job_id for job in ()),
-                    tuple(
-                        grant.grant_id for grant in repository.list_unattended_execution_grants()
-                    ),
                 )
 
                 def request(
@@ -740,9 +735,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 after_read_only_state = (
                     tuple(task.task_id for task in repository.list_tasks()),
                     tuple(job.job_id for job in ()),
-                    tuple(
-                        grant.grant_id for grant in repository.list_unattended_execution_grants()
-                    ),
                 )
                 self.assertEqual(after_read_only_state, before_read_only_state)
                 list_summary = listing["items"][0]["outcomeSummary"]

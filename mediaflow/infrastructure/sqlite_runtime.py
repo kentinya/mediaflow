@@ -13,13 +13,10 @@ from types import SimpleNamespace
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from mediaflow.domain.automation import (
-    AutomationCommand,
     AutomationDefinitionDueState,
     AutomationDefinitionOccurrence,
     AutomationTaskRunMode,
     ProcessingWorker,
-    ScheduleAuditRecord,
-    ScheduleState,
     WorkerStatus,
     validate_worker_commands,
     validate_worker_id,
@@ -250,11 +247,6 @@ from mediaflow.domain.task_scheduling import (
     require_lease_seconds,
     require_preserved_item_source,
     require_result_matches_item_source,
-)
-from mediaflow.domain.unattended_execution import (
-    UnattendedExecutionGrant,
-    UnattendedExecutionGrantAudit,
-    UnattendedExecutionGrantStatus,
 )
 from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_columns
 
@@ -9040,87 +9032,6 @@ class SQLiteTaskRepository:
             reported_at=datetime.fromisoformat(row["reported_at"]),
         )
 
-    def get_schedule_state(self, schedule_id: str) -> ScheduleState | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM automation_schedules WHERE schedule_id=?", (schedule_id,)
-            ).fetchone()
-        return self._schedule_state(row) if row else None
-
-    def initialize_schedule_state(
-        self, schedule_id: str, next_run_at: datetime, now: datetime
-    ) -> ScheduleState:
-        with self._lock, self._connection:
-            self._connection.execute(
-                "INSERT OR IGNORE INTO automation_schedules VALUES (?, ?, ?, NULL)",
-                (schedule_id, next_run_at.isoformat(), now.isoformat()),
-            )
-            row = self._connection.execute(
-                "SELECT * FROM automation_schedules WHERE schedule_id=?",
-                (schedule_id,),
-            ).fetchone()
-        return self._schedule_state(row)
-
-    def list_schedule_states(self) -> tuple[ScheduleState, ...]:
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM automation_schedules ORDER BY schedule_id"
-            ).fetchall()
-        return tuple(self._schedule_state(row) for row in rows)
-
-    def list_schedule_audit(
-        self,
-        schedule_id: str | None = None,
-        *,
-        limit: int | None = None,
-        after: tuple[datetime, str] | None = None,
-        before: tuple[datetime, str] | None = None,
-    ) -> tuple[ScheduleAuditRecord, ...]:
-        if limit is not None and limit < 1:
-            raise ValueError("schedule audit limit must be positive")
-        if after is not None and before is not None:
-            raise ValueError("after and before are mutually exclusive")
-        query = "SELECT * FROM schedule_audit"
-        parameters: list[object] = []
-        predicates: list[str] = []
-        reverse = before is not None
-        if schedule_id is not None:
-            predicates.append("schedule_id=?")
-            parameters.append(schedule_id)
-        if after is not None:
-            timestamp = after[0].isoformat()
-            predicates.append("(emitted_at < ? OR (emitted_at = ? AND audit_id < ?))")
-            parameters.extend((timestamp, timestamp, after[1]))
-        elif before is not None:
-            timestamp = before[0].isoformat()
-            predicates.append("(emitted_at > ? OR (emitted_at = ? AND audit_id > ?))")
-            parameters.extend((timestamp, timestamp, before[1]))
-        if predicates:
-            query += " WHERE " + " AND ".join(predicates)
-        query += (
-            " ORDER BY emitted_at ASC, audit_id ASC"
-            if reverse
-            else " ORDER BY emitted_at DESC, audit_id DESC"
-        )
-        if limit is not None:
-            query += " LIMIT ?"
-            parameters.append(limit)
-        with self._lock:
-            rows = self._connection.execute(query, tuple(parameters)).fetchall()
-        values = tuple(
-            ScheduleAuditRecord(
-                row["audit_id"],
-                row["schedule_id"],
-                datetime.fromisoformat(row["occurrence_at"]),
-                datetime.fromisoformat(row["emitted_at"]),
-                row["task_id"],
-                next((c for c in AutomationCommand if c.value == row["command"]), row["command"]),
-                datetime.fromisoformat(row["next_run_at"]),
-            )
-            for row in rows
-        )
-        return tuple(reversed(values)) if reverse else values
-
     def get_automation_definition_due_state(
         self, definition_id: str
     ) -> AutomationDefinitionDueState | None:
@@ -9271,78 +9182,6 @@ class SQLiteTaskRepository:
                 (definition_id,),
             ).fetchone()
         return self._automation_definition_due_state(row) if row else None
-
-    def admit_due_schedule_task(
-        self,
-        schedule_id: str,
-        task: PersistentTask,
-        scheduling: TaskSchedulingState,
-        *,
-        command: str,
-        occurrence_at: datetime,
-        next_run_at: datetime,
-        now: datetime,
-        capacity: int,
-        display: RunDisplayContext | None = None,
-    ) -> ScheduledTaskAdmission | None:
-        """Atomically admit one due legacy schedule as a kernel Task.
-
-        RO-2/RO-1: the occurrence is the *Task* now, not a Job.  The schedule
-        state advance, its audit row, the Task and its scheduling slot commit in
-        one transaction, so a crash or a full queue leaves the due state
-        unchanged and no orphan Task.  The audit row and the schedule's
-        ``last_task_id`` column carry the substantive Task identity so existing
-        audit readers keep an unambiguous link.
-        """
-
-        require_capacity(capacity)
-        self._require_scheduled_admission_values(task, scheduling)
-        if (next_run_at.tzinfo is None) or (occurrence_at.tzinfo is None) or (now.tzinfo is None):
-            raise ValueError("schedule admission instants need timezone")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if self._scheduled_capacity_use_locked() >= capacity:
-                    self._connection.rollback()
-                    return None
-                cursor = self._connection.execute(
-                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_task_id=? "
-                    "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
-                    (
-                        next_run_at.isoformat(),
-                        now.isoformat(),
-                        task.task_id,
-                        schedule_id,
-                        occurrence_at.isoformat(),
-                        now.isoformat(),
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    self._connection.rollback()
-                    return None
-                self._connection.execute(_TASK_INSERT, self._task_values(task))
-                if display is not None:
-                    self._insert_run_display_locked(task.task_id, display, task.created_at)
-                self._connection.execute(
-                    _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
-                )
-                self._connection.execute(
-                    "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        f"{schedule_id}:{task.task_id}",
-                        schedule_id,
-                        occurrence_at.isoformat(),
-                        now.isoformat(),
-                        task.task_id,
-                        command,
-                        next_run_at.isoformat(),
-                    ),
-                )
-            except BaseException:
-                self._connection.rollback()
-                raise
-            self._connection.commit()
-        return ScheduledTaskAdmission(task, scheduling, False)
 
     def admit_due_automation_definition_task(
         self,
@@ -9728,167 +9567,6 @@ class SQLiteTaskRepository:
             )
             for row in rows
         )
-
-    def create_unattended_execution_grant(
-        self, value: UnattendedExecutionGrant, audit: UnattendedExecutionGrantAudit
-    ) -> None:
-        if value.status is not UnattendedExecutionGrantStatus.ACTIVE:
-            raise ValueError("unattended execution grant must start active")
-        with self._lock, self._connection:
-            self._connection.execute(
-                """INSERT INTO unattended_execution_grants (
-                    grant_id, definition_id, resource_library_id, source_scope, run_mode,
-                    max_items_per_run, status, granting_principal, granted_at,
-                    revoking_principal, revoked_at, reason, definition_fingerprint,
-                    configuration_snapshot_id, configuration_snapshot_digest,
-                    configuration_snapshot_version, preview_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                self._unattended_execution_grant_values(value),
-            )
-            self._insert_unattended_execution_grant_audit(audit)
-
-    # Compatibility spelling used by lightweight application adapters.
-    create_unattended_grant = create_unattended_execution_grant
-
-    def get_unattended_execution_grant(self, grant_id: str) -> UnattendedExecutionGrant | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
-                (grant_id,),
-            ).fetchone()
-        return self._unattended_execution_grant(row) if row else None
-
-    get_unattended_grant = get_unattended_execution_grant
-
-    def get_active_unattended_execution_grant(
-        self, definition_id: str
-    ) -> UnattendedExecutionGrant | None:
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT * FROM unattended_execution_grants
-                WHERE definition_id=? AND status=?
-                ORDER BY granted_at DESC, grant_id DESC LIMIT 1""",
-                (definition_id, UnattendedExecutionGrantStatus.ACTIVE.value),
-            ).fetchone()
-        return self._unattended_execution_grant(row) if row else None
-
-    get_active_unattended_grant = get_active_unattended_execution_grant
-
-    def get_latest_unattended_execution_grant(
-        self, definition_id: str
-    ) -> UnattendedExecutionGrant | None:
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT * FROM unattended_execution_grants
-                WHERE definition_id=?
-                ORDER BY granted_at DESC, grant_id DESC LIMIT 1""",
-                (definition_id,),
-            ).fetchone()
-        return self._unattended_execution_grant(row) if row else None
-
-    get_latest_unattended_grant = get_latest_unattended_execution_grant
-
-    def list_unattended_execution_grants(
-        self,
-        *,
-        definition_ids: tuple[str, ...] | None = None,
-        limit: int = 100,
-    ) -> tuple[UnattendedExecutionGrant, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("unattended execution grant limit must be between 1 and 100")
-        parameters: tuple[object, ...] = ()
-        query = "SELECT * FROM unattended_execution_grants"
-        if definition_ids is not None:
-            values = tuple(definition_ids)
-            if not values:
-                return ()
-            if len(values) > 100:
-                raise ValueError("unattended execution definition page is too large")
-            if any(not isinstance(value, str) or not value.strip() for value in values):
-                raise ValueError("unattended execution definition ID is required")
-            placeholders = ", ".join("?" for _ in values)
-            query += f" WHERE definition_id IN ({placeholders})"
-            parameters = values
-        query += " ORDER BY granted_at DESC, grant_id DESC LIMIT ?"
-        parameters += (limit,)
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._unattended_execution_grant(row) for row in rows)
-
-    list_unattended_grants = list_unattended_execution_grants
-
-    def revoke_unattended_execution_grant(
-        self,
-        grant_id: str,
-        now: datetime,
-        audit: UnattendedExecutionGrantAudit,
-        *,
-        revoking_principal: str,
-        reason: str | None = None,
-    ) -> UnattendedExecutionGrant:
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = self._connection.execute(
-                    "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
-                    (grant_id,),
-                ).fetchone()
-                if row is None:
-                    raise LookupError(f"unattended execution grant {grant_id!r} was not found")
-                current = self._unattended_execution_grant(row)
-                if current.status is UnattendedExecutionGrantStatus.REVOKED:
-                    self._connection.commit()
-                    return current
-                self._connection.execute(
-                    """UPDATE unattended_execution_grants
-                    SET status=?, revoking_principal=?, revoked_at=?, reason=?
-                    WHERE grant_id=? AND status=?""",
-                    (
-                        UnattendedExecutionGrantStatus.REVOKED.value,
-                        revoking_principal,
-                        now.isoformat(),
-                        reason,
-                        grant_id,
-                        UnattendedExecutionGrantStatus.ACTIVE.value,
-                    ),
-                )
-                self._insert_unattended_execution_grant_audit(audit)
-                updated_row = self._connection.execute(
-                    "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
-                    (grant_id,),
-                ).fetchone()
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-        return self._unattended_execution_grant(updated_row)
-
-    revoke_unattended_grant = revoke_unattended_execution_grant
-
-    def list_unattended_execution_grant_audit(
-        self, grant_id: str, *, limit: int = 100
-    ) -> tuple[UnattendedExecutionGrantAudit, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("unattended execution grant audit limit must be between 1 and 100")
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT * FROM unattended_execution_grant_audit
-                WHERE grant_id=? ORDER BY occurred_at, audit_id LIMIT ?""",
-                (grant_id, limit),
-            ).fetchall()
-        return tuple(
-            UnattendedExecutionGrantAudit(
-                row["audit_id"],
-                row["grant_id"],
-                row["action"],
-                datetime.fromisoformat(row["occurred_at"]),
-                row["actor"],
-                json.loads(row["details_json"]),
-            )
-            for row in rows
-        )
-
-    list_unattended_grant_audit = list_unattended_execution_grant_audit
 
     def append_security_audit(self, value: SecurityAuditRecord) -> None:
         with self._lock, self._connection:
@@ -14314,56 +13992,6 @@ class SQLiteTaskRepository:
                     if value is not None:
                         matches.append(value)
             return tuple(matches)
-
-    def latest_frozen_definition_run_once(
-        self, definition_id: str, *, snapshot_id: str, snapshot_digest: str
-    ) -> MediaDiscovery | None:
-        """The most recent frozen, analyzed definition-bound Run once.
-
-        A definition's shared unattended-grant authorization requires a real,
-        persisted zero-mutation analysis of the exact published definition scope.
-        That analysis is the frozen Run-once manifest with its linked exact
-        organize Preview.  The lookup is bound to the immutable configuration pin
-        (the Active revision the analysis was admitted under), so a republished
-        Active revision never silently makes a stale analysis authoritative for a
-        new grant.  Terminal/non-frozen records and those without a linked
-        Preview are excluded.
-        """
-
-        if not isinstance(definition_id, str) or not definition_id.strip():
-            raise ValueError("definition Run once definition ID is required")
-        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
-            raise ValueError("definition Run once configuration snapshot ID is required")
-        if not isinstance(snapshot_digest, str) or not snapshot_digest.strip():
-            raise ValueError("definition Run once configuration digest is required")
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT discovery_id, definition_origin_json FROM media_discoveries "
-                "WHERE definition_origin_json IS NOT NULL "
-                "AND frozen_at IS NOT NULL "
-                "AND status = ? "
-                "ORDER BY frozen_at DESC, created_at DESC, discovery_id DESC LIMIT 50",
-                (DiscoveryStatus.COMPLETED.value,),
-            ).fetchall()
-            for row in rows:
-                try:
-                    origin = json.loads(row["definition_origin_json"] or "{}")
-                except ValueError:
-                    continue
-                if not isinstance(origin, dict):
-                    continue
-                if (
-                    origin.get("definitionId") == definition_id
-                    and origin.get("configurationRevisionId") == snapshot_id
-                    and origin.get("configurationRevisionDigest") == snapshot_digest
-                ):
-                    value = self._load_media_discovery_locked(row["discovery_id"])
-                    # The frozen manifest is internally linked to its exact
-                    # organize Preview through the durable intent identity, not
-                    # through a discovery.preview_id column (which stays None).
-                    if value is not None and value.frozen and value.intent_id:
-                        return value
-        return None
 
     def update_media_discovery(
         self,
@@ -20995,18 +20623,6 @@ class SQLiteTaskRepository:
                     );
                 CREATE INDEX IF NOT EXISTS automation_definition_occurrences_time
                     ON automation_definition_occurrences(emitted_at, occurrence_id);
-                CREATE TABLE IF NOT EXISTS automation_schedules (
-                    schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, last_task_id TEXT
-                );
-                CREATE TABLE IF NOT EXISTS schedule_audit (
-                    audit_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL,
-                    occurrence_at TEXT NOT NULL, emitted_at TEXT NOT NULL,
-                    task_id TEXT NOT NULL UNIQUE, command TEXT NOT NULL,
-                    next_run_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS schedule_audit_schedule_time
-                    ON schedule_audit(schedule_id, emitted_at, audit_id);
                 CREATE TABLE IF NOT EXISTS notification_deliveries (
                     delivery_id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL,
                     event_id TEXT NOT NULL, event_type TEXT NOT NULL, body TEXT NOT NULL,
@@ -21031,30 +20647,6 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS execution_authorizations_status_expiry
                     ON execution_authorizations(status, expires_at);
-                CREATE TABLE IF NOT EXISTS unattended_execution_grants (
-                    grant_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
-                    resource_library_id TEXT NOT NULL, source_scope TEXT,
-                    run_mode TEXT NOT NULL, max_items_per_run INTEGER NOT NULL,
-                    status TEXT NOT NULL, granting_principal TEXT NOT NULL,
-                    granted_at TEXT NOT NULL, revoking_principal TEXT,
-                    revoked_at TEXT, reason TEXT, definition_fingerprint TEXT NOT NULL,
-                    configuration_snapshot_id TEXT NOT NULL,
-                    configuration_snapshot_digest TEXT NOT NULL,
-                    configuration_snapshot_version INTEGER NOT NULL,
-                    preview_id TEXT
-                );
-                CREATE INDEX IF NOT EXISTS unattended_execution_grants_definition_status
-                    ON unattended_execution_grants(definition_id, status, granted_at, grant_id);
-                CREATE UNIQUE INDEX IF NOT EXISTS unattended_execution_grants_one_active
-                    ON unattended_execution_grants(definition_id) WHERE status='active';
-                CREATE TABLE IF NOT EXISTS unattended_execution_grant_audit (
-                    audit_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL,
-                    action TEXT NOT NULL, occurred_at TEXT NOT NULL,
-                    actor TEXT, details_json TEXT NOT NULL,
-                    FOREIGN KEY(grant_id) REFERENCES unattended_execution_grants(grant_id)
-                );
-                CREATE INDEX IF NOT EXISTS unattended_execution_grant_audit_time
-                    ON unattended_execution_grant_audit(grant_id, occurred_at, audit_id);
                 CREATE TABLE IF NOT EXISTS security_audit (
                     audit_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, principal_id TEXT,
                     method TEXT NOT NULL, route TEXT NOT NULL, action TEXT NOT NULL,
@@ -22746,80 +22338,6 @@ class SQLiteTaskRepository:
                 value.task_id,
                 value.actor,
             ),
-        )
-
-    @staticmethod
-    def _unattended_execution_grant_values(
-        value: UnattendedExecutionGrant,
-    ) -> tuple[object, ...]:
-        return (
-            value.grant_id,
-            value.definition_id,
-            value.resource_library_id,
-            value.source_scope,
-            value.run_mode.value,
-            value.max_items_per_run,
-            value.status.value,
-            value.granting_principal,
-            value.granted_at.isoformat(),
-            value.revoking_principal,
-            value.revoked_at.isoformat() if value.revoked_at else None,
-            value.reason,
-            value.definition_fingerprint,
-            value.configuration_snapshot_id,
-            value.configuration_snapshot_digest,
-            value.configuration_snapshot_version,
-            value.preview_id,
-        )
-
-    @staticmethod
-    def _unattended_execution_grant(
-        row: sqlite3.Row,
-    ) -> UnattendedExecutionGrant:
-        return UnattendedExecutionGrant(
-            row["grant_id"],
-            row["definition_id"],
-            row["resource_library_id"],
-            row["source_scope"],
-            row["run_mode"],
-            int(row["max_items_per_run"]),
-            UnattendedExecutionGrantStatus(row["status"]),
-            row["granting_principal"],
-            datetime.fromisoformat(row["granted_at"]),
-            row["definition_fingerprint"],
-            row["configuration_snapshot_id"],
-            row["configuration_snapshot_digest"],
-            int(row["configuration_snapshot_version"]),
-            row["revoking_principal"],
-            datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
-            row["reason"],
-            row["preview_id"] if "preview_id" in row.keys() else None,
-        )
-
-    def _insert_unattended_execution_grant_audit(
-        self, value: UnattendedExecutionGrantAudit
-    ) -> None:
-        self._connection.execute(
-            """INSERT INTO unattended_execution_grant_audit (
-                audit_id, grant_id, action, occurred_at, actor, details_json
-            ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                value.audit_id,
-                value.grant_id,
-                value.action,
-                value.occurred_at.isoformat(),
-                value.actor,
-                json.dumps(value.details, ensure_ascii=False, sort_keys=True),
-            ),
-        )
-
-    @staticmethod
-    def _schedule_state(row: sqlite3.Row) -> ScheduleState:
-        return ScheduleState(
-            row["schedule_id"],
-            datetime.fromisoformat(row["next_run_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["last_task_id"],
         )
 
     @staticmethod

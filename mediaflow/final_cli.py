@@ -17,7 +17,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
     AutomationConfigurationUnavailable,
@@ -28,6 +27,7 @@ from mediaflow.application.automation import (
 from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
 )
+from mediaflow.application.automation_execution_authority import AutomationExecutionAuthority
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_snapshot import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
@@ -66,12 +66,8 @@ from mediaflow.application.task_flow_settlement import (
     settle_task_flow,
 )
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
-from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
-from mediaflow.domain.automation import (
-    CronSchedule,
-    SchedulerConfigurationSnapshot,
-)
+from mediaflow.domain.automation import SchedulerConfigurationSnapshot
 from mediaflow.domain.automation_settings import engine_values_from_document
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.failure import decode_failure_explanation
@@ -242,13 +238,9 @@ def final_main(
     worker_commands.add_parser("run-next")
     worker_run = worker_commands.add_parser("run")
     worker_run.add_argument("--poll-seconds", type=float)
-    scheduler = commands.add_parser("scheduler", help="persistent interval schedules")
+    scheduler = commands.add_parser("scheduler", help="Automation Task Definition scheduler")
     scheduler_commands = scheduler.add_subparsers(dest="scheduler_command", required=True)
-    scheduler_commands.add_parser("list")
     scheduler_commands.add_parser("tick")
-    scheduler_audit = scheduler_commands.add_parser("audit")
-    scheduler_audit.add_argument("schedule_id", nargs="?")
-    scheduler_audit.add_argument("--limit", type=int, default=100)
     scheduler_run = scheduler_commands.add_parser("run")
     scheduler_run.add_argument("--poll-seconds", type=float)
     notifications = commands.add_parser("notifications", help="notification outbox operations")
@@ -2255,7 +2247,7 @@ def _definition_scoped_service(
         provider_factory=metadata_provider_registry_from_environment,
         strategy_factory=strategy_runner_from_configuration,
         history_factory=JsonLinesOperationHistoryRepository,
-        unattended_grant_service=UnattendedExecutionGrantService(
+        execution_authority=AutomationExecutionAuthority(
             task_repository,
             permission_authority=_ConfiguredPermissionAuthority(
                 lambda: _configuration(configured_path)
@@ -2277,7 +2269,7 @@ def _definition_scoped_service(
 def _scheduler_execution_authority(configuration, repository):
     """Build the live definition authority the Scheduler checks before admission."""
 
-    return UnattendedExecutionGrantService(
+    return AutomationExecutionAuthority(
         repository,
         permission_authority=_ConfiguredPermissionAuthority(
             lambda: _current_automation_configuration(configuration.database_path)
@@ -2794,51 +2786,6 @@ def _current_automation_configuration(database_path):
         )
 
 
-def render_schedules(definitions, states) -> str:
-    state_by_id = {item.schedule_id: item for item in states}
-    lines = ["", "INTERVAL SCHEDULES", ""]
-    for value in definitions:
-        state = state_by_id.get(value.schedule_id)
-        timing = (
-            f"cron={value.expression} | timezone={value.timezone}"
-            if isinstance(value, CronSchedule)
-            else f"interval={value.interval_seconds:g}s"
-        )
-        local_next = (
-            state.next_run_at.astimezone(ZoneInfo(value.timezone)).isoformat()
-            if state and isinstance(value, CronSchedule)
-            else "-"
-        )
-        lines.append(
-            f"{value.schedule_id} | {value.command.value} | "
-            f"enabled={'YES' if value.enabled else 'NO'} | {timing} | "
-            f"limit={value.limit or '-'} | nextUtc="
-            f"{state.next_run_at.isoformat() if state else '-'} | nextLocal={local_next}"
-        )
-    lines.extend(("", f"Total: {len(definitions)}", ""))
-    return "\n".join(lines)
-
-
-def render_schedule_audit(values, definitions=()) -> str:
-    definitions_by_id = {item.schedule_id: item for item in definitions}
-    lines = ["", "SCHEDULE AUDIT", ""]
-    for value in values:
-        definition = definitions_by_id.get(value.schedule_id)
-        local = (
-            value.occurrence_at.astimezone(ZoneInfo(definition.timezone)).isoformat()
-            if isinstance(definition, CronSchedule)
-            else "-"
-        )
-        lines.append(
-            f"{value.emitted_at.isoformat()} | {value.schedule_id} | "
-            f"occurrenceUtc={value.occurrence_at.isoformat()} | occurrenceLocal={local} | "
-            f"task={value.task_id} | "
-            f"command={value.command.value} | next={value.next_run_at.isoformat()}"
-        )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
 def _resident_infrastructure_defaults() -> tuple[float, float, float]:
     """Bounded polling defaults used before any Active configuration exists.
 
@@ -2926,10 +2873,10 @@ def _scheduler_waiting_reason(configuration: RuntimeConfiguration | None) -> tup
             ResidentServiceWaiting.UNCONFIGURED.value,
             "no valid Active configuration is published; no schedule was issued",
         )
-    if not configuration.automation_schedules and not configuration.automation_task_definitions:
+    if not configuration.automation_task_definitions:
         return (
             ResidentServiceWaiting.UNCONFIGURED.value,
-            "the Active configuration declares no schedule or Automation definition",
+            "the Active configuration declares no Automation Task Definition",
         )
     return (ResidentServiceWaiting.NONE.value, "")
 
@@ -3332,16 +3279,15 @@ def _run_scheduler(
             """Build one scheduler bound to the exact configuration it admits from.
 
             When no valid Active exists the scheduler still runs, but with no
-            schedules, no definitions and no snapshot identity.  That makes
-            "emit nothing" the only reachable outcome, which is precisely the
-            required behaviour when Active is absent or unusable.
+            definitions and no snapshot identity.  That makes "emit nothing"
+            the only reachable outcome, which is precisely the required
+            behaviour when Active is absent or unusable.
             """
 
             from mediaflow.application.task_scheduling import TaskSchedulingService
 
             return IntervalScheduler(
                 repository,
-                getattr(resolved, "automation_schedules", ()) if resolved else (),
                 # Notification targets are resolved by the resident Notification
                 # Worker at its own claim boundary.  The Scheduler only writes
                 # deterministic durable deliveries for enabled Webhooks, so an
@@ -3389,24 +3335,6 @@ def _run_scheduler(
             heartbeat_interval_seconds=5.0,
             snapshot_id=snapshot[0] if snapshot is not None else None,
         )
-        if arguments.scheduler_command == "list":
-            definitions = current.automation_schedules if current is not None else ()
-            stdout.write(render_schedules(definitions, repository.list_schedule_states()))
-            return 0
-        if arguments.scheduler_command == "audit":
-            definitions = current.automation_schedules if current is not None else ()
-            known = {item.schedule_id for item in definitions}
-            if arguments.schedule_id and arguments.schedule_id not in known:
-                raise LookupError(f"schedule {arguments.schedule_id!r} was not found")
-            if arguments.limit < 1:
-                raise ValueError("schedule audit limit must be positive")
-            stdout.write(
-                render_schedule_audit(
-                    repository.list_schedule_audit(arguments.schedule_id, limit=arguments.limit),
-                    definitions,
-                )
-            )
-            return 0
         if arguments.scheduler_command == "tick":
             stdout.write(render_tasks(tuple(build_service(current).tick())))
             return 0
@@ -3416,8 +3344,8 @@ def _run_scheduler(
 
             Re-resolving per tick is what makes a running Scheduler adopt an
             eligible publication with no restart, and what keeps it from reusing
-            stale schedules while Active is unavailable: a failed resolution
-            yields no schedules and no pin, so no occurrence is issued or
+            stale definitions while Active is unavailable: a failed resolution
+            yields no definitions and no pin, so no occurrence is issued or
             advanced.
             """
 
@@ -3689,7 +3617,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         app = MediaFlowApi(
             repository,
             None,
-            getattr(configuration, "automation_schedules", ()),
             principals=principals,
             remote_execution_enabled=getattr(configuration, "remote_execution_enabled", False),
             remote_execution_maximum_ttl_seconds=getattr(
@@ -4265,7 +4192,6 @@ def _scheduler_snapshot_from_runtime(configuration) -> SchedulerConfigurationSna
     return SchedulerConfigurationSnapshot(
         configuration.configuration_snapshot_id,
         configuration.configuration_snapshot_digest or "",
-        configuration.automation_schedules,
         configuration.automation_maximum_active_jobs,
         configuration.automation_task_definitions,
         configuration.configuration_snapshot_version,

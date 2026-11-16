@@ -47,7 +47,6 @@ def _snapshot(definitions, *, maximum_active_jobs: int = 10, version: int = 3):
     return SchedulerConfigurationSnapshot(
         "revision-1",
         DIGEST,
-        (),
         maximum_active_jobs,
         tuple(definitions),
         version,
@@ -73,7 +72,6 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
 
         return IntervalScheduler(
             self.repository,
-            (),
             configuration_snapshot_resolver=lambda: active,
             scheduling_service=TaskSchedulingService(self.repository, capacity=capacity),
         )

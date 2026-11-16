@@ -1,6 +1,6 @@
 # Task55.2 — 自动化只依赖当前定义、发布意图与 Task
 
-Next Action: DEVELOPER STARTS TASK55.2 IMPLEMENTATION。
+Next Action: B REVIEWS TASK55.2 IMPLEMENTATION CANDIDATE (READY FOR B REVIEW)。
 
 Task55.1 已由 B 独立复核 PASS：
 `d62436be6f5848329a628356c13fdb28e760239a..f4336e431e27a76af372f9d23fe1896838e8cbd8`。
@@ -17,7 +17,7 @@ Task 实施。本次只激活，不启动其他角色或实施产品变更。
 Task ID: 55.2
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: ebec19bb7592306980a4f288c78378b264f3321f
 Difficulty: High
 Test Level: T4
@@ -226,9 +226,105 @@ pause_requested／迁移／旧结构；RO-5仍有 Copy／Run once 旧 session �
 
 ### Developer completion / B review
 
-尚未实施，无本 Task 候选和 PASS／FIX REQUIRED。Developer 按模板报告精确 SHA、
-READY FOR B REVIEW、行为／关键决定、受影响测试实际结果／剩余项。B 随后独立审查
-完整 Base..Head，给 PASS 或同 Task FIX REQUIRED；PASS 后重评全部 Slice 结果。
+**Developer 交接 — 2026-11-16，READY FOR B REVIEW。**
+
+```text
+Task Base: ebec19bb7592306980a4f288c78378b264f3321f
+Candidate / reviewed Head: <filled by checkpoint commit SHA>
+Branch: main
+Initial workspace: clean (tracked/untracked)
+```
+
+本轮按第 1–7 步完成 RO-2 的本 Task 部分：旧 schedules 与独立 grant 从当前自动化链路
+完整退出，当前定义的 due／Run once／Worker 链路接到唯一当前权威；未扩大范围。
+
+**行为与关键决定**
+
+1. **当前权威收敛到一处。** 新建
+   `mediaflow/application/automation_execution_authority.py`：仅保留当前职责
+   `authorize_task`／`assert_live_task`，复用 `automation_execution_intent` 的真实发布
+   证据、当前配置权限与 Task admission principal；删除
+   `mediaflow/application/unattended_execution.py` 的 grant CRUD／eligibility／
+   projection／shared-analysis 门槛及兼容 wrapper，不把 grant CRUD 改名移入新类。
+   `domain/unattended_execution.py` 仅保留 `CurrentPermissionAuthority` 协议。
+   错误类型换为 `AutomationExecutionIntentError`／`AutomationIntentBoundaryError`
+   （字段形状与旧错误一致，API 错误映射保持 403/404/409/503 与 bounded details）。
+2. **旧调度退出。** 删除 `IntervalSchedule`／`CronSchedule`／`ScheduleDefinition`／
+   `ScheduleState`／`ScheduleAuditRecord` 模型与仓库协议方法、
+   `IntervalScheduler` 的旧 schedules 分支与 `_admit_schedule_task`、CLI `scheduler
+   list/audit` 及渲染器、`/api/v1/schedules` GET/audit 路由、route-kinds／metadata／
+   pagination kind／binding 字段。保留当前定义 interval／Cron／timezone／DST、tick／run、
+   无 Active 等待与实际 polling；Worker 对已受理 `legacy-schedule` pin 的消费路径
+   保留（未在 Task 表内，且已受理 pin 保留义务要求可续作）。
+3. **生命周期简化。** create/edit/copy/remove/read/records 不再读 grant；removal
+   impact/error 的 `authorityState` 表达当前发布 Enabled 状态（active/none/unavailable），
+   removal 是唯一 live stop（成功发布即停止未来调度，不再有单独撤销步骤）。
+   Web `authority: {status}` 取代 `unattendedAuthority`（无 grantId）；grant
+   action／decoder／eligibility 投影整体删除，不留兼容层。
+4. **配置边界。** `automation.schedules` 仅接受系统生成的空数组（原 digest／pin 不变）；
+   任何 schedule 定义走普通校验拒绝；非列表值拒绝。首次 Draft／successor／样例／
+   deployment 配置不再生成 schedules 键。`automation.taskDefinitions` 别名、
+   `staleJobAgeSeconds` 等其他别名未动。
+5. **持久化。** 新库不再创建 `automation_schedules`、`schedule_audit`、
+   `unattended_execution_grants`、`unattended_execution_grant_audit` 及专属索引；
+   schema 身份未变。实测：新库无四张旧表且当前必需结构完整；含 legacy 行的存量库
+   原样保留、当前仓库正常打开，无生产 CRUD 依赖。备份语义不变。
+6. **同步交付。** Node fake（grant seed／route／action 全退，hostie fixture 改接当前
+   definition 传输）、Python harness（grant seed endpoint 退、lifecycle state 改当前
+   publication authority、Scheduler snapshot 调用更新）、两个 example JSON、
+   `make_deployment_config`、三个 Docker smoke（restart fault 改当前 publication
+   断言；empty baseline 改发 enabled definition；upgrade recovery 保留旧库 legacy
+   seeding、新候选对旧表零改动且旧 API 为 unknown）、`schema_upgrade_rehearsal`、
+   README／configuration.md／architecture.md 路由清单。
+
+**实际验证（命令／结果）**
+
+- 治理：`python3 scripts/check_governance.py` PASS；`git diff --check` PASS；
+  `ruff format --check .`／`ruff check .` 全仓 PASS；`compileall -q mediaflow tests
+  scripts` PASS；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配。
+- 示例：`mediaflow --config config/strategy.example.json config validate`、
+  `config/mediaflow.phase13.2.example.json config validate` 均 PASS。
+- Python affected（Task 指定清单，180 项）：`test_cron_scheduler`（改接当前定义边界：
+  tick 正常、list/audit 未注册、空槽可读、旧定义拒绝）、
+  `test_automation_execution_intent`、`test_automation_definition_occurrence`、
+  `test_automation_task_admission`、`test_v2_automation_lifecycle`、
+  `test_automation_run_once`、`test_v2_automation_run_once`、
+  `test_automation_authorized_execution_matrix` — **OK**。
+- 直接受影响扩展清单（827 项）+ 第二批（384 项）+ 设置 resident（81 项）：
+  含 `test_configuration_snapshot`、`test_automation_definition_publication`、
+  `test_v2_automation_operations`、`test_notifications`、
+  `test_notification_delivery_management`、`test_webhook_management`、
+  `test_execution_authorization`、`test_organize_source_history`、
+  `test_organize_preparation`、`test_resident_services`、`test_preview_retirement`、
+  `test_task_scheduling`、`test_automation_entrance_recovery`、
+  `test_automation_settings_management/resident`、`test_media_discovery`、
+  `test_organizer_mutation_authority`、`test_v2_manual_organize` 等 — **全部 OK**。
+- Web：`npm run typecheck` PASS；`npm run build` PASS；`npm run lint --fix` 后
+  changed-file ESLint／Prettier PASS；受影响 unit 12 文件 **155 项通过**。
+- 真实 Python native E2E（候选构建后）：
+  `automation-lifecycle.python` **21/21 通过**（含 removal→当前 authority stop→
+  tick 零发射断言）；`automation-create-dialog.python` 通过；
+  `operations-inventory.python` **47/47**；`automation-settings.python` **18/18**
+  （单独运行；合并运行时的 queue_full 为双 spec 共享一部署的容量竞争伪失败）。
+- AC-8 结构实测：新 SQLite 库无四张旧表、当前必需表完整；存量 legacy 表行原样保留。
+
+**基线既有失败（已在 Base 复现，非本轮引入）**
+
+- `automation-run-once.python` 5 项与 `automation-workspace.python` 4 项在本轮候选与
+  Base（stash 后）**同清单同失败形状**复现（`advanced:false`／`Run once Task was not
+  found`），确认为既有环境性失败，交给 B 在其验收环境复核。
+
+**剩余风险／未执行（B 按 T4 门禁执行）**
+
+- 未运行全量 Python/Web/E2E、wheel／源码外安装、四服务 Docker 镜像与
+  restart/release-security/upgrade-recovery smoke；相关脚本已更新，但镜像与部署矩阵
+  由 B 执行。
+- Worker 对已受理 `legacy-schedule` pin 的续作路径保留但本轮只由存量测试覆盖，其
+  Base→候选跨版本复用由 B 验收第 2 步覆盖。
+- 未推送、未发布、未操作运行库或用户媒体。
+
+本轮测试墙钟合计约 20 分钟（Python unittest 约 7 分钟、E2E 约 9 分钟、质量/构建/
+静态检查约 4 分钟），低于本轮代码勘察／实施与交接总耗时的 30%。
 
 本轮规划检查：治理与 whitespace PASS；仅 TASK.md 变化，2项现有测试通过（0.161秒），
 连同 CLI help 和文档检查不足1秒，低于本轮代码／合同核对及规划总耗时的50%。

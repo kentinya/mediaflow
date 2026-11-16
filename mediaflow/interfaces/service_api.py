@@ -18,6 +18,10 @@ from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
 )
+from mediaflow.application.automation_execution_authority import (
+    AutomationExecutionAuthority,
+    AutomationExecutionIntentError,
+)
 from mediaflow.application.automation_record_display import automation_record_display
 from mediaflow.application.automation_run_once import (
     AutomationRunOnceError,
@@ -116,10 +120,6 @@ from mediaflow.application.system_settings import (
 )
 from mediaflow.application.task_item_recovery import TaskItemRecoveryError, TaskItemRecoveryService
 from mediaflow.application.task_scheduling import TaskSchedulingService
-from mediaflow.application.unattended_execution import (
-    UnattendedExecutionGrantError,
-    UnattendedExecutionGrantService,
-)
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.automation import (
     AutomationCommand,
@@ -342,7 +342,6 @@ class _ApiRuntimeBinding:
     execution_authorizations: ExecutionAuthorizationService
     remote_execution_enabled: bool
     system_status: object | None
-    schedules: tuple
     metadata_policies: tuple
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
@@ -392,7 +391,6 @@ class MediaFlowApi:
         self,
         repository,
         bearer_token: str | None,
-        schedules=(),
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
         remote_execution_enabled: bool = False,
@@ -660,10 +658,8 @@ class MediaFlowApi:
             configuration_service.bind_automation_publication_authority(
                 _CurrentConfiguredPermissionAuthority(self._principals, configuration_service)
             )
-        self._unattended_grants = UnattendedExecutionGrantService(
+        self._automation_execution_authority = AutomationExecutionAuthority(
             repository,
-            discovery_service=self._media_discovery,
-            preview_service=self._manual_previews,
             permission_authority=_CurrentConfiguredPermissionAuthority(
                 self._principals, configuration_service
             ),
@@ -686,17 +682,13 @@ class MediaFlowApi:
             else None,
         )
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
-        self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
         self._automation_occurrences.attach_checkpoint_service(self._checkpoint_service)
         # The V2 Automation workspace reuses the same managed-object authority as
         # the current API/CLI, so one checked Save cannot diverge from normalization,
         # validation, audit, concurrency or checked activation semantics; it only
         # composes the focused definition change and delegates publication.
         self._automation_workspace = (
-            AutomationWorkspaceCommandService(
-                self._configuration_objects,
-                unattended_grants=self._unattended_grants,
-            )
+            AutomationWorkspaceCommandService(self._configuration_objects)
             if self._configuration_objects is not None
             else None
         )
@@ -737,7 +729,6 @@ class MediaFlowApi:
             remote_execution_enabled=remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
             system_status=system_status,
-            schedules=tuple(schedules),
             metadata_policies=tuple(metadata_policies),
         )
 
@@ -804,14 +795,14 @@ class MediaFlowApi:
                 403,
             )
             return self._error(start_response, 403, "forbidden", str(error))
-        except UnattendedExecutionGrantError as error:
+        except AutomationExecutionIntentError as error:
             self._safe_audit(
                 environ,
                 request_id,
                 locals().get("principal"),
                 method,
                 path,
-                "unattended-execution-grant",
+                "automation-execution-intent",
                 "denied" if error.status < 500 else "error",
                 error.status,
             )
@@ -1611,7 +1602,6 @@ class MediaFlowApi:
             "recovery",
             "recovery-batches",
             "resource-libraries",
-            "schedules",
             "security-audit",
             "storage",
             "storages",
@@ -2572,217 +2562,6 @@ class MediaFlowApi:
                     "truncated": len(all_items) > len(items),
                 },
             )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] in {"grant", "grant-state"}
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "unattended execution grant state")
-            active, _raw, definition, historical = self._automation_definition_context_historical(
-                environ, parts[4]
-            )
-            persisted = self._unattended_grants.get_for_definition(definition.definition_id)
-            grant = self._unattended_grants.project(
-                definition,
-                configuration=active.summary(),
-                grant=persisted,
-            )
-            eligibility = self._automation_grant_eligibility(
-                active, definition, principal, persisted=persisted
-            )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "definitionId": parts[4],
-                    "historicalState": "removed" if historical else None,
-                    "configuration": active.summary(),
-                    "grant": grant,
-                    "unattendedExecutionGrant": grant,
-                    "grantEligibility": eligibility,
-                    "previewEligibility": eligibility,
-                },
-            )
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "grant"
-            and parts[6] == "audit"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            _active, _raw, _definition, _historical = (
-                self._automation_definition_context_historical(environ, parts[4])
-            )
-            grant = self._unattended_grants.get_for_definition(parts[4])
-            if grant is None:
-                raise LookupError(
-                    f"unattended execution grant for definition {parts[4]!r} was not found"
-                )
-            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(query).difference({"limit"}) or any(len(value) != 1 for value in query.values()):
-                raise ValueError("unattended execution grant audit query accepts one limit field")
-            limit = self._parse_bounded_limit(
-                query.get("limit", ["100"])[0], "unattended execution grant audit"
-            )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "definitionId": parts[4],
-                    "grantId": grant.grant_id,
-                    "items": [
-                        item.document()
-                        for item in self._unattended_grants.list_audit(grant.grant_id, limit=limit)
-                    ],
-                    "limit": limit,
-                },
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "grant"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.GRANT_UNATTENDED_EXECUTION)
-            self._require_empty_query(environ, "unattended execution grant")
-            document = self._document(environ)
-            allowed = {
-                "revisionId",
-                "expectedVersion",
-                "confirmation",
-                "confirmed",
-                "maxItemsPerRun",
-                "maxItems",
-                "reason",
-                "previewId",
-            }
-            if set(document).difference(allowed):
-                raise ValueError("unattended execution grant fields are invalid")
-            # Grant, revocation and focused Automation publication (including
-            # removal) share one serialization boundary: a removal revokes
-            # authority and publishes inside the same lock, so a concurrent
-            # legitimate grant cannot slip live authority in between.
-            with self._runtime_binding_lock:
-                active, raw, definition = self._automation_definition_context(environ, parts[4])
-                self._validate_grant_revision_binding(document, active)
-                resource = next(
-                    (
-                        value
-                        for value in active.document.get("resourceLibraries", [])
-                        if value.get("id") == definition.resource_library_id
-                    ),
-                    None,
-                )
-                if resource is None:
-                    raise UnattendedExecutionGrantError(
-                        "the definition ResourceLibrary is unavailable",
-                        code="unattended_execution_resource_unavailable",
-                        status=409,
-                        next_action=(
-                            "repair the ResourceLibrary reference and run a fresh Preview"
-                        ),
-                    )
-                grant = self._unattended_grants.grant(
-                    definition,
-                    configuration_snapshot_id=active.revision_id,
-                    configuration_snapshot_digest=active.digest,
-                    configuration_snapshot_version=active.version,
-                    actor=principal.principal_id,
-                    principal=principal,
-                    max_items_per_run=document.get("maxItemsPerRun"),
-                    max_items=document.get("maxItems"),
-                    confirmation=document.get("confirmation", False),
-                    confirmed=document.get("confirmed"),
-                    reason=document.get("reason"),
-                    storage_id=resource.get("storageId"),
-                )
-                eligibility = self._unattended_grants.project_eligibility(
-                    definition,
-                    configuration_snapshot_id=active.revision_id,
-                    configuration_snapshot_digest=active.digest,
-                    configuration_snapshot_version=active.version,
-                    storage_id=resource.get("storageId"),
-                    max_items_per_run=grant.max_items_per_run,
-                    principal_id=grant.granting_principal,
-                )
-                grant_projection = self._unattended_grants.project(
-                    definition,
-                    configuration=active.summary(),
-                    grant=grant,
-                )
-                response_document = {
-                    "configuration": active.summary(),
-                    "definition": raw,
-                    "grant": grant_projection,
-                    "unattendedExecutionGrant": grant_projection,
-                    "grantEligibility": eligibility,
-                    "previewEligibility": eligibility,
-                }
-            return self._response(start_response, 201, response_document)
-        if (
-            (
-                len(parts) == 6
-                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-                and parts[5] == "revoke"
-            )
-            or (
-                len(parts) == 7
-                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-                and parts[5:7] == ["grant", "revoke"]
-            )
-            or (
-                len(parts) == 6
-                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-                and parts[5] == "grant"
-                and method == "DELETE"
-            )
-        ) and method in {"POST", "DELETE"}:
-            self._require(principal, ApiPermission.GRANT_UNATTENDED_EXECUTION)
-            self._require_empty_query(environ, "unattended execution revoke")
-            if method == "DELETE":
-                self._require_empty_body(environ, "unattended execution revoke")
-            document = {} if method == "DELETE" else self._document(environ)
-            if set(document).difference({"grantId", "reason"}):
-                raise ValueError("unattended execution revoke fields are invalid")
-            with self._runtime_binding_lock:
-                _active, _raw, _definition, _historical = (
-                    self._automation_definition_context_historical(environ, parts[4])
-                )
-                grant_id = document.get("grantId")
-                if grant_id is not None:
-                    if not isinstance(grant_id, str) or not grant_id.strip():
-                        raise ValueError("unattended execution grantId must be a non-empty string")
-                    current = self._unattended_grants.get(grant_id)
-                    if current is None or current.definition_id != parts[4]:
-                        raise LookupError(
-                            f"unattended execution grant for definition {parts[4]!r} was not found"
-                        )
-                    grant = self._unattended_grants.revoke(
-                        grant_id,
-                        actor=principal.principal_id,
-                        principal=principal,
-                        reason=document.get("reason"),
-                    )
-                else:
-                    grant = self._unattended_grants.revoke(
-                        definition_id=parts[4],
-                        actor=principal.principal_id,
-                        principal=principal,
-                        reason=document.get("reason"),
-                    )
-                response_document = {
-                    "definitionId": parts[4],
-                    "grant": grant.document(),
-                    "unattendedExecutionGrant": self._unattended_grants.project(
-                        _definition,
-                        configuration=_active.summary(),
-                        grant=grant,
-                    ),
-                }
-            return self._response(start_response, 200, response_document)
         if (
             len(parts) == 5
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
@@ -7864,22 +7643,6 @@ class MediaFlowApi:
                     ]
                 },
             )
-        if parts == ["api", "v1", "schedules"] and method == "GET":
-            self._require_empty_query(environ, "schedule")
-            states = {item.schedule_id: item for item in self._repository.list_schedule_states()}
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        {
-                            **self._value(item),
-                            "state": self._value(states.get(item.schedule_id)),
-                        }
-                        for item in binding.schedules
-                    ]
-                },
-            )
         if parts == ["api", "v1", "notifications"] and method == "GET":
             limit, delivery_status, cursor = self._notification_query(environ)
             scope = delivery_status.value if delivery_status else "all"
@@ -7977,46 +7740,6 @@ class MediaFlowApi:
                     actor=principal.principal_id,
                 )
             return self._response(start_response, 200, result)
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "schedules"]
-            and parts[4] == "audit"
-            and method == "GET"
-        ):
-            known = {item.schedule_id for item in binding.schedules}
-            if parts[3] not in known:
-                raise LookupError(f"schedule {parts[3]!r} was not found")
-            limit, cursor = self._scoped_page_query(
-                environ, "schedule_audit", parts[3], "schedule audit"
-            )
-            values = self._list_page(
-                lambda **kwargs: self._repository.list_schedule_audit(parts[3], **kwargs),
-                limit,
-                cursor,
-            )
-            page, has_previous, has_next = self._page_window(values, limit, cursor)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [self._value(item) for item in page],
-                    "limit": limit,
-                    "previous_cursor": self._page_cursor(
-                        "schedule_audit",
-                        page,
-                        has_previous,
-                        CursorDirection.PREVIOUS,
-                        scope=parts[3],
-                    ),
-                    "next_cursor": self._page_cursor(
-                        "schedule_audit",
-                        page,
-                        has_next,
-                        CursorDirection.NEXT,
-                        scope=parts[3],
-                    ),
-                },
-            )
         if parts == ["api", "v1", "logs"] and method == "GET":
             limit, minimum_level, cursor = self._log_query(environ)
             scope = minimum_level.name if minimum_level else "all"
@@ -8575,48 +8298,50 @@ class MediaFlowApi:
             next_action="configure the missing source, destination and processing policies",
             recovery_destination="/ui-v2/configuration",
         )
-        schedules = (
-            document.get("automation", {}).get("schedules", [])
-            if isinstance(document.get("automation"), dict)
-            else []
-        )
         notifications = (
             document.get("notifications", {}).get("webhooks", [])
             if isinstance(document.get("notifications"), dict)
             else []
         )
-        schedule_present = bool(schedules)
-        schedules = [
-            item for item in schedules if isinstance(item, dict) and item.get("enabled", True)
+        raw_definitions = (
+            document.get("automationTaskDefinitions", [])
+            if isinstance(document.get("automationTaskDefinitions"), list)
+            else []
+        )
+        definitions_present = bool(raw_definitions)
+        enabled_definitions = [
+            item
+            for item in raw_definitions
+            if isinstance(item, dict) and item.get("enabled", False)
         ]
         notification_present = bool(notifications)
         notifications = [
             item for item in notifications if isinstance(item, dict) and item.get("enabled", True)
         ]
         scheduling = self._readiness_entry(
-            ready=bool(schedules) and authorized_for("scheduling"),
+            ready=bool(enabled_definitions) and authorized_for("scheduling"),
             condition=(
                 "unauthorized"
                 if not authorized_for("scheduling")
                 else "ready"
-                if schedules
+                if enabled_definitions
                 else "disabled"
-                if schedule_present
+                if definitions_present
                 else "missing"
             ),
             durable_state=(
                 "scheduling permission denied"
                 if not authorized_for("scheduling")
-                else "enabled schedule definitions are available"
-                if schedules
-                else "no schedule definitions"
+                else "enabled Automation Task Definitions are available"
+                if enabled_definitions
+                else "no enabled Automation Task Definition"
             ),
             next_action=(
                 "contact an administrator for the required permission"
                 if not authorized_for("scheduling")
-                else "enable a schedule"
-                if schedule_present
-                else "add an enabled schedule"
+                else "enable an Automation Task Definition"
+                if definitions_present
+                else "create an Automation Task Definition"
             ),
             recovery_destination="/ui-v2/operations/automation",
             authorized=authorized_for("scheduling"),
@@ -9009,7 +8734,6 @@ class MediaFlowApi:
                 remote_execution_enabled=runtime.remote_execution_enabled,
                 remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
                 system_status=system_status,
-                schedules=runtime.automation_schedules,
                 metadata_policies=runtime.strategy.metadata_policies,
                 runtime_revision=runtime_revision,
                 runtime_configuration=runtime,
@@ -9105,7 +8829,6 @@ class MediaFlowApi:
             ("api", "v1", "manual-recovery-links"),
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "automation"),
-            ("api", "v1", "schedules"),
             ("api", "v1", "files"),
             ("api", "v1", "recovery"),
             ("api", "v1", "recovery-batches"),
@@ -9194,7 +8917,6 @@ class MediaFlowApi:
             remote_execution_enabled=runtime.remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
             system_status=refreshed_status,
-            schedules=runtime.automation_schedules,
             metadata_policies=runtime.strategy.metadata_policies,
             runtime_revision=active,
             runtime_configuration=runtime,
@@ -9215,7 +8937,6 @@ class MediaFlowApi:
         remote_execution_enabled: bool,
         remote_execution_maximum_ttl_seconds: int,
         system_status,
-        schedules: tuple,
         metadata_policies: tuple,
         runtime_revision=None,
         runtime_configuration=None,
@@ -9309,7 +9030,6 @@ class MediaFlowApi:
             ),
             remote_execution_enabled,
             system_status,
-            tuple(schedules),
             tuple(metadata_policies),
             files_browser,
             direct_files,
@@ -9382,7 +9102,6 @@ class MediaFlowApi:
         exact = {
             ("api", "v1", "tasks"),
             ("api", "v1", "confirmations"),
-            ("api", "v1", "schedules"),
             ("api", "v1", "notifications"),
             ("api", "v1", "logs"),
             ("api", "v1", "resource-libraries"),
@@ -9415,19 +9134,6 @@ class MediaFlowApi:
             and parts[5] == "occurrences"
         ):
             return "/api/v1/automation/task-definitions/{id}/occurrences"
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] in {"grant", "grant-state", "revoke"}
-        ):
-            return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "grant"
-            and parts[6] in {"audit", "revoke"}
-        ):
-            return "/api/v1/automation/task-definitions/{id}/grant/" + parts[6]
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
@@ -9586,8 +9292,6 @@ class MediaFlowApi:
             # The work identity is logged through its immutable type+id shape,
             # never through a search keyword.
             return "/api/v1/explore/{mediaType}/{id}"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
-            return "/api/v1/schedules/{id}/audit"
         if (
             len(parts) == 5
             and parts[:3]
@@ -11390,9 +11094,7 @@ class MediaFlowApi:
         if parts[:3] == ["api", "v1", "tasks"]:
             return True
         if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
-            len(parts) in {4, 5}
-            or (len(parts) == 6 and parts[5] in {"occurrences", "grant", "grant-state"})
-            or (len(parts) == 7 and parts[5:7] == ["grant", "audit"])
+            len(parts) in {4, 5} or (len(parts) == 6 and parts[5] == "occurrences")
         ):
             return True
         return (
@@ -11613,7 +11315,7 @@ class MediaFlowApi:
         """Return the immutable Active revision, raw definition, and validated domain value."""
 
         if self._configuration_service is None or self._configuration_objects is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "managed configuration service is unavailable",
                 code="service_unavailable",
                 status=503,
@@ -11786,31 +11488,6 @@ class MediaFlowApi:
         if raw is None:
             raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
         return active, raw, definition, draft, in_active, historical
-
-    @staticmethod
-    def _validate_grant_revision_binding(document: dict, active) -> None:
-        revision_id = document.get("revisionId")
-        if revision_id is not None and revision_id != active.revision_id:
-            raise UnattendedExecutionGrantError(
-                "grant request revision does not match the current Active configuration",
-                code="unattended_execution_grant_snapshot_mismatch",
-                next_action=(
-                    "refresh the current Active configuration and review the exact bounds again"
-                ),
-            )
-        expected = document.get("expectedVersion")
-        if expected is not None and (
-            isinstance(expected, bool)
-            or not isinstance(expected, int)
-            or expected != active.version
-        ):
-            raise UnattendedExecutionGrantError(
-                "grant request configuration version is stale",
-                code="unattended_execution_grant_snapshot_mismatch",
-                next_action=(
-                    "refresh the current Active configuration and review the exact bounds again"
-                ),
-            )
 
     @staticmethod
     def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:
@@ -12946,7 +12623,6 @@ class MediaFlowApi:
 
         permissions = principal.permissions
         manage = ApiPermission.MANAGE_CONFIGURATION in permissions
-        grant_permitted = ApiPermission.GRANT_UNATTENDED_EXECUTION in permissions
         dry_run = ApiPermission.EXECUTE_MANUAL_ORGANIZE in permissions
         active_revision_id = active.revision_id if active is not None else None
         not_active_reason = (
@@ -12973,58 +12649,6 @@ class MediaFlowApi:
                 "sideEffects": "none",
                 "durableOutcome": None,
                 "nextAction": "inspect the bounded occurrence history and its linked work",
-            },
-            "grantState": {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant-state",
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "read the current unattended grant state and its eligibility",
-            },
-            "grant": {
-                "available": grant_permitted and in_active,
-                "reason": (
-                    not_active_reason
-                    if not in_active
-                    else self._organize_unavailable_reason(
-                        grant_permitted,
-                        ApiPermission.GRANT_UNATTENDED_EXECUTION,
-                        "the connected API principal cannot grant unattended execution authority",
-                    )
-                ),
-                "method": "POST",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant",
-                "requiresConfirmation": True,
-                "sideEffects": "none",
-                "durableOutcome": (
-                    "a persistent scoped unattended execution grant is stored and audited"
-                ),
-                "nextAction": (
-                    "run a fresh exact Preview, review its eligibility and explicitly "
-                    "confirm the unattended grant"
-                ),
-            },
-            "revoke": {
-                "available": grant_permitted and in_active,
-                "reason": (
-                    not_active_reason
-                    if not in_active
-                    else self._organize_unavailable_reason(
-                        grant_permitted,
-                        ApiPermission.GRANT_UNATTENDED_EXECUTION,
-                        "the connected API principal cannot revoke unattended execution authority",
-                    )
-                ),
-                "method": "POST",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/revoke",
-                "sideEffects": "none",
-                "durableOutcome": (
-                    "the grant is revoked; future unattended mutation is prevented without "
-                    "rewriting completed effects"
-                ),
-                "nextAction": "revoke the grant when its exact bounds are no longer wanted",
             },
             "runOnce": {
                 # Definition-bound Run once.  The backend derives the manifest
@@ -13111,10 +12735,6 @@ class MediaFlowApi:
 
     @staticmethod
     def _automation_operator_execution_state(operator, *, in_active, historical):
-        for key in ("unattendedExecutionGrant", "grant", "grantEligibility"):
-            operator.pop(key, None)
-        for key in ("grantState", "grant", "revoke"):
-            operator["actions"].pop(key, None)
         state = "enabled" if operator.get("enabled") is True else "disabled"
         if historical:
             state = "historical"
@@ -13147,7 +12767,6 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
         active=None,
         draft=None,
-        eligibility: dict | None = None,
         in_active: bool = True,
         historical: bool = False,
     ) -> dict:
@@ -13194,8 +12813,6 @@ class MediaFlowApi:
             draft_present=bool(draft_state["present"]),
             in_active=in_active,
         )
-        if eligibility is not None:
-            operator["grantEligibility"] = self._strip_automation_operator_evidence(eligibility)
         return self._automation_operator_execution_state(
             operator, in_active=in_active, historical=False
         )
@@ -13218,42 +12835,6 @@ class MediaFlowApi:
             }
         operator["actions"] = actions
         return operator
-
-    def _automation_grant_eligibility(
-        self,
-        active,
-        definition,
-        principal: ResolvedApiPrincipal,
-        *,
-        persisted=None,
-    ) -> dict:
-        """The shared read-only unattended-grant admission decision."""
-
-        resource = next(
-            (
-                value
-                for value in active.document.get("resourceLibraries", [])
-                if value.get("id") == definition.resource_library_id
-            ),
-            None,
-        )
-        return self._unattended_grants.project_eligibility(
-            definition,
-            configuration_snapshot_id=active.revision_id,
-            configuration_snapshot_digest=active.digest,
-            configuration_snapshot_version=active.version,
-            storage_id=resource.get("storageId") if resource is not None else None,
-            max_items_per_run=(
-                persisted.max_items_per_run
-                if persisted is not None and persisted.status.value == "active"
-                else definition.item_limit
-            ),
-            principal_id=(
-                persisted.granting_principal
-                if persisted is not None and persisted.status.value == "active"
-                else principal.principal_id
-            ),
-        )
 
     # -- Unified Operations run inventory (Slice 42 RO-1/RO-2) ------------
 
@@ -15982,7 +15563,7 @@ class MediaFlowApi:
                 "managed configuration service is unavailable",
             )
         if active is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "no Active configuration exists; managed configuration setup owns the first Draft",
                 code="automation_active_missing",
                 status=409,
@@ -15990,7 +15571,7 @@ class MediaFlowApi:
                 next_action="complete managed configuration setup, then stage a successor Draft",
             )
         if draft is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "no open successor Draft contains this definition",
                 code="automation_draft_required",
                 status=409,
@@ -16027,7 +15608,7 @@ class MediaFlowApi:
             )
         changed = self._automation_draft_changed_sections(draft.document, active.document)
         if changed - {"automationTaskDefinitions"}:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "this Draft changes configuration outside the Automation Task Definition boundary",
                 code="automation_activation_out_of_scope",
                 status=409,
@@ -16144,7 +15725,7 @@ class MediaFlowApi:
         active_definitions = self._automation_definition_identity_map(active_document)
         draft_definitions = self._automation_definition_identity_map(draft_document)
         if active_definitions is None or draft_definitions is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "the Automation Task Definition section is malformed; activation "
                 "cannot verify its exact boundary",
                 code="automation_activation_out_of_scope",
@@ -16166,7 +15747,7 @@ class MediaFlowApi:
             )
         )
         if unexpected:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "this Draft changes other Automation Task Definitions beyond the "
                 "reviewed definition",
                 code="automation_activation_definition_scope",
@@ -17050,7 +16631,6 @@ class MediaFlowApi:
         projected = self._automation_occurrences.project_definitions(
             active_page,
             configuration=active.summary(),
-            include_grants=False,
         )
         items = [
             self._automation_definition_operator_document(
@@ -17372,7 +16952,6 @@ class MediaFlowApi:
         projected = self._automation_occurrences.project_definition(
             raw,
             configuration=active.summary(),
-            _grant=None,
         )
         operator = self._automation_definition_operator_document(
             projected,
@@ -20080,7 +19659,7 @@ class MediaFlowApi:
                 "managed configuration service is unavailable",
             )
         if active is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "no Active configuration exists; managed configuration setup owns the first Draft",
                 code="notification_active_missing",
                 status=409,
@@ -20088,7 +19667,7 @@ class MediaFlowApi:
                 next_action="complete managed configuration setup, then stage a successor Draft",
             )
         if draft is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "no open successor Draft contains this Webhook definition",
                 code="notification_draft_required",
                 status=409,
@@ -20129,7 +19708,7 @@ class MediaFlowApi:
             )
         changed = self._notification_draft_changed_sections(draft.document, active.document)
         if changed - {"webhooks"}:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "this Draft changes configuration outside the Webhook Definition boundary",
                 code="notification_activation_out_of_scope",
                 status=409,
@@ -20267,7 +19846,7 @@ class MediaFlowApi:
         active_definitions = self._webhook_identity_map(active_document)
         draft_definitions = self._webhook_identity_map(draft_document)
         if active_definitions is None or draft_definitions is None:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "the Webhook definition section is malformed; activation "
                 "cannot verify its exact boundary",
                 code="notification_activation_out_of_scope",
@@ -20289,7 +19868,7 @@ class MediaFlowApi:
             )
         )
         if unexpected:
-            raise UnattendedExecutionGrantError(
+            raise AutomationExecutionIntentError(
                 "this Draft changes other Webhook Definitions beyond the reviewed definition",
                 code="notification_activation_definition_scope",
                 status=409,

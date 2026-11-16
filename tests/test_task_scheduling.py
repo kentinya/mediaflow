@@ -1781,7 +1781,9 @@ class TransitionBoundaryTests(unittest.TestCase):
             # Task47.3: the definition-scoped automatic pipeline adopts a
             # Scheduler/Run once kernel Task and publishes under its claim.
             "application/task_runtime.py",
-            "application/unattended_execution.py",
+            # The current execution authority reads one admitted Task's
+            # scheduling row for its Run once admission principal.
+            "application/automation_execution_authority.py",
             "final_cli.py",
             "interfaces/service_api.py",
             "domain/task_scheduling.py",

@@ -200,14 +200,15 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         self.assertNotEqual(after.revision_id, before.revision_id)
         self.assertEqual(after.document["automation"]["maximumActiveJobs"], 42)
         self.assertEqual(after.document["automation"]["workerPollSeconds"], 1.5)
-        # Every other section and object is byte-identical.
+        # Every other section and object is byte-identical, including the
+        # automation section's non-settings keys.
         for key in set(before.document) | set(after.document):
             if key == "automation":
                 continue
             self.assertEqual(before.document.get(key), after.document.get(key), key)
         self.assertEqual(
-            before.document["automation"]["schedules"],
-            after.document["automation"]["schedules"],
+            before.document["automation"].get("schedules"),
+            after.document["automation"].get("schedules"),
         )
         # The result exposes the published target and a fresh readback.
         self.assertEqual(data["publishedValues"]["automation.maximumActiveJobs"], 42)

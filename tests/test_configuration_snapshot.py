@@ -17,13 +17,10 @@ from mediaflow.application.execution_authorization import ExecutionAuthorization
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.application.unattended_execution import (
-    UnattendedExecutionGrantError,
-    UnattendedExecutionGrantService,
-)
 from mediaflow.domain.automation import (
     AutomationCommand,
-    IntervalSchedule,
+    AutomationTaskDefinition,
+    AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
 )
 from mediaflow.domain.configuration_management import (
@@ -98,70 +95,6 @@ def _snapshot_provider_registry(_requested):
     from mediaflow.application.metadata import MetadataProviderRegistry
 
     return MetadataProviderRegistry((_SnapshotTMDBProvider(),))
-
-
-def _snapshot_analysis_api(repository, configuration_service, document):
-    """The production API assembly the shared analysis and grant share."""
-
-    return MediaFlowApi(
-        repository,
-        None,
-        principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
-        configuration_service=configuration_service,
-        bootstrap_document=document,
-        metadata_provider_registry_factory=_snapshot_provider_registry,
-    )
-
-
-def _produce_shared_analysis(repository, configuration_service, document, definition_id):
-    """Produce the shared analysis an unattended grant now requires.
-
-    The independent Preview product is retired, so the authorization precedent
-    for one unattended grant is the shared zero-mutation organize analysis a
-    definition-bound Run once produces.  This drives that very production
-    assembly -- bounded discovery, stability observation, freeze, shared
-    analysis -- so the grant is admitted over real persisted evidence instead of
-    bypassing the preflight.  Only Storage reads and a zero-mutation analysis
-    happen here; the separate explicit grant is what makes later media mutation
-    legal.
-
-    Returns the discovery and Preview services that own that analysis, so the
-    caller's grant service resolves exactly the evidence just produced.
-    """
-
-    api = _snapshot_analysis_api(repository, configuration_service, document)
-    discovery = api._media_discovery.admit_definition_run_once(
-        definition_id=definition_id, actor="local-admin"
-    )
-    for index in range(16):
-        result = api._media_discovery.claim_and_run(
-            worker_id=f"analysis-worker-{index}",
-            claim_token=f"analysis-token-{index}",
-        )
-        if result is None:
-            raise AssertionError("shared analysis discovery was not claimable")
-        if result.terminal:
-            break
-    else:
-        raise AssertionError("shared analysis discovery did not settle")
-    current = api._media_discovery.get(discovery.discovery_id)
-    _analyzing, _plan = api._automation_run_once.finalize(
-        discovery.discovery_id,
-        actor="local-admin",
-        expected_version=current.version,
-    )
-    assert _plan is None
-    assert _analyzing.status.value == "analyzing", _analyzing.status
-    # The exact plan is durable Worker work of this same run: the resident
-    # Worker links it once the zero-mutation analysis completes.
-    analyzed = api._media_discovery.claim_and_run(
-        worker_id="analysis-worker-final", claim_token="analysis-token-final"
-    )
-    assert analyzed is not None and analyzed.preview_id is not None
-    preview = api._manual_previews.get_readonly(analyzed.preview_id)
-    assert preview.status.value == "previewed", preview.status
-    assert preview.zero_mutation is True
-    return api._media_discovery, api._manual_previews
 
 
 def request(
@@ -1612,23 +1545,44 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertTrue(conflict["error"]["details"]["retrySafe"])
                 self.assertIn("refresh", conflict["error"]["details"]["nextAction"])
 
-    def test_scheduler_resolves_schedule_content_and_pin_from_one_snapshot(self) -> None:
+    def test_scheduler_resolves_definition_content_and_pin_from_one_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                first_schedule = IntervalSchedule("first", AutomationCommand.ORGANIZE, 60)
-                second_schedule = IntervalSchedule("first", AutomationCommand.ORGANIZE, 30)
+                first_definition = AutomationTaskDefinition(
+                    "nightly",
+                    "Nightly",
+                    "library",
+                    None,
+                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    60,
+                    None,
+                    None,
+                    5,
+                    True,
+                )
+                second_definition = AutomationTaskDefinition(
+                    "nightly",
+                    "Nightly",
+                    "library",
+                    None,
+                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    30,
+                    None,
+                    None,
+                    5,
+                    True,
+                )
                 current = [
                     SchedulerConfigurationSnapshot(
                         "first-revision",
-                        "first-digest",
-                        (first_schedule,),
+                        "a" * 64,
                         10,
+                        (first_definition,),
                     )
                 ]
                 scheduler = IntervalScheduler(
                     repository,
-                    (first_schedule,),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
                 now = datetime.now(UTC)
@@ -1636,25 +1590,23 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(len(first), 1)
                 self.assertEqual(first[0].command, "organize")
                 self.assertEqual(first[0].configuration_snapshot_id, "first-revision")
-                self.assertEqual(
-                    repository.get_schedule_state("first").last_task_id,
-                    first[0].task_id,
-                )
+                state = repository.get_automation_definition_due_state("nightly")
+                self.assertEqual(state.last_task_id, first[0].task_id)
 
                 current[0] = SchedulerConfigurationSnapshot(
                     "second-revision",
-                    "second-digest",
-                    (second_schedule,),
+                    "b" * 64,
                     20,
+                    (second_definition,),
                 )
                 second = scheduler.tick(now + timedelta(seconds=61))
                 self.assertEqual(len(second), 1)
                 self.assertEqual(second[0].command, AutomationCommand.ORGANIZE.value)
                 self.assertEqual(second[0].configuration_snapshot_id, "second-revision")
-                self.assertEqual(second[0].configuration_snapshot_digest, "second-digest")
+                self.assertEqual(second[0].configuration_snapshot_digest, "b" * 64)
                 # The second snapshot's changed cadence content is what the
                 # same tick used for the next due instant.
-                state = repository.get_schedule_state("first")
+                state = repository.get_automation_definition_due_state("nightly")
                 self.assertIsNotNone(state)
             finally:
                 repository.close()
@@ -1677,7 +1629,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 api = MediaFlowApi(
                     task_repository,
                     None,
-                    tuple(),
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1690,15 +1641,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 changed["historyPath"] = str(root / "changed.jsonl")
                 changed["automation"]["maximumActiveJobs"] = 7
                 changed["automation"]["staleJobAgeSeconds"] = 7200
-                changed["automation"]["schedules"] = [
-                    {
-                        "id": "replacement-preview",
-                        "command": "organize",
-                        "intervalSeconds": 30,
-                        "limit": 3,
-                        "enabled": True,
-                    }
-                ]
                 changed["metadataPolicies"][0]["language"] = "ja-JP"
                 active = activate_document(service, changed)
 
@@ -1706,12 +1648,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(system["system"]["configuration_snapshot_id"], active.revision_id)
                 self.assertEqual(system["system"]["maximum_active_jobs"], 7)
-                status, schedules = request(api, "/api/v1/schedules")
-                self.assertEqual(status, 200)
-                self.assertEqual(
-                    [item["schedule_id"] for item in schedules["items"]],
-                    ["replacement-preview"],
-                )
+                # The retired schedules surface answers like any unknown route.
+                status, _schedules = request(api, "/api/v1/schedules")
+                self.assertEqual(status, 404)
                 # An immutable Active may still carry the retired stale-age key;
                 # it is readable with the value ignored and never appears in the
                 # effective runtime settings projection.
@@ -2158,7 +2097,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 snapshot_id=active.revision_id,
                 snapshot_digest=active.digest,
             )
-            definition = pinned.automation_task_definitions[0]
             now = datetime.now(UTC)
 
             def disable_current_principal() -> None:
@@ -2182,73 +2120,12 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             with SQLiteTaskRepository(runtime) as repository:
                 emitted = IntervalScheduler(
                     repository,
-                    pinned.automation_schedules,
                     automation_task_definitions=pinned.automation_task_definitions,
                     configuration_snapshot_id=pinned.configuration_snapshot_id,
                     configuration_snapshot_digest=pinned.configuration_snapshot_digest,
                     configuration_snapshot_version=pinned.configuration_snapshot_version,
                 ).tick(now)
                 self.assertEqual(len(emitted), 1)
-                # An unattended grant may only be admitted over a real shared
-                # zero-mutation analysis of the exact definition bounds, so
-                # produce it through the retained Run-once assembly under the
-                # same published revision this grant is pinned to.  That
-                # analysis needs a live managed-configuration authority, which
-                # closes again before the checkpoint assertions below (the
-                # pinned-snapshot validator deliberately stays unresolvable).
-                with SQLiteConfigurationRepository(runtime) as analysis_configuration:
-                    analysis_managed = ManagedConfigurationService(
-                        analysis_configuration, bootstrap_database_path=str(runtime)
-                    )
-                    # The preflight is not bypassed: the same confirmed grant is
-                    # still refused while no shared analysis exists, and no
-                    # grant row is written.
-                    analysis_api = _snapshot_analysis_api(repository, analysis_managed, document)
-                    refused = UnattendedExecutionGrantService(
-                        repository,
-                        permission_authority=_ConfiguredPermissionAuthority(
-                            lambda: _configuration(str(config))
-                        ),
-                        discovery_service=analysis_api._media_discovery,
-                        preview_service=analysis_api._manual_previews,
-                    )
-                    with self.assertRaises(UnattendedExecutionGrantError) as unanalyzed:
-                        refused.grant(
-                            definition,
-                            configuration_snapshot_id=pinned.configuration_snapshot_id,
-                            configuration_snapshot_digest=pinned.configuration_snapshot_digest,
-                            configuration_snapshot_version=pinned.configuration_snapshot_version,
-                            actor="local-admin",
-                            confirmation=True,
-                            storage_id=pinned.resource_libraries[0].storage_id,
-                        )
-                    self.assertEqual(
-                        "unattended_execution_analysis_required", unanalyzed.exception.code
-                    )
-                    self.assertEqual(repository.list_unattended_execution_grants(), ())
-                    (
-                        shared_analysis_discovery,
-                        shared_analysis_previews,
-                    ) = _produce_shared_analysis(
-                        repository, analysis_managed, document, definition.definition_id
-                    )
-                    grant_service = UnattendedExecutionGrantService(
-                        repository,
-                        permission_authority=_ConfiguredPermissionAuthority(
-                            lambda: _configuration(str(config))
-                        ),
-                        discovery_service=shared_analysis_discovery,
-                        preview_service=shared_analysis_previews,
-                    )
-                    grant_service.grant(
-                        definition,
-                        configuration_snapshot_id=pinned.configuration_snapshot_id,
-                        configuration_snapshot_digest=pinned.configuration_snapshot_digest,
-                        configuration_snapshot_version=pinned.configuration_snapshot_version,
-                        actor="local-admin",
-                        confirmation=True,
-                        storage_id=pinned.resource_libraries[0].storage_id,
-                    )
 
                 original_execute = OrganizerExecutor.execute
                 effect_calls = []
@@ -2994,16 +2871,27 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                current = [("first", "digest-first")]
-                schedule = IntervalSchedule("test", AutomationCommand.ORGANIZE, 1)
+                current = [("first", "a" * 64)]
+                definition = AutomationTaskDefinition(
+                    "test",
+                    "Test",
+                    "library",
+                    None,
+                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    1,
+                    None,
+                    None,
+                    5,
+                    True,
+                )
                 scheduler = IntervalScheduler(
                     repository,
-                    (schedule,),
+                    automation_task_definitions=(definition,),
                     configuration_snapshot_resolver=lambda: current[0],
                 )
-                first = scheduler.tick()
+                first = scheduler.tick(datetime.now(UTC))
                 self.assertEqual(first[0].configuration_snapshot_id, "first")
-                current[0] = ("second", "digest-second")
+                current[0] = ("second", "b" * 64)
                 second = scheduler.tick(
                     first[0].created_at.replace(microsecond=0) + timedelta(seconds=2)
                 )
@@ -3015,9 +2903,20 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                schedule = IntervalSchedule("test", AutomationCommand.ORGANIZE, 60)
+                definition = AutomationTaskDefinition(
+                    "test",
+                    "Test",
+                    "library",
+                    None,
+                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    60,
+                    None,
+                    None,
+                    5,
+                    True,
+                )
                 current = [
-                    SchedulerConfigurationSnapshot("revision-a", "digest-a", (schedule,), 10)
+                    SchedulerConfigurationSnapshot("revision-a", "a" * 64, 10, (definition,))
                 ]
 
                 def resolve():
@@ -3027,22 +2926,27 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
 
                 scheduler = IntervalScheduler(
                     repository,
-                    (schedule,),
+                    automation_task_definitions=(definition,),
                     configuration_snapshot_resolver=resolve,
                 )
                 now = datetime.now(UTC)
                 emitted = scheduler.tick(now)
                 self.assertEqual(len(emitted), 1)
-                state_before = repository.get_schedule_state("test")
+                state_before = repository.get_automation_definition_due_state("test")
                 self.assertIsNotNone(state_before)
+                # A definition-backed scheduler has known definitions to record
+                # the blocked reason on, so the tick fails closed without
+                # raising and without emitting.
                 current[0] = None
-                with self.assertRaises(RuntimeError):
-                    scheduler.tick(now + timedelta(seconds=61))
+                self.assertEqual(scheduler.tick(now + timedelta(seconds=61)), ())
                 self.assertEqual(
                     [item.task_id for item in repository.list_tasks()],
                     [emitted[0].task_id],
                 )
-                self.assertEqual(repository.get_schedule_state("test"), state_before)
+                self.assertEqual(
+                    repository.get_automation_definition_due_state("test").next_run_at,
+                    state_before.next_run_at,
+                )
             finally:
                 repository.close()
 

@@ -169,23 +169,23 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
         # really is a valid strict first-setup bootstrap.
         self.assertTrue(is_minimal_management_bootstrap(self.document))
 
-    def test_scheduler_list_and_tick_start_without_active(self) -> None:
-        """Reproduction of the reviewed defect.
+    def test_scheduler_tick_starts_without_active(self) -> None:
+        """With a valid management-only bootstrap, the resident Scheduler and
+        the one-shot ``scheduler tick`` start, wait and emit nothing; the
+        retired ``scheduler list``/``audit`` subcommands are unregistered."""
 
-        With a valid management-only bootstrap, ``scheduler list`` and
-        ``scheduler tick`` previously raised AttributeError for
-        ``automation_schedules`` and the resident ``run`` loop crashed on the
-        same attribute.  All three must now work and emit nothing.
-        """
-
-        for arguments in (["scheduler", "list"], ["scheduler", "tick"]):
+        code, out, err = self.cli("scheduler", "tick")
+        self.assertEqual(code, 0, msg=f"tick: {err}")
+        self.assertNotIn("AttributeError", err)
+        self.assertNotIn("Traceback", err)
+        for arguments in (["scheduler", "list"], ["scheduler", "audit", "nightly"]):
             with self.subTest(arguments=arguments):
-                code, out, err = self.cli(*arguments)
-                self.assertEqual(code, 0, msg=f"{arguments}: {err}")
-                self.assertNotIn("AttributeError", err)
-        code, out, err = self.cli("scheduler", "list")
-        self.assertIn("INTERVAL SCHEDULES", out)
-        self.assertIn("Total: 0", out)
+                import contextlib
+
+                with contextlib.redirect_stderr(io.StringIO()) as parser_error:
+                    code, out, err = self.cli(*arguments)
+                self.assertEqual(code, 2, msg=f"{arguments}: {err}")
+                self.assertIn("invalid choice", parser_error.getvalue())
 
     def test_notification_worker_waits_instead_of_crashing_without_active(self) -> None:
         """Reproduction of the reviewed defect.
@@ -433,21 +433,46 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
 
         self.publish_first_draft(self.empty_baseline())
         first = _current_runtime_configuration(str(self.config))
-        self.assertEqual(first.automation_schedules, ())
+        self.assertEqual(first.automation_task_definitions, ())
 
-        def add_schedule(document: dict) -> None:
-            document["automation"]["schedules"] = [
+        def add_definition(document: dict) -> None:
+            # The starter document has no business objects, so the definition
+            # publishes with its own typed Local Storage and library.
+            document.setdefault("storages", []).append(
+                {
+                    "id": "source",
+                    "name": "Source",
+                    "type": "local",
+                    "rootPath": str(self.root / "source"),
+                    "enabled": True,
+                }
+            )
+            document.setdefault("resourceLibraries", []).append(
+                {
+                    "id": "library",
+                    "name": "Library",
+                    "storageId": "source",
+                    "storagePath": "",
+                    "enabled": True,
+                }
+            )
+            document["automationTaskDefinitions"] = [
                 {
                     "id": "nightly",
-                    "command": "organize",
+                    "name": "Nightly",
+                    "resourceLibraryId": "library",
+                    "mode": "automatic-organization",
                     "intervalSeconds": 3600,
                     "enabled": True,
                 }
             ]
 
-        second_revision = self.publish_successor(add_schedule)
+        second_revision = self.publish_successor(add_definition)
         second = _current_runtime_configuration(str(self.config))
-        self.assertEqual([item.schedule_id for item in second.automation_schedules], ["nightly"])
+        self.assertEqual(
+            [item.definition_id for item in second.automation_task_definitions],
+            ["nightly"],
+        )
         # The pinned identity really did change, so this is a new authority and
         # not a stale in-memory object.
         self.assertNotEqual(first.configuration_snapshot_id, second.configuration_snapshot_id)

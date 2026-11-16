@@ -7,8 +7,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from mediaflow.application.automation import IntervalScheduler
+from mediaflow.application.automation_execution_authority import AutomationIntentBoundaryError
 from mediaflow.application.automation_execution_intent import activation_evidence, resolve_principal
-from mediaflow.application.unattended_execution import UnattendedExecutionBoundaryError
 from mediaflow.domain.automation import AutomationTaskDefinition, SchedulerConfigurationSnapshot
 from mediaflow.domain.configuration_management import AutomationDefinitionSaveError
 from tests import test_v2_automation_lifecycle as lifecycle
@@ -42,7 +42,6 @@ class ExecutionIntentTests(unittest.TestCase):
         snapshot = SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
-            (),
             100,
             (definition,),
             active.version,
@@ -51,9 +50,8 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         return IntervalScheduler(
             f.runtime,
-            (),
             configuration_snapshot_resolver=lambda: snapshot,
-            execution_authority=f.api._unattended_grants,
+            execution_authority=f.api._automation_execution_authority,
         )
 
     def publish(self, document, actor="admin"):
@@ -65,16 +63,17 @@ class ExecutionIntentTests(unittest.TestCase):
             validated.revision_id, expected_version=validated.version, actor=actor
         )
 
-    def test_checked_enable_supplies_scoped_principal_without_grants_or_immediate_work(self):
+    def test_checked_enable_supplies_scoped_principal_without_immediate_work(self):
         active, definition = self.enable()
         f = self.fixture
         self.assertEqual((), f.runtime.list_tasks())
-        self.assertEqual((), f.runtime.list_unattended_execution_grants())
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
         principal = resolve_principal(f.managed, job, definition)
         self.assertEqual("admin", principal.principal_id)
         self.assertFalse(principal.trusted_local)
-        self.assertIsNone(f.api._unattended_grants.authorize(job, definition).grant)
+        decision = f.api._automation_execution_authority.authorize(job, definition)
+        self.assertEqual("admin", decision.principal_id)
+        self.assertFalse(decision.run_once)
         audit = activation_evidence(f.managed.repository, active)
         self.assertEqual(
             "admin", audit.after["automationExecutionIntents"]["nightly"]["principalId"]
@@ -104,12 +103,12 @@ class ExecutionIntentTests(unittest.TestCase):
             )
         )
         self.assertEqual((), f.runtime.list_tasks())
-        self.assertEqual((), f.runtime.list_unattended_execution_grants())
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
         principal = resolve_principal(f.managed, job, definition)
         self.assertEqual("admin", principal.principal_id)
         self.assertFalse(principal.trusted_local)
-        self.assertIsNone(f.api._unattended_grants.authorize(job, definition).grant)
+        decision = f.api._automation_execution_authority.authorize(job, definition)
+        self.assertEqual("admin", decision.principal_id)
         audit = activation_evidence(f.managed.repository, active)
         self.assertEqual(
             "admin", audit.after["automationExecutionIntents"]["created-enabled"]["principalId"]
@@ -121,12 +120,12 @@ class ExecutionIntentTests(unittest.TestCase):
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
         status, body = f.request("POST", lifecycle.BASE + "/nightly/disable", f.authority())
         self.assertEqual(200, status, body)
-        with self.assertRaises(UnattendedExecutionBoundaryError):
-            f.api._unattended_grants.assert_live(job, definition)
+        with self.assertRaises(AutomationIntentBoundaryError):
+            f.api._automation_execution_authority.assert_live(job, definition)
         status, body = f.request("DELETE", lifecycle.BASE + "/nightly", f.authority())
         self.assertEqual(200, status, body)
-        with self.assertRaises(UnattendedExecutionBoundaryError):
-            f.api._unattended_grants.assert_live(job, definition)
+        with self.assertRaises(AutomationIntentBoundaryError):
+            f.api._automation_execution_authority.assert_live(job, definition)
         self.assertIsNotNone(f.runtime.get_task(job.task_id))
         self.assertEqual(active.revision_id, job.configuration_snapshot_id)
 
@@ -140,8 +139,8 @@ class ExecutionIntentTests(unittest.TestCase):
         successor = self.publish(document)
         # Unrelated role publication retains the original principal, never launders it.
         self.assertEqual("admin", resolve_principal(f.managed, job, definition).principal_id)
-        with self.assertRaises(UnattendedExecutionBoundaryError):
-            f.api._unattended_grants.assert_live(job, definition)
+        with self.assertRaises(AutomationIntentBoundaryError):
+            f.api._automation_execution_authority.assert_live(job, definition)
         self.assertEqual((), self.scheduler(successor, definition).tick(now + timedelta(hours=2)))
 
     def test_generic_activation_cannot_expand_enabled_scope_without_execution_permission(self):
@@ -429,7 +428,7 @@ class ExecutionIntentTests(unittest.TestCase):
 
         with patch.object(f.managed.repository, "list_audits", side_effect=OSError("unavailable")):
             with self.assertRaises(Exception):
-                f.api._unattended_grants.authorize(job, definition)
+                f.api._automation_execution_authority.authorize(job, definition)
         self.assertIsNotNone(f.runtime.get_task(job.task_id))
 
     def test_reenable_does_not_resurrect_pre_disable_job(self):
@@ -439,12 +438,12 @@ class ExecutionIntentTests(unittest.TestCase):
         status, body = f.request("POST", lifecycle.BASE + "/nightly/disable", f.authority())
         self.assertEqual(200, status, body)
         successor, enabled = self.enable()
-        with self.assertRaises(UnattendedExecutionBoundaryError) as failure:
-            f.api._unattended_grants.assert_live(old_job, definition)
+        with self.assertRaises(AutomationIntentBoundaryError) as failure:
+            f.api._automation_execution_authority.assert_live(old_job, definition)
         self.assertEqual("scheduled_intent_stopped", failure.exception.category)
         # The normal next due owns a fresh intent; it is not an old-job retry.
         (new_job,) = self.scheduler(successor, enabled).tick(datetime.now(UTC) + timedelta(hours=2))
-        f.api._unattended_grants.assert_live(new_job, enabled)
+        f.api._automation_execution_authority.assert_live(new_job, enabled)
         self.assertNotEqual(old_job.task_id, new_job.task_id)
 
     def test_enabled_successor_keeps_legitimate_admitted_pin(self):
@@ -454,7 +453,7 @@ class ExecutionIntentTests(unittest.TestCase):
         document = copy.deepcopy(active.document)
         document["automationTaskDefinitions"][0]["name"] = "Changed presentation"
         self.publish(document)
-        f.api._unattended_grants.assert_live(job, definition)
+        f.api._automation_execution_authority.assert_live(job, definition)
         self.assertEqual(active.revision_id, job.configuration_snapshot_id)
 
     def test_unreferenced_storage_publication_does_not_create_execution_intent(self):
@@ -491,8 +490,7 @@ class ExecutionIntentTests(unittest.TestCase):
             )
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
         self.assertEqual("admin", resolve_principal(f.managed, job, definition).principal_id)
-        f.api._unattended_grants.assert_live(job, definition)
-        self.assertEqual((), f.runtime.list_unattended_execution_grants())
+        f.api._automation_execution_authority.assert_live(job, definition)
 
     def test_resident_permission_reader_uses_current_managed_database_without_environment_locator(
         self,

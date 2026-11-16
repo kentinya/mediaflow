@@ -71,8 +71,7 @@ AutomationTaskDefinitionMode = AutomationTaskRunMode
 class AutomationTaskDefinition:
     """A reusable, managed source/schedule/run-intent definition.
 
-    This object remains independent from :class:`ScheduleDefinition`: legacy
-    schedules stay Preview-only while the managed Scheduler consumes this
+    This object is the only scheduling input: the Scheduler consumes this
     definition through its separate due-occurrence admission boundary.
     """
 
@@ -717,67 +716,11 @@ def _is_sha256(value: object) -> bool:
 
 
 @dataclass(frozen=True)
-class IntervalSchedule:
-    schedule_id: str
-    command: AutomationCommand
-    interval_seconds: float
-    limit: int | None = None
-    enabled: bool = True
-
-    def __post_init__(self) -> None:
-        if not self.schedule_id:
-            raise ValueError("schedule ID must be non-empty")
-        if not isinstance(self.command, AutomationCommand):
-            object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.ORGANIZE}:
-            raise ValueError("schedule command must be organize")
-        if self.interval_seconds <= 0:
-            raise ValueError("schedule interval must be positive")
-        if self.limit is not None and self.limit < 1:
-            raise ValueError("schedule limit must be positive")
-
-
-@dataclass(frozen=True)
-class CronSchedule:
-    schedule_id: str
-    command: AutomationCommand
-    expression: str
-    timezone: str
-    limit: int | None = None
-    enabled: bool = True
-
-    def __post_init__(self) -> None:
-        from datetime import UTC, datetime
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-        from mediaflow.domain.cron import CronExpression
-
-        if not self.schedule_id:
-            raise ValueError("schedule ID must be non-empty")
-        if not isinstance(self.command, AutomationCommand):
-            object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.ORGANIZE}:
-            raise ValueError("schedule command must be organize")
-        expression = CronExpression.parse(self.expression)
-        try:
-            timezone = ZoneInfo(self.timezone)
-        except (ZoneInfoNotFoundError, ValueError) as error:
-            raise ValueError(f"unknown schedule timezone {self.timezone!r}") from error
-        expression.next_after(datetime.now(UTC), timezone)
-        if self.limit is not None and self.limit < 1:
-            raise ValueError("schedule limit must be positive")
-
-
-ScheduleDefinition = IntervalSchedule | CronSchedule
-
-
-@dataclass(frozen=True)
 class SchedulerConfigurationSnapshot:
     """The schedule inputs and identity loaded from one runtime revision."""
 
     snapshot_id: str
     snapshot_digest: str
-    schedules: tuple[ScheduleDefinition, ...]
     maximum_active_jobs: int
     automation_task_definitions: tuple[AutomationTaskDefinition, ...] = ()
     configuration_snapshot_version: int | None = None
@@ -801,54 +744,9 @@ class SchedulerConfigurationSnapshot:
             raise ValueError("scheduler configuration snapshot version must be positive")
 
 
-@dataclass(frozen=True)
-class ScheduleState:
-    schedule_id: str
-    next_run_at: datetime
-    updated_at: datetime
-    last_task_id: str | None = None
-
-
-@dataclass(frozen=True)
-class ScheduleAuditRecord:
-    audit_id: str
-    schedule_id: str
-    occurrence_at: datetime
-    emitted_at: datetime
-    task_id: str
-    command: AutomationCommand
-    next_run_at: datetime
-
-
 class AutomationSchedulerRepository(Protocol):
-    """Durable schedule/occurrence facts around Tasks, never a second queue."""
+    """Durable definition occurrence facts around Tasks, never a second queue."""
 
-    def get_schedule_state(self, schedule_id: str) -> ScheduleState | None: ...
-    def initialize_schedule_state(
-        self, schedule_id: str, next_run_at: datetime, now: datetime
-    ) -> ScheduleState: ...
-    def admit_due_schedule_task(
-        self,
-        schedule_id: str,
-        task: object,
-        state: object,
-        *,
-        command: str,
-        occurrence_at: datetime,
-        next_run_at: datetime,
-        now: datetime,
-        capacity: int,
-        display: object | None = None,
-    ) -> object | None: ...
-    def list_schedule_states(self) -> tuple[ScheduleState, ...]: ...
-    def list_schedule_audit(
-        self,
-        schedule_id: str | None = None,
-        *,
-        limit: int | None = None,
-        after: tuple[datetime, str] | None = None,
-        before: tuple[datetime, str] | None = None,
-    ) -> tuple[ScheduleAuditRecord, ...]: ...
     def get_automation_definition_due_state(
         self, definition_id: str
     ) -> AutomationDefinitionDueState | None: ...

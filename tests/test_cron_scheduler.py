@@ -5,18 +5,13 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from threading import Barrier, Thread
 from zoneinfo import ZoneInfo
 
-from mediaflow.application.automation import IntervalScheduler
-from mediaflow.domain.automation import CronSchedule
 from mediaflow.domain.cron import CronExpression
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.interfaces.service_api import MediaFlowApi
 
 
 class CronExpressionTests(unittest.TestCase):
@@ -91,89 +86,33 @@ class CronExpressionTests(unittest.TestCase):
         )
 
 
-class CronSchedulerTests(unittest.TestCase):
-    def test_current_future_missed_and_audit(self) -> None:
-        schedule = CronSchedule("morning", "organize", "0 8 * * *", "Asia/Shanghai", 20)
-        now = datetime(2026, 8, 22, 0, 0, 30, tzinfo=UTC)
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                scheduler = IntervalScheduler(repository, (schedule,))
-                first = scheduler.tick(now)
-                self.assertEqual(len(first), 1)
-                audit = repository.list_schedule_audit("morning")
-                self.assertEqual(len(audit), 1)
-                self.assertEqual(audit[0].occurrence_at, now.replace(second=0))
-                self.assertEqual(audit[0].task_id, first[0].task_id)
-                self.assertEqual(scheduler.tick(now), ())
-                # Several missed days coalesce into one emitted job.
-                later = now + timedelta(days=3, minutes=1)
-                self.assertEqual(len(scheduler.tick(later)), 1)
-                self.assertEqual(len(repository.list_schedule_audit("morning")), 2)
-                self.assertEqual(len(repository.list_tasks()), 2)
+class SchedulerDefinitionBoundaryTests(unittest.TestCase):
+    """The Scheduler consumes Automation Task Definitions only.
 
-    def test_concurrent_ticks_emit_one_job_and_one_audit(self) -> None:
-        schedule = CronSchedule("midnight", "organize", "0 0 * * *", "UTC")
-        now = datetime(2026, 8, 22, tzinfo=UTC)
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database):
-                pass
-            barrier = Barrier(2)
-            results = []
+    The retired ``automation.schedules`` product neither parses into runtime
+    configuration nor advertises CLI surfaces; a system-generated empty slot in
+    a normal V2 document stays readable with no scheduling semantics.
+    """
 
-            def tick() -> None:
-                with SQLiteTaskRepository(database) as repository:
-                    barrier.wait()
-                    results.append(IntervalScheduler(repository, (schedule,)).tick(now))
-
-            threads = [Thread(target=tick), Thread(target=tick)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(sum(len(value) for value in results), 1)
-                self.assertEqual(len(repository.list_tasks()), 1)
-                self.assertEqual(len(repository.list_schedule_audit()), 1)
-
-    def test_audit_filter_limit_and_api(self) -> None:
-        schedules = (
-            CronSchedule("one", "organize", "* * * * *", "UTC"),
-            CronSchedule("two", "organize", "* * * * *", "UTC"),
-        )
-        now = datetime(2026, 8, 22, tzinfo=UTC)
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                IntervalScheduler(repository, schedules).tick(now)
-                self.assertEqual(len(repository.list_schedule_audit(limit=1)), 1)
-                self.assertEqual(len(repository.list_schedule_audit("one")), 1)
-                api = MediaFlowApi(repository, "secret", schedules)
-                status = []
-                environ = {
-                    "REQUEST_METHOD": "GET",
-                    "PATH_INFO": "/api/v1/schedules/one/audit",
-                    "CONTENT_LENGTH": "0",
-                    "HTTP_AUTHORIZATION": "Bearer secret",
-                    "wsgi.input": io.BytesIO(),
-                }
-                body = b"".join(api(environ, lambda value, headers: status.append(value)))
-                self.assertEqual(status[0].split()[0], "200")
-                self.assertEqual(json.loads(body)["items"][0]["schedule_id"], "one")
-
-    def test_runtime_configuration_and_cli_audit_are_storage_free(self) -> None:
-        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        document["automation"] = {
-            "schedules": [
-                {
-                    "id": "cn-morning",
-                    "command": "organize",
-                    "cron": "0 8 * * *",
-                    "timezone": "Asia/Shanghai",
-                }
-            ]
+    def _definition_document(self) -> dict:
+        return {
+            "id": "cn-morning",
+            "name": "Morning organize",
+            "resourceLibraryId": "source",
+            "mode": "automatic-organization",
+            "cron": "0 8 * * *",
+            "timezone": "Asia/Shanghai",
+            "enabled": False,
         }
-        loaded = load_runtime_configuration(copy.deepcopy(document))
-        self.assertIsInstance(loaded.automation_schedules[0], CronSchedule)
+
+    def _base_document(self) -> dict:
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        document["automation"] = {}
+        document["automationTaskDefinitions"] = [self._definition_document()]
+        return document
+
+    def test_scheduler_tick_runs_definition_only_configuration(self) -> None:
+        document = self._base_document()
         with tempfile.TemporaryDirectory() as directory:
             document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
             config = Path(directory, "config.json")
@@ -188,27 +127,39 @@ class CronSchedulerTests(unittest.TestCase):
                 0,
                 error.getvalue(),
             )
-            audit = io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "scheduler", "audit", "cn-morning"],
-                    stdout=audit,
-                    stderr=error,
-                ),
-                0,
-            )
-            self.assertIn("SCHEDULE AUDIT", audit.getvalue())
 
-    def test_invalid_cron_schedule_configuration(self) -> None:
-        base = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+    def test_scheduler_list_and_audit_are_not_registered(self) -> None:
+        import contextlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            document = self._base_document()
+            document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
+            config = Path(directory, "config.json")
+            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+            for arguments in (
+                ["--config", str(config), "scheduler", "list"],
+                ["--config", str(config), "scheduler", "audit", "cn-morning"],
+            ):
+                output, error = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stderr(io.StringIO()) as parser_error:
+                    with self.assertRaises(SystemExit):
+                        final_main(arguments, stdout=output, stderr=error)
+                self.assertIn("invalid choice", parser_error.getvalue())
+
+    def test_empty_schedules_slot_stays_readable_without_semantics(self) -> None:
+        document = self._base_document()
+        document["automation"] = {"schedules": []}
+        loaded = load_runtime_configuration(copy.deepcopy(document))
+        self.assertEqual(loaded.automation_task_definitions[0].definition_id, "cn-morning")
+        self.assertEqual(
+            getattr(loaded, "automation_schedules", None),
+            None,
+            "the retired schedules product keeps no runtime projection",
+        )
+
+    def test_retired_schedule_definitions_reject_through_normal_validation(self) -> None:
         invalid = (
             {"id": "x", "command": "organize", "cron": "* * * * *"},
-            {
-                "id": "x",
-                "command": "organize",
-                "cron": "* * * * *",
-                "timezone": "Missing/Zone",
-            },
             {
                 "id": "x",
                 "command": "organize",
@@ -216,12 +167,19 @@ class CronSchedulerTests(unittest.TestCase):
                 "timezone": "UTC",
                 "intervalSeconds": 60,
             },
+            {"id": "x", "command": "organize", "intervalSeconds": 60},
         )
         for schedule in invalid:
-            document = copy.deepcopy(base)
+            document = self._base_document()
             document["automation"] = {"schedules": [schedule]}
             with self.subTest(schedule=schedule), self.assertRaises(ValueError):
                 load_runtime_configuration(document)
+
+    def test_non_list_schedules_value_rejects(self) -> None:
+        document = self._base_document()
+        document["automation"] = {"schedules": "organize-daily"}
+        with self.assertRaises(ValueError):
+            load_runtime_configuration(document)
 
 
 if __name__ == "__main__":

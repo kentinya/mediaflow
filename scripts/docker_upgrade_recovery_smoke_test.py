@@ -1211,11 +1211,6 @@ def upgrade_recovery_smoke(
                 "notifications": collection_items(base, token, "/api/v1/notifications?limit=100"),
                 "logs": collection_items(base, token, "/api/v1/logs?limit=100"),
                 "audits": collection_items(base, token, "/api/v1/security-audit?limit=100"),
-                "schedule_audit": collection_items(
-                    base,
-                    token,
-                    f"/api/v1/schedules/{SCHEDULE_ID}/audit?limit=10",
-                ),
             }
             task_ids = {item.get("task_id") for item in baseline["tasks"]}
             if TASK_ID not in task_ids:
@@ -1392,15 +1387,6 @@ def upgrade_recovery_smoke(
             final_audit_ids = {item.get("audit_id") for item in final_audits}
             if not baseline_audit_ids <= final_audit_ids:
                 raise RuntimeError("security-audit identities were lost after upgrade")
-            final_schedule = collection_items(
-                base,
-                token,
-                f"/api/v1/schedules/{SCHEDULE_ID}/audit?limit=10",
-            )
-            if [item["audit_id"] for item in final_schedule] != [
-                item["audit_id"] for item in baseline["schedule_audit"]
-            ]:
-                raise RuntimeError("schedule occurrence identities changed after upgrade")
             _, failed_item = json_request(
                 base,
                 "/api/v1/tasks/upgrade-task/items/upgrade-failed-item",

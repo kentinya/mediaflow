@@ -52,7 +52,7 @@ interface HarnessState {
     readonly resourceLibraryId: string;
     readonly itemLimit?: number;
   }>;
-  readonly grant: { readonly status: string; readonly grantId: string } | null;
+  readonly authority: { readonly status: string } | null;
   readonly occurrenceTotal: number;
 }
 
@@ -467,20 +467,11 @@ test("removal stops the enabled definition, revokes historical authority and ret
     page.getByRole("button", { name: "Grant unattended authority" }),
   ).toHaveCount(0);
 
-  // A retained historical grant remains durable history; removal still revokes
-  // it while the Enabled definition is the actual execution intent.
-  const seeded = await page.request.post(
-    "/__harness__/seed-automation-definition-grant",
-  );
-  const seededBody = (await seeded.json()) as {
-    grantId?: string;
-    status?: string;
-  };
-  expect(seededBody.status).toBe("active");
-
+  // The published Enabled definition is the actual execution intent; removal
+  // stops future scheduling while retained history stays durable.
   let state = await harnessState(page);
   expect(state.definitions[0]?.enabled).toBe(true);
-  expect(state.grant?.status).toBe("active");
+  expect(state.authority?.status).toBe("active");
 
   await openLifecycle(page, DEFINITION_ID);
   await expect(page.getByLabel("启用定时计划")).toBeChecked();
@@ -490,7 +481,7 @@ test("removal stops the enabled definition, revokes historical authority and ret
 
   state = await harnessState(page, DEFINITION_ID);
   expect(state.definitions).toEqual([]);
-  expect(state.grant?.status).toBe("revoked");
+  expect(state.authority?.status).toBe("none");
   // A real subsequent Scheduler tick emits nothing for the removed definition.
   const tick = await page.request.post(
     `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,

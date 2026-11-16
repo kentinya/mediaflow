@@ -935,6 +935,11 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         receiver.received.clear()
 
         def configure(document: dict) -> None:
+            # The media-free stack publishes one enabled Automation Task
+            # Definition over a typed Local Storage and ResourceLibrary: the
+            # current `schedule.emitted` notification is the definition
+            # occurrence event, so the resident Scheduler and Notification
+            # Worker adopt the publication without a restart.
             document.setdefault("notifications", {})["webhooks"] = [
                 {
                     "id": "primary",
@@ -944,10 +949,30 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                     "enabled": True,
                 }
             ]
-            document.setdefault("automation", {})["schedules"] = [
+            document.setdefault("storages", []).append(
+                {
+                    "id": "acceptance-source",
+                    "name": "Acceptance source",
+                    "type": "local",
+                    "rootPath": "/media/incoming",
+                    "enabled": True,
+                }
+            )
+            document.setdefault("resourceLibraries", []).append(
+                {
+                    "id": "acceptance-library",
+                    "name": "Acceptance library",
+                    "storageId": "acceptance-source",
+                    "storagePath": "",
+                    "enabled": True,
+                }
+            )
+            document["automationTaskDefinitions"] = [
                 {
                     "id": "acceptance-organize",
-                    "command": "organize",
+                    "name": "Acceptance organize",
+                    "resourceLibraryId": "acceptance-library",
+                    "mode": "automatic-organization",
                     "intervalSeconds": 2,
                     "enabled": True,
                 }

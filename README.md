@@ -204,7 +204,7 @@ stability observations and zero-mutation planning remain. Independent Preview is
 ### Current organizing analysis and confirmation
 
 [The Preview retirement contract](docs/preview-retirement-spec.md) uses the same first-deployment
-absence standard as Scan: independent Preview pages/API/CLI/Jobs/schedules/dispatch/continuation,
+absence standard as Scan: independent Preview pages/API/CLI/Jobs/dispatch/continuation,
 exclusive persistence/composition and compatibility layers are removed. Old inputs use ordinary not-found or
 unsupported-argument/type errors; no retirement page/410, automatic conversion or old production
 migration/history/takeover framework. New manual organizing starts from ResourceLibrary Files;

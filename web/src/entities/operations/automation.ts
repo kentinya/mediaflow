@@ -61,19 +61,6 @@ export const AUTOMATION_DEFINITION_STATES = [
   "historical",
 ] as const;
 
-export const AUTOMATION_GRANT_STATUSES = ["none", "active", "revoked"] as const;
-
-export const AUTOMATION_PERMISSION_STATUSES = [
-  "valid",
-  "invalid",
-  "unavailable",
-] as const;
-
-export const AUTOMATION_ELIGIBILITY_STATUSES = [
-  "eligible",
-  "ineligible",
-] as const;
-
 export const AUTOMATION_PREVIEW_STATUSES = [
   "previewed",
   "partial",
@@ -118,9 +105,6 @@ export type AutomationActionKind =
   | "definition-detail"
   | "definition-occurrences"
   | "definition-run-once"
-  | "definition-grant-state"
-  | "definition-grant"
-  | "definition-revoke"
   | "definition-copy"
   | "definition-draft-create"
   | "list-create"
@@ -132,8 +116,6 @@ export type AutomationActionKind =
   | "preview-detail"
   | "preview-items"
   | "preview-definition"
-  | "preview-grant-state"
-  | "preview-grant"
   | "occurrence-task";
 
 const AUTOMATION_DEFINITIONS_ROUTE = "/api/v1/automation/task-definitions/";
@@ -170,30 +152,6 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
     method: "POST",
     routePrefix: OPERATIONS_DEFINITIONS_ROUTE,
     suffix: "run-once",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "definition-grant-state": {
-    method: "GET",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "grant-state",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "definition-grant": {
-    method: "POST",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "grant",
-    requiresConfirmation: true,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "definition-revoke": {
-    method: "POST",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "revoke",
     requiresConfirmation: false,
     offeredWithoutTransport: false,
     objectBound: true,
@@ -284,22 +242,6 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
     routePrefix: OPERATIONS_DEFINITIONS_ROUTE,
     suffix: "",
     requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "preview-grant-state": {
-    method: "GET",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "grant-state",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "preview-grant": {
-    method: "POST",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "grant",
-    requiresConfirmation: true,
     offeredWithoutTransport: false,
     objectBound: true,
   },
@@ -580,163 +522,6 @@ export function normalizeAutomationDraftState(
   };
 }
 
-export interface AutomationPermissionModel {
-  readonly principalId: string;
-  readonly status: string;
-  readonly allowed: boolean;
-}
-
-function normalizePermission(
-  value: unknown,
-  field: string,
-): AutomationPermissionModel {
-  const source = readRecord(value, field);
-  return {
-    principalId: text(source, "principalId"),
-    status: enumOrFail(
-      source["status"],
-      `${field}.status`,
-      AUTOMATION_PERMISSION_STATUSES,
-    ),
-    allowed: flag(source, "allowed"),
-  };
-}
-
-export interface AutomationGrantStateModel {
-  readonly status: string;
-  readonly active: boolean;
-  readonly grantId: string | null;
-  readonly definitionId: string;
-  readonly definitionChangedSinceGrant: boolean;
-  readonly nextAction: string;
-  readonly maxItemsPerRun: number | null;
-  readonly previewId: string | null;
-  readonly grantingPrincipal: string | null;
-  readonly grantedAt: string | null;
-  readonly revokedAt: string | null;
-  readonly reason: string | null;
-  readonly currentPermission: AutomationPermissionModel | null;
-}
-
-export function normalizeAutomationGrantState(
-  value: unknown,
-  field = "grant",
-): AutomationGrantStateModel {
-  const source = readRecord(value, field);
-  const status = enumOrFail(
-    source["status"],
-    `${field}.status`,
-    AUTOMATION_GRANT_STATUSES,
-  );
-  const grantId = optionalText(source, "grantId");
-  const active = flag(source, "active");
-  if (status === "none" && (grantId !== null || active)) {
-    // A "none" projection never carries grant authority evidence.
-    return fail(`${field}.status`);
-  }
-  if (status !== "none" && grantId === null) {
-    return fail(`${field}.grantId`);
-  }
-  const rawPermission = source["currentPermission"];
-  return {
-    status,
-    active,
-    grantId,
-    definitionId: text(source, "definitionId"),
-    definitionChangedSinceGrant: flag(source, "definitionChangedSinceGrant"),
-    nextAction: text(source, "nextAction"),
-    maxItemsPerRun: optionalCount(source, "maxItemsPerRun"),
-    previewId: optionalText(source, "previewId"),
-    grantingPrincipal: optionalText(source, "grantingPrincipal"),
-    grantedAt: optionalText(source, "grantedAt"),
-    revokedAt: optionalText(source, "revokedAt"),
-    reason: optionalText(source, "reason"),
-    currentPermission:
-      rawPermission === null || rawPermission === undefined
-        ? null
-        : normalizePermission(rawPermission, `${field}.currentPermission`),
-  };
-}
-
-export interface AutomationEligibilityErrorModel {
-  readonly code: string;
-  readonly status: number;
-  readonly message: string;
-  readonly durableState: string;
-  readonly retrySafe: boolean;
-  readonly nextAction: string;
-}
-
-export interface AutomationEligibilityModel {
-  readonly eligible: boolean;
-  readonly status: string;
-  readonly previewId: string | null;
-  readonly current: boolean;
-  readonly zeroMutation: boolean;
-  readonly maxItemsPerRun: number | null;
-  readonly currentPermission: AutomationPermissionModel | null;
-  readonly explanation: string;
-  readonly durableState: string;
-  readonly retrySafe: boolean;
-  readonly nextAction: string;
-  readonly error: AutomationEligibilityErrorModel | null;
-}
-
-export function normalizeAutomationEligibility(
-  value: unknown,
-  field = "grantEligibility",
-): AutomationEligibilityModel | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const source = readRecord(value, field);
-  const eligible = flag(source, "eligible");
-  const status = enumOrFail(
-    source["status"],
-    `${field}.status`,
-    AUTOMATION_ELIGIBILITY_STATUSES,
-  );
-  if (eligible !== (status === "eligible")) {
-    // The status label is derived from the admission decision; a contradictory
-    // pair is malformed evidence.
-    return fail(`${field}.status`);
-  }
-  const rawError = source["error"];
-  let error: AutomationEligibilityErrorModel | null = null;
-  if (rawError !== null && rawError !== undefined) {
-    const errorSource = readRecord(rawError, `${field}.error`);
-    error = {
-      code: text(errorSource, "code"),
-      status: count(errorSource, "status"),
-      message: text(errorSource, "message"),
-      durableState: text(errorSource, "durableState"),
-      retrySafe: flag(errorSource, "retrySafe"),
-      nextAction: text(errorSource, "nextAction"),
-    };
-  }
-  if (eligible !== (error === null)) {
-    return fail(`${field}.error`);
-  }
-  const rawPermission = source["currentPermission"];
-  return {
-    eligible,
-    status,
-    previewId: optionalText(source, "previewId"),
-    current: flag(source, "current"),
-    zeroMutation: flag(source, "zeroMutation"),
-    maxItemsPerRun: optionalCount(source, "maxItemsPerRun"),
-    currentPermission:
-      rawPermission === null || rawPermission === undefined
-        ? null
-        : normalizePermission(rawPermission, `${field}.currentPermission`),
-    explanation: text(source, "explanation"),
-    durableState: text(source, "durableState"),
-    retrySafe: flag(source, "retrySafe"),
-    nextAction: text(source, "nextAction"),
-    error,
-  };
-}
-
 export interface AutomationOutcomeAttentionModel {
   readonly taskId: string;
   readonly itemId: string;
@@ -937,7 +722,6 @@ export interface AutomationDefinitionModel {
   readonly nextAction: string | null;
   readonly lastFailureCategory: string | null;
   readonly outcomeSummary: AutomationOutcomeSummaryModel | null;
-  readonly grant: AutomationGrantStateModel | null;
   readonly executionReadiness: {
     readonly state:
       "enabled" | "disabled" | "unavailable" | "historical" | "draft-only";
@@ -946,14 +730,10 @@ export interface AutomationDefinitionModel {
   } | null;
   readonly draftState: AutomationDraftStateModel;
   readonly activeConfiguration: AutomationActiveConfigurationModel | null;
-  readonly grantEligibility: AutomationEligibilityModel | null;
   readonly actions: {
     readonly detail: AutomationActionModel;
     readonly occurrences: AutomationActionModel;
     readonly runOnce: AutomationActionModel;
-    readonly grantState: AutomationActionModel | null;
-    readonly grant: AutomationActionModel | null;
-    readonly revoke: AutomationActionModel | null;
     readonly copy: AutomationActionModel;
     readonly draftCreate: AutomationActionModel;
   };
@@ -995,18 +775,11 @@ export function normalizeAutomationDefinition(
       occurrence["outcomeSummary"],
       `${field}.occurrenceState.outcomeSummary`,
     ),
-    grant: withReadiness
-      ? null
-      : normalizeAutomationGrantState(
-          source["unattendedExecutionGrant"] ?? source["grant"],
-          `${field}.grant`,
-        ),
     draftState,
     activeConfiguration: normalizeAutomationActiveConfiguration(
       source["activeConfiguration"],
       `${field}.activeConfiguration`,
     ),
-    grantEligibility: null,
     executionReadiness: withReadiness
       ? (() => {
           const readiness = readRecord(
@@ -1045,30 +818,6 @@ export function normalizeAutomationDefinition(
         "definition-run-once",
         identity,
       ),
-      grantState: withReadiness
-        ? null
-        : normalizeAutomationAction(
-            actions["grantState"],
-            `${field}.actions.grantState`,
-            "definition-grant-state",
-            identity,
-          ),
-      grant: withReadiness
-        ? null
-        : normalizeAutomationAction(
-            actions["grant"],
-            `${field}.actions.grant`,
-            "definition-grant",
-            identity,
-          ),
-      revoke: withReadiness
-        ? null
-        : normalizeAutomationAction(
-            actions["revoke"],
-            `${field}.actions.revoke`,
-            "definition-revoke",
-            identity,
-          ),
       copy: normalizeAutomationAction(
         actions["copy"],
         `${field}.actions.copy`,
@@ -1266,13 +1015,10 @@ export interface AutomationPreviewModel {
   readonly current: boolean;
   readonly staleReason: string | null;
   readonly truncated: boolean;
-  readonly grantEligibility: AutomationEligibilityModel | null;
   readonly actions: {
     readonly detail: AutomationActionModel;
     readonly items: AutomationActionModel;
     readonly definition: AutomationActionModel;
-    readonly grantState: AutomationActionModel;
-    readonly grant: AutomationActionModel;
   };
 }
 
@@ -1324,10 +1070,6 @@ export function normalizeAutomationPreview(
     current: flag(source, "current"),
     staleReason: optionalText(source, "staleReason"),
     truncated: flag(source, "truncated"),
-    grantEligibility: normalizeAutomationEligibility(
-      source["grantEligibility"],
-      `${field}.grantEligibility`,
-    ),
     actions: {
       detail: normalizeAutomationAction(
         actions["detail"],
@@ -1347,18 +1089,6 @@ export function normalizeAutomationPreview(
         actions["definition"],
         `${field}.actions.definition`,
         "preview-definition",
-        definitionId,
-      ),
-      grantState: normalizeAutomationAction(
-        actions["grantState"],
-        `${field}.actions.grantState`,
-        "preview-grant-state",
-        definitionId,
-      ),
-      grant: normalizeAutomationAction(
-        actions["grant"],
-        `${field}.actions.grant`,
-        "preview-grant",
         definitionId,
       ),
     },

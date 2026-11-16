@@ -483,7 +483,6 @@ class RunOnceApiTests(unittest.TestCase):
         snapshot = SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
-            (),
             100,
             definitions,
             active.version,
@@ -492,7 +491,6 @@ class RunOnceApiTests(unittest.TestCase):
         )
         return IntervalScheduler(
             value.repository,
-            (),
             configuration_snapshot_resolver=lambda: snapshot,
         )
 
@@ -545,7 +543,7 @@ class RunOnceApiTests(unittest.TestCase):
             provider_factory=provider_factory,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=value.api._unattended_grants,
+            execution_authority=value.api._automation_execution_authority,
         )
 
     def execute(self, value):
@@ -716,7 +714,6 @@ class RunOnceApiTests(unittest.TestCase):
                 return (
                     len(value.repository.list_tasks()),
                     len(()),
-                    len(value.repository.list_unattended_execution_grants()),
                     len(value.discovery.list()),
                     value.managed.active().revision_id,
                 )
@@ -793,7 +790,6 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
             self.assertEqual(before.revision_id, value.managed.active().revision_id)
             self.assertIsNone(value.repository.get_automation_definition_due_state("nightly"))
-            self.assertEqual((), value.repository.list_unattended_execution_grants())
             self.assertEqual((), value.discovery.list())
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(0, len(()))
@@ -2335,7 +2331,6 @@ class RunOnceApiTests(unittest.TestCase):
             snapshot = SchedulerConfigurationSnapshot(
                 active.revision_id,
                 active.digest,
-                (),
                 100,
                 (definition,),
                 version,
@@ -2344,7 +2339,6 @@ class RunOnceApiTests(unittest.TestCase):
             )
             emitted = IntervalScheduler(
                 value.repository,
-                (),
                 configuration_snapshot_resolver=lambda: snapshot,
                 scheduling_service=scheduling,
             ).tick(value.clock.now)
@@ -2898,7 +2892,6 @@ class RunOnceApiTests(unittest.TestCase):
             snapshot = SchedulerConfigurationSnapshot(
                 active.revision_id,
                 active.digest,
-                (),
                 100,
                 (definition,),
                 version,
@@ -2907,7 +2900,6 @@ class RunOnceApiTests(unittest.TestCase):
             )
             scheduler = IntervalScheduler(
                 value.repository,
-                (),
                 configuration_snapshot_resolver=lambda: snapshot,
                 scheduling_service=scheduling,
             )
@@ -2939,7 +2931,7 @@ class RunOnceApiTests(unittest.TestCase):
                 provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
                 strategy_factory=strategy_runner_from_configuration,
                 history_factory=JsonLinesOperationHistoryRepository,
-                unattended_grant_service=value.api._unattended_grants,
+                execution_authority=value.api._automation_execution_authority,
             )
 
             def runner(task, claim, clock=None, heartbeat=None):
@@ -3023,7 +3015,6 @@ class RunOnceApiTests(unittest.TestCase):
             snapshot = SchedulerConfigurationSnapshot(
                 active.revision_id,
                 active.digest,
-                (),
                 100,
                 (definition,),
                 version,
@@ -3032,7 +3023,6 @@ class RunOnceApiTests(unittest.TestCase):
             )
             emitted = IntervalScheduler(
                 value.repository,
-                (),
                 configuration_snapshot_resolver=lambda: snapshot,
                 scheduling_service=scheduling,
             ).tick(value.clock.now)
@@ -3062,7 +3052,7 @@ class RunOnceApiTests(unittest.TestCase):
                 provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
                 strategy_factory=strategy_runner_from_configuration,
                 history_factory=JsonLinesOperationHistoryRepository,
-                unattended_grant_service=value.api._unattended_grants,
+                execution_authority=value.api._automation_execution_authority,
             )
 
             def runner(task, claim, clock=None, heartbeat=None):
@@ -3120,7 +3110,6 @@ class RunOnceApiTests(unittest.TestCase):
         snapshot = SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
-            (),
             100,
             (definition,),
             version,
@@ -3129,7 +3118,6 @@ class RunOnceApiTests(unittest.TestCase):
         )
         emitted = IntervalScheduler(
             value.repository,
-            (),
             configuration_snapshot_resolver=lambda: snapshot,
             scheduling_service=scheduling,
         ).tick(value.clock.now)
@@ -3156,7 +3144,7 @@ class RunOnceApiTests(unittest.TestCase):
             provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=value.api._unattended_grants,
+            execution_authority=value.api._automation_execution_authority,
         )
 
         def runner(task, claim, clock=None, heartbeat=None):
@@ -3329,76 +3317,6 @@ class RunOnceApiTests(unittest.TestCase):
             (kept,) = value.repository.list_results(task_id)
             self.assertEqual(result, kept)
             self.assertIsNone(value.repository.get_task_scheduling(task_id).mutation_state)
-
-    def test_legacy_interval_and_cron_schedules_run_as_kernel_tasks(self) -> None:
-        from mediaflow.application.automation import IntervalScheduler
-        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
-        from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.domain.automation import (
-            AutomationCommand,
-            CronSchedule,
-            IntervalSchedule,
-        )
-        from mediaflow.final_cli import _automatic_task_runner
-        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
-
-        (self.source_root / "Empty").mkdir()
-        with self.journey(definitions=[]) as value:
-            scheduling = TaskSchedulingService(value.repository, capacity=10)
-            scheduler = IntervalScheduler(
-                value.repository,
-                (
-                    IntervalSchedule("legacy-interval", AutomationCommand.ORGANIZE, 60, 5),
-                    CronSchedule("legacy-cron", AutomationCommand.ORGANIZE, "* * * * *", "UTC", 5),
-                ),
-                scheduling_service=scheduling,
-            )
-            # The first tick initializes both due states and may emit the
-            # interval; one minute later both a legacy interval and a
-            # timezone-aware Cron occurrence are due.
-            emitted = list(scheduler.tick(self.clock.now))
-            self.clock.advance(60)
-            emitted.extend(scheduler.tick(self.clock.now))
-            names = {
-                value.repository.get_run_display_context(item.task_id).origin_definition_name
-                for item in emitted
-            }
-            self.assertEqual({"legacy-interval", "legacy-cron"}, names)
-            self.assertFalse(hasattr(value.repository, "list_jobs"))
-            for item in emitted:
-                self.assertEqual(
-                    "legacy-schedule",
-                    value.repository.get_run_display_context(item.task_id).origin_kind,
-                )
-                self.assertIsNotNone(value.repository.get_task_scheduling(item.task_id))
-            value.repository.register_worker(
-                "legacy-worker",
-                "legacy worker",
-                5.0,
-                ("organize",),
-                None,
-                None,
-                SCHEMA_VERSION,
-                self.clock.now,
-            )
-            runner = _automatic_task_runner(value.repository, None, scheduling)
-            worker = ManualTaskEngineWorker(
-                value.repository,
-                scheduling,
-                None,
-                None,
-                worker_id="legacy-worker",
-                clock=self.clock,
-                automatic_runner=runner,
-            )
-            with patch("mediaflow.final_cli._configuration", return_value=value.runtime):
-                for _ in emitted:
-                    worker.run_next()
-            for item in emitted:
-                task = value.repository.get_task(item.task_id)
-                self.assertEqual("completed", task.status.value)
-                self.assertEqual(0, task.total_items)
-            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
     def test_repeated_storage_cursor_cannot_be_reported_as_empty_scope(self):
         from mediaflow.domain.storage import StoragePage
