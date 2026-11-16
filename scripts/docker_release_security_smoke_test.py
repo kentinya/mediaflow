@@ -885,7 +885,7 @@ def assert_v2_manual_organize(
 
     source = source_root / "Release Manual Organize.2001.mkv"
     source.write_bytes(b"release-security-manual-organize" * 8)
-    # A second source that stays deliberately un-seeded: no durable Result grounds
+    # A second source that stays deliberately un-seeded: no captured evidence grounds
     # a metadata identity for it, so it carries the fail-closed legs below.
     unseeded = source_root / "Release Fail Closed.2001.mkv"
     unseeded.write_bytes(b"release-security-fail-closed" * 8)
@@ -899,14 +899,26 @@ def assert_v2_manual_organize(
     if status != 404 or refused.get("error", {}).get("code") != "not_found":
         raise RuntimeError("unknown Scan route did not return ordinary not-found")
     # The isolated release harness has no live Provider. Seed only a bounded,
-    # source-linked dry-run Result so the normal API intent authority can use
+    # source-linked metadata evidence so the normal API intent authority can use
     # an already reviewed identity without contacting an external service.
     seed = r"""
 from datetime import UTC, datetime
+from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence
 from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
 with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
+    repository.append_evidence(PipelineEvidence(
+        evidence_id="release-manual-evidence", task_id="release-manual-task",
+        item_id="release-manual-item", attempts=1,
+        source_storage_id="source-storage", source_path="Release Manual Organize.2001.mkv",
+        captured_at=datetime.now(UTC), configuration_snapshot_id=None,
+        configuration_snapshot_digest=None, outcome="planned",
+        sections={"metadata": EvidenceSection(True, value={
+            "provider": "tmdb", "providerId": "603", "mediaType": "movie",
+            "title": "Release Manual Organize",
+        })},
+    ))
     repository.append_result(PersistentResultRecord(
         "release-manual-result", "release-manual-task", "release-manual-item",
         "source-storage", "Release Manual Organize.2001.mkv", "media-target",
@@ -985,7 +997,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
         raise RuntimeError("manual Organize Preview omitted the selected item")
     if preview_item.get("status") != "previewed":
         # The pinned MetadataPolicy is offline (`mediaQueryType=none`) and the
-        # Choice identity is grounded in the source-linked dry-run Result seeded
+        # Choice identity is grounded in the source-linked metadata evidence seeded
         # above, so this isolated harness must reach the real success path with
         # no network and no TMDB credential.  A Provider failure here is a hard
         # regression, never an accepted outcome.
@@ -1057,7 +1069,7 @@ def assert_manual_organize_fails_closed(
     instead of being relabeled as success.
     """
 
-    # The source-linked dry-run Result legitimately grounds provider id 603, so an
+    # The captured source-linked evidence legitimately grounds provider id 603, so an
     # invented identity must remain unverified at Choice admission.
     status, intent = json_request(
         base,
