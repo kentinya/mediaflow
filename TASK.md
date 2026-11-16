@@ -1,6 +1,6 @@
 # Task55.2 — 自动化只依赖当前定义、发布意图与 Task
 
-Next Action: B REVIEWS TASK55.2 IMPLEMENTATION CANDIDATE (READY FOR B REVIEW)。
+Next Action: DEVELOPER FIXES TASK55.2 — SAME TASK FIX LOOP。
 
 Task55.1 已由 B 独立复核 PASS：
 `d62436be6f5848329a628356c13fdb28e760239a..f4336e431e27a76af372f9d23fe1896838e8cbd8`。
@@ -17,7 +17,7 @@ Task 实施。本次只激活，不启动其他角色或实施产品变更。
 Task ID: 55.2
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: ebec19bb7592306980a4f288c78378b264f3321f
 Difficulty: High
 Test Level: T4
@@ -329,3 +329,134 @@ Initial workspace: clean (tracked/untracked)
 本轮规划检查：治理与 whitespace PASS；仅 TASK.md 变化，2项现有测试通过（0.161秒），
 连同 CLI help 和文档检查不足1秒，低于本轮代码／合同核对及规划总耗时的50%。
 未运行产品全量／原生／Docker门禁，未将规划检查记为产品验收。
+
+
+## B Review — FIX REQUIRED（2026-11-17）
+
+```text
+Task Base: ebec19bb7592306980a4f288c78378b264f3321f
+Developer implementation: 7d57bf721c127a6882464b68faec2bfd767aefe9
+Developer handoff: ea27144f0a6c6b36e4a79ba9e7b8496e10a59101
+Reviewed complete range: ebec19bb7592306980a4f288c78378b264f3321f..03a6df37f4f3fec71ce3c540628581429ce86a48
+B acceptance-consumer checkpoint: 03a6df37f4f3fec71ce3c540628581429ce86a48
+Decision: FIX REQUIRED
+Task blockers: B55.2-01, B55.2-02
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+Evidence: .git/validation-evidence/ea27144f/task55.2-b/ (local, ignored)
+```
+
+初始现场 main／ea27144f，tracked／untracked 干净，治理 PASS。B 检查完整实现、删除与
+消费者差异，并独立执行以下验收。03a6df37 只修正六个测试消费者，没有修改产品实现。
+原失败日志保留，不把缺失证据或测试消费者问题转为产品缺陷。
+
+### 已验证的交付结果
+
+- 用户从“自动化 → 新建／编辑”创建并启用、保存启停／副本／删除，列表 Run once，
+  原 Task 决策／分析／精确摘要／显式续作、成功兄弟保留、重启与原请求核对均有真实
+  Python／SQLite／Worker／浏览器实证；没有增加独立 grant 步骤。
+- 正常当前配置／管理员下，旧 schedules 查询和 grant 表面已从注册移除；当前定义
+  interval／Cron／timezone、原子 due admission、发布者／实时权限及逐效果检查保持。
+- 用 Slice Base 的真实源码和现有 V2 API／Worker 夹具建立一份正常配置（含系统空槽）、
+  一项已完成结果、一个丢响应后待执行的 Run once，以及一个待执行 due Task。由候选
+  重开后，原 revision／digest／IDs／pins／已完成 Result 一致；GET 原 request 查回同一
+  Task，未新增请求；两个待执行 Task 正常完成，已完成兄弟未重放，Active digest 未变。
+  具体输入和结果保留在 base-continuity.py／manifest／log；这是本地验收证据，不是
+  产品迁移工具，未纳入源码。
+- 新库实测不再创建四张 schedules／grant 专属表，当前 Task／scheduling／definition
+  due／occurrences 结构完整；Base 库的原表保留，未通过 DROP 或删历史实现退役。
+
+这些结果支持当前旅程继续使用；下列退出与断言保留义务尚未完成，因此本 Task 不能 PASS。
+
+### B55.2-01 — P1：旧 schedules 专属执行链路仍随 Worker 和 wheel 交付
+
+**依据与位置：** Task Implementation Scope 第1／2／6步、AC-10，Slice RO-2／RO-6。
+`final_cli.py` 的 `_automatic_task_runner` 仍按 `origin_kind == "legacy-schedule"`
+调用 `DefinitionScopedExecutionService.run_legacy_schedule`；后者仍为没有当前定义的旧
+interval／Cron occurrence 枚举全部 ResourceLibrary 并 `execute=True`。它不是当前
+Enabled／Run once 的 authority 检查链路。
+
+B 检查本轮构建的 `mediaflow-2.0.0.dev0-py3-none-any.whl`，两段实现确实均在交付物中，
+记录见 legacy-schedule-artifact.json。此项是约定的专属源码／执行分派退役未完成，
+不以构造数据库行或不存在的 API 来声称发现一次运行中的越权。
+
+**Developer 修正指导：**
+
+1. 删除该 Worker 分派及 `run_legacy_schedule` 专用实现／依赖／说明；保留当前
+   definition due／Run once、同 Task 续作与本 Task 之外的 direct-organize 路径。
+2. 保留历史原记录、合法当前 V2 Task／pins／Results；不为旧 schedule 加转换、接管、
+   专门退休处理或替代执行器。“原 pin 保留”不能使已退役调度产品重新获得执行职责。
+3. 同一次删除清理 `pagination.py` 的 schedule_audit kinds，以及 service_api.py
+   `_page_cursor` 的 schedule_audit 专属映射／时间分支；它们已没有当前生产者，属于
+   本 Task 已明确列出的旧 schedules 接线，不扩大到其他分页／schema／恢复清理。
+4. 在干净 wheel／源码外安装中核对旧执行器和分派已消失，同时保留当前 due／Run once
+   与存量正常 V2 原 pins 继续使用的现有断言。无需增加新入口或通用扫描工具。
+
+### B55.2-02 — P1：删除 grant 时连带删掉了当前业务断言
+
+**依据与位置：** Task Implementation Scope 第6步、AC-10，Slice RO-6／AC-12。
+`tests/test_v2_automation_operations.py` 的整段删除不仅退出了 grant 正向支持，还删除了
+以下仍有当前产品职责的测试，未在本轮给出对应断言的保留位置：
+
+- `test_operator_list_and_detail_are_bounded_and_permission_aware`：当前列表／详情的范围、
+  权限、只读与脱敏；仅其 grant 部分应退出。
+- `test_metrics_embedded_reads_and_failure_share_the_evaluated_basis`：独立统计、列表内统计
+  与 viewer 使用同一完整总体；真实读取失败显示 unavailable，而不是空值或成功率0。
+- `test_draft_journey_composes_existing_routes_atomically`、
+  `test_definition_mutations_are_permission_bound`：现有配置草稿／检查／显式激活、并发
+  拒绝和管理／只读权限；本 Task 没有退出这些仍注册的配置表面。
+- `test_retired_automation_preview_routes_are_ordinary_not_found`：已接受的 Preview 退出
+  反证，不是 grant 正向支持。
+
+B 在隔离的 Slice Base 真源码执行 metrics 那项原测试，**1 test OK，0.083秒**；并核对
+当前测试没有原来的独立／嵌入统计读失败配对断言。不能以总测试数或其他正常统计用例
+替代被删的这个具体结果。
+
+**Developer 修正指导：** 恢复上述测试的当前断言，或在对应现有当前用例中完整保留并
+注明位置；仅移除 grant CRUD／eligibility 和专属旧字段的断言。使用当前真实注册入口、
+当前定义／权限夹具，不恢复旧 grant 模型／route，也不新增通用测试框架。保留读取失败、
+无权限、并发冲突、零效果和退休不存在的原业务断言，不改成只测 HTTP200／按钮存在。
+
+### 实际验收与未执行项
+
+- 指定 Python affected：**180 tests OK，37.083秒**。
+- Python full：**2622 tests，1 failure／3 errors／7 skipped，349.908秒**，原结果保留在
+  python-full.log。四项均是遗漏同步的旧 schedules 夹具／字段／binding 参数；B 已在
+  03a6df37 同步为当前定义／无旧字段／当前签名，三个完整受影响模块 **56 tests OK，
+  3.031秒**（python-consumers.log）。未将最初失败的全量日志改称全绿。修正候选的
+  后续完整 T4 验收仍由 B 完成。
+- Web unit：**103文件／1653 passed，158.19秒**。Node E2E：**285 passed，3.5分钟**。
+  typecheck／ESLint／Prettier、Python Ruff format/check／compileall／pip check、两份
+  示例验证、无 FFmpeg／FFprobe、治理和 whitespace 均通过。
+- 原生自动化第一轮 **42 passed／10 failed**；B 核对了真实链接与页面：两个 helper 把
+  `?run=<Task ID>` 错读为路径末段，过滤用例混入前一用例刻意保留的 enabled Draft。
+  纠正后又发现技术失败用例仍要求已退出的恢复说明块，以及慢读 handler 移除时尚未
+  完成。B 将其接到当前“条目证据／处理结果／需处理原因”并等待该 handler 完成，
+  保留具体失败／源与成功兄弟／原结果／无重试／非重放断言，未加 retry／放宽 timeout。
+  第二轮 **49 passed／3 failed** 和最终 **52 passed，1.5分钟** 均保留原日志。
+- 当前 Task Center／actions 两个完整 native spec：**54 passed，2.0分钟**，没有与会
+  修改容量的 settings spec 共用运行库。settings 的独立 native 验收尚未执行。
+- wheel build／源码外 wheel smoke PASS；精确 wheel SHA-256 为
+  `608acaffbae84604a1ec60e03f890bbcbf0cfd63eadfa0c98e82791cab0e04e6`。
+  该 wheel 的旧 schedule 执行器存在已另存实证，wheel smoke 通过不代表完整退出通过。
+  第一次 smoke 误填了不存在的0.1.0文件名，实际2.0.0.dev0 wheel 随后执行成功；失败
+  命令记录保留在 wheel-smoke.log。
+- Docker smoke 在 compose bind 阶段拒绝，原因是本轮 TMPDIR 不在已有 Colima mount
+  中；不是产品拒绝／执行失败。已查明现有 mount 是
+  `.git/validation-evidence/cf680df6/b-final/docker-tmp`，临时栈由脚本清理，无遗留容器。
+  因已有本 Task 阻塞，没有继续重跑镜像门禁；restart／release-security 未执行。
+  Docker／settings／修正候选完整门禁继续由 B 负责，不作为 Developer 产品返工项。
+
+证据均在本地忽略目录，未上传 CI；没有操作用户媒体／运行库、推送、发布或部署。
+本轮并行测试／构建墙钟区间合并约11.6分钟，原失败与重跑均计入；静态检查主要重叠于
+这些区间，合计低于12分钟。完整代码／合同审查、结果核对与记录使本轮总耗时超过
+24分钟，测试时间小于50%；区间见 test-timing.txt。本轮未给出 Slice Closure Packet，
+也没有规划新 Task。
+
+### 全部 Slice 结果重评
+
+RO-1 保持55.1已接受结果；RO-2 的 schedules／grant 主要入口已退出，但本 Task 旧
+schedule 执行链路仍未退出，remote tickets／全局旧恢复／非内核路径仍待后续授权工作。
+RO-3 的严格 bootstrap／其他纯迁移配置、RO-4 的 flow／迁移／旧结构、RO-5 的 session／
+其他协议清理尚未完成；RO-6 本 Task 尚缺专属源码退出和当前断言保留，最终包／镜像
+门禁也未完整通过。Slice55 保持 ACTIVE；修正留在55.2，原 Base／Goal／Scope 不变。
