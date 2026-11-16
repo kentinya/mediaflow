@@ -1,6 +1,6 @@
 # Task55.2 — 自动化只依赖当前定义、发布意图与 Task
 
-Next Action: DEVELOPER FIXES TASK55.2 — SAME TASK FIX LOOP。
+Next Action: B REVIEWS TASK55.2 FIX CANDIDATE (READY FOR B REVIEW, SAME TASK FIX LOOP)。
 
 Task55.1 已由 B 独立复核 PASS：
 `d62436be6f5848329a628356c13fdb28e760239a..f4336e431e27a76af372f9d23fe1896838e8cbd8`。
@@ -17,7 +17,7 @@ Task 实施。本次只激活，不启动其他角色或实施产品变更。
 Task ID: 55.2
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: ebec19bb7592306980a4f288c78378b264f3321f
 Difficulty: High
 Test Level: T4
@@ -460,3 +460,95 @@ schedule 执行链路仍未退出，remote tickets／全局旧恢复／非内核
 RO-3 的严格 bootstrap／其他纯迁移配置、RO-4 的 flow／迁移／旧结构、RO-5 的 session／
 其他协议清理尚未完成；RO-6 本 Task 尚缺专属源码退出和当前断言保留，最终包／镜像
 门禁也未完整通过。Slice55 保持 ACTIVE；修正留在55.2，原 Base／Goal／Scope 不变。
+
+## Developer 修正交接 — 2026-11-17，READY FOR B REVIEW
+
+```text
+Task Base: ebec19bb7592306980a4f288c78378b264f3321f
+Fix checkpoint: 609cebc6 (product + tests)
+Fix candidate HEAD: this documentation checkpoint
+Branch: main
+Initial workspace: clean (tracked/untracked)
+B fix findings addressed: B55.2-01, B55.2-02
+```
+
+本轮只修正 B55.2-01／B55.2-02，未扩大 Task 范围，未改 Base／Goal／Scope／验收，
+未恢复旧 schedules／grant 产品或新增入口。
+
+### B55.2-01 — 旧 schedules 执行链路退出
+
+- `mediaflow/final_cli.py` `_automatic_task_runner` 删除 `origin_kind ==
+  "legacy-schedule"` 分派。保留当前 definition due／Run once、同 Task 续作和
+  direct-organize／remote-organize 路径。
+- `mediaflow/application/automation_definition_execution.py` 删除
+  `DefinitionScopedExecutionService.run_legacy_schedule` 及其专用流程；其使用的
+  `MediaOrganizerService`／`OrganizerExecutor` 能力仍由当前 definition 和
+  direct-organize 路径使用。
+- `mediaflow/interfaces/pagination.py` 删除 `schedule_audit` 的 kinds／scoped kinds；
+  `mediaflow/interfaces/service_api.py` `_page_cursor` 删除 `schedule_audit` 专属
+  `audit_id` 映射及 `emitted_at` 分支。其他分页、恢复、schema 未动。
+- 未对历史旧 schedule 记录做转换、接管或专门退休处理；原记录／当前合法 V2
+  Task／pins／Results 未删。没有 TaskItems 的旧 `legacy-schedule` Task 不再
+  获得旧执行器，按缺少当前 definition origin fail closed；已有 TaskItems 的
+  Task 仍按同 Task 续作边界处理。
+
+### B55.2-02 — 当前业务断言恢复
+
+`tests/test_v2_automation_operations.py` 恢复以下用例，使用当前真实注册入口和现有
+定义／权限夹具；只删除 grant CRUD／eligibility 与旧专属字段的断言：
+
+- `test_operator_list_and_detail_are_bounded_and_permission_aware`：列表／详情的
+  范围、Active 投影、只读 viewer 的 Run once／create／createDraft 不可用、脱敏；
+  保留 retired preview／grant action 不广告的反证，删除共享分析前置和 grant 字段。
+- `test_metrics_embedded_reads_and_failure_share_the_evaluated_basis`：独立统计、
+  列表嵌入统计、viewer 同一总体、非法参数拒绝，以及读取失败显示 unavailable。
+- `test_draft_journey_composes_existing_routes_atomically`：创建 Draft、保存版本
+  冲突、检查、显式激活、重复激活拒绝、激活后详情。
+- `test_definition_mutations_are_permission_bound`：manager 可保存、viewer 保存
+  403、viewer Draft 动作不可用。
+- `test_retired_automation_preview_routes_are_ordinary_not_found`：原 Preview
+  路由按普通未知路由处理，不产生 Preview／Task／Storage 证据。
+- 另修正该文件模块说明和 `_run_shared_analysis` 说明中的 grant／Preview 旧措辞；
+  未恢复旧 grant 模型／route，未新增测试框架。
+
+### 实际验证（本轮）
+
+- `.venv/bin/python -m unittest tests.test_v2_automation_operations`：
+  **19 tests OK，7.885秒**（含恢复的 5 项当前断言）。
+- Task 指定 affected：
+  `.venv/bin/python -m unittest tests.test_cron_scheduler
+  tests.test_automation_execution_intent tests.test_automation_definition_occurrence
+  tests.test_automation_task_admission tests.test_v2_automation_lifecycle
+  tests.test_automation_run_once tests.test_v2_automation_run_once
+  tests.test_automation_authorized_execution_matrix`：**180 tests OK，36.502秒**。
+- 直接受影响扩展：
+  `tests.test_automation_entrance_recovery tests.test_task_source_ownership_race
+  tests.test_task_item_metadata_search tests.test_organize_source_history
+  tests.test_operations_task_center tests.test_operational_logging
+  tests.test_processing_worker_readiness tests.test_automation_definition_publication`：
+  **154 tests OK，26.488秒**。
+- `.venv/bin/python -m compileall -q mediaflow tests` PASS；变更 Python 文件
+  `ruff format --check`／`ruff check` PASS；`python3 scripts/check_governance.py`
+  PASS；`git diff --check` PASS。
+- 从 `git archive 609cebc6` 的干净源码目录构建 wheel：
+  `mediaflow-2.0.0.dev0-py3-none-any.whl`，SHA-256
+  `44566072325a3cedc5878dbc4b93f146dfeb232bde70d6e17d61cea0cc73dd49`。
+  解包核对 `mediaflow/final_cli.py`、`automation_definition_execution.py`、
+  `pagination.py`、`service_api.py`：无 `run_legacy_schedule`、无
+  `legacy-schedule` 分派、无 `schedule_audit` 分页接线。
+- `scripts/wheel_manifest_check.py`：`byte_equality_proven: true`，174 条目，
+  `only_in_candidate`／`only_in_clean` 均为空。
+- `scripts/wheel_smoke_test.py` 对该 wheel：PASS；隔离 venv 源码外安装，
+  schema 58，backup／verify／Automation consumer 加载完成。
+
+### 剩余风险／未执行（B 按 T4 执行）
+
+- 未运行全量 Python／Web／Node E2E、四服务 Docker、restart／release-security／
+  upgrade-recovery；这些仍由 B 的修正候选 T4 门禁完成。
+- Base 既有正常 V2 库中的旧表历史行、原 Task／pins／Results 及跨版本继续读取
+  由 B 验收第 2 步核对；本轮未修改 schema 身份，未自动 DROP／删行。
+- 未推送、未发布、未操作用户媒体或运行库。
+
+本轮测试／构建墙钟合计约 1.5 分钟（19 项 7.9 秒、180 项 36.5 秒、154 项
+26.5 秒、clean wheel 构建＋smoke＋manifest 约 10 秒、静态检查数秒），低于本轮
+从开始到交接总耗时（约 20 分钟）的 30%。未将未执行门禁写成通过。
