@@ -230,7 +230,7 @@ pause_requested／迁移／旧结构；RO-5仍有 Copy／Run once 旧 session �
 
 ```text
 Task Base: ebec19bb7592306980a4f288c78378b264f3321f
-Candidate / reviewed Head: <filled by checkpoint commit SHA>
+Implementation candidate: 7d57bf72 (the product checkpoint above this handoff record)
 Branch: main
 Initial workspace: clean (tracked/untracked)
 ```
