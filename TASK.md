@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER STARTS TASK55.3 IMPLEMENTATION。
+Next Action: DEVELOPER FIXES TASK55.3 B55.3-01–03；修正后提交 READY FOR B REVIEW。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -284,3 +284,123 @@ Task Base 保持 `b73c36353e5427cbe60fbb7c1b8cc85b139edca4`。
   due/Run once、四类恢复和普通文件覆盖由保留测试与全量回归承接。
 
 下一步由 B 独立审查 Base..本候选，给出 PASS 或 SAME TASK FIX REQUIRED。
+
+### B independent review — FIX REQUIRED（2026-11-17）
+
+复核范围：`b73c36353e5427cbe60fbb7c1b8cc85b139edca4..6d48fbdf38368ef2d91a1b3cbe0d31b1f934ce81`。
+现场 main、候选 HEAD 如上、初始工作区干净；治理 PASS。独立核对完整范围的
+75 文件清单、生产注册／composition／持久化／Web 消费者及测试删除的交付影响。
+本节是 B 的 Task 复核，不是 A 的 Slice 终审；原 Base、Goal、Scope、High/T4 不变。
+
+已确认票据 CLI／受理注册和两个常驻独立 Worker 的接线已退出；Files 与自动化的
+当前同 Task 摘要／确认在下述重点复核中通过。Task 尚未满足 AC-2/4/6/7，结论为
+**SAME TASK FIX REQUIRED**，没有新 Task，也没有 Slice 关闭。
+
+#### B55.3-01 / P1 — 新配置仍可发布退役的远程票据字段
+
+真实入口：管理员使用现有 `POST /api/v1/configuration/drafts` 导入正常示例文档，
+在 `api` 中加入 `remoteExecution: {enabled: true, maximumTtlSeconds: 900}`，随后
+调用该 revision 的 `validate`、`activate`。本候选实际返回 **201 draft → 200 validated
+→ 200 active**；不含旧字段的对照也正常完成。没有 Task 或媒体操作。
+`runtime_configuration.py:409–415` 对新输入和历史 pin 使用同一个宽松读取，设置表单
+的 `field_retired` 没有覆盖 JSON 导入／校验／激活。因此用户仍可把已删除功能的设置
+发布为 Active，与 AC-2 和 README 的“不能再次发布”相反。
+
+**Developer 指导：**
+
+1. 在现有配置写入／校验／发布链中拒绝新提交的 `api.remoteExecution`；覆盖 JSON
+   导入／编辑及已有 Draft 的发布，沿现有错误结构说明退役字段，不静默忽略。
+2. 将这一写入约束与已接受 immutable revision／合法 pin 的读取分开。历史原文、
+   ID／digest／pin 不改写；正常无此字段的新输入保持通过。当前 typed Save 从合法
+   历史 Active 派生 successor 的流程须一并核对，不能要求用户重建整份配置。
+3. 在 `test_execution_authorization.py`／`test_configuration_snapshot.py` 用上述已有
+   API 生命周期加入拒绝断言，确认无 Active 替换／Task／媒体效果；历史读取用真实
+   Base 建立的有效 V2 revision 验证。仅测 `validate_settings_edit` 不能证明本项。
+
+#### B55.3-02 / P1 — 新库仍初始化旧恢复子 Task 链，当前查询仍依赖它
+
+真实入口：创建普通隔离新库并完成上述正常配置生命周期，`sqlite_master` 中仍有
+**`recovery_continuations`、`metadata_correction_continuations`**。前者保留
+`new_task_id/new_result_id`、queued/running 索引，后者也是旧子 Task 链；当前源码已无
+它们的 INSERT 生产者。`sqlite_runtime.py:19407/19765` 仍建表，任务查询／统计／来源
+历史仍 JOIN 这些结构；`scope_continuation.py` 仍遍历旧 parent→child 链并读取已经
+不存在的 repository 接口。这不是“既有库历史不删除”：每个新实例仍安装这些结构。
+AC-4/6 要求的退出尚未完成，不能把本 Task 的专属结构推到全局 schema 后续 Task。
+
+**Developer 指导：**
+
+1. 删除这两条旧链在新库中的专属结构／索引及无生产者 reader、模型与查询分支；
+   将 Task Center、Automation 统计、来源历史和 checkpoint 的现行查询收敛到真实
+   同 Task item／attempt／request／preparation／execution 关系。
+2. 保留 `recovery_requests` 与当前 `manual_recovery_preparations` 的实际职责。
+   `AutomaticTaskContinuationService._publish_summary` 当前写入的 source/analysis
+   Task 都是原 Task，analysis_continuation_id 为空；其摘要 ID、确认和未知请求
+   回读必须继续有效。处理新 schema 中指向旧链的 FK 与纯旧关联，不整删共享摘要。
+3. `scope_continuation.py` 只留下真实当前消费者所需的同 Task 来源／效果资格计算；
+   删除旧子 Task ancestry／已无 repository reader 的分支。现存库历史原样保留，
+   当前读写不再要求旧链表；不新增迁移执行器。
+4. 用正常新库检查结构，再从现有 Files／due／Run once 入口完成决策→分析→摘要
+   →确认→原 Task，核对问题计数、统计、来源锁和结果；用 Base 真代码形成的当前
+   V2 待确认／恢复摘要由候选继续使用。全局 paused flow 清理仍属原明确后续边界。
+
+#### B55.3-03 / P1 — 当前功能／安全断言随整套旧测试被删除
+
+完整删除审查发现 `tests/test_media_discovery.py` 现在只剩 fixture，原当前 Files
+测试也被整段删除；不是全部都属于退休产品。例如 Base 的
+`test_real_stability_requires_an_elapsed_unchanged_observation`、
+`test_one_hundred_and_one_primary_items_cannot_yield_a_prefix`、
+`test_colon_named_directory_and_file_mixed_selections_admit_exact_plans` 和
+`test_a_colon_named_scope_reaches_one_real_confirmed_move` 验证的仍是本 Task AC-3/5/7
+保留旅程。`test_notifications.py` 也整删真实 Worker 终态到 outbox 的完成／取消／
+不重复发布断言。候选没有给出这些当前断言的等价接回；其余测试通过不能替代它们。
+本项是交付覆盖被削弱，不据此宣称这些产品行为已发生故障。
+
+**Developer 指导：** 按原用例的当前业务职责恢复或接入现有 Task 内核测试：Files
+有界文件夹的真实稳定间隔／101 项不执行前缀／含冒号目录与混选到精确确认和真实
+效果，以及当前受理→生产 Worker→终态通知一次发布／取消／reopen。纯票据、独立
+Worker、旧恢复链正向断言继续退出；对已有等价覆盖注明具体用例即可，不重复造测试。
+`tests/task_engine_test_helpers.py` 的 discovery helper 直接领取 discovery，execution
+helper 还会补写 scheduling／改 Task 状态；它们不能证明“真实入口只走 Task claim”。
+以上接回用例直接使用现有 Task admission 与 `ManualTaskEngineWorker`，不复制旧领取
+循环或再建通用测试平台。保留未受本 Task 改动影响的既有断言。
+
+#### 修正轮次测试与 B 剩余验收
+
+Developer 先跑新增／修改用例和以下直接受影响模块；如恢复用例放在其他既有模块，
+补跑该模块。沿用上文 Web affected 计划，不扩大为 Developer 全量门禁：
+
+```sh
+.venv/bin/python -m unittest tests.test_execution_authorization tests.test_configuration_snapshot tests.test_media_discovery tests.test_manual_task_engine tests.test_notifications tests.test_v2_automation_run_once
+.venv/bin/python scripts/check_governance.py
+git diff --check
+```
+
+B 本轮实测：
+
+- 配置 API 对照／含旧字段导入→校验→激活及新库结构：**复现上述两项阻塞**，
+  0.168 秒。原始脚本／日志在
+  `.git/validation-evidence/6d48fbdf/task55-3-b/reproduce.py` 与 `reproduce-entry.log`。
+  首次直接运行脚本缺 PYTHONPATH，导入失败；补 `PYTHONPATH=.` 后才得到上述产品结果，
+  原失败 `reproduce.log` 保留。
+- `.venv/bin/python -m unittest tests.test_execution_authorization`
+  加四个精确用例：`ManualTaskDiscoveryTests.test_confirmation_adopts_the_same_task_and_executes`、
+  `test_native_summary_is_confirmable_on_the_same_task_from_the_center`、
+  `test_continue_at_full_capacity_keeps_the_saved_decision_and_waits`（均在
+  `tests.test_manual_task_engine`），以及
+  `tests.test_v2_automation_run_once.RunOnceApiTests.test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`
+  → **11 tests OK，0 skipped，测试报告0.836秒／命令墙钟1.01秒**，见 `focused.log`。
+- `git diff --check b73c3635..6d48fbdf` → PASS。manifest 与生产 diff 留在同一忽略目录。
+- Developer 报告的 Python/Web 全量及五项原生 E2E 仍是其原报告，本轮未当作 B 已完成
+  验收。按工作流 §6，已证明阻塞后本轮提前 FIX REQUIRED；B 完整 T4、真实 Base V2
+  连续使用、其余原生浏览器／视觉、wheel／源码外安装和候选 Docker 门禁待修正候选，
+  不因本轮未跑而转为 Developer 的全量工作，也不记为 PASS。
+- 本轮已记录的复核区间从 2026-11-17 07:15:45（Asia/Shanghai）开始；产品测试命令
+  墙钟合计不足3秒，另有治理／whitespace 文档检查，测试占比小于50%。
+  07:20:39 完成报告检查：治理 PASS、`tests.test_release_security.ReleaseSecurityPolicyTests`
+  **8 tests OK（0.020秒）**、`git diff --check` PASS；本轮只修改 TASK.md。
+
+全部 Slice 结果重评：RO-1 沿用55.1 PASS；RO-2 沿用55.2 schedules/grant PASS，
+本55.3票据／内核收敛有实质进展，但上述三项未完成，V1 全局审核表面仍按原边界后续。
+RO-3 全局配置权威、RO-4 历史 flow／升级、RO-5 旧 session／协议仍未完成；
+RO-6 本单元的断言／产物一致性未验收。Slice55 保持 ACTIVE，不规划下一 Task，
+不修改 SLICE／Roadmap／Progress；下一步是 Developer 在同55.3修正后交回 B。
