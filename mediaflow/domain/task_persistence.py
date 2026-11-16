@@ -780,14 +780,6 @@ class PersistentTaskRepository(Protocol):
         self, storage_id: str, path: str, *, limit: int = 100
     ) -> tuple[ManualExecution, ...]: ...
     def update_manual_execution(self, execution: ManualExecution) -> None: ...
-    def claim_next_manual_execution(
-        self,
-        now: datetime,
-        *,
-        worker_id: str,
-        claim_token: str,
-        lease_seconds: float,
-    ) -> ManualExecution | None: ...
     def manual_execution_claim(self, execution_id: str) -> dict[str, object] | None: ...
     def begin_manual_execution(
         self, execution_id: str, claim_token: str, now: datetime

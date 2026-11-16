@@ -65,8 +65,6 @@ class RuntimeConfiguration:
     webhooks: tuple[WebhookDefinition, ...] = ()
     notification_poll_seconds: float = 5.0
     notification_delivery_lease_seconds: float = 300.0
-    remote_execution_enabled: bool = False
-    remote_execution_maximum_ttl_seconds: int = 900
     api_principals: tuple[ApiPrincipalDefinition, ...] = ()
     operational_logging_enabled: bool = False
     operational_logging_minimum_level: LogLevel = LogLevel.INFO
@@ -408,22 +406,13 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         raise ValueError("API principal IDs must be unique")
     if len(token_envs) != len(set(token_envs)):
         raise ValueError("API principal tokenEnv names must be unique")
-    remote_execution = api.get("remoteExecution", {})
-    if not isinstance(remote_execution, dict):
+    # Retired remote-execution ticket settings remain readable in an immutable
+    # historical document but never enable a ticket, a permission or an API
+    # submission again.  A malformed historical value is still not a document
+    # the runtime may reinterpret.
+    retired_remote_execution = api.get("remoteExecution")
+    if retired_remote_execution is not None and not isinstance(retired_remote_execution, dict):
         raise ValueError("API remoteExecution must be an object")
-    forbidden_remote_fields = {"token", "secret", "tokenEnv", "executionToken"}.intersection(
-        remote_execution
-    )
-    if forbidden_remote_fields:
-        raise ValueError(
-            f"API remoteExecution field {sorted(forbidden_remote_fields)[0]!r} is forbidden"
-        )
-    remote_execution_enabled = remote_execution.get("enabled", False)
-    if not isinstance(remote_execution_enabled, bool):
-        raise ValueError("API remoteExecution enabled must be boolean")
-    maximum_ttl = remote_execution.get("maximumTtlSeconds", 900)
-    if isinstance(maximum_ttl, bool) or not isinstance(maximum_ttl, int) or maximum_ttl < 1:
-        raise ValueError("API remoteExecution maximumTtlSeconds must be a positive integer")
     automation = document.get("automation", {})
     if not isinstance(automation, dict):
         raise ValueError("runtime configuration 'automation' must be an object")
@@ -555,8 +544,6 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         webhooks,
         notification_poll,
         notification_lease,
-        remote_execution_enabled,
-        maximum_ttl,
         api_principals,
         logging_enabled,
         logging_level,

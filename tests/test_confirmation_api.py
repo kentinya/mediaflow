@@ -52,7 +52,6 @@ def api_principals() -> tuple[ResolvedApiPrincipal, ...]:
                     ApiPermission.SUBMIT_DRY_RUN,
                     ApiPermission.CANCEL_JOB,
                     ApiPermission.RESOLVE_CONFIRMATION,
-                    ApiPermission.REMOTE_EXECUTE,
                 }
             ),
         ),

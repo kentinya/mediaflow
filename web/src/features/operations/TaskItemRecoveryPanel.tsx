@@ -15,7 +15,6 @@ import type {
   TaskItemDecisionKind,
 } from "../../entities/operations/task-item-recovery";
 import {
-  recoveryBatchQueryKey,
   runItemEvidenceQueryKey,
   runItemsQueryKey,
   taskItemRecoveryQueryKey,
@@ -550,9 +549,6 @@ export function TaskItemRecoveryPanel({
     });
     void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey, runId] });
     void queryClient.invalidateQueries({
-      queryKey: [recoveryBatchQueryKey, taskId],
-    });
-    void queryClient.invalidateQueries({
       queryKey: [runOverviewQueryKey, runId],
     });
     if (linkedDiscoveryId !== null) {
@@ -1051,7 +1047,6 @@ export function TaskItemRecoveryPanel({
     });
   };
 
-  const linked = model?.manualRecoveryLink ?? null;
   // Task Center RO-4 publishes a purely technical failure read-only.  Every
   // mutating affordance of this panel (a four-type decision form, the shared
   // save/analyse action, the batch/checkpoint next-step guidance and the
@@ -1067,8 +1062,7 @@ export function TaskItemRecoveryPanel({
     activePreparation === null &&
     model?.manualRecoveryAvailable === true &&
     model.manualRecoveryAnalysisReady &&
-    confirmedPreparation === null &&
-    (linked === null || linked.status === "stale");
+    confirmedPreparation === null;
   // The saved-decision fallback keeps the same save/analyse action for a
   // decision whose analysis was not admitted (a full shared queue), a failed
   // analysis, or a summary the backend requires re-analyzing.  When this exact
@@ -1450,8 +1444,7 @@ export function TaskItemRecoveryPanel({
   const hasLiveRecoveryAction =
     owesRecoveryAction ||
     activePreparation !== null ||
-    checkpoint?.continuationStatus === "completed" ||
-    linked !== null;
+    checkpoint?.continuationStatus === "completed";
   const hasSessionFeedback =
     busy ||
     pendingAction !== null ||
@@ -1745,17 +1738,6 @@ export function TaskItemRecoveryPanel({
               {busy ? "正在准备…" : "生成计划摘要并在此确认"}
             </button>
           </div>
-        </div>
-      )}
-      {linked && (
-        <div className="mf-count-section">
-          <h6>关联的整理恢复</h6>
-          <p>
-            状态：{linked.status}；分析 Task {linked.analysisTaskId}；Result{" "}
-            {linked.analysisResultId}。
-          </p>
-          <p>下一步：{linked.nextAction}</p>
-          {linked.executionId && <p>执行记录：{linked.executionId}</p>}
         </div>
       )}
     </section>

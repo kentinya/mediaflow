@@ -48,7 +48,6 @@ from mediaflow.application.direct_file_transfers import (
     DirectFileTransferService,
     durable_transfer_read_service,
 )
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.explore import ExploreService
 from mediaflow.application.library_file_operations import (
     LibraryFileOperationError,
@@ -122,7 +121,6 @@ from mediaflow.application.task_item_recovery import TaskItemRecoveryError, Task
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.automation import (
-    AutomationCommand,
     AutomationQueueFull,
     AutomationTaskDefinition,
     WorkerReadiness,
@@ -339,8 +337,6 @@ class _ApiRuntimeBinding:
     snapshot_id: str | None
     snapshot_digest: str | None
     maximum_active_jobs: int
-    execution_authorizations: ExecutionAuthorizationService
-    remote_execution_enabled: bool
     system_status: object | None
     metadata_policies: tuple
     files_browser: RuntimeFilesBrowserService | None = None
@@ -393,8 +389,6 @@ class MediaFlowApi:
         bearer_token: str | None,
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
-        remote_execution_enabled: bool = False,
-        remote_execution_maximum_ttl_seconds: int = 900,
         maximum_active_jobs: int | None = None,
         system_status=None,
         metadata_policies=(),
@@ -470,7 +464,6 @@ class MediaFlowApi:
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
                 ),
-                task_scheduling_enabled=True,
             )
         # Definition-bound Run once composes the existing bounded discovery, the
         # existing manual intent admission and the existing exact Preview.  It
@@ -726,8 +719,6 @@ class MediaFlowApi:
             snapshot_id=configuration_snapshot_id,
             snapshot_digest=configuration_snapshot_digest,
             maximum_active_jobs=100 if maximum_active_jobs is None else maximum_active_jobs,
-            remote_execution_enabled=remote_execution_enabled,
-            remote_execution_maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
             system_status=system_status,
             metadata_policies=tuple(metadata_policies),
         )
@@ -1565,17 +1556,6 @@ class MediaFlowApi:
             # durable error, a fingerprint value or a configured display root.
             operations_projection = True
             parts = ["api", "v1", *parts[3:]]
-        if (
-            len(parts) >= 3
-            and parts[:2] == ["api", "v1"]
-            and parts[2]
-            in {
-                "manual-organize",
-                "manual-organize-intents",
-            }
-        ):
-            # Keep the public route aliases on the same application semantics.
-            parts[2] = "manual-intents"
         # Unknown namespaces never resolve Active configuration or adapters.
         supported_roots = {
             "auth",
@@ -1587,11 +1567,9 @@ class MediaFlowApi:
             "files",
             "logs",
             "management",
-            "manual-execution-authorizations",
             "manual-executions",
             "manual-intents",
             "manual-previews",
-            "manual-recovery-links",
             "manual-recovery-preparations",
             "media-libraries",
             "metadata-corrections",
@@ -1600,7 +1578,6 @@ class MediaFlowApi:
             "operations",
             "recognition-reviews",
             "recovery",
-            "recovery-batches",
             "resource-libraries",
             "security-audit",
             "storage",
@@ -1844,9 +1821,6 @@ class MediaFlowApi:
             self._require_empty_query(environ, "task item recovery detail")
             value = self._task_item_recovery.detail(parts[3], parts[5])
             if self._manual_recovery is not None:
-                value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
-                    parts[3], parts[5]
-                )
                 value["manualRecoveryPreparation"] = (
                     self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
                 )
@@ -2232,9 +2206,6 @@ class MediaFlowApi:
             )
             recovery = self._task_item_recovery.detail(parts[3], parts[5])
             if self._manual_recovery is not None:
-                recovery["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
-                    parts[3], parts[5]
-                )
                 recovery["manualRecoveryPreparation"] = (
                     self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
                 )
@@ -6082,30 +6053,6 @@ class MediaFlowApi:
                     "scopeId": parts[3],
                 },
             )
-        if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6] == "metadata-correction-continuation"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "task item action")
-            return self._error(
-                start_response,
-                410,
-                "job_continuation_retired",
-                "the independent Job continuation was retired",
-                details={
-                    "durableState": "unchanged; no Job, Task or Result was created",
-                    "sideEffects": "none",
-                    "retrySafe": False,
-                    "nextAction": (
-                        "save the Metadata decision and continue the same Task through its "
-                        "Task item recovery action"
-                    ),
-                },
-            )
         if parts == ["api", "v1", "manual-previews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_previews is None:
@@ -6196,7 +6143,7 @@ class MediaFlowApi:
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
-            and parts[4] in {"manual-organize", "manual-intent"}
+            and parts[4] == "manual-intent"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
@@ -6339,151 +6286,6 @@ class MediaFlowApi:
             )
         if (
             len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-previews"]
-            and parts[4] == "authorize"
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution authorization")
-            document = self._document(environ)
-            allowed = {
-                "expectedVersion",
-                "expectedItemVersions",
-                "itemIds",
-                "snapshotId",
-                "snapshotDigest",
-                "confirmation",
-                "allowOverwrite",
-                "allowSourceCleanup",
-                "ttlSeconds",
-                "note",
-            }
-            if set(document).difference(allowed):
-                raise ValueError("manual execution authorization fields are invalid")
-            required = {"expectedVersion", "expectedItemVersions", "itemIds", "confirmation"}
-            if not required.issubset(document):
-                raise ValueError(
-                    "manual execution authorization requires expected versions, itemIds, "
-                    "and confirmation"
-                )
-            expected_version = document["expectedVersion"]
-            if (
-                isinstance(expected_version, bool)
-                or not isinstance(expected_version, int)
-                or expected_version < 1
-            ):
-                raise ValueError("manual execution expectedVersion must be a positive integer")
-            item_ids = document["itemIds"]
-            if not isinstance(item_ids, list):
-                raise ValueError("manual execution itemIds must be an array")
-            expected_item_versions = document["expectedItemVersions"]
-            if not isinstance(expected_item_versions, (dict, list)):
-                raise ValueError("manual execution expectedItemVersions must be an object or array")
-            for name in ("snapshotId", "snapshotDigest"):
-                if name in document and (
-                    not isinstance(document[name], str) or not document[name].strip()
-                ):
-                    raise ValueError(f"manual execution {name} must be a non-empty string")
-            if "confirmation" not in document or document["confirmation"] is not True:
-                raise ValueError("manual execution authorization requires confirmation=true")
-            authorization = self._manual_execution.authorize(
-                parts[3],
-                item_ids,
-                expected_intent_version=expected_version,
-                expected_item_versions=expected_item_versions,
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-                allow_overwrite=document.get("allowOverwrite", False),
-                allow_source_cleanup=document.get("allowSourceCleanup", False),
-                ttl_seconds=document.get("ttlSeconds"),
-                note=document.get("note"),
-            )
-            return self._response(
-                start_response,
-                201,
-                self._manual_execution.authorization_document(authorization.authorization_id),
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
-            and parts[4] in {"execute", "consume"}
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution")
-            document = self._document(environ)
-            if set(document) != {"confirmation"} or document["confirmation"] is not True:
-                raise ValueError("manual execution requires only confirmation=true")
-            execution = self._manual_execution.execute(
-                parts[3],
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-            )
-            return self._response(
-                start_response,
-                200,
-                self._manual_execution.document(execution.execution_id),
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-previews"]
-            and parts[4] == "execute"
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution")
-            document = self._document(environ)
-            if set(document) != {"authorizationId", "confirmation"}:
-                raise ValueError(
-                    "manual Preview execution requires authorizationId and confirmation"
-                )
-            if (
-                not isinstance(document["authorizationId"], str)
-                or not document["authorizationId"].strip()
-                or document["confirmation"] is not True
-            ):
-                raise ValueError("manual Preview execution requires confirmation=true")
-            authorization = self._manual_execution.get_authorization(document["authorizationId"])
-            if authorization.preview_id != parts[3]:
-                raise ValueError("manual execution authorization does not belong to this Preview")
-            execution = self._manual_execution.execute(
-                authorization.authorization_id,
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-            )
-            return self._response(
-                start_response,
-                200,
-                self._manual_execution.document(execution.execution_id),
-            )
-        if (
-            len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-executions"]
             and parts[4] == "reconcile"
             and method == "POST"
@@ -6510,25 +6312,6 @@ class MediaFlowApi:
                 start_response,
                 200,
                 self._manual_execution.document(execution.execution_id),
-            )
-        if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution authorization detail")
-            return self._response(
-                start_response,
-                200,
-                self._manual_execution.authorization_document(parts[3]),
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-executions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -6868,40 +6651,6 @@ class MediaFlowApi:
             )
         if method == "GET":
             self._require(principal, ApiPermission.READ)
-        if parts == ["api", "v1", "tasks"] and method == "POST":
-            self._require(principal, ApiPermission.REMOTE_EXECUTE)
-            self._require_empty_query(environ, "remote organize submission")
-            document = self._document(environ)
-            if not binding.remote_execution_enabled:
-                raise ValueError("remote execution is disabled")
-            if document.get("command") != AutomationCommand.ORGANIZE.value:
-                raise ValueError("remote Task submission supports only command organize")
-            if document.get("execute") is not True:
-                raise ValueError("remote organize requires execute=true")
-            unsupported = set(document).difference({"command", "execute", "limit"})
-            if unsupported:
-                raise ValueError(f"unsupported remote organize field {sorted(unsupported)[0]!r}")
-            token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
-            submission = binding.execution_authorizations.submit_organize(
-                token, limit=document.get("limit")
-            )
-            admitted_task = submission.task
-            return self._response(
-                start_response,
-                202,
-                redact_manual_value(
-                    {
-                        "taskId": admitted_task.task_id,
-                        "command": admitted_task.command,
-                        "status": "queued",
-                        "executeAuthorized": bool(admitted_task.execute_authorized),
-                        "itemLimit": admitted_task.item_limit,
-                        "executionMethod": "task_engine",
-                        "task": f"/api/v1/tasks/{admitted_task.task_id}",
-                        "sideEffects": "none",
-                    }
-                ),
-            )
         if parts == ["api", "v1", "tasks"] and method == "GET":
             task_status, task_command, limit, cursor = self._task_collection_query(environ)
             scope = _collection_scope(task_status.value if task_status else None, task_command)
@@ -6953,9 +6702,6 @@ class MediaFlowApi:
                     parts[3], parts[5]
                 )
             if self._manual_recovery is not None:
-                value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
-                    parts[3], parts[5]
-                )
                 value["manualRecoveryPreparation"] = (
                     self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
                 )
@@ -7067,80 +6813,17 @@ class MediaFlowApi:
                 )
             return self._error(
                 start_response,
-                410,
-                "job_continuation_retired",
-                "the independent Job continuation was retired",
+                409,
+                "continuation_unavailable",
+                "this Task has no current same-Task analysis to continue",
                 details={
-                    "durableState": "unchanged; no Job, child Task or Result was created",
+                    "durableState": "unchanged",
                     "sideEffects": "none",
                     "retrySafe": False,
                     "nextAction": (
                         "open the Task's current item checkpoint and use its supported "
                         "same-Task recovery action"
                     ),
-                },
-            )
-        if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "authorize-organize"]
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_recovery is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual recovery continuation service is unavailable",
-                )
-            self._require_empty_query(environ, "manual recovery continuation authorization")
-            document = self._document(environ)
-            allowed = {
-                "expectedCheckpointVersion",
-                "confirmation",
-                "allowOverwrite",
-                "allowSourceCleanup",
-                "ttlSeconds",
-                "note",
-            }
-            if set(document).difference(allowed):
-                raise ValueError("manual recovery continuation fields are invalid")
-            expected = document.get("expectedCheckpointVersion")
-            if not isinstance(expected, str) or not expected.strip():
-                raise ValueError("expectedCheckpointVersion is required")
-            if document.get("confirmation") is not True:
-                raise ValueError(
-                    "manual recovery continuation authorization requires confirmation=true"
-                )
-            if (
-                "note" in document
-                and document["note"] is not None
-                and not isinstance(document["note"], str)
-            ):
-                raise ValueError("manual recovery continuation note must be a string")
-            link = self._manual_recovery.authorize_continued(
-                parts[3],
-                parts[5],
-                expected_checkpoint_version=expected,
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-                allow_overwrite=bool(document.get("allowOverwrite", False)),
-                allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
-                ttl_seconds=document.get("ttlSeconds"),
-                note=document.get("note"),
-            )
-            return self._response(
-                start_response,
-                201,
-                {
-                    **link.document(),
-                    "sourceTaskId": parts[3],
-                    "sourceItemId": parts[5],
-                    "sideEffects": "none",
-                    "executionMode": "not_authorized_yet",
                 },
             )
         if (
@@ -7168,55 +6851,37 @@ class MediaFlowApi:
             expected = document["expectedCheckpointVersion"]
             if not isinstance(expected, str) or not expected.strip():
                 raise ValueError("expectedCheckpointVersion is required")
-            if self._manual_recovery.native_preparation_summary(parts[3], parts[5]) is not None:
-                # The kernel-managed Task's own linked Files preparation already
-                # *is* the durable zero-mutation summary.  Re-publishing it is a
-                # read: no second preparation, authority or mutation is made.
-                try:
-                    native = self._manual_recovery.prepare_native_summary(
-                        parts[3],
-                        parts[5],
-                        expected_checkpoint_version=expected,
-                        actor=principal.principal_id,
-                    )
-                except ManualRecoveryContinuationError as error:
-                    return self._error(
-                        start_response,
-                        error.status,
-                        error.code,
-                        str(error),
-                        details={
-                            "nextAction": error.next_action,
-                            "durableState": "rejected_without_mutation",
-                            "sideEffects": "none",
-                            "retrySafe": error.status < 500,
-                            **error.details,
-                        },
-                    )
-                return self._response(
-                    start_response,
-                    201,
-                    redact_manual_value(
-                        {
-                            **native,
-                            "hasExecutionAuthority": False,
-                            "sideEffects": "none",
-                            "executionMode": "not_authorized_yet",
-                        }
-                    ),
+            # The kernel-managed Task's own linked Files/automatic continuation
+            # summary already *is* the durable zero-mutation summary.  Preparing
+            # it is a bounded read: no second preparation, authority or mutation
+            # is made.
+            try:
+                native = self._manual_recovery.prepare_native_summary(
+                    parts[3],
+                    parts[5],
+                    expected_checkpoint_version=expected,
+                    actor=principal.principal_id,
                 )
-            preparation = self._manual_recovery.prepare_summary(
-                parts[3],
-                parts[5],
-                expected_checkpoint_version=expected,
-                actor=principal.principal_id,
-            )
+            except ManualRecoveryContinuationError as error:
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details={
+                        "nextAction": error.next_action,
+                        "durableState": "rejected_without_mutation",
+                        "sideEffects": "none",
+                        "retrySafe": error.status < 500,
+                        **error.details,
+                    },
+                )
             return self._response(
                 start_response,
                 201,
                 redact_manual_value(
                     {
-                        **preparation.document(),
+                        **native,
                         "hasExecutionAuthority": False,
                         "sideEffects": "none",
                         "executionMode": "not_authorized_yet",
@@ -7305,143 +6970,6 @@ class MediaFlowApi:
                     "nextAction": execution.next_action,
                     "executionPath": "/api/v1/manual-executions/" + execution.execution_id,
                     "sideEffects": "execution_admitted",
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-recovery-links"]
-            and parts[4] == "execute"
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_recovery is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual recovery continuation service is unavailable",
-                )
-            self._require_empty_query(environ, "manual recovery continuation execution")
-            document = self._document(environ)
-            if set(document) != {"confirmation"} or document["confirmation"] is not True:
-                raise ValueError(
-                    "manual recovery continuation execution requires confirmation=true"
-                )
-            link = self._manual_recovery.execute_continued(
-                parts[3],
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-            )
-            return self._response(
-                start_response,
-                200,
-                link.document(),
-            )
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4:6] == ["recovery", "continue-batch"]
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "task batch recovery continuation")
-            document = self._document(environ)
-            if set(document).difference({"items", "batchId"}) or "items" not in document:
-                raise ValueError(
-                    "task batch recovery continuation requires items and optional batchId"
-                )
-            if not isinstance(document["items"], list):
-                raise ValueError("task batch recovery items must be a list")
-            if "batchId" in document and not isinstance(document["batchId"], str):
-                raise ValueError("task batch recovery identity must be a UUID")
-            native = getattr(self, "_manual_task_continuation", None)
-            if native is not None and native.applies(parts[3]):
-                # A kernel-managed Task re-plans every remaining source of that
-                # same Task at once, so a per-item Job batch does not exist for
-                # it.  Answering with the bounded same-Task action is truthful;
-                # silently minting the legacy Jobs would reintroduce them.
-                error = native.refuse_batch(parts[3])
-                return self._error(
-                    start_response,
-                    error.status,
-                    error.code,
-                    str(error),
-                    details={
-                        "nextAction": error.next_action,
-                        "durableState": "rejected_without_mutation",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        **error.details,
-                    },
-                )
-            return self._error(
-                start_response,
-                410,
-                "job_batch_continuation_retired",
-                "the independent Job batch continuation was retired",
-                details={
-                    "durableState": "unchanged; no Job, child Task or Result was created",
-                    "sideEffects": "none",
-                    "retrySafe": False,
-                    "nextAction": (
-                        "continue the same Task through its supported same-Task recovery action"
-                    ),
-                },
-            )
-        if (
-            (
-                len(parts) == 6
-                and parts[:3] == ["api", "v1", "tasks"]
-                and parts[4] == "recovery-batches"
-            )
-            or (len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"])
-            or (
-                len(parts) == 5
-                and parts[:3] == ["api", "v1", "recovery-batches"]
-                and parts[4] == "resume"
-            )
-        ):
-            return self._error(
-                start_response,
-                410,
-                "job_batch_continuation_retired",
-                "the independent Job batch continuation was retired",
-                details={
-                    "durableState": "unchanged; no Job, child Task or Result was created",
-                    "sideEffects": "none",
-                    "retrySafe": False,
-                    "nextAction": "use the Task's supported same-Task recovery action",
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "remaining-scope-previews"
-            and method == "POST"
-        ):
-            # Paused-scope remaining-scope preparation and its queued
-            # continuation executor were retired together with pause/resume.
-            # The route stays reachable so an old Web client, bookmark or script
-            # reaches one bounded, truthful refusal instead of a silent 404.  No
-            # discovery, intent, Preview, authorization, Job, Task or Storage
-            # change is made and no compatible executor is ever started.
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            self._require_empty_query(environ, "remaining-scope Preview")
-            return self._error(
-                start_response,
-                409,
-                "scope_continuation_retired",
-                "remaining-scope continuation of a paused run was retired",
-                details={
-                    "durableState": "unchanged; no preparation, Job or Task was created",
-                    "sideEffects": "none",
-                    "retrySafe": False,
-                    "nextAction": (
-                        "start a fresh Files organizing request; a reviewed recognition/"
-                        "metadata/classification/conflict item continues through its own "
-                        "decision journey"
-                    ),
                 },
             )
         if (
@@ -8731,8 +8259,6 @@ class MediaFlowApi:
                 snapshot_id=revision.revision_id,
                 snapshot_digest=revision.digest,
                 maximum_active_jobs=maximum_active_jobs,
-                remote_execution_enabled=runtime.remote_execution_enabled,
-                remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
                 system_status=system_status,
                 metadata_policies=runtime.strategy.metadata_policies,
                 runtime_revision=runtime_revision,
@@ -8825,13 +8351,10 @@ class MediaFlowApi:
             ("api", "v1", "manual-intents"),
             ("api", "v1", "manual-previews"),
             ("api", "v1", "manual-executions"),
-            ("api", "v1", "manual-execution-authorizations"),
-            ("api", "v1", "manual-recovery-links"),
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "automation"),
             ("api", "v1", "files"),
             ("api", "v1", "recovery"),
-            ("api", "v1", "recovery-batches"),
             ("api", "v1", "confirmations"),
             ("api", "v1", "recognition-reviews"),
             ("api", "v1", "metadata-corrections"),
@@ -8914,8 +8437,6 @@ class MediaFlowApi:
                 if self._maximum_active_jobs_override is not None
                 else runtime.automation_maximum_active_jobs
             ),
-            remote_execution_enabled=runtime.remote_execution_enabled,
-            remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
             system_status=refreshed_status,
             metadata_policies=runtime.strategy.metadata_policies,
             runtime_revision=active,
@@ -8934,8 +8455,6 @@ class MediaFlowApi:
         snapshot_id: str | None,
         snapshot_digest: str | None,
         maximum_active_jobs: int,
-        remote_execution_enabled: bool,
-        remote_execution_maximum_ttl_seconds: int,
         system_status,
         metadata_policies: tuple,
         runtime_revision=None,
@@ -9011,24 +8530,12 @@ class MediaFlowApi:
                     "notifications.deliveryLeaseSeconds": (
                         runtime_configuration.notification_delivery_lease_seconds
                     ),
-                    "api.remoteExecution.enabled": runtime_configuration.remote_execution_enabled,
-                    "api.remoteExecution.maximumTtlSeconds": (
-                        runtime_configuration.remote_execution_maximum_ttl_seconds
-                    ),
                 },
             }
         return _ApiRuntimeBinding(
             snapshot_id,
             snapshot_digest,
             maximum_active_jobs,
-            ExecutionAuthorizationService(
-                self._repository,
-                maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
-                maximum_active_jobs=maximum_active_jobs,
-                configuration_snapshot_id=snapshot_id,
-                configuration_snapshot_digest=snapshot_digest,
-            ),
-            remote_execution_enabled,
             system_status,
             tuple(metadata_policies),
             files_browser,
@@ -9115,7 +8622,6 @@ class MediaFlowApi:
             ("api", "v1", "classification-reviews"),
             ("api", "v1", "recognition-reviews"),
             ("api", "v1", "metadata-corrections"),
-            ("api", "v1", "recovery-batches"),
             ("api", "v1", "automation", "task-definitions"),
             ("api", "v1", "files"),
             ("api", "v1", "storage", "files"),
@@ -9213,20 +8719,8 @@ class MediaFlowApi:
             and parts[6:8] in (["recovery", "decision"], ["recovery", "metadata-search"])
         ):
             return f"/api/v1/tasks/{{task_id}}/items/{{item_id}}/recovery/{parts[7]}"
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "recovery-batches"
-        ):
-            return "/api/v1/tasks/{task_id}/recovery-batches/{batch_id}"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4:6] == ["recovery", "continue-batch"]
-        ):
-            return "/api/v1/tasks/{task_id}/recovery/continue-batch"
         if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "tasks"]
@@ -9249,26 +8743,11 @@ class MediaFlowApi:
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "authorize-organize"]
-        ):
-            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize"
-        if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
             and parts[4] == "confirm"
         ):
             return "/api/v1/manual-recovery-preparations/{id}/confirm"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
-            return "/api/v1/recovery-batches/{id}"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "recovery-batches"]
-            and parts[4] == "resume"
-        ):
-            return "/api/v1/recovery-batches/{id}/resume"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
@@ -9426,34 +8905,15 @@ class MediaFlowApi:
             return "/api/v1/metadata-corrections/{id}"
         if len(parts) == 4 and parts[:3] in (
             ["api", "v1", "manual-previews"],
-            ["api", "v1", "manual-execution-authorizations"],
             ["api", "v1", "manual-executions"],
         ):
             return f"/api/v1/{parts[2]}/{{id}}"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-previews"]
-            and parts[4] in {"authorize", "execute"}
-        ):
-            return f"/api/v1/manual-previews/{{id}}/{parts[4]}"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
-            and parts[4] in {"execute", "consume"}
-        ):
-            return f"/api/v1/manual-execution-authorizations/{{id}}/{parts[4]}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-executions"]
             and parts[4] == "reconcile"
         ):
             return "/api/v1/manual-executions/{id}/reconcile"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-recovery-links"]
-            and parts[4] == "execute"
-        ):
-            return "/api/v1/manual-recovery-links/{id}/execute"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
@@ -11071,11 +10531,7 @@ class MediaFlowApi:
             ["api", "v1", "workers"],
         ):
             return True
-        if parts[:3] == ["api", "v1", "manual-intents"] or (
-            len(parts) >= 3
-            and parts[:2] == ["api", "v1"]
-            and parts[2] in {"manual-organize", "manual-organize-intents"}
-        ):
+        if parts[:3] == ["api", "v1", "manual-intents"]:
             return True
         if parts[:3] == ["api", "v1", "manual-previews"]:
             return True
@@ -11085,10 +10541,7 @@ class MediaFlowApi:
             and parts[4] == "previews"
         ):
             return True
-        if tuple(parts[:3]) in {
-            ("api", "v1", "manual-execution-authorizations"),
-            ("api", "v1", "manual-executions"),
-        }:
+        if parts[:3] == ["api", "v1", "manual-executions"]:
             return True
         if parts[:3] == ["api", "v1", "tasks"]:
             return True

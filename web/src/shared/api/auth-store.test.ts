@@ -2,10 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { authStore } from "./auth-store";
 import { destinations } from "../navigation/destination-model";
 import type { DestinationPath } from "../navigation/destination-model";
-import {
-  clearOtherRecoveryBatchSessions,
-  recoveryBatchSessionKey,
-} from "../../features/operations/recovery-batch-session";
 
 afterEach(() => {
   authStore.clearToken();
@@ -106,68 +102,6 @@ describe("authStore", () => {
     authStore.clearToken();
     expect(authStore.getToken()).toBeNull();
     expect(authStore.getIntendedPath()).toBeNull();
-  });
-
-  it("clears persisted recovery batch commands when a principal changes", () => {
-    const key = recoveryBatchSessionKey("harness-admin", "task-001");
-    window.sessionStorage.setItem(key, "admin-command");
-    authStore.setToken("admin-token");
-    authStore.setToken("viewer-token");
-
-    expect(window.sessionStorage.getItem(key)).toBeNull();
-  });
-
-  it("preserves recovery batch reconciliation through same-principal auth return", () => {
-    const key = recoveryBatchSessionKey("harness-admin", "task-001");
-    window.sessionStorage.setItem(key, "durable-batch-hint");
-    authStore.setToken("admin-token");
-    authStore.clearRejectedAuthority();
-    authStore.setToken("admin-reconnected-token");
-
-    expect(window.sessionStorage.getItem(key)).toBe("durable-batch-hint");
-  });
-
-  it("scopes recovery batch session hints to the confirmed principal", () => {
-    const adminKey = recoveryBatchSessionKey("harness-admin", "task-001");
-    const viewerKey = recoveryBatchSessionKey("harness", "task-001");
-    window.sessionStorage.setItem(adminKey, "admin-command");
-    window.sessionStorage.setItem(viewerKey, "viewer-command");
-    window.sessionStorage.setItem(
-      "mediaflow.operations.recovery-batch:task-legacy",
-      "unscoped-command",
-    );
-
-    clearOtherRecoveryBatchSessions("harness");
-
-    expect(window.sessionStorage.getItem(adminKey)).toBeNull();
-    expect(window.sessionStorage.getItem(viewerKey)).toBe("viewer-command");
-    expect(
-      window.sessionStorage.getItem(
-        "mediaflow.operations.recovery-batch:task-legacy",
-      ),
-    ).toBeNull();
-  });
-
-  it("encodes Unicode principal IDs without losing exact identity", () => {
-    const chineseId = "值班管理员";
-    const key = recoveryBatchSessionKey(chineseId, "task-001");
-
-    expect(key).toBe(
-      `mediaflow.operations.recovery-batch:v2:${encodeURIComponent(chineseId)}:task-001`,
-    );
-    expect(key).not.toContain(chineseId);
-    expect(key).toMatch(/^[\x20-\x7e]+$/);
-    expect(recoveryBatchSessionKey("值班管理员", "task-001")).not.toBe(
-      recoveryBatchSessionKey("值班管理員", "task-001"),
-    );
-  });
-
-  it("safely encodes malformed UTF-16 without aliasing a valid principal", () => {
-    const malformedKey = recoveryBatchSessionKey("\ud800", "task-001");
-    const validKey = recoveryBatchSessionKey("%u16%d800", "task-001");
-
-    expect(malformedKey).toContain(":%u16%d800:task-001");
-    expect(malformedKey).not.toBe(validKey);
   });
 
   it("advances an in-memory generation when authenticated authority changes", () => {

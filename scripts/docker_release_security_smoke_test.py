@@ -284,7 +284,6 @@ def prepare_deployment_files(
                 "enabled": True,
             },
         ],
-        "remoteExecution": {"enabled": True, "maximumTtlSeconds": 900},
     }
     # The source bind is intentionally read-only in this security harness.
     # Use an explicit non-destructive policy for the temporary manual flow.
@@ -749,8 +748,8 @@ def assert_rbac_and_no_side_effects(
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "auditor denied POST response")
-    if status != 403:
-        raise RuntimeError(f"auditor remote Task submission returned HTTP {status}, expected 403")
+    if status != 404:
+        raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
     status, body = request_bytes(
         f"{base}/api/v1/tasks",
@@ -759,10 +758,8 @@ def assert_rbac_and_no_side_effects(
         body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "executor no-authority POST response")
-    if status not in {400, 403}:
-        raise RuntimeError(
-            f"executor organize without authority returned HTTP {status}, expected 400/403"
-        )
+    if status != 404:
+        raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
     for path in (
         "/api/v1/configuration/status",

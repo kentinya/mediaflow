@@ -30,7 +30,6 @@ class ApiPermission(StrEnum):
     RESOLVE_RECOGNITION_REVIEW = "resolve_recognition_review"
     RESOLVE_METADATA_REVIEW = "resolve_metadata_review"
     RESOLVE_CLASSIFICATION_REVIEW = "resolve_classification_review"
-    REMOTE_EXECUTE = "remote_execute"
     READ_SECURITY_AUDIT = "read_security_audit"
     MANAGE_CONFIGURATION = "manage_configuration"
     ACTIVATE_CONFIGURATION = "activate_configuration"
@@ -60,7 +59,6 @@ ROLE_PERMISSIONS = {
             ApiPermission.RESOLVE_RECOGNITION_REVIEW,
             ApiPermission.RESOLVE_METADATA_REVIEW,
             ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
-            ApiPermission.REMOTE_EXECUTE,
             ApiPermission.EXECUTE_MANUAL_ORGANIZE,
         }
     ),

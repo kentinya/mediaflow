@@ -374,7 +374,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertNotIn("schedules", document["automation"])
         self.assertEqual(document["automationTaskDefinitions"], [])
         self.assertEqual(document["notifications"]["webhooks"], [])
-        self.assertFalse(document["api"]["remoteExecution"]["enabled"])
+        self.assertNotIn("remoteExecution", document["api"])
         self.assertNotIn("rootPath", json.dumps(document))
         self.assertNotIn("historyPath", json.dumps(document))
         self.assertNotIn("https://", json.dumps(document))
@@ -436,7 +436,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(draft_document["mediaLibraries"], [])
         self.assertEqual(draft_document["recognitionTypes"], [])
         self.assertEqual(draft_document["automationTaskDefinitions"], [])
-        self.assertFalse(draft_document["api"]["remoteExecution"]["enabled"])
+        self.assertNotIn("remoteExecution", draft_document.get("api", {}))
 
         status, validated = request(
             self.api,
@@ -505,7 +505,9 @@ class ManagementSetupTests(unittest.TestCase):
         status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
         self.assertEqual(status, 200)
         matching = json.loads(json.dumps(detail["document"]))
-        matching["api"]["principals"] = json.loads(json.dumps(self.bootstrap["api"]["principals"]))
+        matching.setdefault("api", {})["principals"] = json.loads(
+            json.dumps(self.bootstrap["api"]["principals"])
+        )
         status, saved = request(
             self.api,
             f"/api/v1/configuration/revisions/{revision_id}",
@@ -637,7 +639,7 @@ class ManagementSetupTests(unittest.TestCase):
         status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
         self.assertEqual(status, 200)
         escalated = json.loads(json.dumps(detail["document"]))
-        escalated["api"]["principals"] = [
+        escalated.setdefault("api", {})["principals"] = [
             {"id": "viewer", "tokenEnv": "MF_VIEWER_TOKEN", "roles": ["admin"]}
         ]
         status, rejected = request(

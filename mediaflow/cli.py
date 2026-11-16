@@ -61,7 +61,6 @@ def main(
         "scheduler",
         "notifications",
         "notification-worker",
-        "execution-authorizations",
         "security-audit",
         "metadata-reviews",
         "metadata-corrections",

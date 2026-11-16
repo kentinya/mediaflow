@@ -603,7 +603,6 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 for table in (
                     "task_items",
                     "task_results",
-                    "execution_authorizations",
                     "manual_execution_authorizations",
                 ):
                     self.assertEqual(count_rows(repository, table), 0, table)

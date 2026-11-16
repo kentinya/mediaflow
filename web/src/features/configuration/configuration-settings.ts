@@ -122,13 +122,6 @@ const FIELD_PRESENTATION: Readonly<Record<string, FieldPresentation>> = {
     minimum: 1,
     maximum: 86_400,
   },
-  "api.remoteExecution.enabled": { label: "启用远程执行" },
-  "api.remoteExecution.maximumTtlSeconds": {
-    label: "远程执行最大 TTL",
-    unit: "秒",
-    minimum: 1,
-    maximum: 86_400,
-  },
 };
 
 const LOG_LEVEL_OPTIONS: readonly SettingOption[] = [

@@ -1764,7 +1764,6 @@ class TransitionBoundaryTests(unittest.TestCase):
             # its own zero-mutation analysis through the kernel re-entry
             # boundary, and the remote ticket consumes into a Task admission.
             "application/automatic_task_continuation.py",
-            "application/execution_authorization.py",
             "application/manual_organize_execution.py",
             "application/manual_recovery_continuation.py",
             "application/manual_task_continuation.py",
@@ -1797,10 +1796,11 @@ class TransitionBoundaryTests(unittest.TestCase):
             if any(marker in path.read_text(encoding="utf-8") for marker in markers)
         }
         self.assertEqual(consumers, expected)
-        # The legacy runners exclude kernel-managed rows, so a second Worker
-        # can never claim the same new work through the old queue.
+        # The independent discovery/execution queues are gone; no second
+        # global claim can bypass the Task scheduling kernel.
         runtime = (package / "infrastructure" / "sqlite_runtime.py").read_text(encoding="utf-8")
-        self.assertIn("NOT EXISTS (SELECT 1 FROM task_scheduling", runtime)
+        self.assertNotIn("def claim_next_media_discovery", runtime)
+        self.assertNotIn("def claim_next_manual_execution", runtime)
 
 
 if __name__ == "__main__":

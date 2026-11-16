@@ -99,10 +99,6 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
     media.chmod(0o644)
 
     document = json.loads(config_file.read_text(encoding="utf-8"))
-    document.setdefault("api", {})["remoteExecution"] = {
-        "enabled": True,
-        "maximumTtlSeconds": 900,
-    }
     # The standard media overlay mounts the source read-only. Exercise the
     # supported COPY operation rather than granting an impossible MOVE.
     for policy in document.get("organizePolicies", []):
@@ -313,6 +309,50 @@ def wait_worker_ready(base: str, token: str) -> dict:
     wait_until(reached, timeout=120.0, description="processing Worker ready")
     _, readiness = json_request(base, "/api/v1/workers/readiness", token)
     return readiness
+
+
+def seed_queued_organize_code() -> str:
+    """Admit one queued organizing Task through the current kernel."""
+
+    return r"""
+import json
+from datetime import UTC, datetime
+
+from mediaflow.application.task_scheduling import build_scheduled_task_admission
+from mediaflow.domain.task_persistence import RunDisplayContext
+from mediaflow.domain.task_scheduling import TaskTrigger
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+DATABASE = "/data/mediaflow.sqlite3"
+with (
+    SQLiteTaskRepository(DATABASE) as repository,
+    SQLiteConfigurationRepository(DATABASE) as configuration,
+):
+    active = configuration.get_active_revision()
+    if active is None:
+        raise RuntimeError("no Active managed revision is present")
+    task, state = build_scheduled_task_admission(
+        "organize",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal="isolated-restart-acceptance",
+        item_limit=1,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+        now=datetime.now(UTC),
+    )
+    repository.admit_scheduled_task(
+        task,
+        state,
+        capacity=100,
+        display=RunDisplayContext(source_scope=None, origin_kind="remote-organize"),
+    )
+    print(json.dumps({"taskId": task.task_id}))
+"""
 
 
 def seed_state_code() -> str:
@@ -803,47 +843,11 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "stop", "worker", "notification-worker"], environment=environment)
             wait_for_api(base, token)
 
-            # Use the supported, explicitly authorized remote Organize entry.
-            # The stopped Worker cannot execute this fencing-only Task.
-            issued = run(
-                [
-                    *command,
-                    "exec",
-                    "-T",
-                    "api",
-                    "mediaflow",
-                    "--config",
-                    "/config/mediaflow.json",
-                    "execution-authorizations",
-                    "issue",
-                    "--ttl-seconds",
-                    "300",
-                    "--max-items",
-                    "1",
-                    "--actor",
-                    "isolated-restart-acceptance",
-                ],
-                environment=environment,
+            # Admit one real organizing Task through the current kernel.  The
+            # stopped Worker cannot execute this fencing-only Task.
+            submitted = json.loads(
+                exec_python(command, environment, seed_queued_organize_code()).strip()
             )
-            execution_token = next(
-                line.removeprefix("Token: ")
-                for line in issued.stdout.splitlines()
-                if line.startswith("Token: ")
-            )
-            request = urllib.request.Request(
-                f"{base}/api/v1/tasks",
-                data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-MediaFlow-Execution-Token": execution_token,
-                    "Content-Type": "application/json",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=10) as response:
-                if response.status != 202:
-                    raise RuntimeError(f"fault Task submission returned HTTP {response.status}")
-                submitted = json.load(response)
             fence_task_id = submitted["taskId"]
 
             print("Seeding durable notification/uncertain/audit/log evidence...")
@@ -1042,7 +1046,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 [*command, "logs", "--no-color", "--tail", "800"],
                 environment=environment,
             )
-            for secret in (token, execution_token):
+            for secret in (token,):
                 if secret in logs_result.stdout or secret in logs_result.stderr:
                     raise RuntimeError("service logs contain an API or execution token")
             if secrets.token_urlsafe(8) in config_file.read_text(encoding="utf-8"):

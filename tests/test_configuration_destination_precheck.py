@@ -110,7 +110,6 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 "recognition_reviews",
                 "metadata_reviews",
                 "classification_reviews",
-                "execution_authorizations",
             ):
                 with self.subTest(table=table):
                     count = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]

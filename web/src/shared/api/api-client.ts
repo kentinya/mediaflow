@@ -83,15 +83,11 @@ import {
   type RulesWorkspaceModel,
 } from "../../entities/rules/rules-workspace";
 import {
-  normalizeManualRecoveryLink,
   normalizeManualRecoveryPreparation,
   normalizeMetadataSearch,
-  normalizeRecoveryBatch,
   normalizeTaskItemRecovery,
-  type ManualRecoveryLinkModel,
   type ManualRecoveryPreparationModel,
   type MetadataSearchModel,
-  type RecoveryBatchModel,
   type TaskItemRecoveryModel,
 } from "../../entities/operations/task-item-recovery";
 
@@ -1415,27 +1411,6 @@ export async function fetchTaskItemRecovery(
   return parseRunDetailResponse(response, normalizeTaskItemRecovery);
 }
 
-export async function fetchTaskRecoveryBatch(
-  token: string | null,
-  taskId: string,
-  batchId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<OperationsRead<RecoveryBatchModel>> {
-  if (!isSafeIdentifier(taskId) || !/^[a-f0-9-]{36}$/i.test(batchId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/recovery-batches/${encodeURIComponent(batchId)}`,
-      { method: "GET", headers: operationsHeaders(token) },
-    );
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  return parseRunDetailResponse(response, normalizeRecoveryBatch);
-}
-
 export interface AuthenticatedPrincipalModel {
   readonly principalId: string;
 }
@@ -1985,73 +1960,6 @@ export async function continueTaskItemAnalysis(
   );
 }
 
-export async function submitTaskRecoveryBatch(
-  token: string | null,
-  taskId: string,
-  batchId: string,
-  items: readonly {
-    readonly itemId: string;
-    readonly expectedCheckpointVersion: string;
-  }[],
-  fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<RecoveryBatchModel>> {
-  if (!isSafeIdentifier(taskId) || !/^[a-f0-9-]{36}$/i.test(batchId)) {
-    return { ok: false, status: 0, code: "invalid_request" };
-  }
-  return submitOrganizeMutation(
-    token,
-    `/api/v1/tasks/${encodeURIComponent(taskId)}/recovery/continue-batch`,
-    { batchId, items: items.map((item) => ({ ...item })) },
-    normalizeRecoveryBatch,
-    fetchImpl,
-  );
-}
-
-export async function authorizeTaskItemRecoveryOrganize(
-  token: string | null,
-  options: {
-    readonly taskId: string;
-    readonly itemId: string;
-    readonly expectedCheckpointVersion: string;
-    readonly allowOverwrite: boolean;
-    readonly allowSourceCleanup: boolean;
-  },
-  fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<ManualRecoveryLinkModel>> {
-  if (!isSafeIdentifier(options.taskId) || !isSafeIdentifier(options.itemId)) {
-    return { ok: false, status: 0, code: "invalid_request" };
-  }
-  return submitOrganizeMutation(
-    token,
-    `/api/v1/tasks/${encodeURIComponent(options.taskId)}/items/${encodeURIComponent(options.itemId)}/recovery/authorize-organize`,
-    {
-      expectedCheckpointVersion: options.expectedCheckpointVersion,
-      confirmation: true,
-      allowOverwrite: options.allowOverwrite,
-      allowSourceCleanup: options.allowSourceCleanup,
-    },
-    normalizeManualRecoveryLink,
-    fetchImpl,
-  );
-}
-
-export async function executeTaskItemRecoveryOrganize(
-  token: string | null,
-  linkId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<ManualRecoveryLinkModel>> {
-  if (!isSafeIdentifier(linkId)) {
-    return { ok: false, status: 0, code: "invalid_request" };
-  }
-  return submitOrganizeMutation(
-    token,
-    `/api/v1/manual-recovery-links/${encodeURIComponent(linkId)}/execute`,
-    { confirmation: true },
-    normalizeManualRecoveryLink,
-    fetchImpl,
-  );
-}
-
 /**
  * Publish one non-authorizing plan summary of a recovery source item.
  *
@@ -2331,35 +2239,6 @@ export async function submitOrganizePreview(
 export type OrganizePreviewRead =
   | { readonly ok: true; readonly model: OrganizePreviewModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
-
-/**
- * Admit the native exact Preview of one paused run's remaining scope.
- *
- * This is the RO-5 recovery entry the backend advertises alongside a withheld
- * Continue. The browser sends nothing but the run identity: the scope, the
- * historical pin and every source identity are resolved server-side, and the
- * backend durably admits one bounded remaining-scope observation.  The resident
- * Worker proves the configured stability interval, freezes the remaining
- * sources and links the ordinary zero-mutation organize Preview the operator
- * then reviews and explicitly executes.  The response is therefore the
- * discovery projection, not a finished Preview.
- */
-export async function submitRemainingScopePreview(
-  token: string | null,
-  options: { readonly taskId: string },
-  fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<OrganizeDiscoveryModel>> {
-  if (!isSafeIdentifier(options.taskId)) {
-    return { ok: false, status: 0, code: "invalid_request" };
-  }
-  return submitOrganizeMutation(
-    token,
-    `/api/v1/tasks/${encodeURIComponent(options.taskId)}/remaining-scope-previews`,
-    {},
-    normalizeOrganizeDiscovery,
-    fetchImpl,
-  );
-}
 
 export async function fetchOrganizePreviewDetail(
   token: string | null,

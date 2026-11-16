@@ -1083,9 +1083,7 @@ class ManagedConfigurationService:
 def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
     """Build the bounded, inactive document used by a fresh setup Draft."""
 
-    api: dict[str, object] = {
-        "remoteExecution": {"enabled": False, "maximumTtlSeconds": 900},
-    }
+    api: dict[str, object] = {}
     if bootstrap.api_token_env:
         api["tokenEnv"] = bootstrap.api_token_env
     if bootstrap.api_principals:

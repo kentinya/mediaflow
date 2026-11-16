@@ -47,6 +47,7 @@ from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.task_engine_test_helpers import claim_and_run
 
 ADMIN_TOKEN = "automation-run-once-admin"
 OPERATOR_TOKEN = "automation-run-once-operator"
@@ -430,8 +431,8 @@ class RunOnceApiTests(unittest.TestCase):
     def drive(self, value, *, steps: int = 12):
         result = None
         for index in range(steps):
-            result = value.discovery.claim_and_run(
-                worker_id=f"worker-{index}", claim_token=f"token-{index}"
+            result = claim_and_run(
+                value.discovery, worker_id=f"worker-{index}", claim_token=f"token-{index}"
             )
             if result is None:
                 raise AssertionError("Run-once discovery was not claimable")

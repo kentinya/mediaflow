@@ -120,20 +120,6 @@ const sections = {
       boundary: "hot_consumed",
     },
   },
-  API: {
-    "api.remoteExecution.enabled": {
-      label: "Remote execution enabled",
-      value: false,
-      valueType: "boolean",
-      boundary: "hot_consumed",
-    },
-    "api.remoteExecution.maximumTtlSeconds": {
-      label: "TTL",
-      value: 900,
-      valueType: "integer",
-      boundary: "hot_consumed",
-    },
-  },
 };
 
 const groups = readSettingGroups({ sections });
@@ -152,7 +138,6 @@ describe("configuration settings model", () => {
       "日志",
       "重试",
       "通知运行",
-      "远程执行",
     ]);
     expect(allFields.map((item) => item.path)).not.toContain(
       "automation.workerPollSeconds",

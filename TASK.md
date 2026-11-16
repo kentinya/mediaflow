@@ -236,6 +236,51 @@ session／协议适配留在 Slice 后续完整单元。本 Task 的旧链专属
 
 ### Developer Completion Report / B Review Result
 
-尚未实施，无候选 SHA、无本 Task PASS/FIX REQUIRED。Developer 按模板提交不可变
-READY FOR B REVIEW 检查点、改动、实际 affected tests、剩余工作／风险；B 独立审查
-完整 Base..Head 并完成验收后给出 PASS 或 SAME TASK FIX REQUIRED。
+**Status: READY FOR B REVIEW（本检查点）**
+
+Developer 已按 Task55.3 范围实施并提交本地候选检查点。源码身份以本提交 HEAD 为准，
+Task Base 保持 `b73c36353e5427cbe60fbb7c1b8cc85b139edca4`。
+
+改动摘要：
+
+- 删除远程票据产品：CLI `execution-authorizations`、`POST /api/v1/tasks` 票据受理、
+  `X-MediaFlow-Execution-Token`、`REMOTE_EXECUTE`、`api.remoteExecution` 运行权威、
+  service/domain/repository CRUD 和新库 `execution_authorizations*` 表。历史文档中的
+  `api.remoteExecution` 仍可读但被忽略；设置编辑按 `field_retired` 拒绝。
+- 常驻 Worker 只装配 `ManualTaskEngineWorker` 与普通文件 runner；删除
+  `media_discovery_worker.py`、`manual_organize_worker.py`、全局
+  `claim_next_media_discovery`／`claim_next_manual_execution` 和 `task_scheduling_enabled`
+  回落。发现/执行服务仍由 Task 内核按精确记录 claim、续租和 fence 调用。
+- 旧恢复链退出：删除独立 authorize/execute、`manual-recovery-links`、`continue-batch`、
+  `recovery-batches`、`remaining-scope-previews` 及不再存在的 `metadata-correction-continuation`
+  退休 410 表面；新库不再创建 link/batch 表。保留自动化同 Task preparation、Files native
+  摘要、`prepare-summary`／`confirm` 和原 Task 摘要身份。
+- Web 删除 batch/link 交互、旧 API 客户端与 `recovery-batch-session`；保留四类逐项恢复、
+  当前摘要确认和 Task Center 读取。设置消费者移除远程执行字段。
+- 同步 README、示例配置、部署/harness/wheel smoke 与相关入口断言；删除仅覆盖旧正向
+  路径的测试（含旧 ticket/Worker 轮次），保留并接回当前 Task 内核断言。
+
+实际验证（仓库根目录，本轮）：
+
+- `python3 scripts/check_governance.py` → PASS。
+- `ruff check .` → PASS；`ruff format --check .` → PASS；`compileall mediaflow tests scripts` → PASS。
+- 全量 Python：`.venv/bin/python -m unittest discover -s tests` → **2373 tests OK（7 skipped）**。
+- 指定 affected suite → **258 tests OK**。
+- Web：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` → PASS；
+  `npm run test -- run` → **103 files / 1642 tests PASS**。
+- Playwright `operations-inventory.python.spec.ts` 指定的五个 native recovery 场景 → **5 passed**。
+- `config/strategy.example.json`、`config/mediaflow.phase13.2.example.json` JSON 与 CLI config
+  validate 路径保持可用；新库不存在票据/旧 link/batch 表。
+
+剩余工作／风险（交 B）：
+
+- B 仍需执行完整 T4 验收、其余 E2E 文件、wheel／源码外安装和三项 Docker smoke（Developer
+  本轮未把它们当作 affected gates 运行）。
+- `application/scope_continuation.py` 保留只读的既有恢复资格校验以保护现存 V2 历史记录；
+  其创建、领取、批量执行和专用入口已删除。B 需判断是否还需进一步收敛该只读面。
+- 架构／迁移说明中仍可能有历史票据描述；本 Task 未改写 A-owned 的 CURRENT/TARGET 叙述，
+  由 B 验收时核对并交 A 做最终文档 reconciliation。
+- 删除了仅验证已退役独立 Worker/旧恢复链的测试文件与方法；当前 Task 内核、Files、自动化
+  due/Run once、四类恢复和普通文件覆盖由保留测试与全量回归承接。
+
+下一步由 B 独立审查 Base..本候选，给出 PASS 或 SAME TASK FIX REQUIRED。

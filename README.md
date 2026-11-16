@@ -261,28 +261,15 @@ API requests use `Authorization: Bearer ...` with environment-owned principal re
 viewer/operator/executor/auditor/admin roles. `/health` is public. Executor permission alone is not
 mutation authority. Keep local API tokens, Webhook secrets and Storage credentials independent.
 
-### Remote API execution authorization
+### Organizing execution entrances
 
-For explicitly enabled remote API automation, locally issue a short-lived single-use authorization:
-
-```bash
-mediaflow execution-authorizations issue --ttl-seconds 300 --max-items 20
-curl -X POST http://127.0.0.1:8787/api/v1/tasks \
-  -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
-  -H "X-MediaFlow-Execution-Token: <one-time-token>" \
-  -H "Content-Type: application/json" \
-  --data '{"command":"organize","execute":true,"limit":20}'
-```
-
-`api.remoteExecution.enabled` defaults false; configure the principal and TTL ceiling explicitly.
-The raw value is displayed once, only its digest persists, and admission/consumption is atomic.
-The response is `202` with the admitted `taskId` and its `task` read address; the submitted work is
-the ordinary organizing Task shown in the Task center. Only `command:"organize"`, `execute:true`
-and `limit` are accepted — the retired Job collection and its submission/cancel/requeue aliases are
-not available. Use `mediaflow tasks cancel TASK_ID` (or the Task center) for cooperative cancellation.
-The V2 Web journey instead holds exact-plan authority on the server after review and explicit
-confirmation; ordinary users do not issue or transfer tokens. Both retain RBAC, pins, effect scope,
-audit, fencing and OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization-current-v1-and-v2).
+New organizing work is admitted through the current Task kernel only: the Files Web journey,
+the direct CLI `organize` command, an Automation due occurrence, or a definition Run once. The
+former remote execution ticket (`execution-authorizations`, `X-MediaFlow-Execution-Token` and
+`POST /api/v1/tasks`) is retired; `api.remoteExecution` in an immutable historical document stays
+readable but grants no authority and cannot be published again. Ordinary users never issue or
+transfer execution tokens. Every entrance retains RBAC, pins, effect scope, audit, fencing and
+OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization-current-v1-and-v2).
 
 ### Operator Web UI
 

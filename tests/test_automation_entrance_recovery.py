@@ -34,7 +34,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -183,7 +182,6 @@ def entrance_journey(
     document["api"]["principals"] = [
         {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
     ]
-    document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
     config = root / "bootstrap.json"
     config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     if provider_registry is None:
@@ -1060,98 +1058,6 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 {"stopped"},
                 {worker.status.value for worker in value.repository.list_workers()},
             )
-
-    def test_remote_ticket_decision_completes_the_same_recovery_on_one_task(self):
-        """The remote-ticket Task's saved decision finishes on the same Task."""
-
-        self.media("One.2001.mkv")
-        with entrance_journey(self) as value:
-            issued = ExecutionAuthorizationService(
-                value.repository,
-                maximum_ttl_seconds=900,
-                token_factory=lambda: "one-time-entrance-ticket",
-            ).issue(ttl_seconds=300, max_items=5, actor="admin")
-            status, admitted = self.request(
-                value,
-                "POST",
-                "/api/v1/tasks",
-                {"command": "organize", "execute": True, "limit": 5},
-                headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": "one-time-entrance-ticket"},
-            )
-            self.assertEqual(202, status, admitted)
-            self.assertEqual("task_engine", admitted["executionMethod"], admitted)
-            task_id = admitted["taskId"]
-            task = value.repository.get_task(task_id)
-            self.assertIsNotNone(task)
-            self.assertTrue(task.execute_authorized)
-            self.assertEqual(value.revision.revision_id, task.configuration_snapshot_id, task)
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("manual", state.admission_trigger.value)
-            self.assertEqual("remote-execution", state.admission_principal)
-            display = value.repository.get_run_display_context(task_id)
-            self.assertEqual("remote-organize", display.origin_kind)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(
-                "consumed",
-                value.repository.get_execution_authorization(
-                    issued.authorization.authorization_id
-                ).status.value,
-            )
-
-            settled = self._run_resident_worker(value, prefix="remote-initial")
-            self.assertIsNotNone(settled)
-            (item,) = value.repository.list_items(task_id)
-            self.assertEqual("waiting_recognition", item.status.value, item)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-            status, continued, decided, _detail = self._save_recognition_decision_and_continue(
-                value, task_id, item.item_id
-            )
-            self.assertEqual(202, status, continued)
-            self.assertEqual(task_id, continued["nativeAnalysis"]["taskId"])
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("queued", state.queue_state.value)
-            self.assertEqual("admin", state.continuation_actor)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-
-            settled = self._run_resident_worker(value, prefix="remote-continuation")
-            self.assertIsNotNone(settled)
-            (item,) = value.repository.list_items(task_id)
-            self.assertEqual("waiting_confirm", item.status.value, item)
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("waiting_human", state.queue_state.value)
-
-            status, refused = self.request(
-                value,
-                "POST",
-                "/api/v1/tasks",
-                {"command": "organize", "execute": True, "limit": 5},
-                headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": "one-time-entrance-ticket"},
-            )
-            self.assertEqual(400, status, refused)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-
-            status, confirmed, preparation, ready = self._confirm_ready_subset(
-                value, task_id, item.item_id
-            )
-            self.assertEqual(202, status, confirmed)
-            self.assertEqual(task_id, confirmed["taskId"], confirmed)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-
-            settled = self._run_resident_worker(value, prefix="remote-execution")
-            self.assertIsNotNone(settled)
-            self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertFalse((value.source_root / "One.2001.mkv").exists())
-            organized = list((value.target_root / "Organized" / "Movies").rglob("*.mkv"))
-            self.assertEqual(1, len(organized), organized)
-            results = value.repository.list_results(task_id)
-            self.assertEqual(1, len(results), results)
-            self.assertEqual("SUCCESS", results[0].status)
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual(1, len(value.repository.list_tasks()))
 
     def test_retired_retry_failed_entrance_is_an_ordinary_parse_error(self):
         """The retired ``tasks retry-failed`` entrance stays retired, zero effects.

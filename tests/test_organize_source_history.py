@@ -198,7 +198,6 @@ def history_journey(
     document["api"]["principals"] = [
         {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
     ]
-    document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
     config = root / "bootstrap.json"
     config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     provider_registry = case.provider_registry()
@@ -251,7 +250,6 @@ def history_journey(
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storages={"source": source, "target": target},
                 clock=case.clock,
-                task_scheduling_enabled=task_scheduling,
             )
             run_once = AutomationRunOnceService(discovery, previews, clock=case.clock)
             api = MediaFlowApi(

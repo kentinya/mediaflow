@@ -392,7 +392,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         attempt(digest_mismatch, "digest_mismatch")
 
         secret = json.loads(json.dumps(package))
-        secret["payload"]["document"]["api"]["storedToken"] = "literal-secret-value"
+        secret["payload"]["document"].setdefault("api", {})["storedToken"] = "literal-secret-value"
         secret["payload"]["documentDigest"] = canonical_digest(secret["payload"]["document"])
         secret["packageDigest"] = canonical_digest(secret["payload"])
         response = attempt(secret, "literal_secret_rejected")

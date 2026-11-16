@@ -39,7 +39,6 @@ from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
-from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
@@ -58,6 +57,7 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.source_fixtures import source_identity_from_storage
+from tests.task_engine_test_helpers import ManualOrganizeExecutionWorker, claim_and_run
 from tests.test_manual_organize_preview import manual_snapshot
 from tests.test_manual_preview import MutationSpyStorage
 
@@ -355,7 +355,8 @@ class ManualOperationsContractTests(unittest.TestCase):
         analysis_run = api._media_discovery
         preview_id = None
         for index in range(8):
-            claimed = analysis_run.claim_and_run(
+            claimed = claim_and_run(
+                analysis_run,
                 worker_id=f"contract-analysis-{index}",
                 claim_token=f"contract-analysis-{index}",
             )

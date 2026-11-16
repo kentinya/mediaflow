@@ -241,9 +241,12 @@ class ManualPreviewTests(unittest.TestCase):
             "SELECT COUNT(*) AS count FROM manual_intents"
         ).fetchone()["count"]
         task_count = len(repository.list_tasks())
-        authority_count = repository._connection.execute(
-            "SELECT COUNT(*) AS count FROM execution_authorizations"
-        ).fetchone()["count"]
+        authority_count = int(
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name='execution_authorizations'"
+            ).fetchone()[0]
+        )
         return intent_count, task_count, authority_count
 
     def test_exact_current_file_preview_is_durable_and_analysis_only(self):

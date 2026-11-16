@@ -64,21 +64,6 @@ export interface TaskItemRecoveryCheckpoint {
   readonly continuationResultId: string | null;
 }
 
-export interface ManualRecoveryLinkModel {
-  readonly linkId: string;
-  readonly status: "authorized" | "consumed" | "stale";
-  readonly previewId: string;
-  readonly sourceTaskId: string;
-  readonly sourceItemId: string;
-  readonly analysisTaskId: string;
-  readonly analysisResultId: string;
-  readonly authorizationStatus: string | null;
-  readonly executionId: string | null;
-  readonly allowOverwrite: boolean | null;
-  readonly allowSourceCleanup: boolean | null;
-  readonly nextAction: string;
-}
-
 /**
  * One durable, non-authorizing plan summary of a recovery source item.
  *
@@ -166,7 +151,6 @@ export interface TaskItemRecoveryModel {
   readonly checkpoint: TaskItemRecoveryCheckpoint;
   readonly decision: TaskItemDecision | null;
   readonly nativeAnalysis: TaskItemNativeAnalysis | null;
-  readonly manualRecoveryLink: ManualRecoveryLinkModel | null;
   readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
   readonly manualRecoveryAnalysisReady: boolean;
@@ -194,41 +178,6 @@ export interface MetadataSearchModel {
   readonly query: string;
   readonly candidates: readonly MetadataSearchCandidate[];
   readonly truncated: boolean;
-  readonly nextAction: string;
-}
-
-export interface RecoveryBatchChild {
-  readonly itemId: string;
-  readonly checkpointVersion: string;
-  readonly status: string;
-  readonly continuationId: string | null;
-  readonly newTaskId: string | null;
-  readonly newResultId: string | null;
-  readonly reason: string | null;
-  readonly error: string | null;
-  readonly nextAction: string;
-  /** The child's current durable same-page summary, when one exists. */
-  readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
-  /** The current durable checkpoint version of the child item. */
-  readonly currentCheckpointVersion: string | null;
-  /** The child's completed single-item re-analysis status, if any. */
-  readonly recoveryContinuationStatus: string | null;
-  /** Whether the child is still one exact persisted manual execution item. */
-  readonly manualRecoveryAvailable: boolean;
-  /**
-   * The server's current per-item recovery decision.  A saved batch child
-   * that is only technical history stays read-only here even though the
-   * preserved administrative batch API still owns its durable history.
-   */
-  readonly recoveryKind: TaskItemRecoveryKind | null;
-}
-
-export interface RecoveryBatchModel {
-  readonly batchId: string;
-  readonly taskId: string;
-  readonly actor: string;
-  readonly status: string;
-  readonly children: readonly RecoveryBatchChild[];
   readonly nextAction: string;
 }
 
@@ -429,49 +378,6 @@ function readCheckpoint(payload: unknown): TaskItemRecoveryCheckpoint {
   };
 }
 
-export function normalizeManualRecoveryLink(
-  payload: unknown,
-): ManualRecoveryLinkModel {
-  const source = readRecord(payload, "manualRecoveryLink");
-  const status = text(source, "status");
-  if (!["authorized", "consumed", "stale"].includes(status)) return fail();
-  const authorizationStatus = optionalText(source, "authorization_status");
-  const projectedStatus =
-    authorizationStatus === "consumed"
-      ? "consumed"
-      : authorizationStatus === "expired" || authorizationStatus === "revoked"
-        ? "stale"
-        : status;
-  return {
-    linkId: text(source, "link_id"),
-    status: projectedStatus as ManualRecoveryLinkModel["status"],
-    previewId: text(source, "preview_id"),
-    sourceTaskId: text(source, "source_task_id"),
-    sourceItemId: text(source, "source_item_id"),
-    analysisTaskId: text(source, "analysis_task_id"),
-    analysisResultId: text(source, "analysis_result_id"),
-    authorizationStatus,
-    executionId: optionalText(source, "execution_id"),
-    allowOverwrite:
-      source["allow_overwrite"] === null ||
-      source["allow_overwrite"] === undefined
-        ? null
-        : normalizeBoolean(source["allow_overwrite"], "allow_overwrite"),
-    allowSourceCleanup:
-      source["allow_source_cleanup"] === null ||
-      source["allow_source_cleanup"] === undefined
-        ? null
-        : normalizeBoolean(
-            source["allow_source_cleanup"],
-            "allow_source_cleanup",
-          ),
-    nextAction: text(
-      source,
-      source["next_action"] === undefined ? "nextAction" : "next_action",
-    ),
-  };
-}
-
 export function normalizeManualRecoveryPreparation(
   payload: unknown,
 ): ManualRecoveryPreparationModel {
@@ -536,8 +442,6 @@ export function normalizeTaskItemRecovery(
 ): TaskItemRecoveryModel {
   const source = readRecord(payload, "taskItemRecovery");
   const rawDecision = source["decision"];
-  const rawLink =
-    source["manualRecoveryLink"] ?? source["manual_recovery_link"];
   const rawPreparation =
     source["manualRecoveryPreparation"] ??
     source["manual_recovery_preparation"];
@@ -553,10 +457,6 @@ export function normalizeTaskItemRecovery(
       rawDecision === null || rawDecision === undefined
         ? null
         : readDecision(rawDecision),
-    manualRecoveryLink:
-      rawLink === null || rawLink === undefined
-        ? null
-        : normalizeManualRecoveryLink(rawLink),
     manualRecoveryPreparation:
       rawPreparation === null || rawPreparation === undefined
         ? null
@@ -606,50 +506,6 @@ export function normalizeMetadataSearch(payload: unknown): MetadataSearchModel {
       };
     }),
     truncated: normalizeBoolean(source["truncated"], "truncated"),
-    nextAction: text(source, "next_action"),
-  };
-}
-
-export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
-  const source = readRecord(payload, "recoveryBatch");
-  const rawItems = source["items"];
-  if (!Array.isArray(rawItems) || rawItems.length > 100) return fail();
-  return {
-    batchId: text(source, "batch_id"),
-    taskId: text(source, "source_task_id"),
-    actor: normalizeIdentityText(source["actor"], "actor", MAX_TEXT_LENGTH),
-    status: text(source, "status"),
-    children: rawItems.map((value) => {
-      const item = readRecord(value, "recoveryBatch.child");
-      return {
-        itemId: text(item, "source_item_id"),
-        checkpointVersion: text(item, "checkpoint_version"),
-        status: text(item, "status"),
-        continuationId: optionalText(item, "continuation_id"),
-        newTaskId: optionalText(item, "new_task_id"),
-        newResultId: optionalText(item, "new_result_id"),
-        reason: optionalText(item, "reason"),
-        error: optionalText(item, "error"),
-        nextAction: text(item, "next_action"),
-        manualRecoveryPreparation:
-          item["manualRecoveryPreparation"] === null ||
-          item["manualRecoveryPreparation"] === undefined
-            ? null
-            : normalizeManualRecoveryPreparation(
-                item["manualRecoveryPreparation"],
-              ),
-        currentCheckpointVersion: optionalText(
-          item,
-          "currentCheckpointVersion",
-        ),
-        recoveryContinuationStatus: optionalText(
-          item,
-          "recoveryContinuationStatus",
-        ),
-        manualRecoveryAvailable: item["manualRecoveryAvailable"] === true,
-        recoveryKind: normalizeTaskItemRecoveryKind(item["recoveryKind"]),
-      };
-    }),
     nextAction: text(source, "next_action"),
   };
 }

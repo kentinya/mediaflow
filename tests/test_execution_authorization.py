@@ -1,266 +1,111 @@
 from __future__ import annotations
 
-import copy
 import io
 import json
-import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier, Thread
 from unittest.mock import patch
 
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.domain.execution_authorization import ExecutionAuthorizationStatus
+from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
-NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 
-
-def service(repository, clock=None, token="one-time-secret"):
-    return ExecutionAuthorizationService(
-        repository,
-        maximum_ttl_seconds=900,
-        clock=clock or (lambda: NOW),
-        token_factory=lambda: token,
-    )
-
-
-def request(api, document, *, execution_token=None):
-    body = json.dumps(document).encode()
+def request(api, path, method="POST", document=None):
+    body = json.dumps(document).encode() if document is not None else b""
     status = []
     environ = {
-        "REQUEST_METHOD": "POST",
-        "PATH_INFO": "/api/v1/tasks",
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "QUERY_STRING": "",
         "CONTENT_LENGTH": str(len(body)),
-        "HTTP_AUTHORIZATION": "Bearer api-secret",
+        "HTTP_AUTHORIZATION": "Bearer admin-token",
         "wsgi.input": io.BytesIO(body),
     }
-    if execution_token is not None:
-        environ["HTTP_X_MEDIAFLOW_EXECUTION_TOKEN"] = execution_token
     result = b"".join(api(environ, lambda value, headers: status.append(value)))
     return int(status[0].split()[0]), json.loads(result)
 
 
-class ExecutionAuthorizationTests(unittest.TestCase):
-    def test_runtime_feature_gate_defaults_disabled_and_validates_ttl(self) -> None:
-        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        document["api"].pop("remoteExecution", None)
-        self.assertFalse(
-            load_runtime_configuration(copy.deepcopy(document)).remote_execution_enabled
-        )
-        document["api"]["remoteExecution"] = {
-            "enabled": True,
-            "maximumTtlSeconds": 120,
-        }
-        loaded = load_runtime_configuration(copy.deepcopy(document))
-        self.assertTrue(loaded.remote_execution_enabled)
-        self.assertEqual(loaded.remote_execution_maximum_ttl_seconds, 120)
-        for value in (0, True, "60"):
-            invalid = copy.deepcopy(document)
-            invalid["api"]["remoteExecution"]["maximumTtlSeconds"] = value
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                load_runtime_configuration(invalid)
-        literal = copy.deepcopy(document)
-        literal["api"]["remoteExecution"]["token"] = "must-not-be-configured"
-        with self.assertRaises(ValueError):
-            load_runtime_configuration(literal)
-
-    def test_issue_persists_digest_only_and_audit(self) -> None:
+class RetiredRemoteExecutionTests(unittest.TestCase):
+    def test_cli_does_not_register_ticket_commands(self):
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                issued = service(repository).issue(
-                    ttl_seconds=60, max_items=2, actor="local-admin", note="manual approval"
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
+            config = Path(directory, "config.json")
+            config.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(SystemExit) as raised:
+                final_main(
+                    ["--config", str(config), "execution-authorizations", "list"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
                 )
-                stored = repository.get_execution_authorization(
-                    issued.authorization.authorization_id
-                )
-                self.assertEqual(issued.token, "one-time-secret")
-                self.assertNotEqual(stored.token_digest, issued.token)
-                self.assertEqual(
-                    stored.token_digest,
-                    ExecutionAuthorizationService.digest("one-time-secret"),
-                )
-                audit = repository.list_execution_authorization_audit(stored.authorization_id)
-                self.assertEqual([item.action for item in audit], ["issued"])
-            connection = sqlite3.connect(database)
-            raw = connection.execute(
-                "SELECT token_digest FROM execution_authorizations"
-            ).fetchone()[0]
-            connection.close()
-            self.assertNotIn("one-time-secret", raw)
+            self.assertEqual(2, raised.exception.code)
 
-    def test_consume_is_single_use_limit_bounded_and_admits_authorized_task(self) -> None:
+    def test_api_ticket_submission_is_an_unknown_route_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                authorizer = service(repository)
-                issued = authorizer.issue(ttl_seconds=60, max_items=2)
-                with self.assertRaisesRegex(ValueError, "exceeds"):
-                    authorizer.submit_organize(issued.token, limit=3)
-                submission = authorizer.submit_organize(issued.token, limit=2)
-                task = submission.task
-                self.assertEqual(task.command, "organize")
-                self.assertTrue(task.execute_authorized)
-                self.assertEqual(repository.get_task(task.task_id), task)
-                state = repository.get_task_scheduling(task.task_id)
-                self.assertIsNotNone(state)
-                self.assertEqual(state.queue_state.value, "queued")
-                self.assertEqual(state.admission_principal, "remote-execution")
-                self.assertEqual(1, len(repository.list_tasks()))
-                with self.assertRaisesRegex(ValueError, "consumed"):
-                    authorizer.submit_organize(issued.token, limit=1)
-                stored = repository.get_execution_authorization(
-                    issued.authorization.authorization_id
-                )
-                self.assertEqual(stored.status, ExecutionAuthorizationStatus.CONSUMED)
-                # The legacy column keeps its name and carries the substantive
-                # Task identity, exactly like the occurrence link.
-                self.assertEqual(stored.consumed_task_id, task.task_id)
-                audit = repository.list_execution_authorization_audit(stored.authorization_id)
-                self.assertEqual(
-                    [item.task_id for item in audit if item.action == "consumed"], [task.task_id]
-                )
-
-    def test_expired_revoked_invalid_and_validation(self) -> None:
-        clock = [NOW]
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                authorizer = service(repository, clock=lambda: clock[0])
-                expired = authorizer.issue(ttl_seconds=1, max_items=1)
-                clock[0] += timedelta(seconds=2)
-                self.assertEqual(authorizer.list()[0].status, ExecutionAuthorizationStatus.EXPIRED)
-                with self.assertRaisesRegex(ValueError, "expired"):
-                    authorizer.submit_organize(expired.token, limit=1)
-                self.assertEqual(
-                    repository.get_execution_authorization(
-                        expired.authorization.authorization_id
-                    ).status,
-                    ExecutionAuthorizationStatus.EXPIRED,
-                )
-                clock[0] = NOW
-                active = service(repository, clock=lambda: clock[0], token="second").issue(
-                    ttl_seconds=30, max_items=1
-                )
-                authorizer.revoke(active.authorization.authorization_id)
-                with self.assertRaisesRegex(ValueError, "revoked"):
-                    authorizer.submit_organize("second", limit=1)
-                with self.assertRaisesRegex(ValueError, "invalid"):
-                    authorizer.submit_organize("unknown", limit=1)
-                for ttl, items in ((0, 1), (901, 1), (1, 0)):
-                    with self.subTest(ttl=ttl, items=items), self.assertRaises(ValueError):
-                        authorizer.issue(ttl_seconds=ttl, max_items=items)
-
-    def test_concurrent_token_consumption_admits_one_task(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                service(repository).issue(ttl_seconds=60, max_items=1)
-            barrier = Barrier(2)
-            results = []
-
-            def consume() -> None:
-                with SQLiteTaskRepository(database) as repository:
-                    barrier.wait()
-                    try:
-                        results.append(
-                            service(repository).submit_organize("one-time-secret", limit=1)
-                        )
-                    except ValueError:
-                        results.append(None)
-
-            threads = [Thread(target=consume), Thread(target=consume)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(sum(item is not None for item in results), 1)
-                self.assertEqual(len(()), 0)
-                self.assertEqual(len(repository.list_tasks()), 1)
-
-    def test_api_requires_feature_bearer_separate_header_and_execute_true(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                issued = service(repository, clock=lambda: datetime.now(UTC)).issue(
-                    ttl_seconds=60, max_items=2
-                )
-                disabled = MediaFlowApi(repository, "api-secret")
-                self.assertEqual(
-                    request(
-                        disabled,
-                        {"command": "organize", "execute": True, "limit": 1},
-                        execution_token=issued.token,
-                    )[0],
-                    400,
-                )
-                api = MediaFlowApi(repository, "api-secret", remote_execution_enabled=True)
-                # Only a refused request leaves the one-shot authority
-                # unconsumed, so the accepted case runs last.
-                for document, token in (
-                    ({"command": "organize", "execute": True, "limit": 1}, None),
-                    ({"command": "organize", "limit": 1}, issued.token),
-                    (
-                        {
-                            "command": "organize",
-                            "execute": True,
-                            "limit": 1,
-                            "executionToken": issued.token,
-                        },
-                        issued.token,
+            repository = SQLiteTaskRepository(Path(directory, "runtime.sqlite3"))
+            try:
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
-                ):
-                    with self.subTest(document=document):
-                        self.assertEqual(request(api, document, execution_token=token)[0], 400)
-                status, result = request(
-                    api,
-                    {"command": "organize", "execute": True, "limit": 1},
-                    execution_token=issued.token,
                 )
-                self.assertEqual(status, 202)
-                self.assertTrue(result["executeAuthorized"])
-                self.assertTrue(result["taskId"])
-                self.assertEqual(result["executionMethod"], "task_engine")
-                self.assertNotIn(issued.token, json.dumps(result))
-                # The admitted run is one shared Task: no Job row exists and the
-                # queued Task is the only durable identity.
-                self.assertEqual(1, len(repository.list_tasks()))
-                self.assertIsNotNone(repository.get_task(result["taskId"]))
+                status, document = request(
+                    api,
+                    "/api/v1/tasks",
+                    document={"command": "organize", "execute": True, "limit": 1},
+                )
+                self.assertIn(status, (404, 405), document)
+                self.assertNotIn("taskId", document)
+                self.assertEqual((), repository.list_tasks())
+                tables = {
+                    row[0]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                self.assertNotIn("execution_authorizations", tables)
+                self.assertNotIn("execution_authorization_audit", tables)
+            finally:
+                repository.close()
 
-    def test_api_ticket_admits_one_queued_authorized_task_without_a_job(self) -> None:
+    def test_historical_remote_execution_setting_stays_readable_without_authority(self):
+        document = json.loads(
+            Path("config/mediaflow.phase13.2.example.json").read_text(encoding="utf-8")
+        )
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source.mkv").write_bytes(b"media")
-            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                issued = service(repository, clock=lambda: datetime.now(UTC)).issue(
-                    ttl_seconds=60, max_items=1
-                )
-                api = MediaFlowApi(repository, "api-secret", remote_execution_enabled=True)
-                status, submitted = request(
-                    api,
-                    {"command": "organize", "execute": True, "limit": 1},
-                    execution_token=issued.token,
-                )
-                self.assertEqual(status, 202)
-                task_id = submitted["taskId"]
-                task = repository.get_task(task_id)
-                self.assertIsNotNone(task)
-                self.assertTrue(task.execute_authorized)
-                self.assertIsNone(task.scope_path)
-                self.assertEqual(task.item_limit, 1)
-                state = repository.get_task_scheduling(task_id)
-                self.assertEqual(state.queue_state.value, "queued")
-                self.assertEqual(state.admission_trigger.value, "manual")
-                self.assertEqual(1, len(repository.list_tasks()))
-                # The whole-library scope is the Task's own admitted shape; the
-                # resident engine owns its execution, so nothing ran here.
-                self.assertFalse((root / "target").exists())
-                self.assertTrue((root / "source.mkv").exists())
+            document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
+            document["api"]["remoteExecution"] = {
+                "enabled": True,
+                "maximumTtlSeconds": 900,
+            }
+            loaded = load_runtime_configuration(document)
+            self.assertFalse(hasattr(loaded, "remote_execution_enabled"))
+            from mediaflow.domain.system_settings import (
+                SystemSettingsEdit,
+                validate_settings_edit,
+            )
 
+            errors = validate_settings_edit(
+                (SystemSettingsEdit("api.remoteExecution.enabled", False),),
+                bootstrap_database_path=str(Path(directory, "runtime.sqlite3")),
+            )
+            self.assertEqual("field_retired", errors[0]["code"])
+
+    def test_direct_cli_analysis_and_execute_remain_the_current_entrances(self):
+        # The direct CLI journeys are exercised below; this assertion keeps the
+        # retained current entrance visible in the retirement suite.
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        self.assertNotIn("remoteExecution", document["api"])
+
+
+class RetainedDirectCliTests(unittest.TestCase):
     def test_cli_organize_execute_admits_and_executes_one_kernel_task(self) -> None:
         """Task47.3: the direct CLI execute entrance is one shared Task run.
 
@@ -584,46 +429,6 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertIsNone(repository.get_task_scheduling(task.task_id))
                 (item,) = repository.list_items(task.task_id)
                 self.assertEqual("dry_run", item.status.value)
-
-    def test_cli_issues_token_once_and_lists_without_token_or_digest(self) -> None:
-        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as directory:
-            document["api"]["remoteExecution"]["enabled"] = True
-            document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
-            config = Path(directory, "config.json")
-            config.write_text(json.dumps(document), encoding="utf-8")
-            issued, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "execution-authorizations",
-                        "issue",
-                        "--ttl-seconds",
-                        "60",
-                        "--max-items",
-                        "2",
-                    ],
-                    stdout=issued,
-                    stderr=errors,
-                ),
-                0,
-                errors.getvalue(),
-            )
-            self.assertIn("Token shown once: YES", issued.getvalue())
-            listing = io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "execution-authorizations", "list"],
-                    stdout=listing,
-                    stderr=errors,
-                ),
-                0,
-            )
-            token = issued.getvalue().split("Token: ", 1)[1].splitlines()[0]
-            self.assertNotIn(token, listing.getvalue())
-            self.assertNotIn(ExecutionAuthorizationService.digest(token), listing.getvalue())
 
 
 if __name__ == "__main__":

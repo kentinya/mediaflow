@@ -154,27 +154,33 @@ def example_document() -> dict:
 
 
 def admit_organize_job(api, *, limit: int = 1):
-    """Admit one supported Organize Task under the one-shot authority boundary.
+    """Admit one organizing Task through the current non-interactive kernel."""
+    from datetime import UTC, datetime
 
-    The retired DryRun Job command no longer exists, and organizing execution
-    admission is a Task (Task47.3).  The helper issues a one-shot authorization,
-    submits through that boundary and returns ``(task_id, task_document)`` read
-    back through the ordinary API projection.
-    """
-    from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+    from mediaflow.application.task_scheduling import build_scheduled_task_admission
+    from mediaflow.domain.task_persistence import RunDisplayContext
+    from mediaflow.domain.task_scheduling import TaskTrigger
 
     api._refresh_configuration_binding()
     binding = api._runtime_binding
-    service = ExecutionAuthorizationService(
-        api._repository,
-        maximum_ttl_seconds=3600,
-        maximum_active_jobs=100,
+    task, state = build_scheduled_task_admission(
+        "organize",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal="tester",
+        item_limit=limit,
         configuration_snapshot_id=binding.snapshot_id,
         configuration_snapshot_digest=binding.snapshot_digest,
+        require_configuration_snapshot=True,
+        now=datetime.now(UTC),
     )
-    issued = service.issue(ttl_seconds=60, max_items=limit, actor="tester")
-    submission = service.submit_organize(issued.token, limit=limit)
-    task_id = submission.task.task_id
+    api._repository.admit_scheduled_task(
+        task,
+        state,
+        capacity=binding.maximum_active_jobs,
+        display=RunDisplayContext(source_scope=None, origin_kind="remote-organize"),
+    )
+    task_id = task.task_id
     status, document = request(api, f"/api/v1/tasks/{task_id}")
     assert status == 200, (status, document)
     return task_id, document
@@ -4664,9 +4670,9 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(raw["document"], portable_managed_configuration_document(document))
                 self.assertNotIn("persistence", raw["document"])
                 self.assertNotIn("principals", raw["document"].get("api", {}))
-                # Managed System Settings inside ``api`` are not deployment
-                # identity and stay visible.
-                self.assertIn("remoteExecution", raw["document"]["api"])
+                # The retired remote-execution ticket settings are not part of
+                # a current starter document or its managed projection.
+                self.assertNotIn("remoteExecution", raw["document"].get("api", {}))
                 # The persisted Draft keeps its complete authority; only the
                 # response projection strips it.
                 self.assertEqual(service.require(draft.revision_id).document, document)

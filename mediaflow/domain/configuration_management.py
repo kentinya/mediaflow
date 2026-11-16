@@ -112,7 +112,7 @@ def portable_managed_configuration_document(document: object) -> dict[str, objec
     startup authority — the database locator and the API principal/token
     identity — is excluded; permitted deployment status remains a separate,
     secret-free surface rather than part of the managed document.  ``api``
-    keeps managed System Settings such as ``remoteExecution``.
+    keeps managed System Settings such as notification and retention values.
     """
 
     if not isinstance(document, dict):

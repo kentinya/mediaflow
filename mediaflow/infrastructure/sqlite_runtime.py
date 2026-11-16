@@ -33,11 +33,6 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
 )
 from mediaflow.domain.direct_files import LibraryKind
-from mediaflow.domain.execution_authorization import (
-    ExecutionAuthorization,
-    ExecutionAuthorizationAudit,
-    ExecutionAuthorizationStatus,
-)
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.manual_execution import (
     ManualExecution,
@@ -79,8 +74,6 @@ from mediaflow.domain.manual_organize_preview import (
     manual_preview_plan_problem,
 )
 from mediaflow.domain.manual_recovery import (
-    ManualRecoveryLink,
-    ManualRecoveryLinkStatus,
     ManualRecoveryPreparation,
     ManualRecoveryPreparationStatus,
 )
@@ -170,14 +163,8 @@ from mediaflow.domain.recovery import (
     RecoveryRequest,
     RecoveryRequestStatus,
 )
-from mediaflow.domain.recovery_batch import (
-    RecoveryBatch,
-    RecoveryBatchItem,
-    RecoveryBatchItemStatus,
-)
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuation,
-    RecoveryContinuationStatus,
 )
 from mediaflow.domain.resident_services import (
     ResidentServiceRegistration,
@@ -290,19 +277,11 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # Schema 42 adds the read-supporting item ordering index of the selected-run
 # detail journey.  It is indexes only: the read path adds no column, no
 # backfill and no second execution authority.
-# Schema 43 adds the additive ``scope_continuations`` table: one explicit
-# admission record per Web "Continue" of a durably paused Task's exact
-# remaining admitted scope.  The row copies the original command, scope path,
-# item limit and immutable configuration pin, is linked to exactly one queued
-# continuation Job, and is display/claim evidence only — the resident Worker
-# still owns the running boundary and revalidates live source, capability and
-# mutation authority before any effect.  A legacy database simply has no
-# continuation rows, so nothing is backfilled and no authority is invented.
 # Schema 44 adds a nullable origin Task to ordinary manual Previews. The exact
-# remaining-scope recovery Preview persists that link, and the existing
-# ManualExecution/Task rows complete it after explicit execution. This is
-# history and scope-accounting evidence only; execution still uses the normal
-# one-shot authority, Worker and OrganizerExecutor boundaries.
+# recovery Preview persists that link, and the existing ManualExecution/Task
+# rows complete it after explicit execution. This is history and
+# scope-accounting evidence only; execution still uses the normal one-shot
+# authority, Task kernel and OrganizerExecutor boundaries.
 # Schema 45 adds the additive ``media_discoveries`` and
 # ``media_discovery_observations`` tables: one durable bounded discovery record
 # per ResourceLibrary folder/mixed-selection admission, its persisted counters,
@@ -2153,175 +2132,6 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._recovery_continuation(row) for row in rows)
 
-    def create_manual_recovery_link(self, link: ManualRecoveryLink) -> None:
-        if link.status is not ManualRecoveryLinkStatus.AUTHORIZED:
-            raise ValueError("manual recovery link must start authorized")
-        with self._lock, self._connection:
-            self._connection.execute(
-                """INSERT INTO manual_recovery_links (
-                    link_id, source_task_id, source_item_id,
-                    analysis_continuation_id, analysis_task_id, analysis_result_id,
-                    intent_id, preview_id, authorization_id, actor, status,
-                    created_at, updated_at, execution_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                self._manual_recovery_link_values(link),
-            )
-
-    def get_manual_recovery_link(self, link_id: str) -> ManualRecoveryLink | None:
-        if not isinstance(link_id, str) or not link_id.strip():
-            raise ValueError("manual recovery link ID is required")
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM manual_recovery_links WHERE link_id=?", (link_id,)
-            ).fetchone()
-        return self._manual_recovery_link(row) if row else None
-
-    def get_manual_recovery_link_by_source(
-        self, source_task_id: str, source_item_id: str
-    ) -> ManualRecoveryLink | None:
-        if not isinstance(source_task_id, str) or not source_task_id.strip():
-            raise ValueError("manual recovery source Task ID is required")
-        if not isinstance(source_item_id, str) or not source_item_id.strip():
-            raise ValueError("manual recovery source TaskItem ID is required")
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT * FROM manual_recovery_links
-                WHERE source_task_id=? AND source_item_id=?
-                ORDER BY created_at DESC, link_id DESC LIMIT 1""",
-                (source_task_id, source_item_id),
-            ).fetchone()
-        return self._manual_recovery_link(row) if row else None
-
-    def get_manual_recovery_link_by_authorization(
-        self, authorization_id: str
-    ) -> ManualRecoveryLink | None:
-        if not isinstance(authorization_id, str) or not authorization_id.strip():
-            raise ValueError("manual recovery authorization ID is required")
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT * FROM manual_recovery_links
-                WHERE authorization_id=? ORDER BY created_at DESC, link_id DESC LIMIT 1""",
-                (authorization_id,),
-            ).fetchone()
-        return self._manual_recovery_link(row) if row else None
-
-    def complete_manual_recovery_link(
-        self,
-        link_id: str,
-        *,
-        execution_id: str,
-        now: datetime,
-    ) -> ManualRecoveryLink:
-        if not isinstance(execution_id, str) or not execution_id.strip():
-            raise ValueError("manual recovery execution ID is required")
-        if now.tzinfo is None:
-            raise ValueError("manual recovery completion timestamp needs timezone")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE manual_recovery_links
-                SET status=?, execution_id=?, updated_at=?
-                WHERE link_id=? AND status=?""",
-                (
-                    ManualRecoveryLinkStatus.CONSUMED.value,
-                    execution_id,
-                    now.isoformat(),
-                    link_id,
-                    ManualRecoveryLinkStatus.AUTHORIZED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                value = self.get_manual_recovery_link(link_id)
-                if value is None:
-                    raise LookupError(f"manual recovery link {link_id!r} was not found")
-                if value.status is ManualRecoveryLinkStatus.CONSUMED:
-                    return value
-                raise ValueError("manual recovery link is no longer authorized")
-        value = self.get_manual_recovery_link(link_id)
-        if value is None:
-            raise LookupError(f"manual recovery link {link_id!r} was not found")
-        return value
-
-    def mark_manual_recovery_link_stale(
-        self,
-        link_id: str,
-        *,
-        now: datetime,
-    ) -> ManualRecoveryLink:
-        if now.tzinfo is None:
-            raise ValueError("manual recovery stale timestamp needs timezone")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE manual_recovery_links SET status=?, updated_at=?
-                WHERE link_id=? AND status=?""",
-                (
-                    ManualRecoveryLinkStatus.STALE.value,
-                    now.isoformat(),
-                    link_id,
-                    ManualRecoveryLinkStatus.AUTHORIZED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                value = self.get_manual_recovery_link(link_id)
-                if value is None:
-                    raise LookupError(f"manual recovery link {link_id!r} was not found")
-                return value
-        value = self.get_manual_recovery_link(link_id)
-        if value is None:
-            raise LookupError(f"manual recovery link {link_id!r} was not found")
-        return value
-
-    def supersede_manual_recovery_link(
-        self,
-        link_id: str,
-        *,
-        analysis_continuation_id: str,
-        analysis_task_id: str,
-        analysis_result_id: str,
-        intent_id: str,
-        preview_id: str,
-        authorization_id: str,
-        actor: str,
-        now: datetime,
-    ) -> ManualRecoveryLink:
-        """Replace one stale link's authority with a freshly acquired one.
-
-        A stale link stays the single durable anchor for its source item; the
-        expired or revoked authorization remains auditable in its own table.
-        """
-
-        if now.tzinfo is None:
-            raise ValueError("manual recovery supersede timestamp needs timezone")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE manual_recovery_links
-                SET analysis_continuation_id=?, analysis_task_id=?, analysis_result_id=?,
-                    intent_id=?, preview_id=?, authorization_id=?, actor=?, status=?,
-                    updated_at=?, execution_id=NULL
-                WHERE link_id=? AND status=?""",
-                (
-                    analysis_continuation_id,
-                    analysis_task_id,
-                    analysis_result_id,
-                    intent_id,
-                    preview_id,
-                    authorization_id,
-                    actor,
-                    ManualRecoveryLinkStatus.AUTHORIZED.value,
-                    now.isoformat(),
-                    link_id,
-                    ManualRecoveryLinkStatus.STALE.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                value = self.get_manual_recovery_link(link_id)
-                if value is None:
-                    raise LookupError(f"manual recovery link {link_id!r} was not found")
-                return value
-        value = self.get_manual_recovery_link(link_id)
-        if value is None:
-            raise LookupError(f"manual recovery link {link_id!r} was not found")
-        return value
-
     def create_manual_recovery_preparation(self, preparation: ManualRecoveryPreparation) -> None:
         if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:
             raise ValueError("manual recovery preparation must start prepared")
@@ -2507,120 +2317,6 @@ class SQLiteTaskRepository:
         if value is None:
             raise LookupError(f"manual recovery preparation {preparation_id!r} was not found")
         return value
-
-    def create_recovery_batch(self, batch: RecoveryBatch) -> None:
-        if not batch.items or len(batch.items) > 100:
-            raise ValueError("recovery batch must contain between 1 and 100 items")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                self._connection.execute(
-                    """INSERT INTO recovery_batches
-                    (batch_id, source_task_id, actor, status, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        batch.batch_id,
-                        batch.source_task_id,
-                        batch.actor,
-                        batch.status.value,
-                        batch.created_at.isoformat(),
-                        batch.updated_at.isoformat(),
-                    ),
-                )
-                for item in batch.items:
-                    self._connection.execute(
-                        """INSERT INTO recovery_batch_items
-                        (batch_item_id, batch_id, source_task_id, source_item_id,
-                         checkpoint_version, status, created_at, updated_at, request_id,
-                         continuation_id, reason, error, next_action)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        self._recovery_batch_item_values(item),
-                    )
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def update_recovery_batch_item(self, item: RecoveryBatchItem) -> None:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE recovery_batch_items SET status=?, updated_at=?, request_id=?,
-                continuation_id=?, reason=?, error=?, next_action=?
-                WHERE batch_item_id=?""",
-                (
-                    item.status.value,
-                    item.updated_at.isoformat(),
-                    item.request_id,
-                    item.continuation_id,
-                    item.reason,
-                    item.error,
-                    item.next_action,
-                    item.batch_item_id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise LookupError(f"recovery batch item {item.batch_item_id!r} was not found")
-
-    def get_recovery_batch(self, batch_id: str) -> RecoveryBatch:
-        with self._lock:
-            batch_row = self._connection.execute(
-                "SELECT * FROM recovery_batches WHERE batch_id=?", (batch_id,)
-            ).fetchone()
-            if batch_row is None:
-                raise LookupError(f"recovery batch {batch_id!r} was not found")
-            rows = self._connection.execute(
-                """SELECT b.*, c.status AS continuation_status, c.error AS continuation_error,
-                c.recovery AS continuation_recovery,
-                c.new_task_id AS continuation_new_task_id,
-                c.new_result_id AS continuation_new_result_id
-                FROM recovery_batch_items b
-                LEFT JOIN recovery_continuations c ON c.continuation_id=b.continuation_id
-                WHERE b.batch_id=? ORDER BY b.source_item_id""",
-                (batch_id,),
-            ).fetchall()
-            items = tuple(self._recovery_batch_item(row) for row in rows)
-            unchanged = self._connection.execute(
-                """SELECT COUNT(*) AS count FROM task_items
-                WHERE task_id=? AND status IN ('success', 'skipped', 'dry_run')
-                AND item_id NOT IN
-                (SELECT source_item_id FROM recovery_batch_items WHERE batch_id=?)""",
-                (batch_row["source_task_id"], batch_id),
-            ).fetchone()["count"]
-            ignored = self._connection.execute(
-                """SELECT COUNT(*) AS count FROM task_items
-                WHERE task_id=? AND status = 'ignored'
-                AND item_id NOT IN
-                (SELECT source_item_id FROM recovery_batch_items WHERE batch_id=?)""",
-                (batch_row["source_task_id"], batch_id),
-            ).fetchone()["count"]
-        status = RecoveryBatch.derive_status(items)
-        return RecoveryBatch(
-            batch_row["batch_id"],
-            batch_row["source_task_id"],
-            batch_row["actor"],
-            datetime.fromisoformat(batch_row["created_at"]),
-            max(
-                datetime.fromisoformat(batch_row["updated_at"]),
-                *(item.updated_at for item in items),
-            ),
-            status,
-            items,
-            unchanged,
-            ignored_count=ignored,
-        )
-
-    def list_recovery_batches(
-        self, source_task_id: str, *, limit: int = 20
-    ) -> tuple[RecoveryBatch, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("recovery batch limit must be between 1 and 100")
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT batch_id FROM recovery_batches
-                WHERE source_task_id=? ORDER BY created_at DESC, batch_id DESC LIMIT ?""",
-                (source_task_id, limit),
-            ).fetchall()
-        return tuple(self.get_recovery_batch(row["batch_id"]) for row in rows)
 
     def _resolve_recovery_request_locked(
         self,
@@ -5385,9 +5081,8 @@ class SQLiteTaskRepository:
           continuation records the exact child Task it produced
           (``new_task_id``);
         - a same-page recovery execution is the confirmed execution of one
-          ``manual_recovery_preparations`` summary and/or the consumed
-          ``manual_recovery_links`` anchor, and both tables persist the exact
-          ``manual_executions.task_id`` they admitted.  That execution is a
+          ``manual_recovery_preparations`` summary, and that table persists the
+          exact ``manual_executions.task_id`` it admitted.  That execution is a
           *follow-up* only when it was admitted as a different Task than the
           recovery's own ``source_task_id`` — the historical shape where the
           confirmation minted a new top-level Task.  The same-Task recovery of
@@ -5408,18 +5103,15 @@ class SQLiteTaskRepository:
             f"WHERE followup_recovery.new_task_id = {task_identity}) "
             "OR EXISTS (SELECT 1 FROM metadata_correction_continuations "
             f"followup_correction WHERE followup_correction.new_task_id = {task_identity}) "
-            # The two same-page branches start from the indexed
-            # ``manual_executions.task_id`` identity and then prove the
-            # preparation/link membership, so a run with no manual execution
-            # costs one indexed lookup rather than two table scans.
+            # The same-page branch starts from the indexed
+            # ``manual_executions.task_id`` identity and then proves the
+            # preparation membership, so a run with no manual execution costs
+            # one indexed lookup rather than a table scan.
             "OR EXISTS (SELECT 1 FROM manual_executions followup_execution "
             f"WHERE followup_execution.task_id = {task_identity} "
-            "AND (EXISTS (SELECT 1 FROM manual_recovery_preparations followup_preparation "
+            "AND EXISTS (SELECT 1 FROM manual_recovery_preparations followup_preparation "
             "WHERE followup_preparation.execution_id = followup_execution.execution_id "
-            "AND followup_preparation.source_task_id <> followup_execution.task_id) "
-            "OR EXISTS (SELECT 1 FROM manual_recovery_links followup_link "
-            "WHERE followup_link.execution_id = followup_execution.execution_id "
-            "AND followup_link.source_task_id <> followup_execution.task_id))))"
+            "AND followup_preparation.source_task_id <> followup_execution.task_id)))"
         )
 
     def _run_query_document(self) -> str:
@@ -6706,8 +6398,7 @@ class SQLiteTaskRepository:
         rewritten.  Whether the operator has since handled it is a separate,
         exactly-linked question.  Every branch below joins through a persisted
         identity only (source Task/Item, `recovery_continuations`,
-        `manual_recovery_preparations`, `scope_continuations`,
-        `manual_recovery_links`) — never a name, timestamp proximity or the
+        `manual_recovery_preparations`) — never a name, timestamp proximity or the
         current status of some other Task.
 
         The returned state is one of the closed set below, derived from the
@@ -7678,9 +7369,6 @@ class SQLiteTaskRepository:
                                WHERE lineage_prep.status = 'prepared'
                                  AND (lineage_prep.source_item_id = lineage_item.item_id
                                       OR lineage_prep.source_task_id = lineage_item.task_id))
-                    OR EXISTS (SELECT 1 FROM manual_recovery_links lineage_link
-                               WHERE lineage_link.status = 'authorized'
-                                 AND lineage_link.source_item_id = lineage_item.item_id)
                     OR EXISTS (
                         SELECT 1 FROM manual_execution_items lineage_execution_item
                         JOIN manual_executions lineage_execution
@@ -7757,16 +7445,11 @@ class SQLiteTaskRepository:
         TaskItem, and their own persisted status is the only authority for
         whether the operator still owes the required step:
 
-        - the current ``manual_recovery_preparations`` summary projects
-          ``prepared`` (nobody confirmed it yet) or ``confirmed`` (the exact
-          ready subset was admitted, so the responsibility moved to that
-          execution's own durable Result);
-        - the older one-shot ``manual_recovery_links`` anchor projects
-          ``authorized`` until its execute consumes it, then ``consumed``.
-
-        A ``superseded``/``stale`` summary or link is history and never keeps a
-        step alive.  A consumed link is reported as ``confirmed`` because the
-        operator already completed that exact handoff.
+        The current ``manual_recovery_preparations`` summary projects
+        ``prepared`` (nobody confirmed it yet) or ``confirmed`` (the exact ready
+        subset was admitted, so the responsibility moved to that execution's own
+        durable Result).  A ``superseded``/``stale`` summary is history and never
+        keeps a step alive.
         """
 
         return (
@@ -7774,10 +7457,6 @@ class SQLiteTaskRepository:
             "(SELECT prep.status FROM manual_recovery_preparations prep "
             f"WHERE prep.source_item_id = {item_alias}.item_id "
             "ORDER BY prep.created_at DESC, prep.preparation_id DESC LIMIT 1), "
-            "(SELECT CASE link_row.status WHEN 'consumed' THEN 'confirmed' "
-            "ELSE link_row.status END FROM manual_recovery_links link_row "
-            f"WHERE link_row.source_item_id = {item_alias}.item_id "
-            "ORDER BY link_row.created_at DESC, link_row.link_id DESC LIMIT 1), "
             "'')"
         )
 
@@ -8335,7 +8014,6 @@ class SQLiteTaskRepository:
                 ("task_retry_audit", "decision_id", "decided_at", "task_retry"),
                 ("manual_ignore_audit", "decision_id", "decided_at", "ignore_decision"),
                 ("recovery_requests", "request_id", "requested_at", "recovery_request"),
-                ("recovery_batches", "batch_id", "created_at", "recovery_batch"),
                 (
                     "recovery_continuations",
                     "continuation_id",
@@ -8345,27 +8023,10 @@ class SQLiteTaskRepository:
                 ("recognition_retry_audit", "decision_id", "decided_at", "recognition_retry"),
             )
             for table, id_column, time_column, action in simple_audits:
-                item_column = (
-                    "source_item_id"
-                    if table == "recovery_continuations"
-                    else "NULL"
-                    if table == "recovery_batches"
-                    else "item_id"
-                )
-                scope_column = (
-                    "source_task_id"
-                    if table == "recovery_batches"
-                    else ("source_task_id" if table == "recovery_continuations" else "task_id")
-                )
+                item_column = "source_item_id" if table == "recovery_continuations" else "item_id"
+                scope_column = "source_task_id" if table == "recovery_continuations" else "task_id"
                 state_column = (
-                    "status"
-                    if table
-                    in {
-                        "recovery_requests",
-                        "recovery_batches",
-                        "recovery_continuations",
-                    }
-                    else "NULL"
+                    "status" if table in {"recovery_requests", "recovery_continuations"} else "NULL"
                 )
                 link_column = "request_id" if table == "recovery_continuations" else "NULL"
                 branches.append(
@@ -9402,171 +9063,6 @@ class SQLiteTaskRepository:
     initialize_automation_task_definition_due_state = initialize_automation_definition_due_state
     get_latest_automation_occurrence = get_latest_automation_definition_occurrence
     list_automation_occurrences = list_automation_definition_occurrences
-
-    def create_execution_authorization(
-        self, value: ExecutionAuthorization, audit: ExecutionAuthorizationAudit
-    ) -> None:
-        with self._lock, self._connection:
-            self._connection.execute(
-                "INSERT INTO execution_authorizations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                self._execution_authorization_values(value),
-            )
-            self._insert_execution_authorization_audit(audit)
-
-    def get_execution_authorization(self, authorization_id: str) -> ExecutionAuthorization | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM execution_authorizations WHERE authorization_id=?",
-                (authorization_id,),
-            ).fetchone()
-        return self._execution_authorization(row) if row else None
-
-    def list_execution_authorizations(self) -> tuple[ExecutionAuthorization, ...]:
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM execution_authorizations ORDER BY created_at DESC, authorization_id"
-            ).fetchall()
-        return tuple(self._execution_authorization(row) for row in rows)
-
-    def expire_execution_authorizations(self, now: datetime) -> int:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE execution_authorizations SET status=? WHERE status=? AND expires_at<=?",
-                (
-                    ExecutionAuthorizationStatus.EXPIRED.value,
-                    ExecutionAuthorizationStatus.ACTIVE.value,
-                    now.isoformat(),
-                ),
-            )
-        return cursor.rowcount
-
-    def consume_execution_authorization_task(
-        self,
-        token_digest: str,
-        task: PersistentTask,
-        scheduling: TaskSchedulingState,
-        now: datetime,
-        audit: ExecutionAuthorizationAudit,
-        capacity: int,
-        display: RunDisplayContext | None = None,
-    ) -> ExecutionAuthorization:
-        """Consume one remote ticket into one admitted organizing Task, atomically.
-
-        The exact ticket validation, the shared Task scheduling capacity and the
-        Task/queue/display/audit commit are one transaction: an invalid, expired,
-        over-bound or already-consumed ticket writes nothing, and a full shared
-        queue consumes no authority and admits no orphan Task.  The legacy
-        ``consumed_task_id`` column and the audit's ``task_id`` field keep their
-        names and carry the substantive Task identity, exactly like the
-        occurrence link, so existing readers stay unambiguous.
-        """
-
-        require_capacity(capacity)
-        self._require_scheduled_admission_values(task, scheduling)
-        if now.tzinfo is None:
-            raise ValueError("execution authorization consumption instant needs timezone")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = self._connection.execute(
-                    "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
-                ).fetchone()
-                if row is None:
-                    raise ValueError("execution authorization is invalid")
-                value = self._execution_authorization(row)
-                if value.status is not ExecutionAuthorizationStatus.ACTIVE:
-                    raise ValueError(f"execution authorization is {value.status.value}")
-                if value.expires_at <= now:
-                    self._connection.execute(
-                        "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
-                        (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
-                    )
-                    self._connection.commit()
-                    raise ValueError("execution authorization is expired")
-                if task.item_limit is None or task.item_limit > value.max_items:
-                    raise ValueError("remote organize limit exceeds execution authorization")
-                if self._scheduled_capacity_use_locked() >= capacity:
-                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
-                cursor = self._connection.execute(
-                    "UPDATE execution_authorizations SET status=?, consumed_at=?, "
-                    "consumed_task_id=? WHERE authorization_id=? AND status=?",
-                    (
-                        ExecutionAuthorizationStatus.CONSUMED.value,
-                        now.isoformat(),
-                        task.task_id,
-                        value.authorization_id,
-                        ExecutionAuthorizationStatus.ACTIVE.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("execution authorization was already consumed")
-                self._connection.execute(_TASK_INSERT, self._task_values(task))
-                if display is not None:
-                    self._insert_run_display_locked(task.task_id, display, task.created_at)
-                self._connection.execute(
-                    _TASK_SCHEDULING_INSERT,
-                    self._scheduling_values(scheduling),
-                )
-                self._insert_execution_authorization_audit(
-                    replace(audit, authorization_id=value.authorization_id, task_id=task.task_id)
-                )
-                updated = self._connection.execute(
-                    "SELECT * FROM execution_authorizations WHERE authorization_id=?",
-                    (value.authorization_id,),
-                ).fetchone()
-            except BaseException:
-                self._connection.rollback()
-                raise
-            self._connection.commit()
-        return self._execution_authorization(updated)
-
-    def revoke_execution_authorization(
-        self, authorization_id: str, now: datetime, audit: ExecutionAuthorizationAudit
-    ) -> ExecutionAuthorization:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE execution_authorizations SET status=?, revoked_at=? "
-                "WHERE authorization_id=? AND status=? AND expires_at>?",
-                (
-                    ExecutionAuthorizationStatus.REVOKED.value,
-                    now.isoformat(),
-                    authorization_id,
-                    ExecutionAuthorizationStatus.ACTIVE.value,
-                    now.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                existing = self.get_execution_authorization(authorization_id)
-                if existing is None:
-                    raise LookupError(f"execution authorization {authorization_id!r} was not found")
-                raise ValueError("only an active unexpired execution authorization can be revoked")
-            self._insert_execution_authorization_audit(audit)
-            row = self._connection.execute(
-                "SELECT * FROM execution_authorizations WHERE authorization_id=?",
-                (authorization_id,),
-            ).fetchone()
-        return self._execution_authorization(row)
-
-    def list_execution_authorization_audit(
-        self, authorization_id: str
-    ) -> tuple[ExecutionAuthorizationAudit, ...]:
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM execution_authorization_audit WHERE authorization_id=? "
-                "ORDER BY occurred_at, audit_id",
-                (authorization_id,),
-            ).fetchall()
-        return tuple(
-            ExecutionAuthorizationAudit(
-                row["audit_id"],
-                row["authorization_id"],
-                row["action"],
-                datetime.fromisoformat(row["occurred_at"]),
-                row["task_id"],
-                row["actor"],
-            )
-            for row in rows
-        )
 
     def append_security_audit(self, value: SecurityAuditRecord) -> None:
         with self._lock, self._connection:
@@ -14102,81 +13598,6 @@ class SQLiteTaskRepository:
             attempted_observations=tuple(observations),
         )
 
-    def claim_next_media_discovery(
-        self,
-        now: datetime,
-        *,
-        worker_id: str,
-        claim_token: str,
-        lease_seconds: float,
-    ) -> MediaDiscovery | None:
-        """Atomically lease the oldest queued or expired discovery for one Worker.
-
-        A discovery that already crossed a metadata read boundary is safe to
-        resume: the whole stage is zero mutation, so a stale owner can never
-        cause a media effect.  The claim is still exclusive so two Workers can
-        never append duplicate findings or sources for one record.
-
-        A record carrying an unacknowledged ``cancel_requested`` is deliberately
-        still claimable: the Worker that picks it up settles the accepted
-        cancellation at its safe boundary instead of the request stranding an
-        open record that no Worker may ever touch again.
-        """
-
-        self._require_claim_values(worker_id, claim_token, lease_seconds)
-        if now.tzinfo is None:
-            raise ValueError("media discovery claim timestamp needs timezone")
-        expires_at = now + timedelta(seconds=float(lease_seconds))
-        with self._lock, self._connection:
-            row = self._connection.execute(
-                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?, ?) "
-                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
-                "AND (organize_task_id IS NULL OR NOT EXISTS ("
-                "SELECT 1 FROM task_scheduling WHERE task_scheduling.task_id="
-                "media_discoveries.organize_task_id)) "
-                # A waiting discovery is claimable only once a later observation
-                # could actually change its stability verdict.  Reclaiming it
-                # immediately would spin, burn the durable traversal budget
-                # while traversing nothing and starve every other resident
-                # command, so the durable due time gates the pickup instead of
-                # being re-derived from the lease.
-                "AND (next_observation_at IS NULL OR next_observation_at <= ?) "
-                "ORDER BY created_at, discovery_id LIMIT 1",
-                (
-                    DiscoveryStatus.QUEUED.value,
-                    DiscoveryStatus.RUNNING.value,
-                    DiscoveryStatus.WAITING_STABILITY.value,
-                    DiscoveryStatus.ANALYZING.value,
-                    now.isoformat(),
-                    now.isoformat(),
-                ),
-            ).fetchone()
-            if row is None:
-                return None
-            cursor = self._connection.execute(
-                "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
-                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
-                "WHERE discovery_id=? AND status IN (?, ?, ?, ?) "
-                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
-                "AND (next_observation_at IS NULL OR next_observation_at <= ?)",
-                (
-                    worker_id,
-                    claim_token,
-                    expires_at.isoformat(),
-                    now.isoformat(),
-                    row["discovery_id"],
-                    DiscoveryStatus.QUEUED.value,
-                    DiscoveryStatus.RUNNING.value,
-                    DiscoveryStatus.WAITING_STABILITY.value,
-                    DiscoveryStatus.ANALYZING.value,
-                    now.isoformat(),
-                    now.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                return None
-        return self.get_media_discovery(row["discovery_id"])
-
     def claim_media_discovery(
         self,
         discovery_id: str,
@@ -15079,59 +14500,6 @@ class SQLiteTaskRepository:
             or not 0 < float(lease_seconds) <= 86_400
         ):
             raise ValueError("manual execution claim lease must be between 1 second and 1 day")
-
-    def claim_next_manual_execution(
-        self,
-        now: datetime,
-        *,
-        worker_id: str,
-        claim_token: str,
-        lease_seconds: float,
-    ) -> ManualExecution | None:
-        """Atomically lease the oldest admitted manual execution for one Worker.
-
-        Only an ``admitted`` execution whose previous claim (if any) has
-        expired can be leased, so a crashed Worker can never hand an execution
-        that already crossed the mutation boundary to a second Worker.  The
-        status itself is deliberately not advanced here: the lease is taken
-        first and only ``begin_manual_execution`` publishes the running
-        boundary immediately before OrganizerExecutor work starts.
-        """
-
-        self._require_claim_values(worker_id, claim_token, lease_seconds)
-        if now.tzinfo is None:
-            raise ValueError("manual execution claim timestamp needs timezone")
-        expires_at = now + timedelta(seconds=float(lease_seconds))
-        with self._lock, self._connection:
-            row = self._connection.execute(
-                "SELECT execution_id FROM manual_executions WHERE status=? "
-                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
-                "AND NOT EXISTS (SELECT 1 FROM task_scheduling "
-                "WHERE task_scheduling.task_id=manual_executions.task_id) "
-                "ORDER BY created_at, execution_id LIMIT 1",
-                (ManualExecutionStatus.ADMITTED.value, now.isoformat()),
-            ).fetchone()
-            if row is None:
-                return None
-            cursor = self._connection.execute(
-                "UPDATE manual_executions SET worker_id=?, claim_token=?, claimed_at=?, "
-                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
-                "WHERE execution_id=? AND status=? "
-                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
-                (
-                    worker_id,
-                    claim_token,
-                    now.isoformat(),
-                    expires_at.isoformat(),
-                    now.isoformat(),
-                    row["execution_id"],
-                    ManualExecutionStatus.ADMITTED.value,
-                    now.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                return None
-        return self.get_manual_execution(row["execution_id"])
 
     def claim_manual_execution(
         self,
@@ -20056,27 +19424,6 @@ class SQLiteTaskRepository:
                     WHERE status IN ('queued', 'running');
                 CREATE INDEX IF NOT EXISTS recovery_continuations_item_created
                     ON recovery_continuations(source_item_id, created_at, continuation_id);
-                CREATE TABLE IF NOT EXISTS recovery_batches (
-                    batch_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL, actor TEXT NOT NULL,
-                    status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id)
-                );
-                CREATE TABLE IF NOT EXISTS recovery_batch_items (
-                    batch_item_id TEXT PRIMARY KEY, batch_id TEXT NOT NULL,
-                    source_task_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
-                    checkpoint_version TEXT NOT NULL, status TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    request_id TEXT, continuation_id TEXT,
-                    reason TEXT, error TEXT, next_action TEXT,
-                    FOREIGN KEY(batch_id) REFERENCES recovery_batches(batch_id),
-                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
-                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
-                    FOREIGN KEY(request_id) REFERENCES recovery_requests(request_id),
-                    FOREIGN KEY(continuation_id) REFERENCES recovery_continuations(continuation_id),
-                    UNIQUE(batch_id, source_item_id)
-                );
-                CREATE INDEX IF NOT EXISTS recovery_batch_items_batch
-                    ON recovery_batch_items(batch_id, source_item_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
@@ -20333,32 +19680,6 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS manual_execution_effects_item_order
                     ON manual_execution_effects(execution_item_id, sequence, effect_id);
-                CREATE TABLE IF NOT EXISTS manual_recovery_links (
-                    link_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
-                    source_item_id TEXT NOT NULL,
-                    analysis_continuation_id TEXT NOT NULL,
-                    analysis_task_id TEXT NOT NULL,
-                    analysis_result_id TEXT NOT NULL,
-                    intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
-                    authorization_id TEXT NOT NULL UNIQUE,
-                    actor TEXT NOT NULL, status TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    execution_id TEXT,
-                    UNIQUE(source_task_id, source_item_id),
-                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
-                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
-                    FOREIGN KEY(analysis_continuation_id)
-                        REFERENCES recovery_continuations(continuation_id),
-                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
-                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
-                    FOREIGN KEY(authorization_id)
-                        REFERENCES manual_execution_authorizations(authorization_id),
-                    FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
-                );
-                CREATE INDEX IF NOT EXISTS manual_recovery_links_source
-                    ON manual_recovery_links(source_task_id, source_item_id, link_id);
-                CREATE INDEX IF NOT EXISTS manual_recovery_links_authorization
-                    ON manual_recovery_links(authorization_id);
                 CREATE TABLE IF NOT EXISTS manual_recovery_preparations (
                     preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
                     source_item_id TEXT NOT NULL,
@@ -20633,20 +19954,6 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS notification_due
                     ON notification_deliveries(status, next_attempt_at, created_at);
-                CREATE TABLE IF NOT EXISTS execution_authorizations (
-                    authorization_id TEXT PRIMARY KEY, token_digest TEXT NOT NULL UNIQUE,
-                    status TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                    max_items INTEGER NOT NULL, actor TEXT, note TEXT, consumed_at TEXT,
-                    consumed_task_id TEXT, revoked_at TEXT
-                );
-                CREATE TABLE IF NOT EXISTS execution_authorization_audit (
-                    audit_id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL,
-                    action TEXT NOT NULL, occurred_at TEXT NOT NULL, task_id TEXT, actor TEXT,
-                    FOREIGN KEY(authorization_id)
-                        REFERENCES execution_authorizations(authorization_id)
-                );
-                CREATE INDEX IF NOT EXISTS execution_authorizations_status_expiry
-                    ON execution_authorizations(status, expires_at);
                 CREATE TABLE IF NOT EXISTS security_audit (
                     audit_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, principal_id TEXT,
                     method TEXT NOT NULL, route TEXT NOT NULL, action TEXT NOT NULL,
@@ -21872,106 +21179,6 @@ class SQLiteTaskRepository:
         )
 
     @staticmethod
-    def _recovery_batch_item_values(item: RecoveryBatchItem) -> tuple[object, ...]:
-        return (
-            item.batch_item_id,
-            item.batch_id,
-            item.source_task_id,
-            item.source_item_id,
-            item.checkpoint_version,
-            item.status.value,
-            item.created_at.isoformat(),
-            item.updated_at.isoformat(),
-            item.request_id,
-            item.continuation_id,
-            item.reason,
-            item.error,
-            item.next_action,
-        )
-
-    @staticmethod
-    def _recovery_batch_item(row: sqlite3.Row) -> RecoveryBatchItem:
-        status = RecoveryBatchItemStatus(row["status"])
-        continuation_status = row["continuation_status"]
-        if continuation_status:
-            status = {
-                RecoveryContinuationStatus.QUEUED.value: RecoveryBatchItemStatus.QUEUED,
-                RecoveryContinuationStatus.RUNNING.value: RecoveryBatchItemStatus.RUNNING,
-                RecoveryContinuationStatus.COMPLETED.value: RecoveryBatchItemStatus.COMPLETED,
-                RecoveryContinuationStatus.FAILED.value: RecoveryBatchItemStatus.FAILED,
-                RecoveryContinuationStatus.CANCELLED.value: RecoveryBatchItemStatus.CANCELLED,
-            }.get(continuation_status, status)
-        new_task_id = row["continuation_new_task_id"]
-        new_result_id = row["continuation_new_result_id"]
-        recovery_status = continuation_status
-        recovery_action = row["continuation_recovery"]
-        return RecoveryBatchItem(
-            row["batch_item_id"],
-            row["batch_id"],
-            row["source_task_id"],
-            row["source_item_id"],
-            row["checkpoint_version"],
-            status,
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["request_id"],
-            row["continuation_id"],
-            new_task_id,
-            new_result_id,
-            recovery_status,
-            recovery_action,
-            row["reason"],
-            row["continuation_error"] or row["error"],
-            (
-                row["continuation_recovery"]
-                or {
-                    RecoveryContinuationStatus.QUEUED.value: (
-                        "wait for the Worker, then inspect the linked DryRun Task/Result"
-                    ),
-                    RecoveryContinuationStatus.RUNNING.value: (
-                        "wait for the Worker, then inspect the linked DryRun Task/Result"
-                    ),
-                    RecoveryContinuationStatus.COMPLETED.value: (
-                        "inspect the linked DryRun Task/Result; the source item remains unchanged"
-                    ),
-                    RecoveryContinuationStatus.CANCELLED.value: (
-                        "refresh the Task item checkpoint and explicitly continue again"
-                    ),
-                }.get(row["continuation_status"])
-                if row["continuation_status"]
-                else row["next_action"]
-            ),
-        )
-
-    @staticmethod
-    def _recovery_continuation(row: sqlite3.Row) -> RecoveryContinuation:
-        try:
-            status = RecoveryContinuationStatus(row["status"])
-        except ValueError:
-            status = RecoveryContinuationStatus.FAILED
-        return RecoveryContinuation(
-            row["continuation_id"],
-            row["request_id"],
-            row["source_task_id"],
-            row["source_item_id"],
-            row["checkpoint_version"],
-            row["configuration_snapshot_id"],
-            row["configuration_snapshot_digest"],
-            row["boundary"],
-            status,
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["actor"],
-            row["new_task_id"],
-            row["new_result_id"],
-            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-            row["error"],
-            row["recovery"],
-            row["authority_statement"],
-        )
-
-    @staticmethod
     def _manual_recovery_preparation_values(
         preparation: ManualRecoveryPreparation,
     ) -> tuple[object, ...]:
@@ -22030,48 +21237,6 @@ class SQLiteTaskRepository:
             tuple(_json_text_list(row["selected_item_ids_json"])),
             bool(row["allow_overwrite"]),
             bool(row["allow_source_cleanup"]),
-        )
-
-    @staticmethod
-    def _manual_recovery_link_values(link: ManualRecoveryLink) -> tuple[object, ...]:
-        return (
-            link.link_id,
-            link.source_task_id,
-            link.source_item_id,
-            link.analysis_continuation_id,
-            link.analysis_task_id,
-            link.analysis_result_id,
-            link.intent_id,
-            link.preview_id,
-            link.authorization_id,
-            link.actor,
-            link.status.value,
-            link.created_at.isoformat(),
-            link.updated_at.isoformat(),
-            link.execution_id,
-        )
-
-    @staticmethod
-    def _manual_recovery_link(row: sqlite3.Row) -> ManualRecoveryLink:
-        try:
-            status = ManualRecoveryLinkStatus(row["status"])
-        except ValueError:
-            status = ManualRecoveryLinkStatus.STALE
-        return ManualRecoveryLink(
-            row["link_id"],
-            row["source_task_id"],
-            row["source_item_id"],
-            row["analysis_continuation_id"],
-            row["analysis_task_id"],
-            row["analysis_result_id"],
-            row["intent_id"],
-            row["preview_id"],
-            row["authorization_id"],
-            row["actor"],
-            status,
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["execution_id"],
         )
 
     @staticmethod
@@ -22293,51 +21458,6 @@ class SQLiteTaskRepository:
             row["reason"],
             row["next_action"],
             row["linked_failure_category"] if "linked_failure_category" in columns else None,
-        )
-
-    @staticmethod
-    def _execution_authorization_values(value: ExecutionAuthorization) -> tuple[object, ...]:
-        return (
-            value.authorization_id,
-            value.token_digest,
-            value.status.value,
-            value.created_at.isoformat(),
-            value.expires_at.isoformat(),
-            value.max_items,
-            value.actor,
-            value.note,
-            value.consumed_at.isoformat() if value.consumed_at else None,
-            value.consumed_task_id,
-            value.revoked_at.isoformat() if value.revoked_at else None,
-        )
-
-    @staticmethod
-    def _execution_authorization(row: sqlite3.Row) -> ExecutionAuthorization:
-        return ExecutionAuthorization(
-            row["authorization_id"],
-            row["token_digest"],
-            ExecutionAuthorizationStatus(row["status"]),
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["expires_at"]),
-            row["max_items"],
-            row["actor"],
-            row["note"],
-            datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
-            row["consumed_task_id"],
-            datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
-        )
-
-    def _insert_execution_authorization_audit(self, value: ExecutionAuthorizationAudit) -> None:
-        self._connection.execute(
-            "INSERT INTO execution_authorization_audit VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                value.audit_id,
-                value.authorization_id,
-                value.action,
-                value.occurred_at.isoformat(),
-                value.task_id,
-                value.actor,
-            ),
         )
 
     @staticmethod

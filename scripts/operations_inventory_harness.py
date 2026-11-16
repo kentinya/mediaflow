@@ -111,12 +111,6 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
 from mediaflow.application.conflict_resolution import ConfirmationService  # noqa: E402
-from mediaflow.application.execution_authorization import (  # noqa: E402
-    ExecutionAuthorizationService,
-)
-from mediaflow.application.manual_organize_worker import (  # noqa: E402
-    ManualOrganizeExecutionWorker,
-)
 from mediaflow.application.media_organizer import (  # noqa: E402
     MediaOrganizerBatchResult,
     MediaOrganizerService,
@@ -211,6 +205,10 @@ from mediaflow.infrastructure.sqlite_runtime import (  # noqa: E402
 )
 from mediaflow.interfaces.service_api import MediaFlowApi  # noqa: E402
 from mediaflow.interfaces.v2_ui import asset_root  # noqa: E402
+from tests.task_engine_test_helpers import (  # noqa: E402
+    ManualOrganizeExecutionWorker,
+    MediaDiscoveryWorker,
+)
 
 HARNESS_TOKEN = "harness-viewer-token"
 HARNESS_ADMIN_TOKEN = "harness-admin-token"
@@ -845,7 +843,6 @@ def build_managed_fixture(
     # the same supported entry the acceptance evidence uses can seed the
     # pending pre-Task Job, while admission still requires its own issued
     # token (see ``seed``).
-    document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
     # The delivery journey needs the outbox row a settled Task really writes.
     # The fixture publishes its Webhook as enabled through the ordinary checked
     # draft/activate path, exactly like any other configured definition, so the
@@ -1429,43 +1426,6 @@ def seed(
 ) -> tuple[SQLiteTaskRepository, MediaFlowApi]:
     """Create one deterministic run population through real producers."""
 
-    # 1. A real durable Job admission through the *supported* remote organize
-    #    entry: the checked switch is enabled for this isolated fixture, the
-    #    operator submits the explicit execute intent and one issued one-shot
-    #    execution authorization.  The same authorization service the CLI issues
-    #    from produces the token, so the pending pre-Task Job carries the real
-    #    admission evidence and no permission is bypassed.  The resident Worker
-    #    has not claimed it yet.
-    issued = state_authorization_service(repository, managed).issue(
-        ttl_seconds=300, max_items=1, actor="harness"
-    )
-    submission = {
-        "body": {"command": "organize", "execute": True, "limit": 1},
-    }
-    # The viewer principal keeps its real refusal: the same submission it may
-    # read but not admit must answer 403 before any Job exists, so the fixture
-    # can never be mistaken for a permission bypass.
-    denied, denial = wsgi_request(
-        api,
-        "POST",
-        "/api/v1/tasks",
-        token=HARNESS_TOKEN,
-        headers={"X-MediaFlow-Execution-Token": issued.token},
-        **submission,
-    )
-    if denied != 403 or "remote_execute" not in json.dumps(denial):
-        raise SystemExit(f"harness: viewer organize admission was not refused: {denied} {denial}")
-    status, job_document = wsgi_request(
-        api,
-        "POST",
-        "/api/v1/tasks",
-        token=HARNESS_ADMIN_TOKEN,
-        headers={"X-MediaFlow-Execution-Token": issued.token},
-        **submission,
-    )
-    if status != 202:
-        raise SystemExit(f"harness: Task admission failed with {status}: {job_document}")
-
     # 2. A definition-pinned Job the way the Scheduler admits one: one real due
     #    occurrence is emitted by the production Scheduler over the checked
     #    Active definitions, so the scheduled trigger carries real admission
@@ -1511,25 +1471,39 @@ def seed(
     return repository, api
 
 
-def state_authorization_service(
-    repository: SQLiteTaskRepository, managed: ManagedHarnessContext | None
-) -> ExecutionAuthorizationService:
-    """The production one-shot execution authority the checked switch enables.
+def admit_harness_organize_task(
+    repository: SQLiteTaskRepository,
+    managed: ManagedHarnessContext | None,
+    *,
+    actor: str = "harness",
+):
+    """Admit one organizing Task through the shared current kernel."""
 
-    It is constructed exactly as the CLI's ``execution-authorizations issue``
-    command and the API runtime binding construct it, so the token the harness
-    submits was really issued and consumed by the supported boundary.
-    """
+    from mediaflow.application.task_scheduling import build_scheduled_task_admission
+    from mediaflow.domain.task_persistence import RunDisplayContext
+    from mediaflow.domain.task_scheduling import TaskTrigger
 
     active = managed.active if managed is not None else None
-    return ExecutionAuthorizationService(
-        repository,
-        maximum_active_jobs=(
-            managed.runtime.automation_maximum_active_jobs if managed is not None else 100
-        ),
-        configuration_snapshot_id=getattr(active, "revision_id", None),
-        configuration_snapshot_digest=getattr(active, "digest", None),
+    snapshot_id = getattr(active, "revision_id", None)
+    snapshot_digest = getattr(active, "digest", None)
+    task, state = build_scheduled_task_admission(
+        "organize",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal=actor,
+        item_limit=1,
+        configuration_snapshot_id=snapshot_id,
+        configuration_snapshot_digest=snapshot_digest,
+        require_configuration_snapshot=snapshot_id is not None,
+        now=datetime.now(UTC),
     )
+    repository.admit_scheduled_task(
+        task,
+        state,
+        capacity=(managed.runtime.automation_maximum_active_jobs if managed is not None else 100),
+        display=RunDisplayContext(source_scope=None, origin_kind="remote-organize"),
+    )
+    return task
 
 
 def run_scheduled_definition_tick(
@@ -2082,22 +2056,10 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
 
 
 def seed_queued_remote_task(state: AppState) -> dict:
-    """Admit one fresh remote organizing Task through the supported entry."""
+    """Admit one fresh organizing Task through the current kernel."""
 
-    issued = state_authorization_service(state.repository, state.managed).issue(
-        ttl_seconds=300, max_items=1, actor="harness-claim"
-    )
-    status, document = wsgi_request(
-        state.api,
-        "POST",
-        "/api/v1/tasks",
-        token=HARNESS_ADMIN_TOKEN,
-        headers={"X-MediaFlow-Execution-Token": issued.token},
-        body={"command": "organize", "execute": True, "limit": 1},
-    )
-    if status != 202:
-        raise RuntimeError(f"harness: queued remote Task admission failed: {status} {document}")
-    return {"taskId": document["taskId"], "status": document.get("status")}
+    task = admit_harness_organize_task(state.repository, state.managed, actor="harness-claim")
+    return {"taskId": task.task_id, "status": task.status.value}
 
 
 def run_worker_once(state: AppState, *, task_id: str | None = None) -> dict:
@@ -2325,8 +2287,6 @@ def release_preparation_freeze_gate(state: AppState) -> dict[str, object]:
 
 
 def _run_discovery_step(state: AppState):
-    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
-
     service = state.api._media_discovery
     gate = state.preparation_freeze_gate
     persist_frozen = getattr(service, "_persist_frozen", None)
@@ -2348,25 +2308,23 @@ def _run_discovery_step(state: AppState):
 
         service._persist_frozen = observed_persist_frozen
     try:
-        advanced = MediaDiscoveryWorker(
-            service,
-            worker_id="harness-discovery-worker",
-            notice=lambda _line: None,
-        ).run_next()
-        if advanced is not None:
-            return advanced
-        # Settle a discovery Task through the production Task engine only when
-        # that exact link exists.  The generic claim must not consume an
-        # unrelated queued Task merely because this fixture route was called.
+        # A kernel-linked discovery must be advanced by the Task engine, which
+        # owns its Task claim.  The direct Worker helper is only for a
+        # non-kernel fixture and must not steal the linked claim.
         linked = [
             item.organize_task_id
             for item in state.repository.list_media_discoveries(limit=100)
             if not item.terminal and item.organize_task_id
         ]
-        if not linked:
-            return None
-        task = _run_manual_task_once(state, task_id=linked[0])
-        return state.repository.get_media_discovery_for_task(task.task_id) if task else None
+        if linked:
+            task = _run_manual_task_once(state, task_id=linked[0])
+            return state.repository.get_media_discovery_for_task(task.task_id) if task else None
+        advanced = MediaDiscoveryWorker(
+            service,
+            worker_id="harness-discovery-worker",
+            notice=lambda _line: None,
+        ).run_next()
+        return advanced
     finally:
         if gate is not None and callable(persist_frozen):
             service._persist_frozen = persist_frozen

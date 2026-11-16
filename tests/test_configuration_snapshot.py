@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 from mediaflow.application.automation import IntervalScheduler
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -144,63 +143,64 @@ def request_raw(api, path, *, method="GET", token="admin-token"):
 
 
 def submit_organize_job(api, *, limit=None):
-    """Admit one real Organize Task and read it back through the supported API.
+    """Admit one real organizing Task through the current Task kernel.
 
-    The retired DryRun Job command no longer exists, and Task47.3 moved supported
-    remote organizing admission to a durable Task.  This helper consumes a
-    one-shot authorization into exactly that Task under the API's current
-    configuration pin, then reads the same Task back through the ordinary
-    ``GET /api/v1/tasks/{id}`` projection.
-
-    A runtime whose Active snapshot is unavailable is fail-closed here exactly
-    like the retired submission boundary was: nothing is admitted and the
-    caller observes an ordinary refusal.
+    The retired remote ticket boundary is gone; this helper uses the same
+    non-interactive kernel admission the supported CLI/Scheduler entrances use,
+    under the API's current configuration pin, then reads the Task back through
+    the ordinary ``GET /api/v1/tasks/{id}`` projection.
     """
+    from datetime import UTC, datetime
+
+    from mediaflow.application.task_scheduling import build_scheduled_task_admission
     from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+    from mediaflow.domain.task_persistence import RunDisplayContext
+    from mediaflow.domain.task_scheduling import TaskQueueFull, TaskTrigger
 
     limit = 1 if limit is None else limit
     try:
         api._refresh_configuration_binding()
         binding = api._runtime_binding
-    except (RuntimeSnapshotUnavailable, Exception):
-        # The real remote Task POST answers the fail-closed configuration error
-        # before any ticket is consumed; probing it here is the product surface.
-        return request(
-            api,
-            "/api/v1/tasks",
-            method="POST",
-            body=json.dumps({"command": "organize", "execute": True, "limit": limit}).encode(),
-        )
+    except RuntimeSnapshotUnavailable as error:
+        return 503, {
+            "error": {
+                "code": "configuration_unavailable",
+                "details": {
+                    "reason": getattr(error, "reason", None),
+                    "revisionId": getattr(error, "revision_id", None),
+                    "version": getattr(error, "version", None),
+                    "digest": getattr(error, "digest", None),
+                    "durableState": "managed_active_unavailable",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                },
+            }
+        }
+    except Exception:
+        return 503, {"error": {"code": "configuration_unavailable"}}
     if binding.snapshot_id is None:
-        return request(
-            api,
-            "/api/v1/tasks",
-            method="POST",
-            body=json.dumps({"command": "organize", "execute": True, "limit": limit}).encode(),
-        )
-    from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-
+        return 503, {"error": {"code": "configuration_unavailable"}}
+    task, state = build_scheduled_task_admission(
+        "organize",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal="tester",
+        item_limit=limit,
+        configuration_snapshot_id=binding.snapshot_id,
+        configuration_snapshot_digest=binding.snapshot_digest,
+        require_configuration_snapshot=True,
+        now=datetime.now(UTC),
+    )
     try:
-        issued = ExecutionAuthorizationService(
-            api._repository,
-            maximum_ttl_seconds=3600,
-            maximum_active_jobs=binding.maximum_active_jobs,
-            configuration_snapshot_id=binding.snapshot_id,
-            configuration_snapshot_digest=binding.snapshot_digest,
-        ).issue(ttl_seconds=60, max_items=1, actor="tester")
-        service = ExecutionAuthorizationService(
-            api._repository,
-            maximum_ttl_seconds=3600,
-            maximum_active_jobs=binding.maximum_active_jobs,
-            configuration_snapshot_id=binding.snapshot_id,
-            configuration_snapshot_digest=binding.snapshot_digest,
+        api._repository.admit_scheduled_task(
+            task,
+            state,
+            capacity=binding.maximum_active_jobs,
+            display=RunDisplayContext(source_scope=None, origin_kind="remote-organize"),
         )
-        submission = service.submit_organize(issued.token, limit=limit)
-    except Exception as error:
-        if type(error).__name__ != "AutomationQueueFull":
-            raise
+    except TaskQueueFull:
         return 409, {"error": {"code": "queue_full"}}
-    return request(api, f"/api/v1/tasks/{submission.task.task_id}")
+    return request(api, f"/api/v1/tasks/{task.task_id}")
 
 
 def activate_document(service, document, *, actor="tester"):
@@ -461,84 +461,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(rejected[0], 409)
                 self.assertEqual(rejected[1]["error"]["code"], "queue_full")
-
-    def test_api_activation_applies_remote_execute_gate_before_token_consumption(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            runtime = root / "runtime.sqlite3"
-            document = example_document()
-            document["persistence"]["databasePath"] = str(runtime)
-            document["api"]["remoteExecution"] = {
-                "enabled": True,
-                "maximumTtlSeconds": 120,
-            }
-            with (
-                SQLiteConfigurationRepository(runtime) as configuration_repository,
-                SQLiteTaskRepository(runtime) as task_repository,
-            ):
-                service = ManagedConfigurationService(
-                    configuration_repository,
-                    bootstrap_database_path=str(runtime),
-                )
-                first = activate_document(service, document)
-                api = MediaFlowApi(
-                    task_repository,
-                    None,
-                    principals=(
-                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
-                    ),
-                    remote_execution_enabled=True,
-                    remote_execution_maximum_ttl_seconds=120,
-                    configuration_service=service,
-                    configuration_snapshot_id=first.revision_id,
-                    configuration_snapshot_digest=first.digest,
-                    bootstrap_document=document,
-                )
-                issued = ExecutionAuthorizationService(task_repository).issue(
-                    ttl_seconds=60,
-                    max_items=1,
-                    actor="tester",
-                )
-
-                disabled = json.loads(json.dumps(document))
-                disabled["historyPath"] = str(root / "disabled.jsonl")
-                disabled["api"]["remoteExecution"]["enabled"] = False
-                activate_document(service, disabled)
-                denied = request(
-                    api,
-                    "/api/v1/tasks",
-                    method="POST",
-                    body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
-                    headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": issued.token},
-                )
-                self.assertEqual(denied[0], 400)
-                self.assertIn("disabled", denied[1]["error"]["message"])
-                self.assertEqual(
-                    task_repository.get_execution_authorization(
-                        issued.authorization.authorization_id
-                    ).status.value,
-                    "active",
-                )
-                self.assertEqual(task_repository.list_tasks(), ())
-
-                enabled = json.loads(json.dumps(disabled))
-                enabled["historyPath"] = str(root / "enabled.jsonl")
-                enabled["api"]["remoteExecution"]["enabled"] = True
-                current = activate_document(service, enabled)
-                accepted = request(
-                    api,
-                    "/api/v1/tasks",
-                    method="POST",
-                    body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
-                    headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": issued.token},
-                )
-                self.assertEqual(accepted[0], 202, accepted[1])
-                self.assertTrue(accepted[1]["executeAuthorized"])
-                self.assertEqual("task_engine", accepted[1]["executionMethod"])
-                admitted = task_repository.get_task(accepted[1]["taskId"])
-                self.assertIsNotNone(admitted)
-                self.assertEqual(admitted.configuration_snapshot_id, current.revision_id)
-                self.assertEqual(admitted.configuration_snapshot_digest, current.digest)
 
     def test_concurrent_activation_and_submission_never_mix_pin_and_admission(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2512,94 +2434,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 current = configuration_repository.get_active_revision()
                 self.assertIsNotNone(current)
                 self.assertEqual(current.revision_id, second_id)
-
-    def test_worker_continues_pinned_preview_when_current_active_is_unhealthy(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_root = root / "source"
-            target_root = root / "target"
-            source_root.mkdir()
-            target_root.mkdir()
-            runtime = root / "runtime.sqlite3"
-            document = example_document()
-            document["storages"][0]["rootPath"] = str(source_root)
-            document["storages"][1]["rootPath"] = str(target_root)
-            document["resourceLibraries"][0]["storagePath"] = ""
-            document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
-            document["persistence"]["databasePath"] = str(runtime)
-            config = root / "bootstrap.json"
-            config.write_text(json.dumps(document), encoding="utf-8")
-            with (
-                SQLiteConfigurationRepository(runtime) as configuration_repository,
-                SQLiteTaskRepository(runtime) as task_repository,
-            ):
-                service = ManagedConfigurationService(
-                    configuration_repository,
-                    bootstrap_database_path=str(runtime),
-                )
-                first_draft = service.import_draft(document, actor="tester")
-                first_validated = service.validate(first_draft.revision_id, actor="tester")
-                first = service.activate(
-                    first_validated.revision_id,
-                    expected_version=first_validated.version,
-                    actor="tester",
-                )
-                from mediaflow.application.execution_authorization import (
-                    ExecutionAuthorizationService,
-                )
-
-                authorization = ExecutionAuthorizationService(
-                    task_repository,
-                    maximum_ttl_seconds=3600,
-                    maximum_active_jobs=100,
-                    configuration_snapshot_id=first.revision_id,
-                    configuration_snapshot_digest=first.digest,
-                )
-                issued = authorization.issue(ttl_seconds=60, max_items=10, actor="tester")
-                old_submission = authorization.submit_organize(issued.token, limit=10)
-                old_task_id = old_submission.task.task_id
-                second_document = json.loads(json.dumps(document))
-                second_document["historyPath"] = str(root / "second-history.jsonl")
-                second_draft = service.import_draft(second_document, actor="tester")
-                second_validated = service.validate(second_draft.revision_id, actor="tester")
-                second = service.activate(
-                    second_validated.revision_id,
-                    expected_version=second_validated.version,
-                    actor="tester",
-                )
-                broken = json.loads(json.dumps(second_document))
-                broken["recognitionTypePolicies"][0]["metadataPolicy"] = "missing-policy"
-                payload = json.dumps(
-                    broken,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    allow_nan=False,
-                )
-                digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-                configuration_repository._connection.execute(
-                    "UPDATE managed_configuration_revisions SET payload=?, digest=? "
-                    "WHERE revision_id=?",
-                    (payload, digest, second.revision_id),
-                )
-                configuration_repository._connection.commit()
-
-            output, error = io.StringIO(), io.StringIO()
-            # Empty Local source: configure a synthetic credential so Preview can
-            # construct its Provider without making any external request.
-            with patch.dict("os.environ", {"TMDB_ACCESS_TOKEN": "fake-preview-test"}):
-                status = final_main(
-                    ["--config", str(config), "worker", "run-next"],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(status, 0, error.getvalue())
-            with SQLiteTaskRepository(runtime) as repository:
-                task = repository.get_task(old_task_id)
-                self.assertIsNotNone(task)
-                self.assertEqual(task.status.value, "completed")
-                self.assertEqual(task.configuration_snapshot_id, first.revision_id)
-                self.assertEqual(task.configuration_snapshot_digest, first.digest)
 
     def test_worker_claim_bootstrap_uses_locator_before_any_task_is_claimed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

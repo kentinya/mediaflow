@@ -464,8 +464,6 @@ class ResidentProcessingWorker:
         repository,
         *,
         manual_task_worker=None,
-        media_discovery_worker=None,
-        manual_organize_worker=None,
         files_transfer_worker=None,
         worker_id: str | None = None,
         label: str | None = None,
@@ -478,8 +476,6 @@ class ResidentProcessingWorker:
     ) -> None:
         self._repository = repository
         self._manual_task_worker = manual_task_worker
-        self._media_discovery_worker = media_discovery_worker
-        self._manual_organize_worker = manual_organize_worker
         self._files_transfer_worker = files_transfer_worker
         self._worker_id = validate_worker_id(worker_id or f"worker-{uuid4().hex[:12]}")
         self._label = validate_worker_label(label or f"worker-{self._worker_id[-6:]}")
@@ -488,7 +484,6 @@ class ResidentProcessingWorker:
             raw_commands: tuple[str, ...] = (
                 "organize",
                 "manual_organize",
-                *tuple(getattr(media_discovery_worker, "commands", ())),
                 *tuple(getattr(files_transfer_worker, "commands", ())),
             )
         else:
@@ -501,8 +496,6 @@ class ResidentProcessingWorker:
         self._registered = False
         for runner in (
             manual_task_worker,
-            media_discovery_worker,
-            manual_organize_worker,
             files_transfer_worker,
         ):
             binder = getattr(runner, "set_worker_heartbeat", None)
@@ -578,8 +571,6 @@ class ResidentProcessingWorker:
         self.ensure_registration()
         for runner in (
             self._manual_task_worker,
-            self._media_discovery_worker,
-            self._manual_organize_worker,
             self._files_transfer_worker,
         ):
             if runner is None:

@@ -409,10 +409,6 @@ class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
         document["resourceLibraries"][0]["storagePath"] = ""
         document["resourceLibraries"][0]["displayRootPath"] = str(source)
         document["api"] = json.loads(json.dumps(self.document["api"]))
-        document["api"]["remoteExecution"] = {
-            "enabled": True,
-            "maximumTtlSeconds": 900,
-        }
         document["automation"]["workerPollSeconds"] = 0.2
         document["automation"]["schedulerPollSeconds"] = 0.2
         self.publish_first_draft(document)
@@ -440,9 +436,7 @@ class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
         import os
         from unittest.mock import patch
 
-        from mediaflow.application.execution_authorization import (
-            ExecutionAuthorizationService,
-        )
+        from tests.task_engine_test_helpers import admit_organize_task
 
         credential = patch.dict(os.environ, {"TMDB_ACCESS_TOKEN": "resident-fake-provider"})
         credential.start()
@@ -459,15 +453,11 @@ class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
         self.assertIsNotNone(active)
 
         with SQLiteTaskRepository(self.database) as repository:
-            service = ExecutionAuthorizationService(
+            task_id = admit_organize_task(
                 repository,
-                maximum_ttl_seconds=3600,
-                maximum_active_jobs=100,
-                configuration_snapshot_id=active.revision_id,
-                configuration_snapshot_digest=active.digest,
-            )
-            issued = service.issue(ttl_seconds=600, max_items=1, actor="tester")
-            task_id = service.submit_organize(issued.token, limit=1).task.task_id
+                snapshot_id=active.revision_id,
+                snapshot_digest=active.digest,
+            ).task_id
 
         def completed():
             with SQLiteTaskRepository(self.database, read_only=True) as repository:
@@ -515,12 +505,10 @@ class BusyStepPinPreservationTests(ResidentAdoptionFixture):
         import os
         from unittest.mock import patch
 
-        from mediaflow.application.execution_authorization import (
-            ExecutionAuthorizationService,
-        )
         from mediaflow.infrastructure.sqlite_configuration_management import (
             SQLiteConfigurationRepository,
         )
+        from tests.task_engine_test_helpers import admit_organize_task
 
         self.publish_first_draft(self.empty_baseline())
         source = self.root / "source"
@@ -554,19 +542,15 @@ class BusyStepPinPreservationTests(ResidentAdoptionFixture):
         with SQLiteConfigurationRepository(self.database) as configuration_repository:
             active = configuration_repository.get_active_revision()
         with SQLiteTaskRepository(self.database) as repository:
-            service = ExecutionAuthorizationService(
+            task = admit_organize_task(
                 repository,
-                maximum_ttl_seconds=3600,
-                maximum_active_jobs=100,
-                configuration_snapshot_id=active.revision_id if active else None,
-                configuration_snapshot_digest=active.digest if active else None,
+                snapshot_id=active.revision_id if active else None,
+                snapshot_digest=active.digest if active else None,
             )
-            issued = service.issue(ttl_seconds=600, max_items=1, actor="tester")
-            submission = service.submit_organize(issued.token, limit=1)
-            task_id = submission.task.task_id
+            task_id = task.task_id
             admitted_pin = (
-                submission.task.configuration_snapshot_id,
-                submission.task.configuration_snapshot_digest,
+                task.configuration_snapshot_id,
+                task.configuration_snapshot_digest,
             )
 
         # Publish a new engine cadence while that Task is admitted but not yet
@@ -606,9 +590,6 @@ class BusyStepAdoptionBoundaryTests(ResidentAdoptionFixture):
     def test_publication_during_a_busy_step_waits_for_the_boundary(self) -> None:
         import io
 
-        from mediaflow.application.execution_authorization import (
-            ExecutionAuthorizationService,
-        )
         from mediaflow.application.resident_runtime import resident_cadence_adoption
         from mediaflow.final_cli import _resident_published_cadence_resolver
 
@@ -631,15 +612,13 @@ class BusyStepAdoptionBoundaryTests(ResidentAdoptionFixture):
         ):
             active = configuration_repository.get_active_revision()
             self.assertIsNotNone(active)
-            service = ExecutionAuthorizationService(
+            from tests.task_engine_test_helpers import admit_organize_task
+
+            admitted = admit_organize_task(
                 repository,
-                maximum_ttl_seconds=3600,
-                maximum_active_jobs=100,
-                configuration_snapshot_id=active.revision_id,
-                configuration_snapshot_digest=active.digest,
+                snapshot_id=active.revision_id,
+                snapshot_digest=active.digest,
             )
-            issued = service.issue(ttl_seconds=600, max_items=1, actor="tester")
-            admitted = service.submit_organize(issued.token, limit=1).task
             admitted_pin = (
                 admitted.configuration_snapshot_id,
                 admitted.configuration_snapshot_digest,

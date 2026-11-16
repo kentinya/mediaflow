@@ -50,6 +50,7 @@ from mediaflow.domain.task_scheduling import (
 from mediaflow.final_cli import _automatic_task_runner
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from tests import test_v2_automation_run_once as run_once_tests
+from tests.task_engine_test_helpers import claim_and_run
 
 
 class RunOnceSourceOwnershipTests(unittest.TestCase):
@@ -318,8 +319,8 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
                 },
             )
             self.assertEqual(202, status, discovery)
-            result = value.discovery.claim_and_run(
-                worker_id="files-worker", claim_token="claim-files"
+            result = claim_and_run(
+                value.discovery, worker_id="files-worker", claim_token="claim-files"
             )
             self.assertIsNotNone(result)
 

@@ -28,10 +28,14 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
             return
         self.assertNotEqual(first_nonempty_line, "", "TASK.md must declare a lifecycle state")
         self.assertIn("docs/development-workflow.md", task)
-        self.assertIn("### Developer — affected tests", task)
+        self.assertTrue(
+            "### Developer — affected tests" in task or "**Developer — affected tests" in task,
+            "the active Task must document Developer's affected-test ownership",
+        )
         self.assertTrue(
             "### B — independent acceptance / full regression" in task
-            or "### B — acceptance and full regression" in task,
+            or "### B — acceptance and full regression" in task
+            or "**B — acceptance" in task,
             "the active Task must document B's acceptance/full-regression ownership",
         )
 

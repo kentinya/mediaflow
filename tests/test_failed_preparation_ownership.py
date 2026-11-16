@@ -21,7 +21,6 @@ production state interface is introduced.
 
 from __future__ import annotations
 
-import unittest
 from unittest.mock import patch
 
 from mediaflow.application.media_discovery import DiscoveryUnavailable
@@ -637,68 +636,3 @@ class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
             self.assertEqual(202, status, fresh)
             self.assertNotEqual(old_id, fresh["organizeTaskId"])
             self.assertEqual([], value.target.mutations)
-
-    def test_an_old_authorization_crossing_the_failure_is_never_consumed(self):
-        self.media("Movies/One.2001.mkv")
-        provider = _provider(MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001))
-        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
-            old_id, preview = self.summary(
-                value, ["Movies/One.2001.mkv"], "11111111-1111-4111-8111-111111111111"
-            )
-            selected = self._selected_ids(preview)
-            # The operator projection carries no version proof, so the exact
-            # reviewed item versions are read from the durable Preview itself.
-            durable = value.previews.get(preview["previewId"])
-            versions = {
-                item.item_id: item.item_version
-                for item in durable.items
-                if item.item_id in set(selected)
-            }
-
-            # The exact authority is issued while the flow is still healthy,
-            # through the standalone authorization entrance.
-            code, authorized = self.request(
-                value,
-                f"/api/v1/manual-previews/{preview['previewId']}/authorize",
-                method="POST",
-                body={
-                    "expectedVersion": preview["intentVersion"],
-                    "expectedItemVersions": versions,
-                    "itemIds": selected,
-                    "confirmation": True,
-                },
-            )
-            self.assertEqual(201, code, authorized)
-            authorization_id = authorized["authorizationId"]
-
-            # The flow settles while this old authority's own consume runs its
-            # source check: the admission transaction itself must refuse it.
-            crossing = self._crossing_storage_check(value, old_id, fire_at=1)
-            with patch.object(value.executions, "_validate_current_storage", side_effect=crossing):
-                status, refused = self.request(
-                    value,
-                    f"/api/v1/manual-execution-authorizations/{authorization_id}/consume",
-                    method="POST",
-                    body={"confirmation": True},
-                )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("preparation_flow_ended", refused["error"]["code"])
-
-            # With the failure durable, a plain repeat of the same consume is
-            # refused by the same bounded fact and still consumes nothing.
-            status, refused = self.request(
-                value,
-                f"/api/v1/manual-execution-authorizations/{authorization_id}/consume",
-                method="POST",
-                body={"confirmation": True},
-            )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("preparation_flow_ended", refused["error"]["code"])
-
-            authority = value.repository.get_manual_execution_authorization(authorization_id)
-            self.assertIsNot(ManualExecutionAuthorizationStatus.CONSUMED, authority.status)
-            self._assert_no_second_work(value, old_id, preview)
-
-
-if __name__ == "__main__":  # pragma: no cover - direct module execution
-    unittest.main()

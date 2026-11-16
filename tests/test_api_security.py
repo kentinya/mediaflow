@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -33,7 +32,6 @@ PERMISSIONS = {
             ApiPermission.SUBMIT_DRY_RUN,
             ApiPermission.CANCEL_JOB,
             ApiPermission.RESOLVE_CONFIRMATION,
-            ApiPermission.REMOTE_EXECUTE,
         }
     ),
     "auditor": frozenset({ApiPermission.READ, ApiPermission.READ_SECURITY_AUDIT}),
@@ -129,31 +127,9 @@ class ApiSecurityTests(unittest.TestCase):
                     repository,
                     None,
                     principals=principals(),
-                    remote_execution_enabled=True,
                 )
                 self.assertEqual(request(api, "GET", "/api/v1/tasks")[0], 401)
                 self.assertEqual(request(api, "GET", "/api/v1/tasks", token="viewer-token")[0], 200)
-                self.assertEqual(
-                    request(
-                        api,
-                        "POST",
-                        "/api/v1/tasks",
-                        token="viewer-token",
-                        document={"command": "organize", "limit": 1},
-                    )[0],
-                    403,
-                )
-                status, job = request(
-                    api,
-                    "POST",
-                    "/api/v1/tasks",
-                    token="executor-token",
-                    document={"command": "organize", "limit": 1},
-                )
-                # The legacy organize Job submission requires an enabled remote
-                # execution boundary plus a one-shot execution token; without it
-                # the request is refused before any durable admission.
-                self.assertEqual(status, 400)
                 # Task cancellation stays permission-gated on the durable Task
                 # the scheduling kernel admitted.
                 from mediaflow.application.task_scheduling import TaskSchedulingService
@@ -235,45 +211,6 @@ class ApiSecurityTests(unittest.TestCase):
                     )
                 self.assertEqual(compare.call_count, len(principals()))
 
-    def test_executor_role_still_requires_one_time_authorization(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=principals(),
-                    remote_execution_enabled=True,
-                )
-                document = {"command": "organize", "execute": True, "limit": 1}
-                self.assertEqual(
-                    request(
-                        api, "POST", "/api/v1/tasks", token="operator-token", document=document
-                    )[0],
-                    403,
-                )
-                self.assertEqual(
-                    request(
-                        api, "POST", "/api/v1/tasks", token="executor-token", document=document
-                    )[0],
-                    400,
-                )
-                issued = ExecutionAuthorizationService(repository).issue(
-                    ttl_seconds=60, max_items=1
-                )
-                status, admitted = request(
-                    api,
-                    "POST",
-                    "/api/v1/tasks",
-                    token="executor-token",
-                    execution_token=issued.token,
-                    document=document,
-                )
-                self.assertEqual(status, 202)
-                self.assertTrue(admitted["executeAuthorized"])
-                self.assertEqual("task_engine", admitted["executionMethod"])
-                self.assertTrue(repository.get_task(admitted["taskId"]).execute_authorized)
-                self.assertEqual(1, len(repository.list_tasks()))
-
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
@@ -292,36 +229,6 @@ class ApiSecurityTests(unittest.TestCase):
                 self.assertNotIn("Authorization", serialized)
                 self.assertNotIn("ignored", serialized)
                 self.assertLessEqual(len(repository.list_security_audit(limit=1)), 1)
-
-    def test_audit_failure_blocks_job_creation_before_mutation(self) -> None:
-        class BrokenAuditRepository(SQLiteTaskRepository):
-            def append_security_audit(self, value):
-                raise OSError("database unavailable token=secret")
-
-        with tempfile.TemporaryDirectory() as directory:
-            with BrokenAuditRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
-                # The whole response is captured: the failing audit dependency
-                # must never leak its credential-shaped message through the
-                # JSON error, a stderr diagnostic or any traceback output.
-                stderr = io.StringIO()
-                with patch("sys.stderr", stderr):
-                    status, response = request(
-                        api,
-                        "POST",
-                        "/api/v1/tasks",
-                        token="operator-token",
-                        document={"command": "organize", "limit": 1},
-                    )
-                self.assertEqual(status, 500)
-                self.assertEqual((), repository.list_tasks())
-                self.assertNotIn("secret", json.dumps(response))
-                # The raw exception chain is never written to any stream: the
-                # operator-facing error and the audit row carry the bounded,
-                # secret-free evidence instead (REQ-LOG-003).
-                self.assertNotIn("secret", stderr.getvalue())
-                self.assertNotIn("INTERNAL ERROR", stderr.getvalue())
-                self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_local_audit_cli_is_storage_free_and_redacted(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))

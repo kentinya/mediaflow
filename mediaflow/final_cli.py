@@ -34,12 +34,10 @@ from mediaflow.application.configuration_snapshot import (
     ManagedConfigurationService,
 )
 from mediaflow.application.conflict_resolution import ConfirmationService
-from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
-from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.media_organizer import (
     IncompleteOrganizingScope,
     MediaOrganizerBatchResult,
@@ -264,23 +262,6 @@ def final_main(
     notification_worker_commands.add_parser("run-next")
     notification_worker_run = notification_worker_commands.add_parser("run")
     notification_worker_run.add_argument("--poll-seconds", type=float)
-    execution_authorizations = commands.add_parser(
-        "execution-authorizations", help="local one-time remote execution authority"
-    )
-    execution_authorization_commands = execution_authorizations.add_subparsers(
-        dest="execution_authorization_command", required=True
-    )
-    execution_authorization_issue = execution_authorization_commands.add_parser("issue")
-    execution_authorization_issue.add_argument("--ttl-seconds", type=int, required=True)
-    execution_authorization_issue.add_argument("--max-items", type=int, required=True)
-    execution_authorization_issue.add_argument("--actor")
-    execution_authorization_issue.add_argument("--note")
-    execution_authorization_commands.add_parser("list")
-    execution_authorization_show = execution_authorization_commands.add_parser("show")
-    execution_authorization_show.add_argument("authorization_id")
-    execution_authorization_revoke = execution_authorization_commands.add_parser("revoke")
-    execution_authorization_revoke.add_argument("authorization_id")
-    execution_authorization_revoke.add_argument("--actor")
     security_audit = commands.add_parser("security-audit", help="local API security audit")
     security_audit_commands = security_audit.add_subparsers(
         dest="security_audit_command", required=True
@@ -842,53 +823,6 @@ def final_main(
                 arguments.config,
                 stdout=stdout,
             )
-        if arguments.command == "execution-authorizations":
-            if not configuration.remote_execution_enabled:
-                raise ValueError("remote execution authorization is disabled")
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = ExecutionAuthorizationService(
-                    repository,
-                    maximum_ttl_seconds=configuration.remote_execution_maximum_ttl_seconds,
-                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
-                    configuration_snapshot_id=getattr(
-                        configuration, "configuration_snapshot_id", None
-                    ),
-                    configuration_snapshot_digest=getattr(
-                        configuration, "configuration_snapshot_digest", None
-                    ),
-                )
-                if arguments.execution_authorization_command == "issue":
-                    issued = service.issue(
-                        ttl_seconds=arguments.ttl_seconds,
-                        max_items=arguments.max_items,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(render_issued_execution_authorization(issued))
-                elif arguments.execution_authorization_command == "list":
-                    stdout.write(render_execution_authorizations(service.list()))
-                elif arguments.execution_authorization_command == "show":
-                    value = service.get(arguments.authorization_id)
-                    if value is None:
-                        raise LookupError(
-                            f"execution authorization {arguments.authorization_id!r} was not found"
-                        )
-                    stdout.write(
-                        render_execution_authorization(
-                            value,
-                            repository.list_execution_authorization_audit(value.authorization_id),
-                        )
-                    )
-                else:
-                    stdout.write(
-                        render_execution_authorization(
-                            service.revoke(arguments.authorization_id, actor=arguments.actor),
-                            repository.list_execution_authorization_audit(
-                                arguments.authorization_id
-                            ),
-                        )
-                    )
-            return 0
         if arguments.command == "security-audit":
             if arguments.limit < 1 or arguments.limit > 1000:
                 raise ValueError("security audit limit must be between 1 and 1000")
@@ -1888,59 +1822,6 @@ def render_migration_rehearsal(value) -> str:
 
 def render_notification(value) -> str:
     return render_notifications((value,))
-
-
-def render_issued_execution_authorization(issued) -> str:
-    value = issued.authorization
-    return "\n".join(
-        (
-            "",
-            "EXECUTION AUTHORIZATION ISSUED",
-            "",
-            f"ID: {value.authorization_id}",
-            f"Expires: {value.expires_at.isoformat()}",
-            f"Max items: {value.max_items}",
-            f"Token: {issued.token}",
-            "Token shown once: YES",
-            "",
-        )
-    )
-
-
-def render_execution_authorizations(values) -> str:
-    lines = ["", "EXECUTION AUTHORIZATIONS", ""]
-    for value in values:
-        lines.append(
-            f"{value.authorization_id} | {value.status.value} | "
-            f"expires={value.expires_at.isoformat()} | maxItems={value.max_items} | "
-            f"task={value.consumed_task_id or '-'}"
-        )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_execution_authorization(value, audit) -> str:
-    lines = [
-        "",
-        "EXECUTION AUTHORIZATION",
-        "",
-        f"ID: {value.authorization_id}",
-        f"Status: {value.status.value}",
-        f"Created: {value.created_at.isoformat()}",
-        f"Expires: {value.expires_at.isoformat()}",
-        f"Max items: {value.max_items}",
-        f"Consumed task: {value.consumed_task_id or '-'}",
-        "",
-        "AUDIT",
-        "",
-    ]
-    lines.extend(
-        f"{item.occurred_at.isoformat()} | {item.action} | task={item.task_id or '-'} | "
-        f"actor={item.actor or '-'}"
-        for item in audit
-    )
-    lines.append("")
-    return "\n".join(lines)
 
 
 def render_security_audit(values) -> str:
@@ -2984,12 +2865,12 @@ def _run_worker(
                 # their independent consumers reconstruct their own durable pins.
                 return (None, None)
 
-        with _media_discovery_worker_context(
+        with _media_discovery_service_context(
             configuration, configured_path, repository
-        ) as media_discovery_worker:
-            with _manual_organize_worker_context(
+        ) as discovery_service:
+            with _manual_organize_service_context(
                 configuration, configured_path, repository
-            ) as manual_organize_worker:
+            ) as execution_service:
                 with _files_transfer_worker_context(
                     configuration, configured_path, repository
                 ) as files_transfer_worker:
@@ -3007,8 +2888,6 @@ def _run_worker(
                         repository,
                         configuration_snapshot_resolver=pending_snapshot,
                         runtime_schema_version=SCHEMA_VERSION,
-                        manual_organize_worker=manual_organize_worker,
-                        media_discovery_worker=media_discovery_worker,
                         files_transfer_worker=files_transfer_worker,
                     )
                     from mediaflow.application.manual_task_engine import (
@@ -3035,8 +2914,8 @@ def _run_worker(
                     manual_task_worker = ManualTaskEngineWorker(
                         repository,
                         scheduling_service,
-                        media_discovery_worker.service,
-                        manual_organize_worker.service,
+                        discovery_service,
+                        execution_service,
                         worker_id=worker_service.worker_id,
                     )
                     manual_task_worker.set_automatic_runner(
@@ -3057,26 +2936,6 @@ def _run_worker(
                                 in {
                                     "completed",
                                     "partial_success",
-                                    "cancelled",
-                                }
-                                else 1
-                            )
-                        if hasattr(result, "discovery_id"):
-                            stdout.write(
-                                f"Discovery ID: {result.discovery_id}\n"
-                                f"Status: {result.status.value}\n"
-                            )
-                            return 0
-                        if hasattr(result, "execution_id"):
-                            stdout.write(
-                                f"Manual execution ID: {result.execution_id}\n"
-                                f"Status: {result.status.value}\n"
-                            )
-                            return (
-                                0
-                                if result.status.value
-                                in {
-                                    "completed",
                                     "cancelled",
                                 }
                                 else 1
@@ -3118,8 +2977,6 @@ def _run_worker(
                     # wrapped liveness evidence (processing-Worker row plus
                     # resident-presence row) fresh across its own long
                     # claim, exactly like the Files transfer consumer.
-                    media_discovery_worker.set_worker_heartbeat(heartbeat)
-                    manual_organize_worker.set_worker_heartbeat(heartbeat)
                     manual_task_worker.set_worker_heartbeat(heartbeat)
 
                     def step(loop: ResidentLoop) -> int:
@@ -3601,10 +3458,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             repository,
             None,
             principals=principals,
-            remote_execution_enabled=getattr(configuration, "remote_execution_enabled", False),
-            remote_execution_maximum_ttl_seconds=getattr(
-                configuration, "remote_execution_maximum_ttl_seconds", 900
-            ),
             maximum_active_jobs=getattr(configuration, "automation_maximum_active_jobs", 100),
             system_status=(
                 None if management_only else build_configuration_snapshot(configuration)
@@ -3648,10 +3501,10 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
 
 
 @contextmanager
-def _manual_organize_worker_context(configuration, configured_path: str | None, repository):
-    """Yield the resident Worker's admitted-manual-Organize runner.
+def _manual_organize_service_context(configuration, configured_path: str | None, repository):
+    """Yield the Task engine's admitted-manual-Organize application service.
 
-    The runner reconstructs the reviewed Preview, the pinned runtime snapshot
+    The service reconstructs the reviewed Preview, the pinned runtime snapshot
     and the required Storage adapters from durable state, so it never shares
     in-memory authority with the API request that admitted the work.  Every
     runtime resource it opens is closed with the surrounding Worker lifetime.
@@ -3681,14 +3534,14 @@ def _manual_organize_worker_context(configuration, configured_path: str | None, 
             intents,
             checkpoint_service=ProcessingCheckpointService(repository),
         )
-        yield ManualOrganizeExecutionWorker(execution)
+        yield execution
 
 
 @contextmanager
-def _media_discovery_worker_context(configuration, configured_path: str | None, repository):
-    """Yield the resident Worker's admitted bounded-discovery runner.
+def _media_discovery_service_context(configuration, configured_path: str | None, repository):
+    """Yield the Task engine's admitted bounded-discovery application service.
 
-    The runner reconstructs the pinned Active revision, the runtime snapshot and
+    The service reconstructs the pinned Active revision, the runtime snapshot and
     the configured Storage adapters from durable state, so it never shares
     in-memory authority with the API request that admitted the discovery.  The
     admitting request performs zero Storage enumeration; this Worker context is
@@ -3697,7 +3550,6 @@ def _media_discovery_worker_context(configuration, configured_path: str | None, 
     """
 
     from mediaflow.application.media_discovery import MediaDiscoveryService
-    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
 
     bootstrap_document = _configuration_document(configured_path)
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
@@ -3722,9 +3574,8 @@ def _media_discovery_worker_context(configuration, configured_path: str | None, 
             intents,
             configuration_service=configuration_service,
             preview_service=previews,
-            task_scheduling_enabled=True,
         )
-        yield MediaDiscoveryWorker(discovery)
+        yield discovery
 
 
 @contextmanager

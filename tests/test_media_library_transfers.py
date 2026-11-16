@@ -1335,8 +1335,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
                 snapshot_id=None,
                 snapshot_digest=None,
                 maximum_active_jobs=1,
-                remote_execution_enabled=False,
-                remote_execution_maximum_ttl_seconds=900,
                 system_status=None,
                 metadata_policies=(),
             )

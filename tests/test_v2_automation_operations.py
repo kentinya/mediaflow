@@ -39,6 +39,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.task_engine_test_helpers import claim_and_run
 
 ADMIN_TOKEN = "automation-admin-token"
 VIEWER_TOKEN = "automation-viewer-token"
@@ -316,7 +317,8 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             definition_id=definition_id, actor="admin"
         )
         for index in range(16):
-            result = value.api._media_discovery.claim_and_run(
+            result = claim_and_run(
+                value.api._media_discovery,
                 worker_id=f"analysis-worker-{index}",
                 claim_token=f"analysis-token-{index}",
             )
@@ -332,8 +334,10 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         )
         self.assertIsNone(_plan)
         self.assertEqual("analyzing", _analyzing.status.value)
-        analyzed = value.api._media_discovery.claim_and_run(
-            worker_id="analysis-worker-final", claim_token="analysis-token-final"
+        analyzed = claim_and_run(
+            value.api._media_discovery,
+            worker_id="analysis-worker-final",
+            claim_token="analysis-token-final",
         )
         self.assertIsNotNone(analyzed)
         self.assertIsNotNone(analyzed.preview_id)

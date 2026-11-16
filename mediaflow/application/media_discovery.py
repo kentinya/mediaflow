@@ -256,7 +256,6 @@ class MediaDiscoveryService:
         monotonic: Callable[[], float] = time.monotonic,
         lease_seconds: float = DEFAULT_DISCOVERY_LEASE_SECONDS,
         budgets: DiscoveryBudgets | None = None,
-        task_scheduling_enabled: bool = False,
     ) -> None:
         if (
             isinstance(lease_seconds, bool)
@@ -278,7 +277,6 @@ class MediaDiscoveryService:
         self._monotonic = monotonic
         self._lease_seconds = float(lease_seconds)
         self._budgets = budgets or DiscoveryBudgets()
-        self._task_scheduling_enabled = bool(task_scheduling_enabled)
 
     @property
     def repository(self):
@@ -597,21 +595,12 @@ class MediaDiscoveryService:
             snapshot_digest,
         )
         reserve_sources = self._reserve_sources_callback(library, observed_versions)
-        creator = getattr(self._repository, "create_files_organize_work", None)
-        if not callable(creator):
-            creator = getattr(self._repository, "create_media_discovery", None)
-        if not callable(creator):
-            raise DiscoveryUnavailable("durable media discovery storage is unavailable")
-        scheduling = (
-            self._task_admission_state(
-                organize_task,
-                actor=actor,
-                admission_request_id=admission_request_id,
-                now=now,
-            )
-            if self._task_scheduling_enabled
-            and callable(getattr(self._repository, "create_files_organize_work", None))
-            else None
+        creator = self._organize_work_boundary()
+        scheduling = self._task_admission_state(
+            organize_task,
+            actor=actor,
+            admission_request_id=admission_request_id,
+            now=now,
         )
         try:
             created = self._create_work(
@@ -882,16 +871,11 @@ class MediaDiscoveryService:
             admitted=canonical_scope(remaining),
             refused=canonical_refusals(tuple(refusals)),
         )
-        scheduling = (
-            self._task_admission_state(
-                organize_task,
-                actor=actor,
-                admission_request_id=admission_request_id,
-                now=now,
-            )
-            if self._task_scheduling_enabled
-            and callable(getattr(self._repository, "create_files_organize_work", None))
-            else None
+        scheduling = self._task_admission_state(
+            organize_task,
+            actor=actor,
+            admission_request_id=admission_request_id,
+            now=now,
         )
         try:
             created = self._create_work(
@@ -1026,9 +1010,9 @@ class MediaDiscoveryService:
 
     def _organize_work_boundary(self):
         boundary = getattr(self._repository, "create_files_organize_work", None)
-        if callable(boundary):
-            return boundary
-        return getattr(self._repository, "create_media_discovery", None)
+        if not callable(boundary):
+            raise DiscoveryUnavailable("the Task scheduling kernel cannot admit an organizing Task")
+        return boundary
 
     def _owned_source_work(self, library, entry: DiscoveryScopeEntry):
         """The unfinished work a durable boundary proves it holds for one source."""
@@ -1086,43 +1070,15 @@ class MediaDiscoveryService:
         scheduling: TaskSchedulingState | None = None,
         capacity: int | None = None,
     ) -> MediaDiscovery:
-        """Commit the admitted organizing work through the available boundary.
+        """Commit the Task-owned discovery through the Task scheduling boundary."""
 
-        A repository with the atomic Task+discovery admission commits both; a
-        repository without it still records the discovery, and the returned record
-        then has no organizing Task identity instead of referring to a Task that was
-        never persisted.
-        """
-
-        accepts_task = getattr(self._repository, "create_files_organize_work", None)
-        if callable(accepts_task) and organize_task is not None:
-            options = {"display": self._organize_display(library, scope)}
-            if reserve_sources is not None:
-                options["reserve_sources"] = reserve_sources
-            if scheduling is not None:
-                options["scheduling"] = scheduling
-                options["capacity"] = capacity
-            try:
-                return accepts_task(discovery, organize_task, **options)
-            except TypeError:
-                if reserve_sources is None or scheduling is not None:
-                    # A kernel-managed admission must never silently degrade to
-                    # an unscheduled Task: that would leave production work on a
-                    # second, competing queue authority.
-                    raise
-                # A boundary that cannot re-check the concrete source is never
-                # silently treated as if it had: the admission then keeps only the
-                # pre-commit check it already performed.
-                return accepts_task(
-                    discovery,
-                    organize_task,
-                    display=options["display"],
-                )
-        if discovery.organize_task_id is not None:
-            # Fail closed rather than advertising an organizing Task identity that
-            # no repository committed.
-            discovery = replace(discovery, organize_task_id=None)
-        return creator(discovery)
+        options = {"display": self._organize_display(library, scope)}
+        if reserve_sources is not None:
+            options["reserve_sources"] = reserve_sources
+        if scheduling is not None:
+            options["scheduling"] = scheduling
+            options["capacity"] = capacity
+        return creator(discovery, organize_task, **options)
 
     @staticmethod
     def _storage_scope(
@@ -2763,7 +2719,7 @@ class MediaDiscoveryService:
     def _kernel_task_id(self, discovery: MediaDiscovery) -> str | None:
         """The Task engine identity of this discovery, when it has one."""
 
-        if not self._task_scheduling_enabled or discovery.organize_task_id is None:
+        if discovery.organize_task_id is None:
             return None
         reader = getattr(self._repository, "get_task_scheduling", None)
         if not callable(reader):
@@ -2837,14 +2793,9 @@ class MediaDiscoveryService:
         real read failure still raises to the caller instead of being hidden.
 
         Like ``_kernel_task_id``, this only judges runs the Task scheduling
-        kernel actually governs: compositions built without the kernel (the
-        explicit ``task_scheduling_enabled=False`` fixtures) keep their ordinary
-        legacy analysis semantics, because no kernel admission ever fenced them
-        either.  Every production composition enables the kernel.
+        kernel actually governs; every current composition admits through it.
         """
 
-        if not self._task_scheduling_enabled:
-            return False
         task_id = discovery.organize_task_id
         if not isinstance(task_id, str) or not task_id:
             return False
@@ -3111,55 +3062,6 @@ class MediaDiscoveryService:
     # Worker execution
     # ------------------------------------------------------------------
 
-    def claim_and_run(
-        self,
-        *,
-        worker_id: str,
-        claim_token: str,
-        heartbeat: Callable[[str], bool] | None = None,
-        parent_heartbeat: Callable[[], bool] | None = None,
-    ) -> MediaDiscovery | None:
-        """Claim and advance one queued/expired discovery by one bounded step.
-
-        ``parent_heartbeat`` is the containing processing-Worker's registration
-        heartbeat.  A blocked Storage/Provider call inside one advance step can
-        otherwise outlive the parent's stale threshold and make a *working*
-        resident Worker report unavailable, so a lease keeper keeps both the
-        discovery claim and the parent registration live for the whole
-        invocation.  The parent signal is liveness evidence only: a fault is
-        tolerated and retried on the next interval, and the discovery's own
-        claim heartbeat remains the ownership boundary.
-        """
-
-        claimer = getattr(self._repository, "claim_next_media_discovery", None)
-        if not callable(claimer):
-            raise DiscoveryUnavailable("durable media discovery claim is unavailable")
-        claimed = claimer(
-            self._clock(),
-            worker_id=worker_id,
-            claim_token=claim_token,
-            lease_seconds=self._lease_seconds,
-        )
-        if claimed is None:
-            return None
-        beat = None
-        if heartbeat is not None:
-            discovery_id = claimed.discovery_id
-
-            def beat() -> bool:  # type: ignore[misc]
-                return heartbeat(discovery_id)
-
-        # ``run_claimed`` owns the lease keeper for the whole invocation, so a
-        # blocked Storage/Provider call cannot outlive the claim or the parent
-        # registration.  The parent signal is liveness evidence only.
-        return self.run_claimed(
-            claimed.discovery_id,
-            worker_id=worker_id,
-            claim_token=claim_token,
-            heartbeat=beat,
-            parent_heartbeat=parent_heartbeat,
-        )
-
     def _recovery_eligibility(self, discovery: MediaDiscovery) -> RecoveryPreparationEligibility:
         """The live qualification of one admitted recovery preparation."""
 
@@ -3169,118 +3071,6 @@ class MediaDiscoveryService:
             snapshot_id=discovery.snapshot_id,
             snapshot_digest=discovery.snapshot_digest,
         )
-
-    def _settle_stale_recovery(
-        self,
-        discovery: MediaDiscovery,
-        claim_token: str | None,
-        *,
-        message: str,
-        next_action: str,
-    ) -> MediaDiscovery:
-        """Settle one recovery preparation as an explainable, zero-mutation stop."""
-
-        now = self._clock()
-        settled = replace(
-            discovery,
-            status=DiscoveryStatus.CANCELLED,
-            version=discovery.version + 1,
-            # The frozen manifest is the only part of this preparation that could
-            # ever be confirmed and executed, so it is cleared.  The exact
-            # observations, counters, findings, refusals and the linked intent
-            # remain durable history; nothing is rewritten or erased.
-            sources=(),
-            preview_id=None,
-            next_observation_at=None,
-            updated_at=now,
-            error=message[:MAX_DISCOVERY_TEXT_LENGTH],
-            progress=replace(
-                discovery.progress,
-                phase="stale",
-                pending_files=(),
-                pending_directories=(),
-                active_directory=None,
-                active_cursor=None,
-                active_cursors_seen=(),
-                message=next_action[:MAX_DISCOVERY_TEXT_LENGTH],
-            ),
-        )
-        return self._settle_control(
-            settled, expected_version=discovery.version, claim_token=claim_token
-        )
-
-    def _stale_recovery_preparation(
-        self, discovery: MediaDiscovery, claim_token: str | None
-    ) -> MediaDiscovery | None:
-        """Settle one preparation whose admitted scope was decided elsewhere.
-
-        The outcome is durable and explainable: the preparation stops as
-        ``CANCELLED`` with the shared boundary's bounded message and next action,
-        releases its claim, publishes no intent/Preview, and keeps no source that
-        could be confirmed and executed.  Nothing is mutated and no authority is
-        granted; the earlier attempt's own results stay untouched.
-
-        ``claim_token`` fences the settlement against the exact live claim when
-        the caller still holds one; a caller that already published and released
-        its claim (the freeze/analysis boundary) passes ``None`` and relies on
-        the version CAS alone.
-        """
-
-        eligibility = self._recovery_eligibility(discovery)
-        if eligibility.eligible:
-            return None
-        return self._settle_stale_recovery(
-            discovery,
-            claim_token,
-            message=(eligibility.message or "the preparation's remaining scope changed"),
-            next_action=(
-                eligibility.next_action
-                or "request a fresh plan summary for the still-undecided sources"
-            ),
-        )
-
-    def _filter_frozen_recovery_sources(
-        self, discovery: MediaDiscovery
-    ) -> tuple[MediaDiscovery, bool]:
-        """Drop the frozen sources this preparation's chain has since decided.
-
-        A recovery preparation can hold an exact frozen source list while an
-        *earlier* attempt of the same chain decides one sibling.  The chain stays
-        eligible while any source is still undecided, so the whole-chain refusal
-        never fires for a mixed scope and the decided sibling would otherwise be
-        published, authorized and executed a second time.  The frozen manifest is
-        the only part that can ever be confirmed, so it is re-judged per exact
-        source here.
-
-        Returns ``(discovery, all_decided)``.  ``all_decided`` is ``True`` when
-        the frozen manifest was non-empty and every entry is now decided; the
-        caller then settles the preparation instead of publishing it.  The
-        manifest and the linked intent are not rewritten here beyond the returned
-        projection, so the analysis can still refuse the decided entries.
-        """
-
-        eligibility = self._recovery_eligibility(discovery)
-        if not eligibility.applies or not eligibility.eligible:
-            return discovery, False
-        refused = eligibility.refused_sources(
-            (value.get("storageId"), value.get("path"))
-            for value in discovery.sources
-            if isinstance(value, dict)
-            and isinstance(value.get("storageId"), str)
-            and isinstance(value.get("path"), str)
-        )
-        if not refused:
-            return discovery, False
-        kept = tuple(
-            value
-            for value in discovery.sources
-            if not (
-                isinstance(value, dict) and (value.get("storageId"), value.get("path")) in refused
-            )
-        )
-        if not kept:
-            return replace(discovery, sources=()), True
-        return replace(discovery, sources=kept), False
 
     def run_claimed(
         self,

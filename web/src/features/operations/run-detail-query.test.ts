@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  recoveryBatchQueryOptions,
   runItemEvidenceQueryOptions,
   runProblemItemsQueryOptions,
   runRecordsQueryOptions,
@@ -59,28 +58,5 @@ describe("run detail read polling", () => {
       expect(options.retry).toBe(false);
       expect(options.refetchIntervalInBackground).toBe(false);
     }
-  });
-
-  it("stops a recovery batch poll on failed or terminal reads", () => {
-    const options = recoveryBatchQueryOptions("token", {
-      taskId: "task-1",
-      batchId: "batch-1",
-      principalId: "operator",
-      authGeneration: 1,
-    });
-
-    expect(interval(options, undefined)).toBe(false);
-    expect(interval(options, failedRead)).toBe(false);
-    expect(
-      interval(options, { ok: true, model: { status: "running" } }, "error"),
-    ).toBe(false);
-    expect(interval(options, { ok: true, model: { status: "running" } })).toBe(
-      5_000,
-    );
-    expect(
-      interval(options, { ok: true, model: { status: "completed" } }),
-    ).toBe(false);
-    expect(options.retry).toBe(false);
-    expect(options.refetchIntervalInBackground).toBe(false);
   });
 });

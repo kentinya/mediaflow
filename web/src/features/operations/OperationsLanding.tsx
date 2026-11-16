@@ -2287,7 +2287,6 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                owesRecoveryAction={selectedRunOwesRecovery(run)}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 flow={<RunFlowSummary run={run} />}
                 results={{
@@ -2326,27 +2325,6 @@ function RunDetailPanel({
       </AuthorizedReadBoundary>
     </ModalCardShell>
   );
-}
-
-/**
- * Whether one selected run currently owes a four-type recovery step.
- *
- * Task Center RO-4 publishes a purely technical failure as read-only history,
- * so the generic four-type recovery entries (the batch re-analysis block and
- * the per-item follow-up) are offered only when the run's own durable evidence
- * may still owe one: a current four-type problem, or a run whose reported state
- * is not decided yet.  A terminal failed/partial run with no four-type problem
- * and no recovery lineage keeps its factual detail/results/logs/export without a
- * generic repair invitation; the per-item panel additionally checks its own
- * exact lineage before exposing any follow-up step.
- */
-function selectedRunOwesRecovery(
-  run: RunSummary & { readonly problemTypes: readonly RunProblemType[] },
-): boolean {
-  if (run.problemTypes.length > 0) return true;
-  // An unfinished run may still acquire a four-type problem; a terminal run
-  // with none of them never re-enters the four-type journey from the center.
-  return !TERMINAL_RUN_STATUSES.includes(run.status);
 }
 
 /**

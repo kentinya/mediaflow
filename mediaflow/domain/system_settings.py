@@ -39,6 +39,14 @@ RETIRED_SETTING_FIELDS: dict[str, str] = {
         "this parameter is retired; existing immutable configurations remain readable with it "
         "ignored, but it cannot be edited or published"
     ),
+    "api.remoteExecution.enabled": (
+        "this parameter is retired; the remote execution ticket and its API submission were "
+        "removed, so existing immutable configurations stay readable with it ignored"
+    ),
+    "api.remoteExecution.maximumTtlSeconds": (
+        "this parameter is retired with the remote execution ticket; existing immutable "
+        "configurations stay readable with it ignored"
+    ),
 }
 
 # Fields that require a restart/deployment to take effect.
@@ -70,8 +78,6 @@ HOT_CONSUMED_FIELDS: frozenset[str] = frozenset(
         "workflowRetry.jitterRatio",
         "notifications.pollSeconds",
         "notifications.deliveryLeaseSeconds",
-        "api.remoteExecution.enabled",
-        "api.remoteExecution.maximumTtlSeconds",
     }
 )
 
@@ -252,21 +258,6 @@ SYSTEM_SETTINGS_FIELDS: tuple[SystemSettingsField, ...] = tuple(
                 SystemSettingsBoundary.HOT_CONSUMED,
                 "integer",
             ),
-            # API remote execution
-            SystemSettingsField(
-                "api.remoteExecution.enabled",
-                "Remote execution enabled",
-                "API",
-                SystemSettingsBoundary.HOT_CONSUMED,
-                "boolean",
-            ),
-            SystemSettingsField(
-                "api.remoteExecution.maximumTtlSeconds",
-                "Remote execution maximum TTL (seconds)",
-                "API",
-                SystemSettingsBoundary.HOT_CONSUMED,
-                "integer",
-            ),
         ],
         key=lambda f: f.field_path,
     )
@@ -326,10 +317,6 @@ class SystemSettings:
     notification_poll_seconds: float | None = None
     notification_delivery_lease_seconds: float | None = None
 
-    # API
-    api_remote_execution_enabled: bool | None = None
-    api_remote_execution_maximum_ttl_seconds: int | None = None
-
     # Bootstrap / active identity
     bootstrap_database_path: str | None = None
 
@@ -354,8 +341,6 @@ class SystemSettings:
         logging_cfg = document.get("operationalLogging", {})
         retry_cfg = document.get("workflowRetry", {})
         notifications = document.get("notifications", {})
-        api_cfg = document.get("api", {})
-        remote_exec = api_cfg.get("remoteExecution", {})
 
         boundaries: dict[str, SystemSettingsBoundary] = {
             f.field_path: f.boundary for f in SYSTEM_SETTINGS_FIELDS
@@ -395,10 +380,6 @@ class SystemSettings:
             notification_poll_seconds=_float_or_none(notifications.get("pollSeconds")),
             notification_delivery_lease_seconds=_int_or_none(
                 notifications.get("deliveryLeaseSeconds")
-            ),
-            api_remote_execution_enabled=_bool_or_none(remote_exec.get("enabled")),
-            api_remote_execution_maximum_ttl_seconds=_int_or_none(
-                remote_exec.get("maximumTtlSeconds")
             ),
             bootstrap_database_path=bootstrap_database_path,
             field_boundaries=boundaries,
@@ -469,8 +450,6 @@ class SystemSettings:
             "workflowRetry.jitterRatio": self.workflow_retry_jitter_ratio,
             "notifications.pollSeconds": self.notification_poll_seconds,
             "notifications.deliveryLeaseSeconds": self.notification_delivery_lease_seconds,
-            "api.remoteExecution.enabled": self.api_remote_execution_enabled,
-            "api.remoteExecution.maximumTtlSeconds": self.api_remote_execution_maximum_ttl_seconds,
         }
         return mapping.get(field_path)
 
@@ -682,7 +661,6 @@ def _validate_integer_bounds(field_path: str, value: int) -> dict[str, str] | No
         "operationalLogging.maximumRecords": (1, 1_000_000),
         "workflowRetry.maxAttempts": (1, 100),
         "notifications.deliveryLeaseSeconds": (1, 86_400),
-        "api.remoteExecution.maximumTtlSeconds": (1, 86_400),
     }
     if field_path in bounds:
         low, high = bounds[field_path]

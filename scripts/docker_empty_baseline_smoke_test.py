@@ -1165,7 +1165,6 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         def configure_library(document: dict) -> None:
             full = make_deployment_configuration()
             full["api"] = document["api"]
-            full["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
             full["recognitionRules"] = [
                 {
                     "id": "acceptance",
@@ -1248,13 +1247,12 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             description="the resident Worker reporting transfer readiness",
         )
         print("   resident Worker reports ResourceLibrary transfer readiness")
-        # Legacy Scan/Preview job submission is retired.  The current API
-        # exposes the real mutation path below only after an explicit one-shot
-        # execution authority is issued.
-        print("   retired Scan/Preview probe omitted; using explicit organize authority")
+        # Legacy Scan/Preview job submission is retired.  The current direct
+        # CLI entrance runs the complete Task pipeline over the same Active.
+        print("   retired Scan/Preview probe omitted; using the current direct CLI organize")
         if list(stack.target_root.rglob("*.mkv")):
             raise RuntimeError("Scan/Preview mutated the isolated destination")
-        issued = run(
+        admitted_output = run(
             [
                 *stack.compose,
                 "exec",
@@ -1263,34 +1261,19 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
                 "mediaflow",
                 "--config",
                 "/config/mediaflow.json",
-                "execution-authorizations",
-                "issue",
-                "--ttl-seconds",
-                "300",
-                "--max-items",
+                "organize",
+                "--execute",
+                "--limit",
                 "1",
-                "--actor",
-                "isolated-acceptance",
             ],
             environment=stack.environment,
         )
-        ticket = next(
-            line.removeprefix("Token: ")
-            for line in issued.stdout.splitlines()
-            if line.startswith("Token: ")
+        task_id = next(
+            line.removeprefix("Task ID: ")
+            for line in admitted_output.stdout.splitlines()
+            if line.startswith("Task ID: ")
         )
-        request = urllib.request.Request(
-            stack.base + "/api/v1/tasks",
-            data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
-            headers={
-                "Authorization": "Bearer " + stack.token,
-                "X-MediaFlow-Execution-Token": ticket,
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            admitted = json.load(response)
+        admitted = {"taskId": task_id}
         wait_task(stack, admitted)
         organized = list((stack.target_root / "Movies").rglob("*.mkv"))
         if len(organized) != 1 or organized[0].read_bytes() != source_file.read_bytes():

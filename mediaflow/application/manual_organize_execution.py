@@ -1451,7 +1451,7 @@ class ManualOrganizeExecutionService:
         claim_token: str | None = None,
         heartbeat: Callable[[], bool] | None = None,
         lease_seconds: float = _CLAIM_LEASE_SECONDS,
-        task_context=None,
+        task_context,
     ) -> ManualExecution:
         """Run one already admitted exact execution as its Processing Worker.
 
@@ -1520,8 +1520,6 @@ class ManualOrganizeExecutionService:
             heartbeat=heartbeat,
             task_context=task_context,
         )
-
-    run_claimed_execution = run_admitted
 
     def cancellation_settlement(
         self, execution_id: str, *, now: datetime | None = None
@@ -2078,34 +2076,6 @@ class ManualOrganizeExecutionService:
                 "code": getattr(error, "code", "manual_execution_rejected"),
             },
         )
-
-    def fail_unstarted_execution(self, execution_id: str, error: BaseException) -> ManualExecution:
-        """Close an execution a Worker claimed but could not start.
-
-        Nothing in this boundary invokes ``OrganizerExecutor``.  Each item that
-        never published its running boundary is closed with effect certainty
-        ``none``; an item that already published ``running`` keeps the existing
-        investigation-only handoff.  The result is a durable outcome an
-        operator can act on instead of work that silently returns to the queue.
-        """
-
-        execution = self.get(execution_id)
-        if execution.status not in {
-            ManualExecutionStatus.ADMITTED,
-            ManualExecutionStatus.RUNNING,
-        }:
-            return execution
-        bounded = (
-            error
-            if isinstance(error, ManualExecutionError)
-            else ManualExecutionError(
-                _safe_error(error),
-                code="execution_unavailable",
-                status=503,
-                next_action="inspect the durable execution; automatic replay is refused",
-            )
-        )
-        return self._fail_pending_before_mutation(execution, bounded)
 
     def _run_worker_items(
         self,
@@ -2688,9 +2658,6 @@ class ManualOrganizeExecutionService:
     @staticmethod
     def _authorization_links(value: ManualExecutionAuthorization) -> dict[str, str]:
         links = {
-            "authorization": (
-                f"/api/v1/manual-execution-authorizations/{quote(value.authorization_id, safe='')}"
-            ),
             "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
             "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
         }
@@ -2702,9 +2669,6 @@ class ManualOrganizeExecutionService:
     def _execution_links(value: ManualExecution) -> dict[str, str]:
         links = {
             "execution": f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}",
-            "authorization": (
-                f"/api/v1/manual-execution-authorizations/{quote(value.authorization_id, safe='')}"
-            ),
             "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
             "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
             "task": f"/api/v1/tasks/{quote(value.task_id, safe='')}",

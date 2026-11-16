@@ -240,7 +240,6 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 "recognition_reviews",
                 "metadata_reviews",
                 "classification_reviews",
-                "execution_authorizations",
             ):
                 count = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 if count != 0:

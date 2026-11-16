@@ -42,7 +42,6 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
-from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
@@ -76,6 +75,11 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.in_memory_storage import InMemoryStorage
 from tests.source_fixtures import LiveLibraryView, source_identity_from_storage
 from tests.storage_fixtures import PagedMemoryStorage
+from tests.task_engine_test_helpers import (
+    ManualOrganizeExecutionWorker,
+    claim_and_run,
+    claim_next_execution,
+)
 from tests.test_configuration_objects import example_document
 from tests.test_manual_organize_preview import manual_snapshot
 
@@ -509,7 +513,8 @@ class _JourneyFixtureMixin:
         """Drive the resident Worker until the run links its exact plan."""
 
         for index in range(steps):
-            result = value.api._media_discovery.claim_and_run(
+            result = claim_and_run(
+                value.api._media_discovery,
                 worker_id=f"intent-analysis-worker-{index}",
                 claim_token=f"intent-analysis-token-{index}",
             )
@@ -1032,7 +1037,8 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # Another Worker cannot steal a live claim.
             reader = value.repository
             self.assertIsNotNone(
-                reader.claim_next_manual_execution(
+                claim_next_execution(
+                    reader,
                     datetime.now(UTC),
                     worker_id="worker-2",
                     claim_token="token-two",
@@ -1040,7 +1046,8 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 )
             )
             self.assertIsNone(
-                reader.claim_next_manual_execution(
+                claim_next_execution(
+                    reader,
                     datetime.now(UTC),
                     worker_id="worker-3",
                     claim_token="token-three",
@@ -1056,7 +1063,8 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 reader.begin_manual_execution(execution_id, "token-two", datetime.now(UTC))
             )
             self.assertIsNone(
-                reader.claim_next_manual_execution(
+                claim_next_execution(
+                    reader,
                     datetime.now(UTC) + timedelta(days=1),
                     worker_id="worker-3",
                     claim_token="token-three",
@@ -1923,7 +1931,8 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
                 # Nothing is left to claim and nothing is replayed.
                 self.assertIsNone(worker.run_next())
                 self.assertIsNone(
-                    repository.claim_next_manual_execution(
+                    claim_next_execution(
+                        repository,
                         datetime.now(UTC),
                         worker_id="second-worker",
                         claim_token="second-token",
@@ -1945,7 +1954,8 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
                 # The lease is taken and the running mutation boundary is
                 # published; the process then dies mid-execution, so whether
                 # any mutation happened is genuinely uncertain.
-                claimed = repository.claim_next_manual_execution(
+                claimed = claim_next_execution(
+                    repository,
                     datetime.now(UTC),
                     worker_id="crashed-worker",
                     claim_token="crashed-token",
@@ -1966,7 +1976,8 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
             repository = SQLiteTaskRepository(value.runtime_path)
             try:
                 self.assertIsNone(
-                    repository.claim_next_manual_execution(
+                    claim_next_execution(
+                        repository,
                         datetime.now(UTC) + timedelta(days=1),
                         worker_id="restarted-worker",
                         claim_token="restarted-token",

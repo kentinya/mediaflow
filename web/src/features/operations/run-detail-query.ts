@@ -15,17 +15,13 @@ import {
   fetchRunItems,
   fetchRunRecords,
   fetchTaskItemRecovery,
-  fetchTaskRecoveryBatch,
   type RunItemEvidenceRead,
   type RunItemsRead,
   type RunProblemItemsRead,
   type RunRecordsRead,
 } from "../../shared/api/api-client";
 import type { OperationsRead } from "../../shared/api/api-client";
-import type {
-  RecoveryBatchModel,
-  TaskItemRecoveryModel,
-} from "../../entities/operations/task-item-recovery";
+import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
 import type { RunProblemType } from "../../entities/operations/run";
 import { RUN_REFETCH_INTERVAL } from "./run-query";
 
@@ -35,22 +31,6 @@ export const runRecordsQueryKey = "operations.run-records" as const;
 export const runItemEvidenceQueryKey = "operations.run-item-evidence" as const;
 export const taskItemRecoveryQueryKey =
   "operations.task-item-recovery" as const;
-export const recoveryBatchQueryKey = "operations.recovery-batch" as const;
-
-export function recoveryBatchQueryCacheKey(context: {
-  readonly taskId: string;
-  readonly batchId: string;
-  readonly principalId: string;
-  readonly authGeneration: number;
-}) {
-  return [
-    recoveryBatchQueryKey,
-    context.authGeneration,
-    context.principalId,
-    context.taskId,
-    context.batchId,
-  ] as const;
-}
 
 function detailRefetchInterval(
   read: OperationsRead<unknown> | undefined,
@@ -223,38 +203,6 @@ export function taskItemRecoveryQueryOptions(
         context.active,
         query.state.status === "error",
       ),
-    refetchIntervalInBackground: false,
-  });
-}
-
-export function recoveryBatchQueryOptions(
-  token: string | null,
-  context: {
-    readonly taskId: string;
-    readonly batchId: string;
-    readonly principalId: string;
-    readonly authGeneration: number;
-  },
-) {
-  return queryOptions({
-    queryKey: recoveryBatchQueryCacheKey(context),
-    queryFn: (): Promise<OperationsRead<RecoveryBatchModel>> =>
-      fetchTaskRecoveryBatch(token, context.taskId, context.batchId),
-    enabled:
-      token !== null && context.taskId.length > 0 && context.batchId.length > 0,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 0,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (query.state.status === "error" || data?.ok !== true) return false;
-      return ["completed", "partial", "failed", "cancelled"].includes(
-        data.model.status,
-      )
-        ? false
-        : RUN_REFETCH_INTERVAL;
-    },
     refetchIntervalInBackground: false,
   });
 }
