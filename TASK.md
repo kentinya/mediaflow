@@ -75,6 +75,38 @@ CURRENT/TARGET 契约见 Architecture 的 Slice47 与 Slice55 TARGET。
 | manual 别名／独立授权 | manual-organize、manual-organize-intents 被改写为 manual-intents；manual-previews 下仍有独立授权／执行步骤。删除别名与独立步骤，当前 operations/organize、内部单次确认及历史证据保持。 |
 | Web api-client、RunDetailTabs、recovery-batch-session | 仍有旧 batch／authorize／execute 函数与旧链模型；RunDetailTabs 引用 submitTaskRecoveryBatch。删除旧链交互与未用函数，当前四类逐项处理、摘要确认和原请求核对保持。 |
 
+### 两项退出对象的当前使用与实际影响
+
+**远程票据：目前仍可使用的一项外部脚本入口。** 管理员启用
+`api.remoteExecution.enabled` → 用 `mediaflow execution-authorizations issue` 领取
+单次票据 → 外部脚本携带 `X-MediaFlow-Execution-Token` 调用 `POST /api/v1/tasks`
+发起整理。该入口在 [README](README.md) 中仍有正式用法，系统设置消费者
+`web/src/features/configuration/configuration-settings.ts` 仍有启用／TTL 字段说明；
+`docker_empty_baseline_smoke_test.py`、`docker_restart_fault_smoke_test.py`、
+`docker_release_security_smoke_test.py` 和 `operations_inventory_harness.py` 仍使用它。
+
+`ExecutionAuthorizationService.submit_organize` 已将票据受理为带 scheduling 记录的
+当前 Task，后续由当前内核运行；票据是额外的准入方式。本 Task 按 Slice55 RO-2
+删除这项仍可用的受理能力。删除后外部脚本不能
+再通过该命令／header／POST 组合发起整理；当前 Files 整理、due、Run once、direct
+CLI 和 Web 内部单次确认继续使用各自现有入口。相关设置说明、README 与验收脚本
+同步退出票据用法，当前功能断言接回已有支持入口。
+
+**独立领取：常驻 Worker 仍装配的两条额外轮询路径。** `final_cli.py` 构造
+MediaDiscoveryWorker 和 ManualOrganizeExecutionWorker，交给 ResidentProcessingWorker；
+其 run_next 在 Task runner 之后依次调用二者，再调用普通文件 runner。实际查询范围为：
+
+- `claim_next_media_discovery` 只领取没有 organize_task_id，或其关联 Task 没有
+  task_scheduling 记录的 discovery。
+- `claim_next_manual_execution` 只领取其 Task 没有 task_scheduling 记录的 execution。
+
+正常 V2 Files 整理在受理时启用 Task 调度，走 ManualTaskEngineWorker；上述两个
+独立查询明确排除这种记录。当前 Task 引擎仍从这两个包装对象的 `.service` 取得
+真实 discovery/execution service，并按已领取 Task 关联的精确记录调用处理服务。
+本 Task 删除两个包装 worker、额外轮询和面向非内核记录的全局领取，改为直接装配
+原 service；当前发现、稳定性等待、分析、精确执行、记录级 claim 与逐效果 fence
+继续保留。普通文件 runner 保持其现有独立职责。
+
 规划实测：`.venv/bin/mediaflow --help` 与 `execution-authorizations --help` 显示上述命令；
 现有 `ExecutionAuthorizationTests.test_api_ticket_admits_one_queued_authorized_task_without_a_job`
 与 `test_cli_organize_execute_admits_and_executes_one_kernel_task` **2 tests OK，0.084秒**。
@@ -88,7 +120,8 @@ CURRENT/TARGET 契约见 Architecture 的 Slice47 与 Slice55 TARGET。
    模型。删除旧正向测试时，将仍有当前职责的断言接回上述入口。
 2. **退出远程票据产品。** 一起删除 CLI 注册、API POST 受理、header 消费、专用权限／
    配置字段、服务／领域／仓库 CRUD 与新库专属结构；同步样例、部署生成器、当前说明、
-   安装 smoke 和测试。新输入含 api.remoteExecution 按废弃参数拒绝，不静默忽略。
+   上述 Web 设置消费者、安装／Docker smoke 和测试。新输入含 api.remoteExecution
+   按废弃参数拒绝，不静默忽略。
    现有合法 V2 发布文档及 pin 原字节／digest 保持，读取不能重新赋予票据执行资格；
    用真实 Base V2 配置验证，不改写历史原文来满足新输入要求。
 3. **Worker 只从 Task 领取整理。** composition 直接构造 discovery/execution service，
@@ -113,7 +146,8 @@ CURRENT/TARGET 契约见 Architecture 的 Slice47 与 Slice55 TARGET。
 
 - [ ] AC-1：正常配置、合法 principals 与现存真实请求下，票据 CLI 不注册，旧 POST
   /tasks 为普通未知方法／路由，旧 header 不消费；没有专用退休响应或暗中受理。
-  当前 GET /tasks、direct CLI organize／分析和 Web 工作正常。
+  README、Web 设置消费者和上述脚本不再提供或依赖票据入口；当前 GET /tasks、
+  direct CLI organize／分析和 Web 工作正常。
 - [ ] AC-2：源码／包／镜像无票据服务、专用权限、配置运行权威和 CRUD；新库无
   execution_authorizations／execution_authorization_audit。存量历史不自动删除。
   含旧字段的新输入准确拒绝，零发布／Task／媒体效果，合法 V2 配置及 pins 保持。
