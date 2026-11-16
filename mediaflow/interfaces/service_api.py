@@ -10133,14 +10133,13 @@ class MediaFlowApi:
             "task_items": "item_id",
             "task_results": "result_id",
             "notification_deliveries": "delivery_id",
-            "schedule_audit": "audit_id",
             "automation_definition_occurrences": "occurrence_id",
             "operational_logs": "log_id",
         }[kind]
         identifier = getattr(record, attribute)
         timestamp = (
             record.emitted_at
-            if kind in {"schedule_audit", "automation_definition_occurrences"}
+            if kind == "automation_definition_occurrences"
             else record.occurred_at
             if kind in {"operational_logs", "run_records"}
             else record.created_at

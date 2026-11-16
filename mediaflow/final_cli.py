@@ -2682,23 +2682,6 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
                     heartbeat=heartbeat,
                 )
             return
-        if display is not None and display.origin_kind == "legacy-schedule":
-            configuration = _pinned_task_configuration(configured_path, task)
-
-            def legacy_cancelled() -> bool:
-                current = scheduling_service.state(task.task_id)
-                return current is not None and current.control_request is not None
-
-            service = _definition_scoped_service(repository, configuration, configured_path)
-            service.run_legacy_schedule(
-                task,
-                scheduling_service,
-                claim,
-                cancellation_check=legacy_cancelled,
-                clock=clock,
-                heartbeat=heartbeat,
-            )
-            return
         if display is not None and display.origin_kind in {"remote-organize", "direct-organize"}:
             configuration = _pinned_task_configuration(configured_path, task)
 

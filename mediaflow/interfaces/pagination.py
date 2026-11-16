@@ -23,7 +23,6 @@ _KINDS = frozenset(
         "task_items",
         "task_results",
         "notification_deliveries",
-        "schedule_audit",
         "automation_definition_occurrences",
         "automation_definitions",
         "operational_logs",
@@ -48,7 +47,6 @@ _OPTIONALLY_SCOPED_KINDS = frozenset({"tasks", "jobs"})
 _SCOPED_KINDS = frozenset(
     {
         "notification_deliveries",
-        "schedule_audit",
         "automation_definition_occurrences",
         "automation_definitions",
         "operational_logs",

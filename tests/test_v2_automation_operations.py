@@ -1,16 +1,16 @@
 """V2 Automation operator journey over the real managed API.
 
 These regressions drive the real ``MediaFlowApi`` against a real managed
-configuration runtime, real LocalStorage roots and the real Automation
-Preview/unattended-grant/occurrence services. They prove the new
+configuration runtime, real LocalStorage roots and the real definition
+occurrence/Run once services. They prove the new
 ``/api/v1/operations/automation/*`` read projections are bounded operator
 documents — no revision digests, definition fingerprints, source fingerprints
 or raw organize plans — with backend-authoritative actions and Draft state;
 that the Draft → Validate → checked-Activate journey composes the existing
-managed-configuration routes atomically and starts no work; that the exact
-Preview is zero-mutation, paged and stale-aware; that unattended grants are
-confirmed, bound and audited; and that the existing ``/api/v1/automation`` and
-configuration surfaces remain untouched for V1 clients.
+managed-configuration routes atomically and starts no work; that a definition
+Run once keeps its exact admitted scope and zero-mutation analysis; and that
+the existing ``/api/v1/automation`` and configuration surfaces remain
+untouched for V1 clients.
 """
 
 from __future__ import annotations
@@ -306,11 +306,11 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         """Drive a definition-bound Run once to a frozen, analyzed shared plan.
 
         Returns the linked exact Preview id: the shared zero-mutation organize
-        analysis that an unattended grant now requires for the exact definition
-        scope and bounds.  This mirrors the production Run-once journey the Web
-        and API expose: the exact plan is durable Worker work of the same run,
-        never inline HTTP analysis; only Storage reads and a zero-mutation
-        analysis happen here, never a media mutation.
+        analysis the definition Run once journey produces for its exact scope and
+        bounds.  This mirrors the production Run-once journey the Web and API
+        expose: the exact plan is durable Worker work of the same run, never
+        inline HTTP analysis; only Storage reads and a zero-mutation analysis
+        happen here, never a media mutation.
         """
         discovery = value.api._media_discovery.admit_definition_run_once(
             definition_id=definition_id, actor="admin"
@@ -431,6 +431,329 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
             self.assertEqual((), value.runtime.list_tasks())
+
+    def test_operator_list_and_detail_are_bounded_and_permission_aware(self) -> None:
+        with self._journey() as value:
+            status, page = _request(value.api, OPERATIONS_ROUTE)
+            self.assertEqual(status, 200)
+            _assert_operator_document_clean(page)
+            self.assertEqual(page["total"], 1)
+            self.assertEqual(page["items"][0]["id"], _DEFINITION["id"])
+            active_configuration = page["activeConfiguration"]
+            self.assertEqual(active_configuration["status"], "active")
+            self.assertEqual(active_configuration["revisionId"], value.active.revision_id)
+            self.assertNotIn("digest", active_configuration)
+            definition = page["items"][0]
+            self.assertTrue(definition["enabled"])
+            self.assertEqual(definition["mode"], "automatic-organization")
+            self.assertEqual(definition["draftState"]["present"], False)
+            detail_action = self._action(definition, "detail")
+            self.assertEqual(detail_action["path"], f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            self.assertEqual(detail_action["method"], "GET")
+            # The independent Automation Preview action is retired: no separate
+            # zero-mutation Preview product is advertised.
+            self.assertNotIn("preview", definition["actions"])
+            run_once_action = self._action(definition, "runOnce")
+            self.assertEqual(
+                run_once_action["path"],
+                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/run-once",
+            )
+            for retired in ("grant", "grantState", "revoke"):
+                self.assertNotIn(retired, definition["actions"])
+            self.assertEqual("enabled", definition["executionReadiness"]["state"])
+            copy_action = self._action(definition, "copy")
+            self.assertFalse(copy_action["available"])
+            self.assertIn("successor Draft", copy_action["reason"])
+            self.assertEqual(
+                self._action(definition, "occurrences")["path"],
+                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/occurrences",
+            )
+            self.assertIn("nextRunAt", definition)
+
+            status, viewer_page = _request(value.api, OPERATIONS_ROUTE, token=VIEWER_TOKEN)
+            self.assertEqual(status, 200)
+            viewer_definition = viewer_page["items"][0]
+            self.assertFalse(self._action(viewer_definition, "runOnce")["available"])
+            self.assertNotIn("preview", viewer_definition["actions"])
+            self.assertNotIn("grant", viewer_definition["actions"])
+            self.assertFalse(viewer_page["actions"]["create"]["available"])
+            self.assertFalse(viewer_page["actions"]["createDraft"]["available"])
+
+            status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            self.assertEqual(status, 200)
+            _assert_operator_document_clean(detail)
+            operator = detail["definition"]
+            self.assertEqual(operator["id"], _DEFINITION["id"])
+            self.assertEqual(
+                operator["activeConfiguration"]["revisionId"], value.active.revision_id
+            )
+            self.assertIn("occurrenceState", operator)
+            self.assertEqual(operator["executionReadiness"]["state"], "enabled")
+            for key in ("grant", "grantState", "revoke"):
+                self.assertNotIn(key, operator["actions"])
+
+    def test_metrics_embedded_reads_and_failure_share_the_evaluated_basis(self) -> None:
+        """The independent GET, embedded metrics and a failed read stay honest."""
+
+        from unittest.mock import patch
+
+        metrics_route = "/api/v1/operations/automation/metrics"
+        with self._journey() as value:
+            status, metrics = _request(value.api, metrics_route)
+            self.assertEqual(200, status, metrics)
+            self.assertTrue(metrics["available"])
+            self.assertEqual(0, metrics["monthToDateAdmitted"])
+            self.assertEqual(0, metrics["evaluatedCount"])
+            self.assertEqual(0, metrics["completedCount"])
+            self.assertEqual(0, metrics["monthToDateTerminal"])
+            self.assertIsNone(metrics["successRate"])
+            self.assertIn("no completed or failed Task flow", metrics["denominatorStatement"])
+            _assert_operator_document_clean(metrics)
+
+            # A READ-only viewer sees the same full-population document.
+            status, viewer_metrics = _request(value.api, metrics_route, token=VIEWER_TOKEN)
+            self.assertEqual(200, status, viewer_metrics)
+            for field in ("evaluatedCount", "completedCount", "monthToDateTerminal"):
+                self.assertEqual(metrics[field], viewer_metrics[field], field)
+
+            # The definition page embeds this exact document; a list filter or
+            # page cursor cannot become a second metric basis.
+            status, page = _request(value.api, OPERATIONS_ROUTE)
+            self.assertEqual(200, status, page)
+            embedded = page["metrics"]
+            for field in (
+                "monthToDateAdmitted",
+                "evaluatedCount",
+                "completedCount",
+                "monthToDateFailed",
+                "monthToDateCancelled",
+                "monthToDateTerminal",
+                "successRate",
+                "denominatorStatement",
+            ):
+                self.assertEqual(metrics[field], embedded[field], field)
+
+            # Extra query parameters are rejected rather than silently changing
+            # the authorized population.
+            status, rejected = _request(value.api, metrics_route, query="limit=1")
+            self.assertNotEqual(200, status, rejected)
+
+            with patch.object(
+                value.runtime,
+                "automation_run_metrics",
+                side_effect=RuntimeError("simulated runtime read failure"),
+            ):
+                status, unavailable = _request(value.api, metrics_route)
+                self.assertEqual(200, status, unavailable)
+                self.assertFalse(unavailable["available"])
+                self.assertIsNone(unavailable["successRate"])
+                self.assertEqual("unavailable", unavailable["denominatorStatement"])
+                self.assertIn("refresh", unavailable["nextAction"])
+
+                status, page = _request(value.api, OPERATIONS_ROUTE)
+                self.assertEqual(200, status, page)
+                self.assertFalse(page["metrics"]["available"])
+                self.assertIsNone(page["metrics"]["successRate"])
+
+    def test_draft_journey_composes_existing_routes_atomically(self) -> None:
+        with self._journey() as value:
+            status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
+            self.assertEqual(status, 200)
+            _assert_operator_document_clean(draft)
+            self.assertIsNone(draft["draft"])
+            create_action = self._action(draft, "createDraft")
+            self.assertTrue(create_action["available"])
+            self.assertEqual(
+                create_action["path"],
+                f"/api/v1/configuration/revisions/{value.active.revision_id}/successor",
+            )
+            for name in ("save", "validate", "activate"):
+                self.assertFalse(self._action(draft, name)["available"])
+
+            status, created = _request(
+                value.api,
+                create_action["path"],
+                method="POST",
+                body={"expectedActiveRevisionId": value.active.revision_id},
+            )
+            self.assertEqual(status, 201)
+            revision_id = created["revisionId"]
+
+            status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
+            self.assertEqual(status, 200)
+            self.assertIsNotNone(draft["draft"])
+            self.assertEqual(draft["draft"]["revisionId"], revision_id)
+            self.assertEqual(draft["draft"]["definition"]["id"], _DEFINITION["id"])
+            self.assertIn("resourceLibraryOptions", draft)
+            options = {item["id"]: item for item in draft["resourceLibraryOptions"]}
+            self.assertTrue(options["source"]["enabled"])
+            save_action = self._action(draft, "save")
+            self.assertEqual(save_action["method"], "PUT")
+            self.assertEqual(
+                save_action["path"],
+                f"/api/v1/configuration/revisions/{revision_id}/objects/"
+                f"automationTaskDefinitions/{_DEFINITION['id']}",
+            )
+            activate_action = self._action(draft, "activate")
+            self.assertTrue(activate_action["requiresConfirmation"])
+
+            edited = dict(draft["draft"]["definition"])
+            edited["name"] = "Renamed nightly automation"
+            edited["itemLimit"] = 7
+            status, saved = _request(
+                value.api,
+                save_action["path"],
+                method="PUT",
+                body={"object": edited, "expectedVersion": draft["draft"]["revisionVersion"]},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(saved["automationTaskDefinition"]["itemLimit"], 7)
+
+            stale = dict(edited)
+            stale["name"] = "Stale write"
+            status, _conflict = _request(
+                value.api,
+                save_action["path"],
+                method="PUT",
+                body={
+                    "object": stale,
+                    "expectedVersion": draft["draft"]["revisionVersion"],
+                },
+            )
+            self.assertEqual(status, 409)
+            status, reread = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
+            self.assertEqual(reread["draft"]["definition"]["name"], "Renamed nightly automation")
+
+            validate_action = self._action(reread, "validate")
+            status, validated = _request(value.api, validate_action["path"], method="POST", body={})
+            self.assertEqual(status, 200)
+            self.assertEqual(validated["validationErrors"], [])
+
+            # The draft document advertises the dedicated owned activation
+            # transport, and the real POST to that exact advertised route
+            # performs the checked activation.
+            activate_action = self._action(reread, "activate")
+            self.assertEqual(activate_action["method"], "POST")
+            self.assertTrue(activate_action["requiresConfirmation"])
+            self.assertEqual(
+                activate_action["path"],
+                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/activate-draft",
+            )
+            status, activated = _request(
+                value.api,
+                activate_action["path"],
+                method="POST",
+                body=self._activation_body(reread),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(activated["activatedRevisionId"], reread["draft"]["revisionId"])
+            self.assertEqual(activated["definition"]["id"], _DEFINITION["id"])
+            self.assertEqual(
+                activated["activeConfiguration"]["revisionId"], reread["draft"]["revisionId"]
+            )
+            _assert_operator_document_clean(activated)
+
+            # A repeated submission of the consumed activation is rejected
+            # without leaking digest evidence.
+            status, conflict = _request(
+                value.api,
+                activate_action["path"],
+                method="POST",
+                body=self._activation_body(reread),
+            )
+            self.assertEqual(status, 409)
+            self.assertNotIn("digest", json.dumps(conflict).lower())
+
+            status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            self.assertEqual(status, 200)
+            self.assertEqual(detail["definition"]["name"], "Renamed nightly automation")
+            self.assertEqual(detail["definition"]["itemLimit"], 7)
+            self.assertEqual(
+                detail["activeConfiguration"]["revisionId"], activated["activatedRevisionId"]
+            )
+            self.assertEqual(detail["definition"]["draftState"]["present"], False)
+
+    def test_definition_mutations_are_permission_bound(self) -> None:
+        with self._journey() as value:
+            status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
+            create_action = self._action(draft, "createDraft")
+            _status, _created = _request(
+                value.api,
+                create_action["path"],
+                method="POST",
+                body={"expectedActiveRevisionId": value.active.revision_id},
+            )
+            status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
+            save_action = self._action(draft, "save")
+            edited = dict(draft["draft"]["definition"])
+            edited["name"] = "Manager rename"
+            status, _saved = _request(
+                value.api,
+                save_action["path"],
+                method="PUT",
+                token=MANAGER_TOKEN,
+                body={
+                    "object": edited,
+                    "expectedVersion": draft["draft"]["revisionVersion"],
+                },
+            )
+            self.assertEqual(status, 200)
+            status, _denied = _request(
+                value.api,
+                save_action["path"],
+                method="PUT",
+                token=VIEWER_TOKEN,
+                body={"object": edited, "expectedVersion": draft["draft"]["revisionVersion"] + 1},
+            )
+            self.assertEqual(status, 403)
+            status, viewer_draft = _request(
+                value.api,
+                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft",
+                token=VIEWER_TOKEN,
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(self._action(viewer_draft, "save")["available"])
+            self.assertFalse(self._action(viewer_draft, "activate")["available"])
+            self.assertFalse(self._action(viewer_draft, "createDraft")["available"])
+
+    def test_retired_automation_preview_routes_are_ordinary_not_found(self) -> None:
+        """The independent Automation Preview product is retired.
+
+        Its old routes answer as ordinary not-found results and create no
+        durable Preview evidence, Task, Job or Storage mutation.
+        """
+
+        with self._journey() as value:
+            for method, path in (
+                (
+                    "POST",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
+                ),
+                (
+                    "GET",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews",
+                ),
+                (
+                    "GET",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews/p-1",
+                ),
+                (
+                    "GET",
+                    f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/p-1",
+                ),
+                (
+                    "GET",
+                    f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/p-1/items",
+                ),
+                (
+                    "POST",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview-analyses",
+                ),
+            ):
+                with self.subTest(method=method, path=path):
+                    status, body = _request(value.api, path, method=method, body={})
+                    self.assertIn(status, (404, 503), body)
+                    self.assertNotIn("previewId", body)
 
     def test_definition_change_repins_future_occurrences_to_the_new_identity(self) -> None:
         """A definition change publishes a new exact identity.
