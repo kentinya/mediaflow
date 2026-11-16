@@ -1,18 +1,17 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.2 — 自动化只依赖当前定义、发布意图与 Task
 
-Next Action: 下列 Task55.2 为规划草案；经用户授权实施后再转为正式 Task。
+Next Action: DEVELOPER STARTS TASK55.2 IMPLEMENTATION。
 
 Task55.1 已由 B 独立复核 PASS：
 `d62436be6f5848329a628356c13fdb28e760239a..f4336e431e27a76af372f9d23fe1896838e8cbd8`。
 完整接受、原失败、修正和实际门禁见
 [ebec19bb:TASK.md](https://github.com/kentinya/mediaflow/blob/ebec19bb7592306980a4f288c78378b264f3321f/TASK.md)。
-本轮没有新的 Developer 候选，不重做或改写该 PASS；Slice55 保持 ACTIVE。
-
-## Task55.2 草案 — 自动化只依赖当前定义、发布意图与 Task
+Task55.1 的 PASS 保持；Slice55 保持 ACTIVE。
 
 Authority: committed [SLICE.md](SLICE.md) 的 RO-2（旧 schedules／独立 grant 退出），
 以及对应 RO-3／4／5／6；生命周期依 [Development Workflow](docs/development-workflow.md)。
-这是规划草案，不是活动实施 Task，不授权实施或启动其他角色。
+用户现明确要求“激活Task”，据此将已提交草案转为正式 Task55.2，授权 Developer 按本
+Task 实施。本次只激活，不启动其他角色或实施产品变更。
 
 ```text
 Task ID: 55.2
@@ -23,12 +22,16 @@ Task Base: ebec19bb7592306980a4f288c78378b264f3321f
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: NOT AUTHORIZED — PLANNING DRAFT ONLY
+Implementation Authorization: TASK55.2 IMPLEMENTATION AUTHORIZED
 ```
 
 规划现场：`/Users/songzhidong/mediaflow`，main，上述 HEAD，初始 tracked／untracked
 工作区干净，文件和 Git 可写；治理检查 PASS。未读取私有配置、运行库或用户媒体。
 Base 固定；文档提交不换 Base。实施前重新核对工作区和治理。
+
+激活现场：main，HEAD `a68f0181846fd6db9ec0c2f8a27c9fb4a0c08d9d`，工作区干净，
+治理检查 PASS。激活保留已提交草案的 Goal／Scope／Base／验收／测试分工，状态为
+PLANNED；Developer 开始实施时更新为 IN PROGRESS。
 
 ### Goal / complete journey
 
@@ -219,7 +222,7 @@ bootstrap／其他配置别名、事件／session 与其他迁移协议清理不
 RO-3仍有 JSON_BOOTSTRAP／legacy-admin 和旧配置读取；RO-4仍有历史 flow／
 pause_requested／迁移／旧结构；RO-5仍有 Copy／Run once 旧 session 合并；RO-6 Web
 部分已完成，非 Web 部分随业务退役。因此 Slice55 仍 ACTIVE，尚不交 A 终审。
-本轮只规划此 Task，不预建其余 Task，不更改 Slice／Roadmap／Progress 边界。
+本 Task 不预建其余 Task，不更改 Slice／Roadmap／Progress 边界。
 
 ### Developer completion / B review
 
