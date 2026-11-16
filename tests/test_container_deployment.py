@@ -360,8 +360,7 @@ class ContainerArtifactTests(unittest.TestCase):
         self.assertEqual(document["storages"][1]["rootPath"], "/media/organized")
         self.assertNotIn("MEDIAFLOW_API_TOKEN=", rendered)
         self.assertNotIn("Bearer", rendered)
-        for schedule in document["automation"]["schedules"]:
-            self.assertFalse(schedule["enabled"])
+        self.assertNotIn("schedules", document["automation"])
 
     def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
         """The default deployment bootstrap is usable with durable data alone.

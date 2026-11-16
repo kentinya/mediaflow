@@ -167,8 +167,9 @@ async function runOnceFromList(
   await expect(link).toBeVisible();
   const href = await link.getAttribute("href");
   if (!href) throw new Error("admitted list row has no Task Center link");
-  const taskId = new URL(href, page.url()).pathname.split("/").pop();
+  const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
+  expect(taskId).toMatch(/^[0-9a-f-]{36}$/);
   expect(page.url()).toContain("/ui-v2/operations/automation");
   return taskId;
 }

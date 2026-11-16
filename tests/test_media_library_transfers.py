@@ -1338,7 +1338,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
                 remote_execution_enabled=False,
                 remote_execution_maximum_ttl_seconds=900,
                 system_status=None,
-                schedules=(),
                 metadata_policies=(),
             )
             self.assertIsNone(binding.direct_media_transfers)

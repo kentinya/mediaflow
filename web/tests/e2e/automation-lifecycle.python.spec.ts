@@ -1418,9 +1418,9 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
     state.definitions.find((item) => item.id === DEFINITION_ID),
   ).toMatchObject({ name: "只改名称（慢读）", enabled: true, itemLimit: 7 });
   const fenceAfterSecondSave = state.activeRevisionId;
-  await page.unroute(
-    `**/api/v1/operations/automation/definitions/${DEFINITION_ID}`,
-  );
+  // Finish the deliberately delayed read before removing its handler; this
+  // preserves the slow-read race without letting teardown handle its route.
+  await page.unrouteAll({ behavior: "wait" });
 
   // The same journey on a normal read: re-open, change only the Name, save.
   await openRowEdit("只改名称（慢读）");

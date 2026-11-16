@@ -139,8 +139,9 @@ async function runOnceFromList(page: Page, name: string): Promise<string> {
   await expect(link).toBeVisible();
   const href = await link.getAttribute("href");
   if (!href) throw new Error("admitted list row has no Task Center link");
-  const taskId = new URL(href, page.url()).pathname.split("/").pop();
+  const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
+  expect(taskId).toMatch(/^[0-9a-f-]{36}$/);
   expect(page.url()).toContain("/ui-v2/operations/automation");
   return taskId;
 }
@@ -208,6 +209,9 @@ test("the inventory reads full-population cards, filters and pages from the serv
 
   await page.getByLabel("搜索", { exact: true }).fill("");
   await page.getByLabel("搜索", { exact: true }).press("Enter");
+  // Compare the published definition population: an earlier lifecycle proof
+  // deliberately retains an enabled, unpublished Draft in this shared store.
+  await page.getByLabel("发布状态").selectOption("active");
   // The definition is published disabled, so the enablement filter is a real
   // server partition: `true` excludes it, `false` includes it.
   await page.getByLabel("启用状态").selectOption("true");
@@ -522,11 +526,13 @@ test("a technical record preserves original results without a generic retry entr
     page,
     `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
   );
-  const recovery = page.getByRole("region", { name: "条目审核与恢复" });
+  const recovery = page.getByRole("region", { name: "条目证据" });
   // The failed item reads as its own factual history; the concrete reason sits
   // in the upper evidence block instead of a standing technical tutorial.
   await expect(
-    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+    recovery
+      .getByRole("region", { name: "处理结果" })
+      .getByText("处理失败", { exact: true }),
   ).toBeVisible();
   await expect(
     page
@@ -683,9 +689,11 @@ test("two technical failures retain independent evidence without false resolutio
   // Both failures remain factual history. No unsupported technical recovery
   // control can hide one sibling or turn this partial run into success.
   await connectOn(page, `/ui-v2/operations?run=${taskId}&item=${recoverOnly}`);
-  const recovery = page.getByRole("region", { name: "条目审核与恢复" });
+  const recovery = page.getByRole("region", { name: "条目证据" });
   await expect(
-    recovery.getByText("处理失败；请查看上方失败原因与已记录结果。"),
+    recovery
+      .getByRole("region", { name: "处理结果" })
+      .getByText("处理失败", { exact: true }),
   ).toBeVisible();
   await expect(
     page

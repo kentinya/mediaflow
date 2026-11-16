@@ -149,7 +149,7 @@ class ManagementSetupTests(unittest.TestCase):
             "namingPolicies": [],
             "classificationPolicies": [],
             "organizePolicies": [],
-            "automation": {"schedules": [{"id": "daily", "enabled": True}]},
+            "automationTaskDefinitions": [{"id": "daily", "enabled": True}],
             "notifications": {
                 "webhooks": [{"id": "ops", "enabled": True}],
             },
@@ -371,7 +371,8 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(document["storages"], [])
         self.assertEqual(document["resourceLibraries"], [])
         self.assertEqual(document["mediaLibraries"], [])
-        self.assertEqual(document["automation"]["schedules"], [])
+        self.assertNotIn("schedules", document["automation"])
+        self.assertEqual(document["automationTaskDefinitions"], [])
         self.assertEqual(document["notifications"]["webhooks"], [])
         self.assertFalse(document["api"]["remoteExecution"]["enabled"])
         self.assertNotIn("rootPath", json.dumps(document))
