@@ -731,8 +731,8 @@ def assert_rbac_and_no_side_effects(
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "viewer denied POST response")
-    if status != 403:
-        raise RuntimeError(f"viewer remote Task submission returned HTTP {status}, expected 403")
+    if status != 404:
+        raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
     status, body = request_bytes(f"{base}/api/v1/security-audit", token=viewer)
     assert_no_canaries(body, canaries, "viewer denied audit response")
