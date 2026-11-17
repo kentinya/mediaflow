@@ -14,14 +14,6 @@ class MetadataCorrectionStatus(StrEnum):
     IGNORED = "ignored"
 
 
-class MetadataCorrectionContinuationStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
 @dataclass(frozen=True)
 class MetadataCorrectionReview:
     review_id: str
@@ -78,30 +70,6 @@ class MetadataCorrectionSelection:
     provider_id: str | None = None
 
 
-@dataclass(frozen=True)
-class MetadataCorrectionContinuation:
-    """One durable DryRun-only continuation for an immutable File correction."""
-
-    continuation_id: str
-    file_id: str
-    review_id: str
-    source_task_id: str
-    source_item_id: str
-    configuration_snapshot_id: str
-    configuration_snapshot_digest: str
-    correction_version: str
-    status: MetadataCorrectionContinuationStatus
-    created_at: datetime
-    updated_at: datetime
-    actor: str
-    new_task_id: str | None = None
-    new_result_id: str | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    error: str | None = None
-    recovery: str | None = None
-
-
 class MetadataCorrectionRepository(Protocol):
     def create_metadata_correction(
         self, review: MetadataCorrectionReview, item: PersistentTaskItem
@@ -126,9 +94,3 @@ class MetadataCorrectionRepository(Protocol):
     def list_metadata_correction_audit(
         self, review_id: str
     ) -> tuple[MetadataCorrectionDecisionAudit, ...]: ...
-    def get_metadata_correction_continuation_for_review(
-        self, review_id: str
-    ) -> MetadataCorrectionContinuation | None: ...
-    def list_metadata_correction_continuations(
-        self, *, limit: int = 100
-    ) -> tuple[MetadataCorrectionContinuation, ...]: ...

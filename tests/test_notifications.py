@@ -15,6 +15,8 @@ from unittest.mock import patch
 
 from mediaflow.application.automation import IntervalScheduler
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEvent,
@@ -25,6 +27,7 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_media_discovery import _DiscoveryFixture
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -361,3 +364,258 @@ class NotificationTests(unittest.TestCase):
                     repository.get_task_scheduling(task.task_id),
                     "the schedule event must name the one admitted organizing Task",
                 )
+
+
+class TerminalTaskNotificationTests(_DiscoveryFixture):
+    """A real admission, the production Worker and the durable outbox.
+
+    Each case starts at the supported Files entrance, advances the admitted
+    Task through ``final_cli worker run-next`` (the resident composition with
+    its Task engine and terminal observer), and reads the real notification
+    outbox.  No test calls the publisher to fake the terminal publication.
+    """
+
+    WEBHOOK_EVENTS = ["task.completed", "task.cancelled"]
+
+    def _document(self) -> dict:
+        document = self.document()
+        # The fixture's authenticated operator is also the current published
+        # principal, so Run once resolves its execution permission from the
+        # same managed Active the Worker will run under.
+        document["api"] = {
+            "principals": [
+                {
+                    "id": "operator",
+                    "tokenEnv": "MEDIAFLOW_TERMINAL_OPERATOR_TOKEN",
+                    "roles": ["operator"],
+                    "enabled": True,
+                }
+            ]
+        }
+        # A real rule answer for the fixture's own library identity, so the
+        # journey parks at its exact plan summary instead of an undecided
+        # Recognition problem.
+        document["recognitionRules"] = [
+            {
+                "id": "movies",
+                "name": "Movies",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]},
+                "outputRecognitionType": "A",
+            }
+        ]
+        document["automationTaskDefinitions"] = [
+            {
+                "id": "nightly",
+                "name": "Nightly",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": False,
+                "sourceScope": "Movies",
+            }
+        ]
+        document["notifications"] = {
+            "webhooks": [
+                {
+                    "id": "terminal-events",
+                    "url": "https://example.invalid/mediaflow/events",
+                    "secretEnv": "MEDIAFLOW_TERMINAL_WEBHOOK_SECRET",
+                    "events": list(self.WEBHOOK_EVENTS),
+                    "enabled": True,
+                }
+            ]
+        }
+        return document
+
+    def _journey(self, document):
+        return self.journey(task_scheduling=True, provider=self._provider())
+
+    @staticmethod
+    def _provider():
+        return SyntheticMetadataProvider(
+            (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+        )
+
+    def _write_config(self, document: dict) -> Path:
+        config = self.root / "config.json"
+        config.write_text(json.dumps(document), encoding="utf-8")
+        return config
+
+    def _admit(self, value, path: str):
+        return self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/discoveries",
+            "POST",
+            {"paths": [path], "autoPrepare": True},
+        )
+
+    def _run_worker(self, config: Path):
+        from mediaflow.application.metadata import MetadataProviderRegistry
+
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            return_value=MetadataProviderRegistry((self._provider(),)),
+        ):
+            code = final_main(
+                ["--config", str(config), "worker", "run-next"],
+                stdout=output,
+                stderr=errors,
+            )
+        return code, output.getvalue(), errors.getvalue()
+
+    def _confirm_summary(self, value, task_id: str, item_id: str):
+        status, detail = self.request(value, f"/api/v1/tasks/{task_id}/items/{item_id}/recovery")
+        self.assertEqual(200, status, detail)
+        preparation = detail["manualRecoveryPreparation"]
+        self.assertIsNotNone(preparation, detail)
+        status, preview = self.request(
+            value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+        )
+        self.assertEqual(200, status, preview)
+        ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
+        self.assertEqual(1, len(ready), preview)
+        status, confirmed = self.request(
+            value,
+            f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+            "POST",
+            {
+                "itemIds": ready,
+                "confirmation": True,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertEqual(202, status, confirmed)
+        return confirmed
+
+    def _drive_worker(self, value, config, task_id, *, until, steps=8):
+        """Run the production Worker until the exact Task reaches a boundary."""
+
+        transcripts = []
+        for _ in range(steps):
+            code, output, errors = self._run_worker(config)
+            transcripts.append((code, output, errors))
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            if until == "terminal" and task.status.value in {
+                "completed",
+                "partial_success",
+                "failed",
+                "cancelled",
+            }:
+                return transcripts
+            if (
+                until == "human"
+                and state is not None
+                and state.queue_state.value == "waiting_human"
+            ):
+                return transcripts
+        return transcripts
+
+    def _deliveries(self):
+        with SQLiteTaskRepository(self.database) as repository:
+            return repository.list_deliveries()
+
+    def test_run_once_completion_publishes_one_task_event_and_reopen_keeps_it(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        document = self._document()
+        config = self._write_config(document)
+        with self._journey(document) as value:
+            self.publish_policy(value, document=document)
+            status, admitted = self.request(
+                value,
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                "POST",
+                {"admissionRequestId": "terminal-1"},
+            )
+            self.assertIn(status, (200, 202), admitted)
+            task_id = admitted.get("taskId")
+            self.assertIsInstance(task_id, str, admitted)
+
+            transcripts = self._drive_worker(value, config, task_id, until="terminal")
+            self.assertEqual(
+                "completed",
+                value.repository.get_task(task_id).status.value,
+                (transcripts, value.repository.get_task(task_id)),
+            )
+            task = value.repository.get_task(task_id)
+            results = value.repository.list_results(task_id)
+            items = value.repository.list_items(task_id)
+            self.assertEqual("completed", task.status.value, task.error)
+            self.assertEqual(1, len(results), results)
+            self.assertEqual(["success"], [entry.status.value for entry in items])
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            organized = list((self.target_root / "Organized/Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized))
+
+            (delivery,) = self._deliveries()
+            payload = json.loads(delivery.body)
+            self.assertEqual(NotificationEventType.TASK_COMPLETED, delivery.event_type)
+            self.assertEqual("terminal-events", delivery.webhook_id)
+            self.assertEqual(
+                payload["data"],
+                {"taskId": task_id, "status": "completed", "command": "organize"},
+            )
+            self.assertEqual(payload["eventId"], f"task:{task_id}:completed")
+            self.assertNotIn("secret", delivery.body.lower())
+
+            # A second Worker pass finds no work: the completed source is not
+            # replayed and the terminal event is not published twice.
+            code, output, errors = self._run_worker(config)
+            self.assertEqual(0, code, errors)
+            self.assertIn("No pending work", output)
+            self.assertEqual(1, len(self._deliveries()))
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+        # Same-version reopen keeps the Task outcome and its one outbox row.
+        with SQLiteTaskRepository(self.database) as reopened:
+            self.assertEqual("completed", reopened.get_task(task_id).status.value)
+            self.assertEqual(1, len(reopened.list_deliveries()))
+
+    def test_queued_cancellation_publishes_one_event_without_media_effect(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        document = self._document()
+        config = self._write_config(document)
+        with self._journey(document) as value:
+            self.publish_policy(value, document=document)
+            status, admitted = self._admit(value, "Movies/One.2001.mkv")
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+
+            output, errors = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(config), "tasks", "cancel", task_id],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(0, code, errors.getvalue())
+            self.assertIn("cancelled", output.getvalue())
+            task = value.repository.get_task(task_id)
+            self.assertEqual("cancelled", task.status.value)
+            self.assertTrue((self.source_root / "Movies/One.2001.mkv").exists())
+
+            (delivery,) = self._deliveries()
+            self.assertEqual(NotificationEventType.TASK_CANCELLED, delivery.event_type)
+            self.assertEqual(
+                json.loads(delivery.body)["data"],
+                {"taskId": task_id, "status": "cancelled", "command": "manual_organize"},
+            )
+
+            # The idempotent repeat is the same durable intent, not a second
+            # outbox row.
+            code = final_main(
+                ["--config", str(config), "tasks", "cancel", task_id],
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+            )
+            self.assertEqual(0, code)
+            self.assertEqual(1, len(self._deliveries()))
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertEqual("cancelled", reopened.get_task(task_id).status.value)
+                self.assertEqual(1, len(reopened.list_deliveries()))

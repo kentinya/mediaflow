@@ -46,9 +46,7 @@ class ManualRecoveryPreparation:
     preparation_id: str
     source_task_id: str
     source_item_id: str
-    analysis_continuation_id: str
     analysis_task_id: str
-    analysis_result_id: str
     intent_id: str
     preview_id: str
     intent_version: int
@@ -97,9 +95,7 @@ class ManualRecoveryPreparation:
             "preparation_id": self.preparation_id,
             "source_task_id": self.source_task_id,
             "source_item_id": self.source_item_id,
-            "analysis_continuation_id": self.analysis_continuation_id,
             "analysis_task_id": self.analysis_task_id,
-            "analysis_result_id": self.analysis_result_id,
             "intent_id": self.intent_id,
             "preview_id": self.preview_id,
             "intent_version": self.intent_version,

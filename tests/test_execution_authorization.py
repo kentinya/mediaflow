@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.domain.configuration_integrity import canonical_document_digest
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -433,3 +434,197 @@ class RetainedDirectCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
+    """A newly submitted ticket setting is refused; history stays readable."""
+
+    def _service(self, database: Path, document: dict):
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        repository = SQLiteConfigurationRepository(database)
+        self.addCleanup(repository.close)
+        return ManagedConfigurationService(repository), repository
+
+    def _api(self, database: Path, document: dict, service):
+        repository = SQLiteTaskRepository(database)
+        self.addCleanup(repository.close)
+        return (
+            MediaFlowApi(
+                repository,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ),
+                configuration_service=service,
+                bootstrap_document=document,
+            ),
+            repository,
+        )
+
+    @staticmethod
+    def _document(database: Path) -> dict:
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        document["persistence"] = {"databasePath": str(database)}
+        return document
+
+    def test_new_draft_with_ticket_setting_is_refused_and_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            document = self._document(database)
+            service, _ = self._service(database, document)
+            api, repository = self._api(database, document, service)
+            submitted = json.loads(json.dumps(document))
+            submitted["api"]["remoteExecution"] = {
+                "enabled": True,
+                "maximumTtlSeconds": 900,
+            }
+
+            status, body = request(
+                api,
+                "/api/v1/configuration/drafts",
+                document={"document": submitted},
+            )
+            self.assertEqual(400, status, body)
+            self.assertIn("retired", body["error"]["message"])
+            self.assertIsNone(service.active())
+            self.assertEqual((), repository.list_tasks())
+
+            # The ordinary document without the retired field still completes
+            # the whole Draft -> validate -> activate lifecycle.
+            status, imported = request(
+                api,
+                "/api/v1/configuration/drafts",
+                document={"document": document},
+            )
+            self.assertEqual(201, status, imported)
+            status, refused_edit = request(
+                api,
+                f"/api/v1/configuration/revisions/{imported['revisionId']}",
+                method="PUT",
+                document={"document": submitted, "expectedVersion": imported["version"]},
+            )
+            self.assertEqual(400, status, refused_edit)
+            self.assertIn("retired", refused_edit["error"]["message"])
+            self.assertEqual(imported["digest"], service.require(imported["revisionId"]).digest)
+            status, validated = request(
+                api,
+                f"/api/v1/configuration/revisions/{imported['revisionId']}/validate",
+                document={},
+            )
+            self.assertEqual(200, status, validated)
+            self.assertEqual("validated", validated["status"], validated)
+            status, activated = request(
+                api,
+                f"/api/v1/configuration/revisions/{imported['revisionId']}/activate",
+                document={"expectedVersion": validated["version"]},
+            )
+            self.assertEqual(200, status, activated)
+            self.assertEqual("active", activated["status"])
+            self.assertEqual((), repository.list_tasks())
+
+    def test_existing_draft_with_ticket_setting_cannot_validate_or_activate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            document = self._document(database)
+            service, repository = self._service(database, document)
+            api, tasks = self._api(database, document, service)
+            draft = service.import_draft(document, actor="admin")
+            historical = json.loads(json.dumps(draft.document))
+            historical["api"]["remoteExecution"] = {"enabled": True}
+            digest = canonical_document_digest(historical)
+            with repository._connection:
+                repository._connection.execute(
+                    "UPDATE managed_configuration_revisions SET payload=?, digest=? "
+                    "WHERE revision_id=?",
+                    (
+                        json.dumps(historical, sort_keys=True, separators=(",", ":")),
+                        digest,
+                        draft.revision_id,
+                    ),
+                )
+
+            status, validated = request(
+                api,
+                f"/api/v1/configuration/revisions/{draft.revision_id}/validate",
+                document={},
+            )
+            self.assertEqual(200, status, validated)
+            self.assertEqual("draft", validated["status"], validated)
+            self.assertIn("retired", validated["validationErrors"][0])
+            status, refused = request(
+                api,
+                f"/api/v1/configuration/revisions/{draft.revision_id}/activate",
+                document={"expectedVersion": validated["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertIsNone(service.active())
+            self.assertEqual((), tasks.list_tasks())
+
+    def test_historical_active_stays_readable_and_successor_strips_the_setting(self):
+        from mediaflow.application.system_settings import SystemSettingsService
+        from mediaflow.domain.system_settings import SystemSettingsEdit
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            document = self._document(database)
+            service, repository = self._service(database, document)
+            api, _tasks = self._api(database, document, service)
+            draft = service.import_draft(document, actor="admin")
+            validated = service.validate(draft.revision_id, actor="admin")
+            active = service.activate(
+                validated.revision_id, expected_version=validated.version, actor="admin"
+            )
+
+            # A real accepted V2 revision that still carries the historical
+            # setting: its original bytes, ID and digest stay untouched.
+            historical = json.loads(json.dumps(active.document))
+            historical["api"]["remoteExecution"] = {
+                "enabled": True,
+                "maximumTtlSeconds": 900,
+            }
+            digest = canonical_document_digest(historical)
+            with repository._connection:
+                repository._connection.execute(
+                    "UPDATE managed_configuration_revisions SET payload=?, digest=? "
+                    "WHERE revision_id=?",
+                    (
+                        json.dumps(historical, sort_keys=True, separators=(",", ":")),
+                        digest,
+                        active.revision_id,
+                    ),
+                )
+
+            loaded = load_runtime_configuration(repository.get_active_revision().document)
+            self.assertFalse(hasattr(loaded, "remote_execution_enabled"))
+
+            # The typed System Settings Save derives a successor from that same
+            # historical Active; the successor drops the retired setting rather
+            # than forcing the operator to rebuild the whole configuration.
+            settings = SystemSettingsService(service)
+            settings.edit(
+                edits=(SystemSettingsEdit("automation.maximumActiveJobs", 120),),
+                actor="admin",
+            )
+            successor = (
+                service.latest_open_draft_containing("automationTaskDefinitions", "")
+                or service.open_draft_revisions()[0]
+            )
+            self.assertNotIn("remoteExecution", successor.document.get("api", {}))
+            self.assertEqual(120, successor.document["automation"]["maximumActiveJobs"])
+            successor = service.validate(successor.revision_id, actor="admin")
+            self.assertEqual("validated", successor.status.value, successor.validation_errors)
+            activated = service.activate(
+                successor.revision_id, expected_version=successor.version, actor="admin"
+            )
+            self.assertEqual("active", activated.status.value)
+            original = repository.get_revision(active.revision_id)
+            self.assertEqual(digest, original.digest)
+            self.assertIn(
+                "remoteExecution",
+                original.document["api"],
+                "the accepted historical revision keeps its original bytes",
+            )

@@ -1,28 +1,19 @@
-"""Application boundary for durable queued continuation of a paused Task scope.
+"""Read-only same-Task recovery eligibility.
 
-Two responsibilities live here and nowhere else:
+A recovery preparation is admitted while its exact source is still undecided,
+but its discovery, freeze and analysis happen later.  The operator can
+legitimately confirm and execute an earlier preparation in between, so every
+publication boundary re-asks this one module whether the original Task still
+holds an undecided source under the same immutable pin.
 
-* :class:`ScopeContinuationService` is the **admission** boundary the HTTP
-  control uses.  It revalidates the exact durable Task state, the live source
-  and configuration pin, the applicable execution authority and the queue
-  capacity, then records one queued continuation Job plus its continuation row.
-  It performs **zero** Storage work, constructs no Storage/Provider adapter and
-  never executes media.
-* :class:`ScopeContinuationWorkerService` is the **Worker** boundary.  The
-  resident Worker claims the queued Job under the existing claim/lease/schema
-  fences and then revalidates the same durable evidence before any adapter is
-  built, so a continuation that lost its source, capability, permission or
-  authority is refused with a truthful reason instead of mutating anything.
-
-Neither service shells out to the CLI and neither runs a long continuation
-inside an HTTP request.
+The current recovery continues the *same* Task: the admitted items, their
+Results and the confirmed summary are all bound to that Task identity.  Nothing
+here mutates Storage, grants authority or walks a cross-Task ancestry.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import StrEnum
 
 from mediaflow.domain.organizer import ExecutionEffectCertainty
@@ -36,37 +27,6 @@ from mediaflow.domain.task_persistence import (
 
 CONTINUABLE_TASK_COMMANDS = frozenset({"preview", "organize"})
 
-
-_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")
-
-#: The operator-facing next action when the exact remaining work cannot proceed
-#: without fresh explicit authority.  It names the native journey the Contract
-#: promises (exact Preview plus explicit execution intent) rather than the CLI.
-_NATIVE_AUTHORITY_NEXT_ACTION = (
-    "open the run's exact Preview, review the remaining scope, and authorize execution "
-    "again from 操作与任务; MediaFlow never reissues consumed or revoked execution authority"
-)
-_AUTHORITY_REASON = (
-    "continuing this remaining scope would mutate media, but the original execution authority "
-    "was one-shot, expired or revoked; a stored execute flag is not authority"
-)
-_SNAPSHOT_REASON = (
-    "the Task's immutable configuration pin cannot be resolved, so the exact original scope "
-    "cannot be reproduced"
-)
-_SNAPSHOT_NEXT_ACTION = (
-    "restore the pinned published configuration revision, or start a new bounded run under "
-    "the current Active configuration"
-)
-_LINEAGE_REASON = "the recorded continuation history no longer proves the original paused scope"
-_LINEAGE_NEXT_ACTION = (
-    "inspect the linked continuation run and its configuration history; start a new bounded run "
-    "if the original scope cannot be restored"
-)
-_NO_REMAINING_SCOPE_NEXT_ACTION = (
-    "inspect the linked continuation run and its independent per-item results, or start "
-    "a new bounded run from 操作与任务"
-)
 
 #: The item dispositions that still hold remaining admitted work.  This mirrors
 #: the operator CLI's proven continuation eligibility exactly
@@ -176,9 +136,9 @@ def _decided_source_observations(
     items: tuple[PersistentTaskItem, ...],
     results: tuple[PersistentResultRecord, ...],
 ) -> tuple[set[str], tuple[_SourceObservation, ...]]:
-    """Every decided item identity and decided source of one recorded chain.
+    """Every decided item identity and decided source of one Task.
 
-    A decided outcome reaches the chain through either row shape, and both are
+    A decided outcome reaches the Task through either row shape, and both are
     real:
 
     * a Result is the authoritative record of an executed item, and its
@@ -219,21 +179,56 @@ def _decided_source_observations(
     return decided_items, tuple(observations)
 
 
-#: The statuses that mean a Task of a continuation chain has stopped producing
-#: work: a terminal Task cannot own remaining scope, so the deepest Task of the
-#: chain is the last known owner.
-_CHAIN_TERMINAL_STATUSES = frozenset(
-    {
-        PersistentTaskStatus.COMPLETED,
-        PersistentTaskStatus.PARTIAL_SUCCESS,
-        PersistentTaskStatus.FAILED,
-        PersistentTaskStatus.CANCELLED,
-    }
-)
+def is_continuable_task_command(command: object) -> bool:
+    """Whether one durable Task command has a supported remaining-scope boundary."""
 
-#: A hard bound on how many linked Tasks one chain walk will follow, so a
-#: corrupted or externally written link row can never make a read unbounded.
-_MAX_CHAIN_TASKS = 64
+    return isinstance(command, str) and command in CONTINUABLE_TASK_COMMANDS
+
+
+def remaining_scope(
+    repository,
+    task: PersistentTask,
+) -> tuple[tuple[PersistentTaskItem, ...], frozenset[tuple[str, str]], int | None]:
+    """The exact remaining admitted scope of one same-Task recovery source.
+
+    Returns ``(remaining_items, already_recorded_sources, remaining_limit)``.
+
+    * ``already_recorded_sources`` is every recorded item's
+      ``(storage_id, source_path)`` so a preparation can never re-record or
+      re-process a source this Task already owns;
+    * ``remaining_items`` are the still-undecided items of this Task;
+    * ``remaining_limit`` is the Task's originally admitted ``item_limit`` minus
+      every distinct source it already recorded, so recovery never broadens the
+      admitted budget.
+
+    An outcome is resolved **per source**, not only per item identity: a later
+    attempt of the same Task records its own item and Result, so matching on
+    ``item_id`` alone would leave an earlier item undecided after the same
+    source was really completed.  The recorded history itself is never
+    rewritten: this is a read-time projection over the existing Task/Result
+    rows.
+    """
+
+    items = tuple(repository.list_items(task.task_id))
+    results = tuple(repository.list_results(task.task_id))
+    decided_items, decided_observations = _decided_source_observations(items, results)
+    remaining = tuple(
+        item
+        for item in items
+        if item.status in _REMAINING_ITEM_STATUSES
+        and item.item_id not in decided_items
+        and not any(observation.is_the_same_file_as(item) for observation in decided_observations)
+    )
+    already_recorded = frozenset((item.storage_id, item.source_path) for item in items)
+    if task.item_limit is None:
+        remaining_limit = None
+    else:
+        # A recorded item occupies a unit of the originally admitted budget.
+        # A re-observation of an *already admitted* source is the same unit of
+        # work, not a new one, so the budget is counted over distinct sources.
+        recorded_units = len({(item.storage_id, item.source_path) for item in items})
+        remaining_limit = max(0, task.item_limit - recorded_units)
+    return remaining, already_recorded, remaining_limit
 
 
 @dataclass(frozen=True)
@@ -256,233 +251,6 @@ class RecoveryScopePlan:
     replay_excluded: frozenset[tuple[str, str]]
     new_source_budget: int | None
     unrecorded_budget: int | None
-
-
-def is_continuable_task_command(command: object) -> bool:
-    """Whether one durable Task command has a supported remaining-scope boundary."""
-
-    return isinstance(command, str) and command in CONTINUABLE_TASK_COMMANDS
-
-
-def continuation_origin(repository, task: PersistentTask) -> PersistentTask:
-    """Resolve a continuation Task's root only through exact persisted links.
-
-    Each queued continuation copies its source Task's command, scope, item
-    limit and immutable configuration pin. Rechecking those values on every
-    parent edge makes the root Job's Definition occurrence usable after any
-    number of pauses without inferring ancestry from a path, label or timestamp.
-    A malformed, cyclic, incomplete or overlong chain is refused.
-    """
-
-    reader = getattr(repository, "get_scope_continuation_for_new_task", None)
-    if not callable(reader):
-        return task
-
-    current = task
-    visited = {task.task_id}
-    for _ in range(_MAX_CHAIN_TASKS):
-        link = reader(current.task_id)
-        if link is None:
-            return current
-        if getattr(link, "new_task_id", None) != current.task_id:
-            raise ValueError("continuation ancestry does not identify its child Task")
-        parent_id = getattr(link, "source_task_id", None)
-        if not isinstance(parent_id, str) or not parent_id or parent_id in visited:
-            raise ValueError("continuation ancestry is cyclic or incomplete")
-        parent = repository.get_task(parent_id)
-        if parent is None:
-            raise ValueError("continuation ancestry source Task is unavailable")
-        expected = (
-            parent.task_id,
-            parent.command,
-            parent.scope_path,
-            parent.item_limit,
-            parent.configuration_snapshot_id,
-            parent.configuration_snapshot_digest,
-        )
-        recorded = (
-            getattr(link, "source_task_id", None),
-            getattr(link, "command", None),
-            getattr(link, "scope_path", None),
-            getattr(link, "item_limit", None),
-            getattr(link, "configuration_snapshot_id", None),
-            getattr(link, "configuration_snapshot_digest", None),
-        )
-        child = (
-            current.task_id,
-            current.command,
-            current.scope_path,
-            current.item_limit,
-            current.configuration_snapshot_id,
-            current.configuration_snapshot_digest,
-        )
-        if recorded != expected or child[1:] != expected[1:]:
-            raise ValueError("continuation ancestry changed its original command, scope or pin")
-        visited.add(parent_id)
-        current = parent
-    raise ValueError("continuation ancestry exceeds the supported chain depth")
-
-
-def continuation_chain(repository, task: PersistentTask) -> tuple[PersistentTask, ...]:
-    """The whole recorded continuation chain that owns one Task's admitted scope.
-
-    The chain is resolved only through explicit durable queued-continuation
-    links and exact-Preview recovery links — never by filename, label or
-    creation-time proximity. The root (the originally admitted Task) comes
-    first and every descendant follows in link order, so the original item
-    budget and every recorded item can be read together.
-    """
-
-    root = task
-    ancestors = {task.task_id}
-    link_reader = getattr(repository, "get_scope_continuation_for_new_task", None)
-    recovery_reader = getattr(repository, "get_scope_recovery_for_new_task", None)
-    if callable(link_reader) or callable(recovery_reader):
-        for _ in range(_MAX_CHAIN_TASKS):
-            link = None
-            for reader in (link_reader, recovery_reader):
-                if not callable(reader):
-                    continue
-                try:
-                    link = reader(root.task_id)
-                except Exception:
-                    link = None
-                if link is not None:
-                    break
-            parent_id = getattr(link, "source_task_id", None) if link is not None else None
-            if not isinstance(parent_id, str) or not parent_id or parent_id in ancestors:
-                break
-            parent = repository.get_task(parent_id)
-            if parent is None:
-                break
-            ancestors.add(parent_id)
-            root = parent
-    chain: list[PersistentTask] = [root]
-    # The forward walk tracks its own visited set: an ancestor recorded while
-    # walking up must not make the descendant that produced it look visited.
-    seen = {root.task_id}
-    pending: list[PersistentTask] = [root]
-    lister = getattr(repository, "list_scope_continuations", None)
-    recovery_lister = getattr(repository, "list_scope_recovery_links", None)
-    if callable(lister) or callable(recovery_lister):
-        while pending and len(chain) < _MAX_CHAIN_TASKS:
-            current = pending.pop(0)
-            links = []
-            for reader in (lister, recovery_lister):
-                if not callable(reader):
-                    continue
-                try:
-                    links.extend(reader(current.task_id))
-                except Exception:
-                    continue
-            links.sort(
-                key=lambda value: getattr(value, "created_at", datetime.min.replace(tzinfo=UTC))
-            )
-            for link in links:
-                child_id = getattr(link, "new_task_id", None)
-                if not isinstance(child_id, str) or not child_id or child_id in seen:
-                    continue
-                child = repository.get_task(child_id)
-                if child is None:
-                    continue
-                seen.add(child_id)
-                chain.append(child)
-                pending.append(child)
-    return tuple(chain)
-
-
-def chain_owner(repository, task: PersistentTask) -> PersistentTask:
-    """The chain Task that currently owns the remaining scope.
-
-    A later non-terminal Task of the chain (a continuation that paused or is
-    still running) owns the remaining scope: it carries its own recorded items,
-    pin and remaining budget, so the earlier run must not queue that scope a
-    second time.  When every later Task is terminal, the deepest Task is the
-    last known owner and the caller applies the remaining-budget decision.
-    """
-
-    chain = continuation_chain(repository, task)
-    for value in reversed(chain):
-        if value.status not in _CHAIN_TERMINAL_STATUSES:
-            return value
-    return chain[-1]
-
-
-def remaining_scope(
-    repository,
-    task: PersistentTask,
-) -> tuple[tuple[PersistentTaskItem, ...], frozenset[tuple[str, str]], int | None]:
-    """The exact remaining admitted scope of one paused Task.
-
-    Returns ``(remaining_items, already_recorded_sources, remaining_limit)``.
-
-    The computation spans the whole recorded continuation chain, so a finished
-    or still-paused descendant can never make the original run look unfinished:
-
-    * ``already_recorded_sources`` is **every** recorded item's
-      ``(storage_id, source_path)`` across the chain — including the terminal
-      ones — so the continuation's discovery walk can never re-record or
-      re-process a source any attempt of the chain already owns;
-    * ``remaining_items`` are the still-undecided items of the chain;
-    * ``remaining_limit`` is the **root** Task's originally admitted
-      ``item_limit`` minus every item the chain already recorded, so discovery
-      and continuation never broaden the admitted budget.
-
-    An outcome is resolved **per source**, not only per item identity: a later
-    attempt of the chain (an exact-Preview recovery execution, a queued
-    continuation Task) records its own item and Result under its own item ID,
-    so matching on ``item_id`` alone would leave the ancestor item undecided
-    after the same source was really completed.  A decided outcome therefore
-    retires every chain item that provably names the same source: the same
-    Storage, the same ResourceLibrary and the same exact relative path, and —
-    when both sides recorded verified occurrence evidence — the same
-    fingerprint.  A replaced file at the same path keeps its own undecided
-    state because its fingerprint differs, and a success recorded for a
-    different Storage/library/path never retires this source.  The recorded
-    history itself is never rewritten: this is a read-time projection over the
-    existing Task/Result rows.
-    """
-
-    chain = continuation_chain(repository, task)
-    root = chain[0]
-    items = tuple(item for value in chain for item in repository.list_items(value.task_id))
-    results = tuple(result for value in chain for result in repository.list_results(value.task_id))
-    decided_items, decided_observations = _decided_source_observations(items, results)
-    remaining = tuple(
-        item
-        for item in items
-        if item.status in _REMAINING_ITEM_STATUSES
-        and item.item_id not in decided_items
-        and not any(observation.is_the_same_file_as(item) for observation in decided_observations)
-    )
-    already_recorded = frozenset((item.storage_id, item.source_path) for item in items)
-    if root.item_limit is None:
-        remaining_limit = None
-    else:
-        # A recorded item occupies a unit of the originally admitted budget.
-        # A re-observation of an *already admitted* source (a recovery
-        # execution, a continued attempt) is the same unit of work, not a new
-        # one, so the budget is counted over distinct sources: an extra attempt
-        # must neither shrink nor widen what the operator originally admitted.
-        recorded_units = len({(item.storage_id, item.source_path) for item in items})
-        remaining_limit = max(0, root.item_limit - recorded_units)
-    return remaining, already_recorded, remaining_limit
-
-
-def recovery_scope(
-    repository,
-    task: PersistentTask,
-) -> tuple[tuple[PersistentTaskItem, ...], frozenset[tuple[str, str]], int | None]:
-    """The exact ``(undecided, replay_excluded, new_source_budget)`` triple.
-
-    This stays the compact public shape both the admission and its existing
-    callers read.  :func:`recovery_scope_plan` is the same computation plus the
-    extra ``unrecorded_budget`` fact that decides the observable shape of a
-    preparation, so the two can never disagree.
-    """
-
-    plan = recovery_scope_plan(repository, task)
-    return plan.undecided_items, plan.replay_excluded, plan.new_source_budget
 
 
 def recovery_scope_plan(
@@ -609,7 +377,7 @@ class RecoveryPreparationEligibility:
     def check_sources(self, sources) -> tuple[bool, ...]:
         """Whether each exact observed source may still be offered or executed.
 
-        ``eligible`` is only a statement about the *whole* chain: it says the
+        ``eligible`` is only a statement about the whole Task: it says the
         preparation still has work somewhere.  It is deliberately **not** a
         licence for every individual source, because a mixed scope stays
         eligible while one sibling is still undecided even though another was
@@ -665,15 +433,15 @@ def recovery_preparation_eligibility(
     between.  Persisting the admission is therefore not a licence to publish a
     summary much later: every publication boundary (and the execution admission
     itself) re-asks this one function instead of comparing the original
-    ``Task.updated_at`` — the deciding evidence lives in a *descendant* Task and
-    changes while the original Task row does not.
+    ``Task.updated_at`` — the deciding evidence is recorded on that same Task's
+    own items, Results and confirmed summary.
 
     The revalidation reads only durable evidence:
 
     * the source Task must still be a paused, continuable admission with the
       same immutable pin that was admitted;
-    * the whole explicit continuation chain must still hold at least one
-      undecided source (a completed, ignored or uncertain attempt retires it);
+    * the Task must still hold at least one undecided source (a completed,
+      ignored or uncertain attempt retires it);
     * wherever the caller supplies its own pin, that pin must equal the source
       Task's pin, so a preparation can never observe one revision and publish a
       summary bound to another.

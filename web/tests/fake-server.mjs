@@ -13157,7 +13157,6 @@ const server = createServer(async (req, res) => {
       })),
       recovery_requests: [],
       recovery_request: null,
-      recovery_continuation: null,
       effects: {
         certainty: item.checkpoint.effect_certainty,
         completed_operations: latestResult?.completed_operations ?? [],

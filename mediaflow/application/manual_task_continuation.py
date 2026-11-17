@@ -204,27 +204,6 @@ class ManualTaskContinuationService:
                 next_action="reload the item and follow its offered action",
                 details={"permittedActionIds": sorted(permitted)},
             )
-        active_request = checkpoint.active_recovery_request
-        continuation = checkpoint.recovery_continuation
-        if (
-            active_request is not None
-            and continuation is not None
-            and continuation.request_id == active_request.request_id
-            and continuation.status.active
-        ):
-            # A continuation the legacy Job path already queued is durable work
-            # of this item: it is inspected, never duplicated by a second one.
-            # An active request *without* a live continuation is only the audit
-            # of a retry admission that never reached the queue, so the same
-            # Task's own analysis can still continue it.
-            raise ManualTaskContinuationError(
-                "this item already has an admitted recovery continuation",
-                code="continuation_exists",
-                next_action=(
-                    "inspect the already admitted continuation; this Task never starts a "
-                    "second one for the same item"
-                ),
-            )
         discovery = self._linked_discovery(task_id)
         if discovery is None:
             return self._continue_kernel_analysis(

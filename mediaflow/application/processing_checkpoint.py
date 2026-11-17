@@ -318,10 +318,6 @@ class ProcessingCheckpointService:
             )
             for value in recovery_requests
         )
-        continuation_reader = getattr(self._repository, "list_recovery_continuations", None)
-        recovery_continuations = (
-            tuple(continuation_reader(item_id, limit=32)) if callable(continuation_reader) else ()
-        )
         audits.sort(key=lambda value: (value.occurred_at, value.audit_id))
         return ProcessingCheckpointContext(
             task=task,
@@ -330,7 +326,6 @@ class ProcessingCheckpointService:
             blockers=tuple(blockers),
             audits=tuple(audits[-audit_limit:]),
             recovery_requests=recovery_requests,
-            recovery_continuations=recovery_continuations,
         )
 
     def _project(self, context: ProcessingCheckpointContext) -> ProcessingCheckpoint:
@@ -350,13 +345,9 @@ class ProcessingCheckpointService:
         recovery_requests = tuple(
             _safe_recovery_request(value) for value in context.recovery_requests
         )
-        recovery_continuations = tuple(
-            _safe_recovery_continuation(value) for value in context.recovery_continuations
-        )
         active_request = next(
             (value for value in reversed(recovery_requests) if value.active), None
         )
-        current_continuation = recovery_continuations[0] if recovery_continuations else None
         latest = results[0] if results else None
         prior = results[1:]
         failure = decode_failure_explanation(item.error) or (latest.failure if latest else None)
@@ -391,14 +382,7 @@ class ProcessingCheckpointService:
             or (
                 item_status is TaskItemStatus.PENDING
                 and _bounded(item.stage) in {"task_retry_requested", "queued"}
-                and (
-                    active_request is not None
-                    or (
-                        current_continuation is not None
-                        and _enum_value(current_continuation.status) == "completed"
-                        and current_continuation.new_result_id is not None
-                    )
-                )
+                and active_request is not None
                 and any(value.status == "resolved" for value in blockers)
             )
         ):
@@ -418,7 +402,6 @@ class ProcessingCheckpointService:
             configuration.resolvable,
             raw_stage=_bounded(item.stage),
             recovery_request=active_request,
-            recovery_continuation=current_continuation,
             failure=failure,
         )
         try:
@@ -476,9 +459,6 @@ class ProcessingCheckpointService:
                 for value in audits
             ],
             "recovery_requests": [value.document() for value in recovery_requests],
-            "recovery_continuation": (
-                current_continuation.document() if current_continuation is not None else None
-            ),
             "failure": failure.document() if failure else None,
         }
         checkpoint_version = hashlib.sha256(
@@ -504,7 +484,6 @@ class ProcessingCheckpointService:
             blocker=blocker,
             audits=audits,
             recovery_requests=recovery_requests,
-            recovery_continuation=current_continuation,
             effect_certainty=certainty,
             completed_operations=tuple(_bounded(value, 128) for value in completed),
             uncertain_effects=tuple(_bounded(value, 128) for value in uncertain),
@@ -721,38 +700,6 @@ def _safe_recovery_request(value):
     return request
 
 
-def _safe_recovery_continuation(value):
-    """Keep continuation projection bounded and path/secret-safe at the read boundary."""
-
-    from dataclasses import replace
-
-    return replace(
-        value,
-        continuation_id=_safe_identifier(value.continuation_id),
-        request_id=_safe_identifier(value.request_id),
-        source_task_id=_safe_identifier(value.source_task_id),
-        source_item_id=_safe_identifier(value.source_item_id),
-        checkpoint_version=_safe_identifier(value.checkpoint_version),
-        configuration_snapshot_id=(
-            _safe_identifier(value.configuration_snapshot_id)
-            if value.configuration_snapshot_id is not None
-            else None
-        ),
-        configuration_snapshot_digest=(
-            _safe_identifier(value.configuration_snapshot_digest)
-            if value.configuration_snapshot_digest is not None
-            else None
-        ),
-        boundary=_bounded(value.boundary, 256),
-        actor=_bounded(value.actor, 256),
-        new_task_id=_safe_identifier(value.new_task_id) if value.new_task_id else None,
-        new_result_id=_safe_identifier(value.new_result_id) if value.new_result_id else None,
-        error=_bounded(value.error, 512),
-        recovery=_bounded(value.recovery, 512),
-        authority_statement=_bounded(value.authority_statement, 256),
-    )
-
-
 def _certainty(value) -> EffectCertainty:
     try:
         return EffectCertainty(_enum_value(value))
@@ -872,7 +819,6 @@ def _actions(
     *,
     raw_stage: str = "",
     recovery_request=None,
-    recovery_continuation=None,
     failure=None,
 ) -> tuple[RetrySafety, tuple[CheckpointAction, ...], str | None]:
     status = _item_status(status)
@@ -1035,34 +981,7 @@ def _actions(
             None,
         )
     if status is TaskItemStatus.PENDING and raw_stage == "task_retry_requested":
-        continuation_status = getattr(
-            getattr(recovery_continuation, "status", None),
-            "value",
-            getattr(recovery_continuation, "status", None),
-        )
-        if continuation_status == "completed":
-            return (
-                RetrySafety.UNSAFE,
-                (
-                    CheckpointAction(
-                        "inspect_analysis",
-                        "Inspect the completed linked analysis",
-                        False,
-                        "none",
-                        None,
-                        False,
-                    ),
-                ),
-                "analysis_already_completed: inspect the linked DryRun before any new work",
-            )
         if recovery_request is not None and recovery_request.active:
-            if recovery_continuation is not None and recovery_continuation.active:
-                return (
-                    RetrySafety.UNKNOWN,
-                    (),
-                    "continuation_in_flight: the admitted recovery request is already "
-                    "continued; wait for it to reach a terminal state",
-                )
             return (
                 RetrySafety.UNKNOWN,
                 (

@@ -189,7 +189,6 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
       ],
       recovery_requests: [],
       recovery_request: null,
-      recovery_continuation: null,
       effects: {
         certainty: "unknown",
         completed_operations: [],

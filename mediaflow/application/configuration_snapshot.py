@@ -35,6 +35,8 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_managed_runtime_configuration,
     load_minimal_management_bootstrap,
     load_runtime_configuration,
+    reject_retired_remote_execution_input,
+    strip_retired_remote_execution,
 )
 
 _BUSINESS_CAPABILITY_SECTIONS = {
@@ -400,6 +402,7 @@ class ManagedConfigurationService:
         # the Draft is persisted so an imported/recovered document can never
         # carry (or lose) another deployment's database/principal identity.
         normalized = _canonical_document(self._bind_deployment_authority(normalized))
+        reject_retired_remote_execution_input(normalized)
         _reject_literal_secrets(normalized)
         _reject_unsafe_webhook_urls(normalized, current=None)
         now = self._clock()
@@ -597,7 +600,12 @@ class ManagedConfigurationService:
                 durable_state="active_preserved",
                 next_action="reload configuration status, then create the successor Draft again",
             )
-        normalized = _canonical_document(copy.deepcopy(active.document))
+        # The accepted historical Active stays byte-identical; only the new
+        # successor Draft drops the retired ticket setting, so a typed Save
+        # never requires rebuilding an otherwise valid configuration.
+        normalized = _canonical_document(
+            strip_retired_remote_execution(copy.deepcopy(active.document))
+        )
         _reject_literal_secrets(normalized)
         now = self._clock()
         revision = ManagedConfigurationRevision(
@@ -718,6 +726,7 @@ class ManagedConfigurationService:
             try:
                 if _digest(revision.document) != revision.digest:
                     raise ValueError("configuration Draft digest does not match its payload")
+                reject_retired_remote_execution_input(revision.document)
                 self._loader(copy.deepcopy(revision.document))
             except Exception as error:
                 errors = (_bounded_error(error),)
@@ -791,6 +800,7 @@ class ManagedConfigurationService:
         # the submitted document omits so validation and runtime loading keep
         # consuming this deployment's own locator and principal identity.
         normalized = _canonical_document(self._bind_deployment_authority(normalized))
+        reject_retired_remote_execution_input(normalized)
         _reject_literal_secrets(normalized)
         _reject_unsafe_webhook_urls(normalized, current=revision.document)
         now = self._clock()
@@ -874,6 +884,7 @@ class ManagedConfigurationService:
         # Re-run the exact loader immediately before publishing. This binds the
         # evidence to the digest and prevents stale validation from being activated.
         try:
+            reject_retired_remote_execution_input(revision.document)
             self._loader(copy.deepcopy(revision.document))
         except Exception as error:
             raise ConfigurationActivationConflict(

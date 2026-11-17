@@ -1602,26 +1602,6 @@ def render_recovery_checkpoint(checkpoint) -> str:
                 f"Next action: {request.next_action}",
             )
         )
-    continuation = checkpoint.recovery_continuation
-    if continuation is not None:
-        lines.extend(
-            (
-                "",
-                "RECOVERY CONTINUATION",
-                "",
-                f"Continuation: {continuation.continuation_id}",
-                f"Request: {continuation.request_id}",
-                f"Status: {continuation.status.value}",
-                f"Boundary: {continuation.boundary}",
-                f"Bound checkpoint: {continuation.checkpoint_version}",
-                f"New Task: {continuation.new_task_id or '-'}",
-                f"New Result: {continuation.new_result_id or '-'}",
-                f"Actor: {continuation.actor}",
-                f"Created: {continuation.created_at.isoformat()}",
-                f"Error: {continuation.error or '-'}",
-                f"Recovery: {continuation.recovery or '-'}",
-            )
-        )
     lines.append("")
     return "\n".join(lines)
 

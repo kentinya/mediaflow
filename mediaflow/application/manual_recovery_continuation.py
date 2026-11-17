@@ -382,7 +382,7 @@ class ManualRecoveryContinuationService:
     def _automatic_native_summary(self, source_task_id: str, source_item_id: str):
         """One kernel-admitted automatic Task's own durable continuation summary.
 
-        A Scheduler due / Run once / remote or direct organize Task owns no Files
+        A Scheduler due / Run once / direct organize Task owns no Files
         discovery.  Its continuation analysis produces the same durable
         non-authorizing summary through a real ``manual_recovery_preparations``
         row the resident engine wrote for this exact TaskItem, so the Task Center
@@ -478,9 +478,7 @@ class ManualRecoveryContinuationService:
             "preparation_id": native_preparation_id(discovery.discovery_id, preview.preview_id),
             "source_task_id": discovery.organize_task_id,
             "source_item_id": item.item_id,
-            "analysis_continuation_id": "",
             "analysis_task_id": discovery.organize_task_id,
-            "analysis_result_id": "",
             "intent_id": preview.intent_id,
             "preview_id": preview.preview_id,
             "intent_version": preview.intent_version,

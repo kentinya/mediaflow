@@ -1187,7 +1187,6 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                     effect_certainty=EffectCertainty.NONE,
                     permitted_action_ids=("retry",),
                     active_recovery_request=None,
-                    recovery_continuation=None,
                     configuration=CheckpointConfiguration("snap-1", "digest-1", True, None),
                 )
 

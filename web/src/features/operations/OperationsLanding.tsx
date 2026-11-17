@@ -87,7 +87,6 @@ import type { LifecycleAction } from "../../entities/operations/lifecycle";
 import {
   OPERATIONS_RETURN_KEY,
   operationsLandingSearch,
-  operationsReturnContextFromSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import {
@@ -1196,22 +1195,6 @@ export function OperationsLanding() {
                   onRemainingSession={(patch) =>
                     updateRemainingSession(selectedId, patch)
                   }
-                  onOpenLinkedAnalysis={(taskId, itemId) =>
-                    void navigate({
-                      to: "/operations",
-                      search: {
-                        run: taskId,
-                        returnOps: operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                        ...runDetailStateSearch(
-                          readRunDetailState({ tab: "detail", item: itemId }),
-                        ),
-                      },
-                    })
-                  }
-                  onSelectRun={selectRun}
                   preparationLinkSearch={preparationLinkSearch}
                   // The hosted organizer is the topmost card: the run detail
                   // keeps its content and state but must not keep its own focus
@@ -1659,8 +1642,6 @@ function RunDetailPanel({
   onControlSession,
   remainingSession,
   onRemainingSession,
-  onOpenLinkedAnalysis,
-  onSelectRun,
   preparationLinkSearch,
   suspended,
 }: {
@@ -1677,9 +1658,6 @@ function RunDetailPanel({
   readonly remainingSession: RunRemainingSession;
   /** Persist one remaining-scope session change in the landing. */
   readonly onRemainingSession: (patch: Partial<RunRemainingSession>) => void;
-  readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
-  /** Select another run in place, keeping the list state. */
-  readonly onSelectRun: (runId: string) => void;
   /** The same-route continue search: exact Task plus the hosted marker. */
   readonly preparationLinkSearch: Record<string, RunSearchValue>;
   /**
@@ -1707,21 +1685,7 @@ function RunDetailPanel({
   // is never re-posted: the same discovery identity is polled, so a refresh,
   // reconnect or restart resumes the same work instead of starting another.
   const [remainingDiscoveryId] = useState<string | null>(null);
-  // The durable exact-Preview recovery the run overview already exposes is the
-  // read authority for a paused remaining-scope confirmation.  A refresh,
-  // reconnect or restart restores the same summary (no execution yet) or the
-  // already-admitted execution instead of losing it, and never auto-POSTs.
   const overview = query.data?.ok === true ? query.data.model : null;
-  const durableRecovery = overview?.continuation ?? null;
-  const durableRecoveryPreviewId =
-    durableRecovery?.recoveryKind === "exact_preview"
-      ? durableRecovery.recoveryPreviewId
-      : null;
-  const durableRecoveryExecutionId =
-    durableRecovery?.recoveryKind === "exact_preview"
-      ? durableRecovery.executionId
-      : null;
-
   // The shared centered-card presentation: backdrop, scroll lock, inert
   // background, focus trap, Escape/exit coordination and focus return. The
   // invoking row button stays mounted, so closing returns focus to it; a
@@ -1888,8 +1852,7 @@ function RunDetailPanel({
     remainingPreparation.previewId === null &&
     (["failed", "cancelled"].includes(remainingPreparation.status) ||
       remainingPreparation.status === "partial_success");
-  const linkedRemainingPreviewId =
-    remainingPreparation?.previewId ?? durableRecoveryPreviewId;
+  const linkedRemainingPreviewId = remainingPreparation?.previewId ?? null;
   const {
     selection: remainingSelection,
     overwrite: remainingOverwrite,
@@ -1897,11 +1860,7 @@ function RunDetailPanel({
     submitted: remainingSubmitted,
     admitted: remainingAdmitted,
   } = remainingSession;
-  const admittedRemainingPreviewId =
-    remainingAdmitted?.previewId ??
-    (durableRecoveryPreviewId !== null && durableRecoveryExecutionId !== null
-      ? durableRecoveryPreviewId
-      : null);
+  const admittedRemainingPreviewId = remainingAdmitted?.previewId ?? null;
   // A summary is confirmable only while its exact Preview has not yet been
   // admitted by this page.  A cached discovery read of the same Preview never
   // reopens execution after confirmation.
@@ -1910,8 +1869,7 @@ function RunDetailPanel({
     linkedRemainingPreviewId !== admittedRemainingPreviewId
       ? { previewId: linkedRemainingPreviewId, intentVersion: 0 }
       : null;
-  const admittedRemainingExecutionId =
-    remainingAdmitted?.executionId ?? durableRecoveryExecutionId;
+  const admittedRemainingExecutionId = remainingAdmitted?.executionId ?? null;
   // Bounded, secret-free content for one failed preparation read: which stage
   // failed, that the preparation (not an execution) was admitted, the last
   // known durable state or that the new state is unknown, and the one
@@ -2287,7 +2245,6 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 flow={<RunFlowSummary run={run} />}
                 results={{
                   success: run.successItems,
@@ -2299,7 +2256,6 @@ function RunDetailPanel({
                 facts={
                   <RunDetailFacts
                     run={run}
-                    onSelectRun={onSelectRun}
                     preparationLinkSearch={preparationLinkSearch}
                   />
                 }
@@ -2384,19 +2340,6 @@ function remainingPreparationReadError(read: {
   return new RemainingPreparationReadError(category, read.nextAction);
 }
 
-/** Bounded Chinese label for one continuation status token. */
-function continuationStatusLabel(status: string): string {
-  const labels: Readonly<Record<string, string>> = {
-    queued: "已排队",
-    previewed: "待审阅",
-    running: "进行中",
-    completed: "已完成",
-    failed: "失败",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
-}
-
 /**
  * The selected run's readable fact hierarchy (Slice50 RO-1 / V2-UX-006).
  *
@@ -2404,8 +2347,7 @@ function continuationStatusLabel(status: string): string {
  * with its honesty annotations, the bounded current stage and the run's real
  * business problems. The bounded facts list keeps the scope/time/item
  * evidence; the technical identifiers (Worker, fixed configuration snapshot)
- * collapse into a bounded diagnostics group, and the continuation evidence
- * stays visible because it carries the operator's legal next action.
+ * collapse into a bounded diagnostics group.
  */
 function RunFlowSummary({ run }: { readonly run: RunSummary }) {
   return (
@@ -2458,11 +2400,9 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
 
 function RunDetailFacts({
   run,
-  onSelectRun,
   preparationLinkSearch,
 }: {
   readonly run: RunSummary;
-  readonly onSelectRun: (runId: string) => void;
   /** The same-route continue search: exact Task plus the hosted marker. */
   readonly preparationLinkSearch: Record<string, RunSearchValue>;
 }) {
@@ -2488,46 +2428,6 @@ function RunDetailFacts({
           <dd>{formatDate(run.updatedAt)}</dd>
         </div>
       </dl>
-      {run.continuation !== null && (
-        <section
-          className="mf-run-fact-continuation"
-          aria-label="剩余范围继续记录"
-        >
-          <h4>剩余范围继续记录</h4>
-          {run.continuation.recoveryKind === "exact_preview" ? (
-            <p>
-              零变更计划摘要已关联到此运行，状态为
-              {continuationStatusLabel(run.continuation.status)}
-              。执行任务会计入原运行的范围和条目上限。
-            </p>
-          ) : (
-            <p>
-              该运行已把自己的剩余范围交给一次持久继续(
-              {continuationStatusLabel(run.continuation.status)}
-              )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
-            </p>
-          )}
-          {run.continuation.recoveryPreviewId !== null && (
-            <p>
-              该运行的完整零变更计划摘要显示在本运行详情内；请在此选择就绪子集并明确确认，
-              无需跳转到其他页面。
-            </p>
-          )}
-          {run.continuation.newTaskId !== null ? (
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() => onSelectRun(run.continuation!.newTaskId!)}
-              >
-                打开链接的继续运行
-              </button>
-            </div>
-          ) : run.continuation.recoveryPreviewId === null ? (
-            <p>{run.continuation.nextAction}</p>
-          ) : null}
-        </section>
-      )}
       {run.filesPreparation !== null && run.filesPreparation.continuable && (
         <section className="mf-run-fact-preparation" aria-label="文件整理准备">
           <h4>文件整理准备</h4>

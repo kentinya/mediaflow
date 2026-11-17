@@ -191,13 +191,6 @@ ORGANIZING_TASK_SEED_TASK_FAMILIES: tuple[str, ...] = (
 #: legal continuation of that work instead of guessing from a label.
 ORGANIZING_RETRY_TASK_FAMILIES: tuple[str, ...] = ("retry", "retry-failed")
 
-#: The durable relations that prove a Task continues an admitted organizing
-#: work.  Only persisted identity equality may establish this.
-ORGANIZING_TASK_LINEAGE_RELATIONS: tuple[tuple[str, str], ...] = (
-    ("recovery_continuations", "new_task_id"),
-    ("metadata_correction_continuations", "new_task_id"),
-)
-
 
 def organizing_task_command_family(command: object) -> str | None:
     """The organizing command family of one durable Task/Job command.

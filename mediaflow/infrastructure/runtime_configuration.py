@@ -302,6 +302,42 @@ def load_minimal_management_bootstrap(document: Any) -> ManagementBootstrapConfi
     return load_management_bootstrap(document)
 
 
+RETIRED_REMOTE_EXECUTION_MESSAGE = (
+    "api.remoteExecution is retired with the remote execution ticket and cannot be "
+    "published; remove it from the submitted configuration"
+)
+
+
+def reject_retired_remote_execution_input(document: object) -> None:
+    """Refuse a newly submitted retired remote-execution ticket setting.
+
+    An immutable historical revision may still carry ``api.remoteExecution`` and
+    stays readable (``load_runtime_configuration`` ignores it).  A new Draft,
+    edit or activation is new operator input, so the retired setting is rejected
+    instead of being silently carried into another published document.
+    """
+
+    if not isinstance(document, dict):
+        return
+    api = document.get("api")
+    if isinstance(api, dict) and "remoteExecution" in api:
+        raise ValueError(RETIRED_REMOTE_EXECUTION_MESSAGE)
+
+
+def strip_retired_remote_execution(document: dict) -> dict:
+    """Return a successor document without the retired ticket setting.
+
+    A successor Draft derived from an accepted immutable Active is new
+    authority, so it must not inherit the retired ticket fields.  The source
+    revision keeps its original bytes, ID and digest untouched.
+    """
+
+    api = document.get("api")
+    if isinstance(api, dict):
+        api.pop("remoteExecution", None)
+    return document
+
+
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     if not isinstance(document, dict):
         raise ValueError("runtime configuration must be a JSON object")

@@ -2316,16 +2316,16 @@ test("the retired remaining-scope entry rejects without inspecting a historical 
   await expect(
     controls.getByRole("list", { name: "不可用的运行控制" }),
   ).toHaveCount(0);
-  // Retirement wins before any old scope/pin restoration. This route cannot
-  // create a Preview, authorization or continuation under any historical pin.
+  // The retired remaining-scope entrance is now an ordinary unknown route:
+  // it creates no Preview, authorization or continuation under any historical
+  // pin and leaves the recorded Task authority exactly as it was.
   const refusedPreview = await request.post(
     `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
-  expect(refusedPreview.status()).toBe(409);
+  expect(refusedPreview.status()).toBe(404);
   const refusal = await refusedPreview.json();
-  expect(refusal.error.code).toBe("scope_continuation_retired");
-  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.code).toBe("not_found");
   await expect(detail.getByRole("region", { name: "新计划摘要" })).toHaveCount(
     0,
   );
@@ -2496,16 +2496,14 @@ test("the retired batch continuation is a bounded refusal while the center offer
       },
     },
   );
-  expect(batch.status()).toBe(410);
+  expect(batch.status()).toBe(404);
   const refusal = await batch.json();
-  expect(refusal.error.code).toBe("job_batch_continuation_retired");
-  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.code).toBe("not_found");
 
   const after = await (
     await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
   ).json();
   expect(after.itemStatuses).toEqual(before.itemStatuses);
-  expect(after.continuations).toEqual(before.continuations);
   expect(after.sourceExists).toEqual(before.sourceExists);
 
   await page

@@ -71,8 +71,6 @@ const RUN_AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   task_retry: "失败重试决策",
   ignore_decision: "忽略决策",
   recovery_request: "恢复请求",
-  recovery_batch: "恢复批次",
-  recovery_continuation: "恢复继续",
   recognition_retry: "识别重试决策",
   recognition_decision: "识别决策",
   metadata_decision: "元数据决策",
@@ -766,14 +764,6 @@ export interface RunDetailTabsProps {
   readonly facts?: ReactNode;
   /** The backend-advertised task operations rendered beside the export. */
   readonly actions?: ReactNode;
-  /**
-   * Whether this exact run's durable evidence currently owes a four-type
-   * recovery step.  Task Center RO-4 publishes a purely technical failure as
-   * read-only history, so the generic batch re-analysis entry is offered only
-   * when this is true.  The per-item panel makes the same decision from its own
-   * `recoveryKind`, so both surfaces agree.
-   */
-  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
 }
 
 export function RunDetailTabs({
@@ -786,7 +776,6 @@ export function RunDetailTabs({
   results,
   facts,
   actions,
-  onOpenLinkedAnalysis,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
   /** A filter change always starts from the first page: a cursor minted for
@@ -908,7 +897,6 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
-            onOpenLinkedAnalysis={onOpenLinkedAnalysis}
             active={active}
             evidenceDecisionDrafts={evidenceDecisionDrafts}
             onEvidenceDecisionDraftChange={updateEvidenceDecisionDraft}
@@ -1170,7 +1158,6 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
-  onOpenLinkedAnalysis,
   active,
   evidenceDecisionDrafts,
   onEvidenceDecisionDraftChange,
@@ -1180,7 +1167,6 @@ function RunItemsSection({
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string | null) => void;
-  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly active: boolean;
   readonly evidenceDecisionDrafts: Readonly<
     Record<string, TaskItemDecisionDraft>
@@ -1250,7 +1236,6 @@ function RunItemsSection({
         runId={runId}
         itemId={evidenceItem}
         active={active}
-        onOpenLinkedAnalysis={onOpenLinkedAnalysis}
         onClose={() => onInspectItem(null)}
         decisionDraft={evidenceDecisionDrafts[evidenceItem]}
         onDecisionDraftChange={(draft) =>
@@ -1576,7 +1561,6 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
-  onOpenLinkedAnalysis,
   onClose,
   decisionDraft,
   onDecisionDraftChange,
@@ -1585,7 +1569,6 @@ function RunEvidenceSection({
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
-  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onClose: () => void;
   /** The same file's unsaved decision inputs, owned outside the paged list. */
   readonly decisionDraft?: TaskItemDecisionDraft;
@@ -1822,7 +1805,6 @@ function RunEvidenceSection({
                 runId={runId}
                 active={active}
                 hostedDiagnostics
-                onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />

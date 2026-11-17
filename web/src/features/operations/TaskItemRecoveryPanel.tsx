@@ -306,8 +306,6 @@ export interface TaskItemRecoveryPanelProps {
   readonly itemId: string;
   readonly runId: string;
   readonly active: boolean;
-  readonly analysisDepth?: number;
-  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   /**
    * `full` is the Task Center panel. `decision` is the same typed decision and
    * analysis session rendered compactly inside the manual-organize card; it
@@ -353,8 +351,6 @@ export function TaskItemRecoveryPanel({
   itemId,
   runId,
   active,
-  analysisDepth = 0,
-  onOpenLinkedAnalysis,
   mode = "full",
   onAnalysisRequested,
   decisionDraft,
@@ -1067,11 +1063,8 @@ export function TaskItemRecoveryPanel({
   // decision whose analysis was not admitted (a full shared queue), a failed
   // analysis, or a summary the backend requires re-analyzing.  When this exact
   // item already offers its durable plan summary (prepared or confirmed), the
-  // ready same-page prepare entry, or an analysis continuation that is
-  // queued/running, the durable summary or wait state wins over an older cache.
-  const analysisContinuationActive =
-    checkpoint?.continuationStatus === "queued" ||
-    checkpoint?.continuationStatus === "running";
+  // ready same-page prepare entry or the durable same-Task analysis state wins
+  // over an older cache.
   const offersExplicitSummaryStep =
     (activePreparation !== null && activePreparation.status === "prepared") ||
     confirmedPreparation !== null ||
@@ -1124,9 +1117,7 @@ export function TaskItemRecoveryPanel({
   const analysisWaiting =
     savedDecisionAnalysisVisible &&
     !analysisUnknown &&
-    (analysisAcceptedBySession ||
-      analysisContinuationActive ||
-      analysisDurableActive);
+    (analysisAcceptedBySession || analysisDurableActive);
   const analysisActionVisible =
     savedDecisionAnalysisVisible &&
     !analysisWaiting &&
@@ -1442,9 +1433,7 @@ export function TaskItemRecoveryPanel({
   // no 审核与恢复 area at all. The recovery read still happened and the
   // session state stays intact for the next render.
   const hasLiveRecoveryAction =
-    owesRecoveryAction ||
-    activePreparation !== null ||
-    checkpoint?.continuationStatus === "completed";
+    owesRecoveryAction || activePreparation !== null;
   const hasSessionFeedback =
     busy ||
     pendingAction !== null ||
@@ -1660,67 +1649,6 @@ export function TaskItemRecoveryPanel({
         />
       )}
       {savedDecisionPanel}
-      {checkpoint?.continuationStatus === "completed" && (
-        <StatusBanner variant="info" title="单项分析已完成">
-          <p>
-            已保存关联分析结果；在当前界面检查新计划与原始结果。
-            分析结果仍是零变更检查，不代表文件整理已成功。
-          </p>
-          {checkpoint.continuationTaskId &&
-            checkpoint.continuationItemId &&
-            onOpenLinkedAnalysis && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() =>
-                  onOpenLinkedAnalysis(
-                    checkpoint.continuationTaskId!,
-                    checkpoint.continuationItemId!,
-                  )
-                }
-              >
-                查看关联分析条目
-              </button>
-            )}
-        </StatusBanner>
-      )}
-      {owesRecoveryAction &&
-        checkpoint?.continuationStatus === "failed" &&
-        checkpoint.continuationTaskId &&
-        checkpoint.continuationItemId &&
-        !model?.manualRecoveryAnalysisReady &&
-        confirmedPreparation === null && (
-          <StatusBanner variant="warning" title="重新检查发现新问题">
-            <p>
-              原任务和失败历史保持不变。请在此处理新问题并继续安全分析，
-              完成后更新原恢复摘要；保存决定不会修改文件。
-            </p>
-            {analysisDepth < 16 ? (
-              <div aria-label="当前关联问题">
-                <TaskItemRecoveryPanel
-                  key={checkpoint.continuationItemId}
-                  taskId={checkpoint.continuationTaskId}
-                  itemId={checkpoint.continuationItemId}
-                  runId={runId}
-                  active={active}
-                  analysisDepth={analysisDepth + 1}
-                />
-                <button
-                  type="button"
-                  className="mf-button mf-button-secondary"
-                  disabled={query.isFetching}
-                  onClick={() => void query.refetch()}
-                >
-                  更新原恢复摘要
-                </button>
-              </div>
-            ) : (
-              <p>
-                关联分析已达到支持的深度，请保留当前记录并联系管理员核查恢复链。
-              </p>
-            )}
-          </StatusBanner>
-        )}
       {canPreparePreview && checkpoint !== null && (
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>

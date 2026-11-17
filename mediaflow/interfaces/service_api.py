@@ -12744,7 +12744,6 @@ class MediaFlowApi:
         # remaining scope was already continued keeps a native entry to the run
         # that really owns that scope, so the operator never has to guess an
         # internal identifier and never repeats finished work.
-        document["continuation"] = self._operations_run_continuation(overview)
         # The selected run's own Files preparation, when this Task really owns
         # one.  The bounded identity lets Task Center reopen the same existing
         # summary/preparation instead of keeping a second record list.
@@ -12839,15 +12838,6 @@ class MediaFlowApi:
         if discovery is None:
             return None
         return self._organize_flow_document(discovery.organize_task_id)
-
-    def _operations_run_continuation(self, overview) -> dict[str, object] | None:
-        """Remaining-scope continuations were retired with Job support.
-
-        The selected run keeps its own Task/Result/checkpoint evidence; there is
-        no queued scope-continuation identity to publish.
-        """
-
-        return None
 
     def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
         """Backend-computed controls for one selected run, or ``None``."""

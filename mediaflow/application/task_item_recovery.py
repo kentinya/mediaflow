@@ -94,36 +94,6 @@ class TaskItemRecoveryService:
     def detail(self, task_id: str, item_id: str) -> dict[str, object]:
         checkpoint = self._checkpoint(task_id, item_id)
         checkpoint_document = checkpoint.document()
-        continuation_document = checkpoint_document.get("recovery_continuation")
-        if isinstance(continuation_document, dict):
-            linked_task_id = continuation_document.get("new_task_id")
-            linked_task = (
-                self._repository.get_task(linked_task_id)
-                if isinstance(linked_task_id, str) and linked_task_id
-                else None
-            )
-            linked_items = (
-                tuple(self._repository.list_items(linked_task_id))
-                if linked_task is not None
-                else ()
-            )
-            source_item = self._repository.get_item(item_id)
-            source_task = self._repository.get_task(task_id)
-            if (
-                len(linked_items) == 1
-                and source_item is not None
-                and source_task is not None
-                and linked_items[0].storage_id == source_item.storage_id
-                and linked_items[0].source_path == source_item.source_path
-                and linked_items[0].resource_library_id == source_item.resource_library_id
-                and linked_task.configuration_snapshot_id == source_task.configuration_snapshot_id
-                and linked_task.configuration_snapshot_digest
-                == source_task.configuration_snapshot_digest
-            ):
-                # The recovery route needs an exact destination for its native
-                # linked-item action. Expose an item ID only for a one-item
-                # child that preserves the same source and immutable pin.
-                continuation_document["new_item_id"] = linked_items[0].item_id
         blocker = checkpoint.blocker
         decision: dict[str, object] | None = None
         if blocker is not None:

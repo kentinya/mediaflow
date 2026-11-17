@@ -654,7 +654,6 @@ class ProcessingCheckpointTests(unittest.TestCase):
                         "refusal_reason": full["refusal_reason"],
                         "checkpoint_version": full["checkpoint_version"],
                         "recovery_request": None,
-                        "recovery_continuation": full["recovery_continuation"],
                     },
                 )
                 self.assertEqual(

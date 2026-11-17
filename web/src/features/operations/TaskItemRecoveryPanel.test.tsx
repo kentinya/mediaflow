@@ -51,14 +51,8 @@ function completedRecovery(
   preparation: Record<string, unknown> | null,
 ): Record<string, unknown> {
   const value = recognitionRecovery(true);
-  const checkpoint = value["checkpoint"] as Record<string, unknown>;
-  checkpoint["recovery_continuation"] = {
-    status: "completed",
-    new_task_id: "analysis-task-1",
-    new_item_id: "analysis-item-1",
-    new_result_id: "analysis-result-1",
-  };
   value["manualRecoveryAvailable"] = true;
+  value["manualRecoveryAnalysisReady"] = true;
   value["manualRecoveryPreparation"] = preparation;
   return value;
 }
@@ -206,13 +200,10 @@ function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
 
 function queuedAnalysisRecovery(status: string): Record<string, unknown> {
   const value = recognitionRecovery(true);
-  const checkpoint = value["checkpoint"] as Record<string, unknown>;
-  checkpoint["recovery_continuation"] = {
-    status,
-    new_task_id: "analysis-task-1",
-    new_item_id: "analysis-item-1",
-  };
-  value["native_analysis"] = nativeAnalysis("queued", "analysis");
+  value["native_analysis"] = nativeAnalysis(
+    status === "running" ? "claimed" : "queued",
+    "analysis",
+  );
   return value;
 }
 
@@ -1826,9 +1817,8 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     await waitFor(() => expect(continuationAttempts).toBe(1));
-    // The decision response removed its form and the accepted analysis owns
-    // the same place. The old retry-shaped checkpoint (queue eligible, no
-    // recovery_continuation) must not expose a second analysis action.
+    // The decision response removed its form and the accepted same-Task
+    // analysis owns the same place, so no second analysis action is exposed.
     expect(
       await within(panel).findByText(
         /选择已保存；同一 Task 的分析仍在排队或运行/,
@@ -2330,52 +2320,4 @@ it("keeps a successful technical-history item free of failure guidance", async (
     within(panel).getByText("replay_not_offered: item has a terminal outcome"),
   ).toBeVisible();
   expect(within(panel).getByText("unsafe")).toBeVisible();
-});
-
-it("handles the exact linked blocker in the original context without navigation", async () => {
-  authStore.setToken("task-recovery-test-token");
-  const parent = completedRecovery(null);
-  const checkpoint = parent["checkpoint"] as Record<string, unknown>;
-  checkpoint["recovery_continuation"] = {
-    status: "failed",
-    new_task_id: "child-task",
-    new_item_id: "child-item",
-  };
-  const child = recognitionRecovery();
-  child["task_id"] = "child-task";
-  child["item_id"] = "child-item";
-  const calls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      calls.push((init?.method ?? "GET") + " " + path);
-      return new Response(
-        JSON.stringify(path.includes("child-task") ? child : parent),
-        { status: 200 },
-      );
-    }),
-  );
-  const navigate = vi.fn();
-  renderWithProviders(
-    <TaskItemRecoveryPanel
-      taskId="task-1"
-      itemId="item-1"
-      runId="task-1"
-      active={false}
-      onOpenLinkedAnalysis={navigate}
-    />,
-  );
-  expect(await screen.findByText("重新检查发现新问题")).toBeVisible();
-  expect(
-    await screen.findByRole("heading", { name: "待处理的识别决策" }),
-  ).toBeVisible();
-  expect(calls).toContain(
-    "GET /api/v1/tasks/child-task/items/child-item/recovery",
-  );
-  expect(calls.every((value) => value.startsWith("GET "))).toBe(true);
-  expect(
-    screen.queryByRole("button", { name: "查看关联分析条目" }),
-  ).not.toBeInTheDocument();
-  expect(navigate).not.toHaveBeenCalled();
 });

@@ -261,10 +261,6 @@ export interface RunSummary {
    * Only the single-run overview read publishes it; inventory rows carry
    * `null`. It is the only source of a rendered control. */
   readonly lifecycle: LifecycleProjection | null;
-  /** The run's durable continuation evidence, or `null` when the run never
-   * continued its remaining scope. Only the single-run overview read publishes
-   * it; inventory rows carry `null`. */
-  readonly continuation: RunContinuation | null;
   /** The exact Files preparation this run's Task durably owns, or `null` when
    * it was not started from a Files selection. Only the single-run overview
    * read publishes it; inventory rows carry `null`. */
@@ -281,31 +277,6 @@ export interface RunSummary {
    * non-completed status is refused here instead of being rendered.
    */
   readonly recoveredCompletion: boolean;
-}
-
-/**
- * Bounded continuation evidence of one run.
- *
- * The backend never publishes the internal scope path, the configuration pin or
- * the actor here, so this projection carries only the durable identifiers the
- * operator needs in order to follow the run that really owns the remaining
- * scope.
- */
-export interface RunContinuation {
-  readonly continuationId: string;
-  readonly status: string;
-  readonly command: string;
-  readonly newTaskId: string | null;
-  readonly itemLimit: number | null;
-  readonly createdAt: string;
-  readonly completedAt: string | null;
-  readonly attemptCount: number;
-  readonly truncated: boolean;
-  readonly recoveryKind: "queued_continuation" | "exact_preview" | null;
-  readonly recoveryPreviewId: string | null;
-  readonly executionId: string | null;
-  readonly nextAction: string;
-  readonly sideEffects: string;
 }
 
 /**
@@ -662,7 +633,6 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   );
   const taskId = optionalText(source, "task_id");
   const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId);
-  const continuation = normalizeRunContinuation(source["continuation"]);
   const filesPreparation = normalizeRunFilesPreparation(
     source["filesPreparation"],
     taskId,
@@ -705,7 +675,6 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         ? null
         : normalizeRunProgress(source["progress"]),
     lifecycle,
-    continuation,
     filesPreparation,
     recoveredCompletion:
       // A48-01: the durable flow status is authoritative in the browser too.
@@ -755,99 +724,6 @@ function normalizeAttentionReason(value: unknown): RunAttentionReason | null {
   }
   try {
     return normalizeEnum(value, "attention_reason", RUN_ATTENTION_REASONS);
-  } catch {
-    return fail();
-  }
-}
-
-function normalizeRunContinuation(value: unknown): RunContinuation | null {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  const source = readRecord(value, "run.continuation");
-  try {
-    const attemptCount = normalizeBoundedCount(
-      source["attemptCount"],
-      "run.continuation.attemptCount",
-    );
-    const itemLimit =
-      source["itemLimit"] === null || source["itemLimit"] === undefined
-        ? null
-        : normalizeBoundedCount(
-            source["itemLimit"],
-            "run.continuation.itemLimit",
-          );
-    return {
-      continuationId: normalizeBoundedText(
-        source["continuationId"],
-        "run.continuation.continuationId",
-      ),
-      status: normalizeBoundedText(
-        source["status"],
-        "run.continuation.status",
-        64,
-      ),
-      command: normalizeBoundedText(
-        source["command"],
-        "run.continuation.command",
-        64,
-      ),
-      newTaskId:
-        source["newTaskId"] === null || source["newTaskId"] === undefined
-          ? null
-          : normalizeBoundedText(
-              source["newTaskId"],
-              "run.continuation.newTaskId",
-            ),
-      itemLimit,
-      createdAt: normalizeBoundedText(
-        source["createdAt"],
-        "run.continuation.createdAt",
-      ),
-      completedAt:
-        source["completedAt"] === null || source["completedAt"] === undefined
-          ? null
-          : normalizeBoundedText(
-              source["completedAt"],
-              "run.continuation.completedAt",
-            ),
-      attemptCount,
-      truncated: normalizeBoolean(
-        source["truncated"],
-        "run.continuation.truncated",
-      ),
-      recoveryKind:
-        source["recoveryKind"] === undefined || source["recoveryKind"] === null
-          ? null
-          : normalizeEnum(
-              source["recoveryKind"],
-              "run.continuation.recoveryKind",
-              ["queued_continuation", "exact_preview"] as const,
-            ),
-      recoveryPreviewId:
-        source["recoveryPreviewId"] === null ||
-        source["recoveryPreviewId"] === undefined
-          ? null
-          : normalizeBoundedText(
-              source["recoveryPreviewId"],
-              "run.continuation.recoveryPreviewId",
-            ),
-      executionId:
-        source["executionId"] === null || source["executionId"] === undefined
-          ? null
-          : normalizeBoundedText(
-              source["executionId"],
-              "run.continuation.executionId",
-            ),
-      nextAction: normalizeBoundedText(
-        source["nextAction"],
-        "run.continuation.nextAction",
-      ),
-      sideEffects: normalizeBoundedText(
-        source["sideEffects"],
-        "run.continuation.sideEffects",
-      ),
-    };
   } catch {
     return fail();
   }

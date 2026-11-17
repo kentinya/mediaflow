@@ -3699,10 +3699,6 @@ def task_item_recovery_batch_state(state: AppState) -> dict[str, object]:
         )
     }
     items = {key: state.repository.get_item(item_id) for key, item_id in item_ids.items()}
-    continuations = {
-        key: state.repository.list_recovery_continuations(item_id, limit=10)
-        for key, item_id in item_ids.items()
-    }
     return {
         "available": True,
         "taskId": run["taskId"],
@@ -3712,17 +3708,6 @@ def task_item_recovery_batch_state(state: AppState) -> dict[str, object]:
         },
         "itemStages": {
             key: value.stage if value is not None else None for key, value in items.items()
-        },
-        "continuations": {
-            key: [
-                {
-                    "status": value.status.value,
-                    "newTaskId": value.new_task_id,
-                    "newResultId": value.new_result_id,
-                }
-                for value in rows
-            ]
-            for key, rows in continuations.items()
         },
         "sourceExists": {
             path: (state.managed.root / "source" / path).is_file()
@@ -3747,10 +3732,6 @@ def batch_summary_recovery_state(state: AppState) -> dict[str, object]:
     run = state.recovery_batch_summary_run
     item_ids = [str(value) for value in run["itemIds"]]
     items = {item_id: state.repository.get_item(item_id) for item_id in item_ids}
-    continuations = {
-        item_id: state.repository.list_recovery_continuations(item_id, limit=10)
-        for item_id in item_ids
-    }
     return {
         "available": True,
         "taskId": run["taskId"],
@@ -3758,17 +3739,6 @@ def batch_summary_recovery_state(state: AppState) -> dict[str, object]:
         "itemStatuses": {
             item_id: value.status.value if value is not None else None
             for item_id, value in items.items()
-        },
-        "continuations": {
-            item_id: [
-                {
-                    "status": value.status.value,
-                    "newTaskId": value.new_task_id,
-                    "newResultId": value.new_result_id,
-                }
-                for value in rows
-            ]
-            for item_id, rows in continuations.items()
         },
         "sourceExists": {
             name: (state.managed.root / "source" / name).is_file() for name in run["sourceNames"]
@@ -3806,23 +3776,7 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
     success_item = (
         state.repository.get_item(run["successItemId"]) if run.get("successItemId") else None
     )
-    continuations = state.repository.list_recovery_continuations(run["itemId"], limit=10)
-    continuation = continuations[0] if continuations else None
-    analysis_task = (
-        state.repository.get_task(continuation.new_task_id)
-        if continuation is not None and continuation.new_task_id
-        else None
-    )
-    analysis_items = (
-        state.repository.list_items(continuation.new_task_id)
-        if continuation is not None and continuation.new_task_id
-        else ()
-    )
-    linked_results = (
-        state.repository.list_results(continuation.new_task_id)
-        if continuation and continuation.new_task_id
-        else ()
-    )
+    results = state.repository.list_results(run["taskId"], limit=100)
     provider = state.managed.metadata_registry.resolve("tmdb")
     return {
         "available": True,
@@ -3832,21 +3786,7 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
         "taskStatus": task.status.value if task else None,
         "itemStatus": source.status.value if source else None,
         "itemStage": source.stage if source else None,
-        "continuationStatus": continuation.status.value if continuation else None,
-        "analysisTaskId": continuation.new_task_id if continuation else None,
-        "analysisTaskStatus": analysis_task.status.value if analysis_task else None,
-        "analysisItemId": analysis_items[0].item_id if analysis_items else None,
-        "analysisItems": [
-            {
-                "status": value.status.value,
-                "stage": value.stage,
-                "error": value.error,
-                "sourcePath": value.source_path,
-            }
-            for value in analysis_items
-        ],
-        "analysisResultId": continuation.new_result_id if continuation else None,
-        "resultIds": [value.result_id for value in linked_results],
+        "resultIds": [value.result_id for value in results if value.item_id == run["itemId"]],
         "sourceResultHistory": [
             {
                 "resultId": value.result_id,

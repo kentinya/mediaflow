@@ -465,7 +465,6 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
       audits: [],
       recovery_requests: [],
       recovery_request: null,
-      recovery_continuation: null,
       effects: {
         certainty: "unknown",
         completed_operations: [],
@@ -529,7 +528,6 @@ function standaloneExecutionEvidenceDocument(
       audits: [],
       recovery_requests: [],
       recovery_request: null,
-      recovery_continuation: null,
       // The exact durable facts B's repro proved the API returns for a
       // non-Manual item: the aggregate hides them unless the view reads them.
       effects: {
@@ -721,7 +719,6 @@ function manualExecutionEvidenceDocument(
       audits: [],
       recovery_requests: [],
       recovery_request: null,
-      recovery_continuation: null,
       effects: {
         certainty: "verified_complete",
         completed_operations: ["MOVE"],
@@ -869,15 +866,10 @@ function manualReadyRecoveryDocument(
       permitted_action_ids: [],
       refusal_reason: null,
       next_action: "review the current plan summary and confirm",
-      recovery_continuation: {
-        status: "completed",
-        new_task_id: "analysis-task-1",
-        new_item_id: "analysis-item-1",
-        new_result_id: "analysis-result-1",
-      },
     },
     decision: null,
     manualRecoveryAvailable: true,
+    manualRecoveryAnalysisReady: true,
     manualRecoveryPreparation: preparation,
     next_action: "review the current plan summary and confirm",
   });

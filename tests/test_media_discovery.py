@@ -28,10 +28,12 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import FileStabilityPolicy
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
 )
+from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import (
     StorageError,
@@ -686,3 +688,277 @@ def _runtime_for(managed, revision, *, stability, exclude_rules):
         for library in runtime.resource_libraries
     )
     return _replace(runtime, resource_libraries=libraries)
+
+
+class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
+    """The Files journeys this Task retained, driven only by the Task kernel.
+
+    The retired standalone discovery/execution Worker modules are gone; every
+    admission here goes through the real authenticated Files API and is
+    advanced exclusively by ``ManualTaskEngineWorker`` under its scheduling
+    claim, exactly like the resident Worker.
+    """
+
+    def _admit(self, value, paths, *, request_id=None):
+        body = {"paths": list(paths), "autoPrepare": True}
+        if request_id is not None:
+            body["requestId"] = request_id
+        return self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/discoveries",
+            "POST",
+            body,
+        )
+
+    def _drive(self, value, task_id, *, steps=12):
+        from mediaflow.domain.task_scheduling import TaskQueueState
+
+        for _ in range(steps):
+            value.repository.heartbeat_worker("task-engine-worker", self.clock())
+            value.task_engine.run_next()
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            if discovery is None or state is None:
+                continue
+            if state.queue_state in {
+                TaskQueueState.WAITING_HUMAN,
+                TaskQueueState.PAUSED,
+                TaskQueueState.SETTLED,
+            }:
+                return discovery
+        return value.repository.get_media_discovery_for_task(task_id)
+
+    def _projection(self, value, discovery_id):
+        status, document = self.request(
+            value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+        )
+        self.assertEqual(200, status, document)
+        return document
+
+    def test_real_stability_requires_an_elapsed_unchanged_observation(self) -> None:
+        """A file is admitted only after its real stable interval elapsed."""
+
+        self.media("Movies/One.2001.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
+        with self.journey(
+            task_scheduling=True,
+            stability=FileStabilityPolicy(
+                minimum_age_seconds=0,
+                modified_threshold_seconds=0,
+                stable_size_duration_seconds=60,
+            ),
+        ) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+
+            # First observation: the interval is not fabricated, so the source
+            # is honestly not yet proven stable and the Task waits.
+            value.task_engine.run_next()
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            self.assertIsNotNone(discovery)
+            first = self._projection(value, discovery.discovery_id)
+            self.assertEqual(0, first["progress"]["primarySources"], first)
+            self.assertEqual(1, first["progress"]["unstableEntries"], first)
+            self.assertEqual("waiting_stability", first["status"], first)
+            self.assertFalse(first["progress"]["incomplete"])
+
+            # A later observation of the same unchanged source proves the
+            # elapsed interval and admits it exactly once, still under the
+            # same Task claim.
+            value.clock.advance(120)
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery)
+            settled = self._projection(value, discovery.discovery_id)
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual(1, len(settled["sources"]), settled)
+            self.assertEqual(0, settled["progress"]["unstableEntries"], settled)
+            self.assertEqual(1, settled["primarySourceCount"], settled)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_one_hundred_and_one_primary_items_cannot_yield_a_prefix(self) -> None:
+        """101 eligible files refuse a truncated executable prefix."""
+
+        for index in range(101):
+            self.media(f"Movies/Bulk.{index:03d}.mkv")
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery)
+            settled = self._projection(value, discovery.discovery_id)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("primary_limit", settled["progress"]["incompleteReason"])
+            self.assertEqual(100, settled["progress"]["primarySources"])
+            self.assertTrue(settled["progress"]["incomplete"])
+            self.assertFalse(settled["actions"]["finalize"]["available"])
+            self.assertEqual("discovery_budget_limited", settled["actions"]["finalize"]["refusal"])
+            self.assertIn("narrow", settled["nextAction"])
+
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_budget_limited", refused["error"]["code"])
+            self.assertIsNone(refused.get("intentId"))
+            # No items were frozen and no Storage effect happened.
+            self.assertEqual((), value.repository.list_items(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_colon_named_directory_and_file_mixed_selections_admit_exact_plans(self) -> None:
+        """Directory and mixed scopes keep literal colon names exact."""
+
+        from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
+
+        directory = "电影/Directory: Set"
+        mixed_folder = "电影/Mixed: Folder"
+        mixed_file = "电影/Mixed: Other/Mixed Two.2026.mkv"
+        sources = {
+            f"{directory}/Directory One.2026.mkv": "Directory One",
+            f"{directory}/Directory Two.2026.mkv": "Directory Two",
+            f"{mixed_folder}/Mixed One.2026.mkv": "Mixed One",
+            mixed_file: "Mixed Two",
+        }
+        for path in sources:
+            self.media(path, size=256)
+        provider = SyntheticMetadataProvider(
+            tuple(
+                MediaCandidate(
+                    "tmdb",
+                    str(300 + index),
+                    MediaType.MOVIE,
+                    title,
+                    year=2026,
+                    genres=("Animation",),
+                    countries=("CN",),
+                )
+                for index, title in enumerate(sources.values())
+            )
+        )
+        document = self.document()
+        document["recognitionRules"][0]["condition"]["children"][0]["value"] = "library"
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            self.publish_policy(value, document=document)
+
+            status, admitted = self._admit(value, [directory])
+            self.assertEqual(202, status, admitted)
+            discovery = self._drive(value, admitted["organizeTaskId"])
+            self.assertIsNotNone(discovery)
+            settled = self._projection(value, discovery.discovery_id)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                sorted(list(sources)[:2]), sorted(item["path"] for item in settled["sources"])
+            )
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual(
+                sorted(list(sources)[:2]),
+                sorted(item.source.path for item in preview.items),
+            )
+            self.assertEqual(
+                [ManualPreviewItemStatus.PREVIEWED] * 2,
+                [item.status for item in preview.items],
+            )
+
+            status, admitted = self._admit(value, [mixed_folder, mixed_file])
+            self.assertEqual(202, status, admitted)
+            discovery = self._drive(value, admitted["organizeTaskId"])
+            self.assertIsNotNone(discovery)
+            mixed = self._projection(value, discovery.discovery_id)
+            self.assertEqual("completed", mixed["status"], mixed)
+            expected = sorted((f"{mixed_folder}/Mixed One.2026.mkv", mixed_file))
+            self.assertEqual(expected, sorted(item["path"] for item in mixed["sources"]))
+            mixed_preview = value.repository.get_manual_preview(mixed["previewId"])
+            self.assertIsNotNone(mixed_preview)
+            self.assertEqual(expected, sorted(item.source.path for item in mixed_preview.items))
+            self.assertEqual(
+                [ManualPreviewItemStatus.PREVIEWED] * 2,
+                [item.status for item in mixed_preview.items],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_colon_named_scope_reaches_one_real_confirmed_move(self) -> None:
+        """Punctuation colons stay one exact source through confirmation."""
+
+        from mediaflow.domain.task_persistence import PersistentTaskStatus
+
+        source_path = (
+            "电影/Perfect World Movie: Nine Tribulations Incinerate the Heavens "
+            "(2026) [tmdbid=1598732]/Perfect World Movie: Nine Tribulations "
+            "Incinerate the Heavens.2026.2160p.WEB-DL.SDR.42.0Mbps.H.265."
+            "Dolby Digital Plus.mkv"
+        )
+        title = "Perfect World Movie: Nine Tribulations Incinerate the Heavens"
+        self.media(source_path, size=512)
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "1598732",
+                    MediaType.MOVIE,
+                    title,
+                    year=2026,
+                    genres=("Animation",),
+                    countries=("CN",),
+                ),
+            )
+        )
+        document = self.document()
+        document["recognitionRules"][0]["condition"]["children"][0]["value"] = "library"
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            self.publish_policy(value, document=document)
+            status, admitted = self._admit(value, [source_path])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery)
+            settled = self._projection(value, discovery.discovery_id)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([source_path], [item["path"] for item in settled["sources"]])
+
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual([source_path], [item.source.path for item in preview.items])
+            status, preview_document = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{settled['previewId']}",
+            )
+            self.assertEqual(200, status, preview_document)
+            ready = [
+                item["itemId"]
+                for item in preview_document["items"]
+                if item["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview_document)
+            status, admitted_execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{settled['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview_document["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), admitted_execution)
+            for _ in range(8):
+                value.task_engine.run_next()
+                if value.repository.get_task(task_id).status is PersistentTaskStatus.COMPLETED:
+                    break
+            self.assertIs(
+                PersistentTaskStatus.COMPLETED,
+                value.repository.get_task(task_id).status,
+            )
+            self.assertFalse((self.source_root / source_path).exists())
+            moved = list(Path(self.target_root).rglob("*.mkv"))
+            self.assertEqual(1, len(moved))
+            self.assertEqual(b"m" * 512, moved[0].read_bytes())

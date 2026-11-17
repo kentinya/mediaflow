@@ -58,10 +58,6 @@ export interface TaskItemRecoveryCheckpoint {
   readonly permittedActionIds: readonly string[];
   readonly refusalReason: string | null;
   readonly nextAction: string | null;
-  readonly continuationStatus: string | null;
-  readonly continuationTaskId: string | null;
-  readonly continuationItemId: string | null;
-  readonly continuationResultId: string | null;
 }
 
 /**
@@ -339,18 +335,6 @@ function readCheckpoint(payload: unknown): TaskItemRecoveryCheckpoint {
     blocker === null || blocker === undefined
       ? null
       : optionalText(readRecord(blocker, "checkpoint.blocker"), "kind");
-  const continuation = source["recovery_continuation"];
-  let continuationStatus: string | null = null;
-  let continuationTaskId: string | null = null;
-  let continuationItemId: string | null = null;
-  let continuationResultId: string | null = null;
-  if (continuation !== null && continuation !== undefined) {
-    const record = readRecord(continuation, "checkpoint.recovery_continuation");
-    continuationStatus = optionalText(record, "status");
-    continuationTaskId = optionalText(record, "new_task_id");
-    continuationItemId = optionalText(record, "new_item_id");
-    continuationResultId = optionalText(record, "new_result_id");
-  }
   const version = text(source, "checkpoint_version");
   if (!/^[a-f0-9]{64}$/.test(version)) return fail();
   return {
@@ -371,10 +355,6 @@ function readCheckpoint(payload: unknown): TaskItemRecoveryCheckpoint {
       source,
       source["next_action"] === undefined ? "nextAction" : "next_action",
     ),
-    continuationStatus,
-    continuationTaskId,
-    continuationItemId,
-    continuationResultId,
   };
 }
 
@@ -465,10 +445,7 @@ export function normalizeTaskItemRecovery(
       source["manualRecoveryAvailable"],
       "manualRecoveryAvailable",
     ),
-    manualRecoveryAnalysisReady:
-      source["manualRecoveryAnalysisReady"] === true ||
-      (source["manualRecoveryAnalysisReady"] === undefined &&
-        checkpoint.continuationStatus === "completed"),
+    manualRecoveryAnalysisReady: source["manualRecoveryAnalysisReady"] === true,
     // A missing kind is the conservative read-only default: an older backend
     // that does not publish the field must not turn every terminal failure into
     // a generic repair journey.

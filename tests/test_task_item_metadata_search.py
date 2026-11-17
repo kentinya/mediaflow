@@ -269,7 +269,6 @@ class MetadataSearchYearTests(unittest.TestCase):
             item.status.value,
             review.status.value if review else None,
             len(value.repository.list_results(task_id)),
-            len(value.repository.list_recovery_continuations(item_id, limit=10)),
         )
 
     def test_changed_year_search_sends_that_exact_year_to_the_provider(self):
