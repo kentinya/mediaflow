@@ -125,7 +125,7 @@ def build_configuration(root: Path) -> dict:
     value = json.loads((ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8"))
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
     value["historyPath"] = str(root / "history.jsonl")
-    for item in value.get("notifications", {}).get("webhooks", []):
+    for item in value.get("webhooks", []):
         item.update(
             {
                 "id": WEBHOOK_ID,

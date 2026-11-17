@@ -821,9 +821,7 @@ def build_managed_fixture(
         }
     )
     overwrite_policy = dict(document["organizePolicies"][0])
-    overwrite_policy.update(
-        {"id": "overwrite-fixture", "conflictStrategy": "overwrite", "overwrite": True}
-    )
+    overwrite_policy.update({"id": "overwrite-fixture", "conflictStrategy": "overwrite"})
     document["organizePolicies"].append(overwrite_policy)
     document["recognitionTypes"].append({"id": "overwrite-fixture", "name": "Overwrite fixture"})
     document["recognitionTypePolicies"].append(
@@ -847,11 +845,9 @@ def build_managed_fixture(
     # draft/activate path, exactly like any other configured definition, so the
     # Task kernel's post-commit publication is the only producer.  This harness
     # runs no Notification Worker and sends no external HTTP, so the durable row
-    # stays honestly pending.  The subscribed events keep the example's
-    # already-supported historical ``job.*`` spelling: the Python configuration
-    # parses those literals into their canonical Task event, which is what the
-    # settled Task publishes.
-    document["notifications"]["webhooks"][0]["enabled"] = True
+    # stays honestly pending.  The example already carries the current root-level
+    # Webhook section and subscribes to its current Task lifecycle events.
+    document["webhooks"][0]["enabled"] = True
     # One managed definition whose scope is exactly the fixture's scheduled
     # review scope.  The harness Scheduler tick emits its one real due
     # occurrence at seed time, which is where the definition-pinned pending Job

@@ -26,6 +26,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -34,8 +35,14 @@ from mediaflow.application.rules_workspace_commands import (
     RulesWorkspaceCommandService,
     rules_family_section,
 )
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
     RulesWorkspaceSaveError,
 )
 from mediaflow.domain.recognition import RecognitionType
@@ -174,8 +181,13 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
 
     # -- harness ---------------------------------------------------------
 
-    def _activate_baseline(self, document: dict) -> None:
-        """Publish one fresh legal Active baseline over the same temporary roots."""
+    def _activate_baseline(self, document: dict, *, accepted: bool = False) -> None:
+        """Publish one fresh legal Active baseline over the same temporary roots.
+
+        ``accepted=True`` persists the supplied bytes as an already accepted
+        Draft before validation, which models a revision written by an earlier
+        release.  New submissions still go through the normal import boundary.
+        """
 
         document = copy.deepcopy(document)
         document["persistence"]["databasePath"] = str(self.root / "runtime.sqlite3")
@@ -205,7 +217,24 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         }
         self.objects._storage_adapters.update(self.adapters)
         self.commands = RulesWorkspaceCommandService(self.objects)
-        draft = self.configuration.import_draft(document, actor="bootstrap")
+        if accepted:
+            now = datetime.now(UTC)
+            current = self.config_repo.get_active_revision()
+            draft = self.config_repo.create_revision(
+                ManagedConfigurationRevision(
+                    str(uuid4()),
+                    1,
+                    ManagedConfigurationStatus.DRAFT,
+                    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+                    canonical_document_digest(document),
+                    document,
+                    now,
+                    now,
+                    base_active_revision_id=(current.revision_id if current is not None else None),
+                )
+            )
+        else:
+            draft = self.configuration.import_draft(document, actor="bootstrap")
         validated = self.configuration.validate(draft.revision_id, actor="bootstrap")
         # The baseline records the same shared exact-revision evidence the sibling
         # page-local Save suites use, then publishes through checked activation.
@@ -823,6 +852,113 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                 self.assertEqual(caught.exception.stage, "compose")
                 self.assertEqual(caught.exception.object_kind, family)
                 self.assert_active_unchanged(before)
+
+    def test_checked_save_reads_accepted_organize_overwrite_without_rewriting_it(self) -> None:
+        """An accepted organize policy with the old overwrite key must not block Save.
+
+        This is the first reproduced Base sample: the document was accepted with
+        ``organizePolicies[*].overwrite=false``.  An ordinary description edit on
+        a classification policy still runs the shared whole-document evidence,
+        which must read that historical object by its accepted meaning instead of
+        applying the new-input field allowlist to it.
+        """
+
+        document = example_document()
+        for policy in document["organizePolicies"]:
+            policy["overwrite"] = False
+        self._activate_baseline(document, accepted=True)
+        original = self.configuration.active()
+        assert original is not None
+
+        candidate = copy.deepcopy(self.active_section("classificationPolicies")[0])
+        candidate["description"] = "ordinary description edit"
+        self.save("classificationPolicies", candidate, object_id="A")
+
+        active = self.configuration.active()
+        assert active is not None
+        self.assertEqual(
+            next(
+                item["description"]
+                for item in active.document["classificationPolicies"]
+                if item["id"] == "A"
+            ),
+            "ordinary description edit",
+        )
+        # The unchanged historical organize objects travel with the successor
+        # exactly as they were; a cosmetic edit never rewrites their bytes.
+        self.assertEqual(active.document["organizePolicies"], original.document["organizePolicies"])
+        self.assertTrue(
+            all(policy["overwrite"] is False for policy in active.document["organizePolicies"])
+        )
+        # The prior Active revision keeps its original identity, digest and bytes.
+        preserved = self.config_repo.get_revision(original.revision_id)
+        assert preserved is not None
+        self.assertEqual(preserved.digest, original.digest)
+        self.assertEqual(preserved.document, original.document)
+
+    def test_checked_save_reads_accepted_classification_library_and_keeps_sibling(self) -> None:
+        """The second reproduced Base sample keeps its sibling policy untouched.
+
+        Classification B was accepted with the retired ``result.library`` prefix.
+        Editing only classification A must still pass the shared destination
+        evidence, publish the edit and copy A, while B keeps its original bytes
+        and effective destination.
+        """
+
+        document = example_document()
+        document["classificationPolicies"][1]["rules"][0]["result"] = {
+            "mediaLibraryId": "tv",
+            "library": "TV Shows",
+            "path": ["Series"],
+        }
+        self._activate_baseline(document, accepted=True)
+        original = self.configuration.active()
+        assert original is not None
+        historical_b = copy.deepcopy(
+            next(item for item in original.document["classificationPolicies"] if item["id"] == "B")
+        )
+        historical_a = copy.deepcopy(
+            next(item for item in original.document["classificationPolicies"] if item["id"] == "A")
+        )
+
+        candidate = copy.deepcopy(self.active_section("classificationPolicies")[0])
+        candidate["name"] = "Movie classification edited"
+        self.save("classificationPolicies", candidate, object_id="A")
+
+        active = self.configuration.active()
+        assert active is not None
+        after_a = next(
+            item for item in active.document["classificationPolicies"] if item["id"] == "A"
+        )
+        after_b = next(
+            item for item in active.document["classificationPolicies"] if item["id"] == "B"
+        )
+        self.assertEqual(after_a["name"], "Movie classification edited")
+        self.assertEqual(after_a["rules"][0]["result"], historical_a["rules"][0]["result"])
+        self.assertEqual(after_b, historical_b)
+        self.assertEqual(after_b["rules"][0]["result"]["library"], "TV Shows")
+
+        # A copy is a normal checked publication over the same legacy sibling.
+        copy_candidate = copy.deepcopy(
+            self.commands.copy_projection("classificationPolicies", "A")["object"]
+        )
+        self.save("classificationPolicies", copy_candidate)
+        copied = next(
+            item
+            for item in self.active_section("classificationPolicies")
+            if item["id"] == copy_candidate["id"]
+        )
+        self.assertEqual(copied["rules"], after_a["rules"])
+        self.assertEqual(
+            next(
+                item for item in self.active_section("classificationPolicies") if item["id"] == "B"
+            ),
+            historical_b,
+        )
+        preserved = self.config_repo.get_revision(original.revision_id)
+        assert preserved is not None
+        self.assertEqual(preserved.digest, original.digest)
+        self.assertEqual(preserved.document, original.document)
 
     def test_unconfigured_provider_and_missing_library_are_visible_blockers(self) -> None:
         before = self.configuration.active()

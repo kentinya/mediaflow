@@ -14,6 +14,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectReferenced,
     ConfigurationVersionConflict,
 )
+from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition import PolicyResolutionErrorCode
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -138,6 +139,16 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
         document["storages"][0]["rootPath"] = str(root / "source")
         document["storages"][1]["rootPath"] = str(root / "target")
         return document
+
+    def test_accepted_overwrite_is_read_by_the_shared_policy_catalog(self) -> None:
+        legacy = policy("accepted")
+        legacy["overwrite"] = False
+        accepted = ConfigurationObjectService._organize_policy(legacy)
+        self.assertIs(accepted.conflict_strategy, ConflictStrategy.MANUAL)
+        # New input cannot use the retired spelling; only the accepted document
+        # reader preserves its original meaning.
+        with self.assertRaisesRegex(ValueError, "unsupported field 'overwrite'"):
+            ConfigurationObjectService._normalize(ConfigurationObjectKind.ORGANIZE_POLICY, legacy)
 
     def test_crud_audit_reference_block_and_delete_after_repoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

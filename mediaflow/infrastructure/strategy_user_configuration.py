@@ -163,19 +163,28 @@ def _classification_policies(document, base, required):
             return ()
         assert base is not None
         return base.classification_policies
-    policies = tuple(
-        ClassificationPolicy(
-            _string(item, "id"),
-            str(item.get("name") or item["id"]),
-            tuple(_classification_rule(rule) for rule in _objects(item, "rules")),
-            str(item.get("description", "")),
-            _boolean(item, "enabled", True),
-            _integer(item, "priority", 0),
-        )
-        for item in values
-    )
+    policies = tuple(parse_classification_policy(item) for item in values)
     _unique(policies, lambda item: item.policy_id, "classificationPolicies")
     return policies
+
+
+def parse_classification_policy(item: Mapping[str, Any]) -> ClassificationPolicy:
+    """Parse one classification policy exactly the way runtime loading does.
+
+    Managed configuration checks reuse this reader when they inspect an already
+    accepted revision, so a historical rule keeps its original library prefix,
+    category or flat output while a new submission is still rejected by the
+    object-normalization boundary.
+    """
+
+    return ClassificationPolicy(
+        _string(item, "id"),
+        str(item.get("name") or item["id"]),
+        tuple(_classification_rule(rule) for rule in _objects(item, "rules")),
+        str(item.get("description", "")),
+        _boolean(item, "enabled", True),
+        _integer(item, "priority", 0),
+    )
 
 
 def _classification_rule(value: Mapping[str, Any]) -> ClassificationRule:

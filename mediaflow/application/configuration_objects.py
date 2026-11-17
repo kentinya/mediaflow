@@ -153,7 +153,10 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
     load_storage_definition,
 )
-from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
+from mediaflow.infrastructure.strategy_user_configuration import (
+    parse_classification_policy,
+    parse_organize_policy,
+)
 
 if TYPE_CHECKING:
     from mediaflow.application.metadata import MetadataProviderRegistry
@@ -5064,8 +5067,11 @@ class ConfigurationObjectService:
 
     @classmethod
     def _organize_policy(cls, value: Mapping[str, object]) -> OrganizePolicy:
-        normalized = cls._normalize(ConfigurationObjectKind.ORGANIZE_POLICY, value)
-        return parse_organize_policy(normalized)
+        # This reads a whole managed revision, including an unchanged historical
+        # object accepted before the current input boundary existed.  The domain
+        # reader owns the accepted meaning; new submissions are still restricted
+        # by the object-normalization and configuration-input boundaries.
+        return parse_organize_policy(copy.deepcopy(dict(value)))
 
     @staticmethod
     def _attachment_document(policy: OrganizePolicy) -> dict[str, object]:
@@ -5192,15 +5198,12 @@ class ConfigurationObjectService:
 
     @classmethod
     def _classification_policy(cls, value: Mapping[str, object]) -> ClassificationPolicy:
-        normalized = cls._normalize(ConfigurationObjectKind.CLASSIFICATION_POLICY, value)
-        return ClassificationPolicy(
-            str(normalized["id"]),
-            str(normalized["name"]),
-            tuple(cls._classification_rule(item)[0] for item in normalized["rules"]),
-            str(normalized["description"]),
-            bool(normalized["enabled"]),
-            int(normalized["priority"]),
-        )
+        # Like _organize_policy, this reads an exact managed revision rather than
+        # authoring it.  The domain reader preserves a legacy library prefix,
+        # category/subcategory or flat output only for objects that were already
+        # accepted; a new submission cannot contain those spellings because the
+        # typed Save/import/validate boundaries reject the changed object first.
+        return parse_classification_policy(copy.deepcopy(dict(value)))
 
     def recognition_strategy_select_candidate(
         self,

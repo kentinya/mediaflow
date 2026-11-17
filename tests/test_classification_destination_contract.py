@@ -36,6 +36,7 @@ from mediaflow.domain.classification import (
     ClassificationStatus,
     normalize_classification_path,
 )
+from mediaflow.domain.configuration_management import ConfigurationObjectKind
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.naming import NamingResult
@@ -308,6 +309,35 @@ class ManagedLegacyCompatibilityTests(unittest.TestCase):
         document["storages"][0]["rootPath"] = str(root / "source")
         document["storages"][1]["rootPath"] = str(root / "target")
         return document
+
+    def test_accepted_library_prefix_is_read_without_conversion(self) -> None:
+        legacy = {
+            "id": "B",
+            "name": "TV classification",
+            "rules": [
+                {
+                    "id": "tv-series",
+                    "name": "TV series",
+                    "conditions": {"mediaType": ["tv"]},
+                    "result": {
+                        "mediaLibraryId": "tv",
+                        "library": "TV Shows",
+                        "path": ["Series"],
+                    },
+                }
+            ],
+        }
+        policy = ConfigurationObjectService._classification_policy(legacy)
+        rule = policy.rules[0]
+        self.assertTrue(rule.legacy)
+        self.assertEqual(rule.library, "TV Shows")
+        self.assertEqual(rule.path, "Series")
+        # The same spelling is still rejected when it is new input rather than
+        # an already accepted object being read by the shared check chain.
+        with self.assertRaisesRegex(ClassificationError, "unsupported field 'library'"):
+            ConfigurationObjectService._normalize(
+                ConfigurationObjectKind.CLASSIFICATION_POLICY, legacy
+            )
 
     def test_legacy_document_round_trips_without_rewriting_its_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

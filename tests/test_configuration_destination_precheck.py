@@ -8,16 +8,24 @@ import time
 import unittest
 from contextlib import nullcontext
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.organizer import OrganizePlanner
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationObjectKind,
     ConfigurationVersionConflict,
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
 )
 from mediaflow.domain.naming import NamingResult
 from mediaflow.domain.organizer import Conflict, ConflictStrategy, ConflictType, PlanStatus
@@ -141,6 +149,41 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             _canonical_document(document or self._document(root)), actor="operator"
         )
         return repository, managed, objects, draft
+
+    def test_accepted_legacy_classification_sibling_is_read_by_precheck(self) -> None:
+        """A Base-era sibling rule must not block the shared destination check."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            database = root / "configuration.sqlite3"
+            document = _canonical_document(self._document(root))
+            document["classificationPolicies"][1]["rules"][0]["result"] = {
+                "mediaLibraryId": "tv",
+                "library": "TV Shows",
+                "path": ["Series"],
+            }
+            now = datetime.now(UTC)
+            with SQLiteConfigurationRepository(database) as repository:
+                accepted = repository.create_revision(
+                    ManagedConfigurationRevision(
+                        str(uuid4()),
+                        1,
+                        ManagedConfigurationStatus.DRAFT,
+                        MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+                        canonical_document_digest(document),
+                        document,
+                        now,
+                        now,
+                    )
+                )
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                evidence = self._run(objects, accepted)
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(evidence.result["mediaLibraryId"], "movies")
+                # The historical sibling keeps its bytes; the check only read it.
+                self.assertEqual(managed.require(accepted.revision_id).document, document)
 
     def _run(self, objects, draft, sample=None):
         return objects.destination_precheck(

@@ -940,7 +940,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             # current `schedule.emitted` notification is the definition
             # occurrence event, so the resident Scheduler and Notification
             # Worker adopt the publication without a restart.
-            document.setdefault("notifications", {})["webhooks"] = [
+            document["webhooks"] = [
                 {
                     "id": "primary",
                     "url": webhook_url,
@@ -1011,7 +1011,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         wait_until(has_retry, timeout=90, description="real transport retry")
         saved = retries[0]
         stack.successor(
-            lambda document: document["notifications"]["webhooks"][0].update(
+            lambda document: document["webhooks"][0].update(
                 url=webhook_url.replace("/hook", "/replacement")
             )
         )
@@ -1025,9 +1025,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             for item in receiver.received
         ):
             raise RuntimeError("old event was silently sent to the replacement recipient")
-        stack.successor(
-            lambda document: document["notifications"]["webhooks"][0].update(url=webhook_url)
-        )
+        stack.successor(lambda document: document["webhooks"][0].update(url=webhook_url))
         wait_until(
             lambda: (
                 stack.json_api("/api/v1/notifications/" + saved["deliveryId"])["status"]
