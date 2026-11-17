@@ -547,3 +547,62 @@ Status: READY FOR B REVIEW
 下一步：B 独立审查 `64006c8d..本报告候选`，重跑 B55.4-04 的两个真实样本及
 B55.4-05 两组原生业务旅程，并按 T4 验收计划给出 PASS 或 SAME TASK FIX REQUIRED；
 不规划下一 Task。
+
+### Developer Fix Report — 2026-11-17（B55.4-05）
+
+```text
+Task: 55.4
+Fix Candidate: cc876e5ed7dcf803c4615a5663ec3c9399d20a11
+Range: 1929fe85..cc876e5e (implementation); this report commit follows
+Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
+Status: READY FOR B REVIEW
+```
+
+**实际改动**
+
+- `web/tests/e2e/operations-inventory.python.spec.ts` 的三处同一用户结果断言从
+  `相对路径 Anime` 改为当前规范 fixture 的 `相对路径 Movies/Anime`：桌面证据、
+  390px 证据和重启后读回证据。三处属于同一 Worker 结果，保留识别、匹配、命名、
+  完整最终目标、导出和重启读回断言；同步“Anime classification reason”注释。
+- 未改产品、领域、harness、配置或示例；未新增测试入口。
+
+**实际验证**
+
+- 真实入口：启动 `scripts/operations_inventory_harness.py`，先经既有
+  `POST /__harness__/run-worker` 推进 seed 中较早已排队的 scheduled fixture Task，
+  再经既有 `POST /__harness__/run-manual-organize` 完成一次真实 Preview／Worker
+  MOVE，HTTP 200 `completed`。持久 item 的
+  `classification.relativePath=Movies/Anime`，
+  `target.relativePath=Movies/Anime/One (2001) [tmdbid-101]/One (2001).mkv`，
+  `completedOperations=[CREATE_DIRECTORY, MOVE]`。证据
+  `.git/validation-evidence/task55-4-b55.4-05/{manual-run,run-worker,item}.json`。
+- B 指定的单测试命令已执行：Playwright 在进入断言前，
+  `POST /__harness__/run-manual-organize` 返回 500，
+  `Manual Organize Worker did not complete the admitted execution`。原因是 seed 留下
+  一个更早的 scheduled organize Task，现有 `ManualOrganizeExecutionWorker` 的
+  `claim_next` 先领取它；该路径不由本提交改动，断言尚未执行。原始日志
+  `e2e-isolated.log`。
+- 完整该 spec 同实例执行：`34 passed, 13 failed`，首个失败仍是上述 fixture／
+  claim 顺序，后续失败在同一共享实例级联；完整日志 `e2e-full.log`。本提交只改
+  spec 文本，没有引入该启动失败。
+- `npx eslint tests/e2e/operations-inventory.python.spec.ts` 与
+  `npx prettier --check tests/e2e/operations-inventory.python.spec.ts` exit 0；
+  `python3 scripts/check_governance.py` PASS；`git diff --check` PASS。Web 重新构建
+  通过（`vite build`）。证据同目录 `static-checks.log`、`governance.log`、
+  `diff-check.log`、`summary.json`。
+
+**已知失败／跳过与剩余风险**
+
+- B 指定的单测试门禁在当前共享 seed 初态下未绿：失败发生在真实 Worker 领取
+  更早的 scheduled Task，早于本轮断言；本轮未改该 harness／helper。按 B 上轮
+  交接“初态隔离和余下矩阵由 B 继续”，该初态隔离由 B 在验收时处理。
+- Developer 未运行 Python 全量、wheel、Docker 或其余 E2E；本提交无 Python 改动。
+  完整 spec 同实例的其余 12 个失败发生在首个 fixture 失败之后，未被本提交触碰，
+  也未逐一归因；原始日志保留。
+- 未推送、未发布、未改动用户数据库／媒体／秘密。
+
+**计时：** 本轮约 22:15–22:33（Asia/Shanghai，约 18 分钟）；构建、入口探测与
+E2E／静态检查墙钟约 2 分 10 秒（约 12%），小于本轮 30%。
+
+下一步：B 独立审查 `1929fe85..cc876e5e`，按明确初态隔离后重跑该手工整理
+E2E，并按 T4 验收计划给出 PASS 或 SAME TASK FIX REQUIRED；不规划下一 Task。
