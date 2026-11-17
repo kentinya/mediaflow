@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER FIXES TASK55.3 B55.3-02/04；修正后提交 READY FOR B REVIEW。
+Next Action: DEVELOPER FIXES TASK55.3 B55.3-05；修正后提交 READY FOR B REVIEW。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -285,118 +285,136 @@ Task Base 保持 `b73c36353e5427cbe60fbb7c1b8cc85b139edca4`。
 
 下一步由 B 独立审查 Base..本候选，给出 PASS 或 SAME TASK FIX REQUIRED。
 
-### B independent review — FIX REQUIRED（2026-11-17，候选6687ec13）
+### B independent review — FIX REQUIRED（2026-11-17，产品候选8a8e7d38）
 
-复核范围：`b73c36353e5427cbe60fbb7c1b8cc85b139edca4..6687ec1383e59227d3fe094c3555e27739ff868a`。
-现场 main、上述 HEAD、初始工作区干净、治理 PASS。按用户“改完了”交回的实际候选复核，
-不因根 Task 尚保留上轮状态而跳过代码。完整范围97文件；本次新增修正39文件，核对了
-配置写入／历史读取、旧链 schema／查询／checkpoint、当前摘要与 Web 消费者和恢复测试。
-Task Base、Goal、Scope、High/T4 不变；本结论不代替 A 的 Slice 终审。
+完整范围：`b73c36353e5427cbe60fbb7c1b8cc85b139edca4..7abc055d16c929016dc24b26eb11ccb4133a7b75`。
+Developer 产品候选为 `8a8e7d38d53f84a832bf7c5bacfee1f7495412eb`；其后四个文件仅为 B
+在验收过程中对当前测试消费者的校正，详见下文。产品源码／Web src／配置／依赖未变，
+原 Base、Goal、Scope、High/T4 不变。现场 main、初始工作区干净、治理 PASS。
+本轮没有改变 SLICE／Roadmap／Progress，也不是 A 的 Slice 终审。
 
-上轮三项结论与原始失败保留在
-[8c8e8733:TASK.md](https://github.com/kentinya/mediaflow/blob/8c8e8733172be0b484034087250919c2671b48f3/TASK.md)。
-当前状态如下：
+前轮判断、原失败及指导保留在
+[49328b64:TASK.md](https://github.com/kentinya/mediaflow/blob/49328b64a3d73ce326e437fc6c06f7bf15c4c723/TASK.md)。
+当前结论：**B55.3-01–04 的已列修正通过；SAME TASK FIX REQUIRED，阻塞为 B55.3-05。**
 
-- **B55.3-01 已修正：** 新 JSON Draft 导入／编辑拒绝 api.remoteExecution，已有 Draft
-  校验／发布拒绝；合法当前文档仍能激活，历史读取与 typed successor 流程的重点测试通过。
-  本轮真实 Base 摘要复现中，候选也成功打开原 Base 配置及 pin。完整 T4 尚未验收。
-- **B55.3-02 部分修正、仍阻塞：** 两张旧链表及相应查询／模型／传输已退出；新库的
-  共享摘要表仍保留两个纯旧字段，详见下文。现存 V2 继续使用还存在 B55.3-04。
-- **B55.3-03 已修正所列缺口：** 四项当前 Files 稳定间隔／101项范围／冒号目录混选
-  与确认执行测试，及两项生产 Worker 终态通知完成／取消／重复／reopen 测试已接回
-  真实 Task admission＋Task engine；本轮全部通过。不能据此称完整范围所有门禁通过。
+#### 已完成的两项修正
 
-#### B55.3-04 / P1 — 更新后原有有效恢复摘要无法直接确认
+- **B55.3-04 已修正。** 当前哈希输入保留稳定 null 承诺，旧传输／模型不恢复。用
+  Task Base 真代码在现有 Run once API 中受理、保存识别决定并分析出原摘要，候选
+  打开同一库后，checkpoint 与原摘要完全一致；原确认202，候选 Task Worker完成
+  同一Task，重复确认202回读同一 execution，只留一条SUCCESS Result，原pin保持。
+- **B55.3-02 已修正。** 新库不再安装两旧列，现存有效V2摘要做本单元所需的最小
+  表结构收敛。对 Base 真代码生成的库，在DROP之后、rename之前注入SQLite失败，
+  原表定义和全部摘要行完整回滚；正常再次打开、确认、执行和重复确认通过。
+  旧历史表没有为清理而删除；本轮未扩展到其他旧schema／flow。
+- Slice Base真源码也通过同一旅程：在最初发布前使用正常V2配置（旧schedules空槽、
+  当前定义），候选继续原库的摘要与pin并执行成功。最初直接沿Base示例携带两条已
+  退役非空旧schedule的尝试被准确拒绝，原日志保留；未把这类纯旧输入当成当前V2
+  连续使用失败，也没有修改已发布历史配置。
 
-用户旅程：在 Base 正常发布禁用自动化定义 → 点击“运行一次” → Worker 发现识别问题
-→ 在原 Task 保存识别类型 → 同 Task 分析完成并显示待确认摘要 → 更新候选后点击确认。
+证据在 `.git/validation-evidence/8a8e7d38/task55-3-b/` 的
+`base-summary-atomicity.log`、`base-summary-candidate-completion.log`、
+`slice-base-current-v2-summary.log`。首次旧诊断脚本在候选受理202后仍让Base代码
+回读收敛后的表，旧reader报错；后续验证由候选Worker完成，未将旧代码回退当成支持义务。
 
-实测使用 **Task Base 真源码**的既有
-`RunOnceApiTests.test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`，
-在第一次管理员确认前，让候选进程打开同一隔离配置库／运行库并发送该摘要的原确认
-请求。没有注入 Task／摘要、重算历史 digest、改业务状态或重建配置。结果：
+#### B55.3-05 / P1 — 正式API仍受理无Task的分析，常驻Worker不会处理
 
-- Base 持久化的 checkpoint 为 `235751a7757f2fd48d5c93d03c2d6c78d84f9b74a51a44ed3867a44b24b36a62`；
-  候选读同一 item 算得 `fc6e73a2ecf16f53dd04737517ce85f6919d1704d5c5b08f2d83e4a9fa38b740`。
-- 候选确认返回 **409 stale_checkpoint**，提示 item 已变化；没有受理执行。
-- 随后 Base 在同一数据库确认同一摘要返回 **202**，完整测试继续至原 Task 整理完成。
-  因此不是无效摘要、来源变化或缺少权限，也不是只测不可达的旧恢复入口。
+**完整操作与实际结果：** 操作者通过现有资源库文件整理API提交
+`Movies/One.2001.mkv` → 返回intent → 请求该intent的方案 → API返回“resident Worker
+正在分析” → 常驻Task Worker无可领取工作，读取仍停在analyzing，没有方案可确认。
+Docker安全验收中的真实C类型／A命名分类检查也在同一请求链等不到分析结果。
 
-根因定位：此次 `processing_checkpoint.py` 从哈希 payload 删除了原本为 null 的
-`recovery_continuation` 键，改变所有这类当前 checkpoint 身份；而
-`ManualRecoveryContinuationService.confirm_prepared` 正确地要求重读版本等于原摘要版本。
-清理传输模型时连带改变当前耐久摘要依赖的计算输入，违反 AC-6 的原摘要／原请求继续
-使用。更新后让用户重新分析不能交付“原摘要直接继续”的结果。
-为核实归因，另一次同入口运行捕获候选实际哈希输入，仅在诊断副本补回该 null 键，
-所得哈希与 Base 持久化值完全相同；实际确认仍使用未修改的候选算法并返回409。
-诊断记录见 `base-summary-hash-diagnostic.log`。
+已有入口、正常权限和配置下，在临时Local根／真实API／SQLite复现：
+
+1. `POST /api/v1/resource-libraries/library/files/organize`，正常`paths` → **201**。
+2. `POST /api/v1/operations/organize/intents/{原intentId}/previews`，发送返回的
+   `expectedVersion` → **201**，返回`analysis.phase=analyzing`、`previewId=null`。
+3. 真实`ManualTaskEngineWorker.run_next()` → **None**。持久记录的
+   `organize_task_id=None`，**Task总数0**；源／目标Storage变更均为空。
+4. Task Base相同真实入口由当时生产装配的`MediaDiscoveryWorker`领取后，变成
+   **completed并产生preview**，同样零媒体变更。
+
+**原因与范围：** `service_api.py:5558` 的Files API仍只创建intent，随后
+`MediaDiscoveryService.begin_intent_analysis`在无关联discovery时调用
+`_admit_intent_analysis`（2538–2640），直接`create_media_discovery`，没有Task受理与
+scheduling。原独立Worker删除后，该写入分支与“正在处理”响应没有收敛。问题由初始
+实施`6d48fbdf`删除消费者时留下，8a8e7d38的摘要／结构修正本身已通过。
+这是现存正式入口可触发的停滞，不是构造旧链记录或探测猜测地址；对应AC-3/5/7/8及
+本Task“只有Task内核受理／执行”和真实消费者一致性。
 
 **Developer 指导：**
 
-1. 将当前 checkpoint 的稳定身份计算与旧 API／领域投影退出区分开。相同有效 V2
-   item、pin、决策和效果必须保持原 checkpoint；真实业务变化仍使原确认失效。
-2. 保留现有精确版本校验和摘要／选择／权限绑定。保持原 preparation／Task/item ID、
-   pin、摘要版本与未知请求身份；不通过写回摘要版本或要求用户重做分析解决。
-3. 用本次既有 Base 原生入口复现加入直接回归，验证候选确认原摘要为202且仍是同一
-   Task；执行后重复确认只回读原执行，已完成／未知效果不重放。当前新建摘要、满额
-   保留和真实变化拒绝的原断言同时保持。复用现有夹具，不新建通用兼容／迁移平台。
+1. 沿上述两个已注册入口核对首次Files受理与intent再次分析，将这条现行整理行为接回
+   已有Task受理、discovery／intent关联和Task engine；同一次工作具有真实Task身份、
+   原pin／范围／选择和共享额度／来源所有权。当前Files弹窗的原Task重分析继续复用它。
+2. 收敛 `_admit_intent_analysis` 的无Task写入及相关真实消费者；保留当前零变更分析、
+   精确方案、独立确认与结果职责。当前合法已存intent／摘要的ID、决定、pin和请求关联
+   保持可继续。由当前Task claim驱动发现／分析／发布，不重新引入独立领取包装。
+3. `tests.test_manual_operations_contract` 的当前正向旅程正在用
+   `tests.task_engine_test_helpers.claim_and_run`直接领取discovery，绕开生产Task
+   调度，因而全量通过没有暴露此问题。将这条API旅程接回真实Task engine，保留原
+   成功／权限／脱敏／精确确认断言。同步Docker安全脚本中的同一真实消费者。
+4. 在现有夹具中覆盖API受理→真实Task领取→计划／真实未就绪原因→精确确认→同Task
+   结果；直接受影响的重复请求、已保存决定、满额、权限／来源变化与原pin断言保持。
+   本次短复现和Docker安全超时是修正前的明确失败依据，先跑它们对应的affected cases。
 
-#### B55.3-02 / P1 — 新库仍有旧链专属空字段
+Developer运行新增／修改及上述直接受影响测试，含`tests.test_manual_operations_contract`、
+`tests.test_media_discovery`、`tests.test_manual_task_engine`、`tests.test_v2_manual_organize`；
+若改变共享受理，再跑原Task对应受理／容量／来源竞争模块。完整T4与环境验收由B承担。
+本轮返工仅此链路，不规划下一Task，不扩展队列／页面／治理工具。
 
-普通新库初始化后，`manual_recovery_preparations` 仍含
-`analysis_continuation_id`、`analysis_result_id`（`sqlite_runtime.py:19327/19329`）。
-这两字段已从当前 domain／API 删除，当前 `_manual_recovery_preparation_values` 却固定
-写入两个空字符串；它们已无当前业务数据职责。旧表删除通过，纯旧字段退出未完成。
-此项对应原 AC-4/6、Slice RO-4 的新库无旧恢复链专属列，不扩大到其他全局 schema 工作。
+#### B验收实绩与保留失败
 
-**Developer 指导：** 新建表与当前 INSERT 不再安装／写入这两纯旧字段。现有 Base V2
-库继续保留有效摘要及确认／效果记录，所需最小结构调整保持原 ID、关系、digest、pin、
-版本、结果及失败原子性；旧库历史不为清理而删除。直接核对正常新库结构及上述原摘要
-继续使用，不增加 schema 管理工具或通用升级系统。
+完整日志、源码归档、raw trace、产物身份和短复现均在上述本地忽略目录，不声称远程可达。
 
-#### 本轮实测、证据与后续分工
+| 门禁／复核 | 实际结果 |
+|---|---|
+| Developer候选affected复核 | 139 tests OK，11.891秒；focused.log |
+| Python full | 2386 tests OK，7 skipped，265.044秒；python-full.log |
+| Web质量／全量／构建 | typecheck、lint、format、build通过；103文件／1636 tests通过，161.59秒 |
+| Node完整E2E | 285 passed，3.5分钟；node-e2e.log |
+| 真实Automation Run once／workspace | 17 passed，29.5秒；native-automation.log |
+| 原生组合：operations／manual-dialog／source-history／metadata-year／flow | 55 passed、6 failed，3.0分钟；native-operations.log及原始trace保留 |
+| 原生组合：settings／operations／flow | 51 passed、17 failed，3.0分钟；settings18项通过，其余失败未记PASS，见native-current-consumers.log |
+| 校正后的polling／终态通知消费者 | 2 passed，2.8秒；native-consumer-focused.log；不代替整套原生通过 |
+| Python质量／依赖／示例 | Ruff format／check、compileall、pip check、两example validate通过；FFmpeg／FFprobe检索无匹配（预期exit1） |
+| 干净来源wheel／源码外安装 | 构建通过；旧prepare_summary断言失败后由B接当前消费者，源码外smoke通过；原失败wheel-smoke.log保留 |
+| 候选四服务Docker | 启动／API重启通过；Worker／Scheduler／Notification重启／未知效果证据通过；docker-smoke-visible-mount.log、docker-restart.log |
+| Docker安全 | 初轮viewer旧票据403断言已由B接为404；后续真实intent分析在120秒超时，属B55.3-05，未通过 |
+| Base连续使用／结构失败原子 | 上文原摘要确认／执行／重复／pin保持及DROP后失败回滚通过；其他Base数据完整组合门禁仍待最终修正候选 |
 
-证据目录：`.git/validation-evidence/6687ec13/task55-3-b/`，本地忽略存储，不称远程 CI。
-`source-identity.log` 核对 Base archive 的 checkpoint／原生用例 blob 与真实 Base 一致，
-候选源码为6687ec13。`base-summary.py`、`candidate-summary.py`、`base-summary.log`
-保留上文真实同库复现，Base 全旅程通过、候选409；脚本报告0.365秒（进程墙钟0.822秒）。
-初次写脚本时工作目录不对而未生成文件；更正后执行的是上述持久化脚本，没有据初次
-命令失败判断产品。`schema.log` 保留新库旧表为空、两旧列仍在的结果。
+7项跳过仍为既有真实外部服务／耐久环境未配置；临时媒体、fake Provider／本地服务使用
+范围不变。ResourceWarning、JSDOM scrollTo、Vite chunk提示保留在日志，不抹去失败。
+视觉／其余原生／最终Docker安全仍待B，已证实阻塞后不继续扩跑，也不把验收环境工作
+当成额外产品返工。原生组合中读取／计数／关联失败由B在各自独立harness继续定位；
+settings会发布Active／容量，本轮同实例组合不能用来单独认定新的产品故障。
 
-实际命令（仓库根目录）：
+B本轮只校正了验收消费者四文件：wheel检查当前native summary，Docker未知路由，
+原生E2E的当前`?run=`链接、精确rich-row和明确queued fixture。提交见
+`1e3155a5`、`190f7082`、`6aa74cc0`、`7abc055d`。polling fixture结束时正常取消自己受理
+的Task；原始失败与后续两项通过都保留。没有修改生产逻辑、弱化版本／权限／效果断言，
+没有把Docker后续超时改成通过。本轮不自批这些变化为Task PASS。
 
-```sh
-.venv/bin/python -m unittest tests.test_execution_authorization tests.test_media_discovery tests.test_notifications tests.test_manual_task_engine.ManualTaskDiscoveryTests.test_native_summary_is_confirmable_on_the_same_task_from_the_center tests.test_v2_automation_run_once.RunOnceApiTests.test_recognition_decision_continues_analysis_summary_and_execution_on_one_task
-```
+产物核对：wheel SHA-256
+`97707fed229fed1f86b2c334e29c0f1bd0b499afe1f769e9699db2776b5cb4ec`；镜像
+`mediaflow:task55.3-b-8a8e7d38`，ID
+`sha256:c88d13106db783e802cfcab693a40e4ff3daf01e85fcff2e6e2cfa6f71b7abd7`。
+163个包内Python文件在wheel、镜像与当前生产源码逐字节一致，见artifact-identity.json。
+完整回归输入复用边界：8a8e7d38..7abc055d仅上述验收消费者，mediaflow／Web src／
+unit tests／配置／依赖树完全相同；原全量结果不声称已覆盖后续native脚本修正。
+Docker通过既有Colima专用上下文与已有可见挂载下的新隔离子目录运行，未操作现有部署。
+首次默认socket不可用、第一次临时目录不在VM挂载内的失败也保留，后续使用已存在的
+`colima-mediaflow-review`和可见根，没有改变全局Docker上下文。
 
-**30 tests OK，0 skipped，1.289秒／墙钟1.47秒**，见 `focused.log`；其中有未关闭 SQLite
-连接的 ResourceWarning，原日志保留。新建数据通过与 Base 旧摘要失败是不同结果。
-完整 Base..候选 manifest／生产 diff 在同目录。
+计时：2026-11-17 09:09:55–09:35:58（Asia/Shanghai），已记录复核26分03秒；
+验证／构建日志区间合并725.804秒，计入短命令按12.3分钟记录，小于本轮50%，
+见timing.json。文档检查：治理PASS、8 tests OK（0.022秒）、git diff --check通过。
 
-Base 连续使用复现命令（cwd为同目录的 `base-source/`）：
+#### 全部Slice结果重评
 
-```sh
-PYTHONPATH=. /Users/songzhidong/mediaflow/.venv/bin/python ../base-summary.py /Users/songzhidong/mediaflow/.git/validation-evidence/6687ec13/task55-3-b/candidate-summary.py /Users/songzhidong/mediaflow
-```
-
-**Developer 修正轮：** 先修上述失败，跑新增／修改回归与
-`tests.test_execution_authorization`、`tests.test_processing_checkpoint`、
-`tests.test_manual_task_engine`、`tests.test_v2_automation_run_once`，schema 修改同时跑
-`tests.test_task_persistence`／自身直接受影响测试；Web 有改动沿用本 Task affected 计划。
-不承担全仓／全发布矩阵。交同一55.3不可变检查点与实际结果。
-
-**B 后续验收：** 按工作流§6已证实阻塞，本轮提前 FIX REQUIRED。完整 T4（Python/Web
-全量、其余原生／视觉、wheel／源码外安装、候选 Docker 及 Base 有效数据完整连续使用）
-仍由 B 在修正候选完成。本轮未跑不记 PASS、不转为 Developer 全量义务。上轮原始
-Developer 报告及未完成门禁身份不变。
-
-本轮始于2026-11-17 08:22:43（Asia/Shanghai），上述产品测试及归因复核墙钟合计
-不足5秒；治理／文档检查另计，测试墙钟占本轮总耗时小于50%。治理 PASS、
-`tests.test_release_security.ReleaseSecurityPolicyTests` **8 tests OK（0.022秒）**、
-`git diff --check` PASS；本轮只修改 TASK.md。
-
-全部 Slice 结果重评：RO-1沿用55.1 PASS；RO-2沿用55.2 schedules/grant PASS，本55.3
-票据及Task内核收敛已有交付，但原摘要续作／纯旧字段仍未完成，全局审核表面按原边界
-后续。RO-3全局配置权威、RO-4历史flow／升级、RO-5旧session／协议尚未完成；RO-6
-本单元最终门禁仍待验收。**SAME TASK FIX REQUIRED**；Slice55保持ACTIVE，下一步
-Developer修正B55.3-02/04后交B，不规划下一Task，不修改SLICE／Roadmap／Progress。
+RO-1沿用55.1已接受入口退休；RO-2沿用55.2 schedules/grant与本55.3已完成票据／
+旧Worker／旧恢复链清理，但B55.3-05表明当前受理仍有非Task路径，全局V1审核仍按原
+后续边界。RO-3的完整JSON运行权威／tokenEnv管理员回落仍在；RO-4全局旧flow／升级
+清理仍未完成，本次仅完成当前摘要结构与安全收敛；RO-5旧Run once／Copy session与
+其余协议承接仍待后续；RO-6本单元仍欠真实安全旅程与完整原生门禁。未提前协调CURRENT
+或关闭Slice。**Slice55保持ACTIVE；下一步Developer修正同Task的B55.3-05后交B。**
