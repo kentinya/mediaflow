@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER FIXES TASK55.3 B55.3-05（SAME TASK FIX REQUIRED，已确认待执行工作继续使用原 Task）。
+Next Action: B REVIEWS TASK55.3 B55.3-05 FIX CANDIDATE（READY FOR B REVIEW，SAME TASK FIX LOOP）。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -351,3 +351,81 @@ Slice55保持ACTIVE，SLICE／Roadmap／Progress不变，不声明Task或Slice P
 计时：已记录复核区间2026-11-17 12:08:18–12:13:25（Asia/Shanghai），5分07秒。
 73项相关测试墙钟4.70秒，20项治理测试墙钟6.52秒，真实入口复现及治理短命令计入后
 测试／验证按不足20秒记录，小于本轮50%。下一步Developer修正同一B55.3-05后交B。
+
+
+## Developer 修正交接 — 2026-11-17（B55.3-05 round 2）— READY FOR B REVIEW
+
+```text
+Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
+Fix checkpoint: ad199146
+Branch: main
+Initial workspace: clean (tracked/untracked), governance PASS
+B findings addressed: B55.3-05 (P1)
+```
+
+本轮只修正已确认、尚未执行的合法 Base 工作无法继续，以及重复核对产生额外 Task 的
+问题；未改 Base／Goal／Scope／AC，未恢复独立 Worker、全局领取、页面或恢复类型。
+
+**根因与修正**
+
+- 根因：`execute` 先调用 `_adopt_prechange_summary` 为未链接 Task 的 discovery 提交
+  新 Task，然后才进入 `admit_manual_execution`；原 execution 已存在时按
+  `duplicate_execution` 回读原 execution，但先提交的新 Task 不回滚。原 Task 没有
+  scheduling，当前内核永远领取不到。
+- 收敛：`begin_web_execution` 在创建任何 authority 之前，用本次提交的 Preview、意图
+  版本、pin、精确选中项、逐项版本／指纹、principal、两处破坏性权限与既有
+  execution 的持久化确认证据比对；仅 exact submission 收敛回原 execution。启动／
+  完成的 execution 不走此捷径，保持原授权再核对与不重放。
+- 原子补链：新增 `SQLiteTaskRepository.adopt_confirmed_manual_execution`，在一个
+  `BEGIN IMMEDIATE` 内复核 execution 仍为 admitted、0 attempts、无 claim、授权为
+  精确 consumed、Task 为未结束的原 pin owner、无 Result、每个 execution item 与
+  TaskItem 仍未开始，然后一起写 scheduling（queued／execution）、Task pending 与
+  仍未链接、同 intent／Preview 的 discovery 关联。共享容量不足抛
+  `TaskQueueFull`（409 capacity_full）；任何写入失败整体回滚，不留 Task／调度／
+  错链。重复领取收敛同一执行身份，已登记调度时不重写。
+- 不先建 Task：`execute` 对 exact existing execution 只撤销本次未使用的 authority
+  并返回原工作；非等价的重叠提交跳过 prechange 采纳，让 admission 以自身原因拒绝
+  且不提交 Task。
+- 原 Task、TaskItem、execution、Preview、intent、pin、保存决定、锁与确认证据保持；
+  当前 Worker 按既有 claim／心跳／逐效果 fence 执行并产生原 Task 的 Result。
+
+**实际验证（仓库根目录，最终候选 ad199146）**
+
+- 新增回归
+  `test_prechange_confirmed_execution_continues_on_its_original_task`：两个文件经真实
+  Preview 与 execute 入口形成 Base 形态（1 Task、0 scheduling、未链接 discovery），
+  再走现有 API 重发同一确认。断言原 Task／execution／Preview／intent ID、pin、
+  TaskItem 身份保持；Task 数仍 1；scheduling queued／execution；discovery 链回原
+  Task；无媒体变更。随后真实 `ManualTaskEngineWorker` 领取原 Task 完成，2 条 C 结果、
+  2 次源删除／目标写入，执行前后 admission 核对均返回原 execution。
+  临时去掉本次生产改动时该测试在原断言失败 `1 != 2`，即 B 报告的第二 Task；恢复后
+  通过。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → PASS。
+- `ruff check`（三个改动文件）→ PASS；`ruff format --check`（三个改动文件）→ PASS。
+- `.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_manual_task_engine
+  tests.test_manual_operations_contract tests.test_task_persistence
+  tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_task_source_ownership_race` → **225 tests OK，墙钟 13.06 秒**。
+- 相邻消费者另跑 `tests.test_automation_task_admission`、
+  `tests.test_processing_recovery_admission` → 22 tests OK，0.67 秒；
+  `tests.test_automation_entrance_recovery`、`tests.test_execution_authorization`、
+  `tests.test_manual_operations`、`tests.test_processing_worker_readiness`、
+  `tests.test_task_item_metadata_search`、`tests.test_operations_task_center` →
+  88 tests OK；同批另指定了不存在的 `tests.test_automation_run_once`，仅该模块
+  导入报 ModuleNotFoundError，未计为通过。ResourceWarning 为既有 SQLite 测试
+  痕迹，未见产品失败。
+
+**剩余风险／未执行**
+
+- 完整 T4、全量 Python/Web、Node 原生、wheel、候选镜像 Docker 与浏览器验收仍由 B
+  执行；本报告不声明这些通过。
+- 已开始（execution attempts>0／running）的 Base execution 不重放、不重建调度，
+  保持原耐久记录；本轮只承诺 B 所指的“已确认、尚未执行”工作。
+- 满额路径映射为既有 `capacity_full` 409，未在本轮新增满额夹具；共享容量本身由既有
+  scheduling 测试覆盖。
+- Web src、README、Docker harness 未改；本轮无新增入口、配置键或恢复类型。
+
+计时：本轮开始约 12:20，交接约 12:38（Asia/Shanghai）。实际测试墙钟合计约 40 秒
+（含缺模块导入批次），约占总耗时 4%，低于 30%，也低于 Task 规定的 50%。
+Slice55 保持 ACTIVE，Roadmap／Progress 不变，不声明 Task 或 Slice PASS。
