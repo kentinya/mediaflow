@@ -8,7 +8,7 @@ Task55.1／55.2 的接受事实保持。Slice55 仍 ACTIVE，尚未满足全部�
 
 用户现明确要求“激活Task吧”，据此将已规划的 Task55.4 激活为正式实施 Task。
 Goal／Scope／Task Base／High／T4／验收与测试分工保持原计划。
-Next Action: **DEVELOPER STARTS TASK55.4 IMPLEMENTATION**。
+Next Action: **DEVELOPER FIXES TASK55.4 — B55.4-01–03**。
 本轮仅激活 TASK；SLICE／Roadmap／Progress 保持原合同和接受身份。
 
 Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6、AC-03／05／07／08／11／12。
@@ -19,7 +19,7 @@ Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6�
 Task ID: 55.4
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
 Difficulty: High
 Test Level: T4
@@ -293,11 +293,103 @@ Status: READY FOR B REVIEW
 
 ### B Review Result
 
-尚无 Task55.4 的 B 独立审查结果。Developer 候选
-`7962432a5aefbe8af9940b6d30eb9d7a6281e2d7` 已提交，状态 **READY FOR B REVIEW**。
-B 应独立审查 `64a8f69e..HEAD`（实现候选为 `7962432a`，其后的 TASK 报告提交仅文档），
-复现上述入口并执行 Task 规定的完整 acceptance／T4 门禁；产品返工留在同一 Task。
-Task55.3 PASS 保持，Slice55 Required Outcomes 尚未全部满足。
+**FIX REQUIRED — 2026-11-17，B 独立复核。**
+
+- 固定 Task Base：`64006c8d3b0a2791e5228417420250a064c75cea`；审查到
+  `e3c564e87553e207d616193b34ec8abdf533594a`，共136个变更文件。实现候选为
+  `7962432a5aefbe8af9940b6d30eb9d7a6281e2d7`；`7962432a..e3c564e8` 仅 TASK 报告。
+  Developer 报告的 `64a8f69e` 是激活检查点，不能替代本 Task 的固定 Base。
+- main，复核前 tracked／untracked 工作区干净；治理 PASS，工作区及 Git 可写。
+  检查完整变更清单、产品实现、配置样例语义、测试改接和部署消费者；以下结论来自现有
+  CLI／API 的实际复现。Base 样本由 Base 代码通过正式入口产生，候选直接使用同一库。
+- 已确认管理启动／显式 principal、新输入拒绝、分类完整路径投影和旧 runner 注册的
+  改动；当前新实例定向测试通过。但已有草稿／Active 的继续使用及文档部署旅程失败，
+  AC-2／4／6／7 未满足，不能 PASS。
+
+#### B55.4-01 / P1 — 已保存的首次设置草稿无法继续激活
+
+**用户旅程与实测：** 管理员在 Base 的系统设置点击“创建首个草稿”，暂未激活便更新
+程序，再打开同一草稿检查并激活。Base 的
+`POST /api/v1/configuration/drafts/first` 返回201，原草稿 validate 为 validated；
+候选读取同一 ID／digest 后，validate 将它退回 draft，错误为
+`notifications.webhooks is retired`，activate 返回409。该空集合由 Base 服务自动生成，
+不是用户新提交旧格式。候选新建草稿通过的测试未覆盖这条继续使用旅程。
+
+**定位：** `configuration_snapshot.validate/activate` 用 `_base_document` 检查提交格式；
+首次草稿没有 `base_active_revision_id`，因此原合法文档被当成无保留基线的新输入。
+`configuration_input.py:108–116` 拒绝其原有 `notifications.webhooks=[]`。
+
+**Developer 修正指导／验收：** 在现有草稿生命周期内区分新输入和已经接受的原草稿，
+让原首次草稿继续检查并显式激活，保留原文档、ID、digest 与审计关系。新导入／新编辑
+仍按当前格式检查。用 Base 真实 first-Draft API 创建样本，候选重开后经同一 validate／
+checked activate 完成空 Active；补入现有 `tests.test_management_setup`，不以候选手插
+数据库或重建草稿代替。AC-4／7。
+
+#### B55.4-02 / P1 — 已接受的通知配置使整个 Active 无法使用
+
+**用户旅程与实测：** 管理员用 Base 的规范示例经 `config draft-import` →
+`draft-validate` → `activate` 建立 V2 Active，之后更新程序继续浏览存储。Base
+`config status` 为 HEALTHY／runtimeConfigured=true；候选对同一库、同一 Active
+ID／digest 返回 UNAVAILABLE／false，`storage list` exit2。样本中的禁用通知由 Base
+规范示例提供，事件为 job.*；这一个通知定义即阻断整份配置的读取。原后继草稿也由
+Base 校验成功，候选校验则报 `Webhook operations-webhook uses a retired job.* event`。
+
+**定位：** `NotificationEventType.parse` 改为直接枚举解析，运行时
+`load_runtime_configuration → _webhook → WebhookDefinition.from_document` 同时用于
+原 managed Active／pin 的读取；`_reject_webhook_events` 也没有保留原对象的判断。
+SQLite delivery 行的窄读取不能修复配置快照的这条链路。
+
+**Developer 修正指导／验收：** 在现有 managed 快照／合法原 pin 读取处保留已接受定义
+的原语义，并允许无关配置保存继续携带原对象；新提交和新产生事件继续使用当前契约。
+保留原 revision 文档／digest／pins 及通知 ID／payload／投递状态，不重投原通知。用
+Base CLI 建立本样本后由候选重开，证明存储浏览、无关设置保存及原 pin 的消费可完成；
+同时保留新 job.* 输入拒绝的断言。补入现有 configuration snapshot／notifications／
+resident 测试及本 Task 原有 Base 连续使用验证，不新增迁移服务。AC-4／6。
+
+#### B55.4-03 / P1 — 按部署说明生成的配置无法导入
+
+**用户旅程与实测：** 用户按 `docs/deployment.md` 运行
+`scripts/make_deployment_config.py --output <bootstrap> --configuration-output <input>`，
+启动管理实例后导入第二份文件。生成器正常退出，但 bootstrap principal ID 是 admin，
+配置输入仍是示例的 local-admin，导入因“不能更改部署身份”拒绝。B 用生成的两份文件
+从现有 `config draft-import --file` 重现 exit2；只把双方相同的 databasePath 改为隔离
+测试库，身份及业务内容未改。Docker smoke 的 `prepare_files` 手动覆盖身份，掩盖了
+用户直接运行生成器时的问题。
+
+**Developer 修正指导／验收：** 让生成器正式输出本身可作为该 bootstrap 的配置输入：
+采用已有 portable 输入约定，或与本次生成的部署 principal 一致，保留部署身份检查。
+覆盖默认及 `--token-env` 输出，直接将原始成对输出送入现有导入／校验入口；移除夹具
+里替生成器补身份的做法后仍能完成该旅程。添加到现有部署生成／container 测试，文档
+命令与实际结果一致。同次调整的 `docker_smoke_test.py` 激活段还需先解析 JSON：现有
+`http_request` 返回 bytes，新代码直接读取 `draft["revisionId"]`／`validated.get`。
+修正这个既有消费者的接线、保留断言；实际镜像门禁仍由 B 执行。AC-2／7。
+
+#### 本轮实际验证与下一轮分工
+
+本地原始证据：`.git/validation-evidence/e3c564e8/task55-4-b/`。
+
+- `existing_cli_probe.py`：10次现有 CLI 调用，累计1.774秒；保留 Base 成功、候选
+  Active 读取和后继草稿校验失败的完整结果于 `existing-cli-results.json`。
+- `first_setup_probe.py`：Base 真实 API 创建／校验、候选读回／校验／激活，结果分别在
+  `first-setup-base-results.json`、`first-setup-candidate-results.json`。实际响应为上述
+  201／200／409；没有 Provider 或媒体操作。
+- 现有生成器及 CLI 导入：0.180秒，结果在 `generated-pair-results.json`。
+- `.venv/bin/python -m unittest tests.test_management_setup
+  tests.test_runtime_strategy_configuration tests.test_api_credentials tests.test_notifications`：
+  **50 tests OK**，套件1.669秒、命令墙钟1.863秒，无跳过；日志有 SQLite ResourceWarning，
+  保留于 `focused-tests.log`。这是当前新数据测试的通过结果，不能替代上面的 Base 样本。
+- 治理与 whitespace 检查通过。测试时间占本轮复核时间小于50%，计时明细随证据保存。
+
+按 workflow §6，在已证明产品阻塞后提前 FIX REQUIRED；本轮未运行全仓／浏览器截图／
+wheel／Docker 矩阵，这些验收仍由 B 在修正后的精确候选上执行，不转交 Developer。
+Developer 只修上述三项、运行各项失败案例及直接受影响测试／质量检查，提交同一
+Task 的新检查点和 READY FOR B REVIEW；Task Base、Goal、High／T4 保持。
+
+**全部 Slice 结果重评：** RO-1 的已接受 Web 入口退出及55.2／55.3已接受部分保持；
+RO-2 全局审核／剩余 manual-*，RO-3 余下领域模型，RO-4 schema／五态清理，RO-5
+session／协议和 RO-6 最终全部交付物门禁仍按原边界未完成。本 Task 的配置结果先修
+上述阻塞，不规划下一 Task，不提交 Closure Packet，不改变 Slice／Roadmap／Progress。
+Task55.1–55.3 PASS 保持，Slice55 仍 ACTIVE。
 
 历史规划核验（6463cee9）：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK
 本地链接及 `git diff --check` 通过；仅 TASK 改动。这些是规划检查，不是 Task55.4 的产品
