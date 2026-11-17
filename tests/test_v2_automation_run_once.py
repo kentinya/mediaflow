@@ -1582,6 +1582,27 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
 
+            # Re-submitting the exact confirmed selection after execution only
+            # reads back the original admitted execution: no replay, no second
+            # execution, no second Result and no new Storage effect.  The same
+            # Task keeps its settled history and its one honest result.
+            status, repeat = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, repeat)
+            self.assertEqual(confirmed["executionId"], repeat["executionId"], repeat)
+            self.assertEqual(task_id, repeat["taskId"], repeat)
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            executions = value.repository.list_manual_executions_for_task(task_id)
+            self.assertEqual(1, len(executions), executions)
+            self.assertEqual(confirmed["executionId"], executions[0].execution_id)
+            organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+
     def test_full_queue_refusal_keeps_saved_decision_and_recovers_on_same_action(self):
         """The real refusal projection is human waiting, not accepted analysis.
 

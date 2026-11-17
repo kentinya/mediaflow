@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -1126,6 +1127,354 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
                 assert stored is not None
                 assert stored.status is ManualRecoveryPreparationStatus.SUPERSEDED
                 assert stored.authorization_id is None
+
+    def test_new_library_installs_no_retired_old_chain_columns(self) -> None:
+        """Task55.3 B55.3-02: a fresh library has no retired old-chain summary column.
+
+        ``analysis_continuation_id``/``analysis_result_id`` only served the
+        retired old recovery chain.  A fresh library installs the current
+        summary shape without them, and the current insert still round-trips
+        an exact summary with its analysis Task identity.
+        """
+
+        from mediaflow.domain.manual_recovery import (
+            ManualRecoveryPreparation,
+            ManualRecoveryPreparationStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "fresh.sqlite3")
+            now = datetime(2026, 10, 17, tzinfo=UTC)
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_manual_intent_with_audit(
+                    _manual_intent("intent-1"),
+                    _manual_items("intent-1"),
+                    _manual_audit("intent-1"),
+                )
+                task_id, item_id = self._source_task_and_item(repository)
+                repository.create_manual_recovery_preparation(
+                    ManualRecoveryPreparation(
+                        "prep-1",
+                        task_id,
+                        item_id,
+                        "analysis-task-1",
+                        "intent-1",
+                        "preview-1",
+                        1,
+                        "b" * 64,
+                        "c" * 64,
+                        "snap-1",
+                        "digest-1",
+                        "operator",
+                        ManualRecoveryPreparationStatus.PREPARED,
+                        now,
+                        now,
+                    )
+                )
+            with sqlite3.connect(database) as connection:
+                columns = [
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(manual_recovery_preparations)"
+                    ).fetchall()
+                ]
+                self.assertNotIn("analysis_continuation_id", columns)
+                self.assertNotIn("analysis_result_id", columns)
+                self.assertIn("analysis_task_id", columns)
+            with SQLiteTaskRepository(database) as reopened:
+                stored = reopened.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                self.assertEqual("analysis-task-1", stored.analysis_task_id)
+                self.assertEqual("preview-1", stored.preview_id)
+                self.assertEqual("b" * 64, stored.checkpoint_version)
+
+    _MANUAL_RECOVERY_PREPARATIONS_BASE_COLUMNS = """
+        preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+        source_item_id TEXT NOT NULL,
+        analysis_continuation_id TEXT NOT NULL,
+        analysis_task_id TEXT NOT NULL,
+        analysis_result_id TEXT NOT NULL,
+        intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
+        intent_version INTEGER NOT NULL,
+        checkpoint_version TEXT NOT NULL,
+        input_fingerprint TEXT NOT NULL,
+        configuration_snapshot_id TEXT NOT NULL,
+        configuration_snapshot_digest TEXT NOT NULL,
+        actor TEXT NOT NULL, status TEXT NOT NULL, current INTEGER NOT NULL,
+        authorization_id TEXT UNIQUE, execution_id TEXT,
+        selected_item_ids_json TEXT NOT NULL DEFAULT '[]',
+        allow_overwrite INTEGER NOT NULL DEFAULT 0,
+        allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+        FOREIGN KEY(analysis_continuation_id)
+            REFERENCES recovery_continuations(continuation_id),
+        FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+        FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+        FOREIGN KEY(authorization_id)
+            REFERENCES manual_execution_authorizations(authorization_id),
+        FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
+    """
+
+    _RECOVERY_CONTINUATIONS_BASE_COLUMNS = """
+        continuation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+        source_task_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
+        checkpoint_version TEXT NOT NULL,
+        configuration_snapshot_id TEXT NOT NULL,
+        configuration_snapshot_digest TEXT NOT NULL,
+        boundary TEXT NOT NULL, status TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
+        new_task_id TEXT, new_result_id TEXT,
+        started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
+        authority_statement TEXT NOT NULL
+    """
+
+    def _seed_base_shaped_summary_library(self, database: Path) -> dict[str, object]:
+        """Install the exact Task Base (schema 58) summary table shape with real rows.
+
+        The Base created ``manual_recovery_preparations`` with the two retired
+        old-chain columns as ``NOT NULL`` without a default.  Current-flow
+        summaries were stored with empty strings there; an executed old chain
+        additionally left its continuation/result references in one row.  The
+        inert ``recovery_continuations`` table of such a database keeps its
+        row as retired history.
+        """
+
+        from mediaflow.domain.manual_recovery import (
+            ManualRecoveryPreparation,
+            ManualRecoveryPreparationStatus,
+        )
+
+        now = datetime(2026, 10, 17, tzinfo=UTC)
+        with SQLiteTaskRepository(database) as repository:
+            repository.create_manual_intent_with_audit(
+                _manual_intent("intent-1"),
+                _manual_items("intent-1"),
+                _manual_audit("intent-1"),
+            )
+            task_id, item_id = self._source_task_and_item(repository)
+            for preparation_id, preview_id in (("prep-1", "preview-1"), ("prep-2", "preview-2")):
+                repository.create_manual_recovery_preparation(
+                    ManualRecoveryPreparation(
+                        preparation_id,
+                        task_id,
+                        item_id,
+                        "analysis-task-1",
+                        "intent-1",
+                        preview_id,
+                        1,
+                        "b" * 64,
+                        "c" * 64,
+                        "snap-1",
+                        "digest-1",
+                        "operator",
+                        ManualRecoveryPreparationStatus.PREPARED,
+                        now,
+                        now,
+                    )
+                )
+        with sqlite3.connect(database) as connection:
+            rows = connection.execute(
+                "SELECT * FROM manual_recovery_preparations ORDER BY preparation_id"
+            ).fetchall()
+            assert len(rows) == 2
+            connection.execute("DROP TABLE manual_recovery_preparations")
+            connection.execute(
+                "CREATE TABLE manual_recovery_preparations ("
+                + self._MANUAL_RECOVERY_PREPARATIONS_BASE_COLUMNS
+                + ")"
+            )
+            for row in rows:
+                values = list(row)
+                values[3:3] = [""]  # analysis_continuation_id: current-flow empty
+                values.insert(5, "")  # analysis_result_id: current-flow empty
+                connection.execute(
+                    "INSERT INTO manual_recovery_preparations ("
+                    "preparation_id, source_task_id, source_item_id, "
+                    "analysis_continuation_id, analysis_task_id, analysis_result_id, "
+                    "intent_id, preview_id, intent_version, checkpoint_version, "
+                    "input_fingerprint, configuration_snapshot_id, "
+                    "configuration_snapshot_digest, actor, status, current, "
+                    "authorization_id, execution_id, selected_item_ids_json, "
+                    "allow_overwrite, allow_source_cleanup, created_at, updated_at) "
+                    "VALUES (" + "?, " * 22 + "?)",
+                    values,
+                )
+            # One legacy row carries an executed old chain's references.
+            connection.execute(
+                "UPDATE manual_recovery_preparations SET analysis_continuation_id='chain-c-1', "
+                "analysis_result_id='chain-r-1' WHERE preparation_id='prep-2'"
+            )
+            connection.execute(
+                "CREATE TABLE recovery_continuations ("
+                + self._RECOVERY_CONTINUATIONS_BASE_COLUMNS
+                + ")"
+            )
+            connection.execute(
+                """INSERT INTO recovery_continuations (
+                    continuation_id, request_id, source_task_id, source_item_id,
+                    checkpoint_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, boundary, status,
+                    created_at, updated_at, actor, authority_statement
+                ) VALUES ('chain-c-1', 'request-legacy', ?, ?, ?, 'snap-1', 'digest-1',
+                          'manual_recovery', 'completed', ?, ?, 'operator', 'retired')""",
+                (task_id, item_id, "b" * 64, now.isoformat(), now.isoformat()),
+            )
+            connection.commit()
+        return {"task_id": task_id, "item_id": item_id, "now": now}
+
+    def test_legacy_base_library_rebuilds_summary_table_without_retired_columns(self) -> None:
+        """The minimal structure adjustment keeps every valid summary byte-for-byte.
+
+        A Base-created library opens with the candidate: the two retired old-chain
+        columns leave the summary table, every summary keeps its identity, pin,
+        checkpoint version, preview relation and status, a new current insert
+        is accepted, and the retired ``recovery_continuations`` history of the
+        same database is not deleted.
+        """
+
+        from mediaflow.domain.manual_recovery import (
+            ManualRecoveryPreparation,
+            ManualRecoveryPreparationStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "legacy.sqlite3")
+            seeded = self._seed_base_shaped_summary_library(database)
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
+                stored = reopened.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                self.assertEqual("analysis-task-1", stored.analysis_task_id)
+                self.assertEqual("intent-1", stored.intent_id)
+                self.assertEqual("preview-1", stored.preview_id)
+                self.assertEqual("b" * 64, stored.checkpoint_version)
+                self.assertEqual("c" * 64, stored.input_fingerprint)
+                self.assertEqual("operator", stored.actor)
+                self.assertIs(ManualRecoveryPreparationStatus.PREPARED, stored.status)
+                self.assertIsNone(stored.authorization_id)
+                self.assertIsNone(stored.execution_id)
+                current = reopened.get_current_manual_recovery_preparation(
+                    seeded["task_id"], seeded["item_id"]
+                )
+                assert current is not None
+                self.assertEqual("prep-2", current.preparation_id)
+                # The current insert (which no longer writes retired fields)
+                # works on the rebuilt table.
+                reopened.create_manual_recovery_preparation(
+                    ManualRecoveryPreparation(
+                        "prep-3",
+                        seeded["task_id"],
+                        seeded["item_id"],
+                        "analysis-task-1",
+                        "intent-1",
+                        "preview-3",
+                        1,
+                        "d" * 64,
+                        "e" * 64,
+                        "snap-1",
+                        "digest-1",
+                        "operator",
+                        ManualRecoveryPreparationStatus.PREPARED,
+                        seeded["now"],
+                        seeded["now"],
+                    )
+                )
+                superseded = reopened.supersede_manual_recovery_preparation(
+                    "prep-3", now=seeded["now"]
+                )
+                self.assertIs(ManualRecoveryPreparationStatus.SUPERSEDED, superseded.status)
+            with sqlite3.connect(database) as connection:
+                columns = [
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(manual_recovery_preparations)"
+                    ).fetchall()
+                ]
+                self.assertNotIn("analysis_continuation_id", columns)
+                self.assertNotIn("analysis_result_id", columns)
+                self.assertIn("analysis_task_id", columns)
+                self.assertEqual(
+                    3,
+                    connection.execute(
+                        "SELECT COUNT(*) FROM manual_recovery_preparations"
+                    ).fetchone()[0],
+                )
+                # The retired old-chain history of the same database stays.
+                self.assertEqual(
+                    1,
+                    connection.execute("SELECT COUNT(*) FROM recovery_continuations").fetchone()[0],
+                )
+
+    def test_legacy_rebuild_failure_keeps_previous_shape_rows_and_marker(self) -> None:
+        """A failed rebuild is atomic: the previous shape and every row survive.
+
+        An injected failure during the rebuild aborts initialization inside the
+        ``_initialize`` transaction; the database keeps the Base shape, every
+        summary row including its retired references, and its schema marker,
+        and a later open without the fault completes the rebuild safely.
+        """
+
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "legacy.sqlite3")
+            self._seed_base_shaped_summary_library(database)
+            original_connect = sqlite3.connect
+            state = {"raised": False}
+
+            class _FailingConnection(sqlite3.Connection):
+                def execute(self, sql, *args, **kwargs):
+                    if (
+                        not state["raised"]
+                        and isinstance(sql, str)
+                        and "CREATE TABLE manual_recovery_preparations_migrate58" in sql
+                    ):
+                        state["raised"] = True
+                        raise sqlite3.OperationalError("injected rebuild failure")
+                    return super().execute(sql, *args, **kwargs)
+
+            def _patched_connect(*args, **kwargs):
+                kwargs.setdefault("factory", _FailingConnection)
+                return original_connect(*args, **kwargs)
+
+            with patch.object(sqlite3, "connect", _patched_connect):
+                with self.assertRaises(sqlite3.OperationalError):
+                    SQLiteTaskRepository(database)
+            self.assertTrue(state["raised"])
+
+            def _facts() -> tuple[list[str], int, str]:
+                with sqlite3.connect(database) as connection:
+                    columns = [
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA table_info(manual_recovery_preparations)"
+                        ).fetchall()
+                    ]
+                    count = connection.execute(
+                        "SELECT COUNT(*) FROM manual_recovery_preparations"
+                    ).fetchone()[0]
+                    marker = connection.execute(
+                        "SELECT version FROM schema_version WHERE component='runtime'"
+                    ).fetchone()[0]
+                return columns, count, str(marker)
+
+            columns, count, marker = _facts()
+            self.assertIn("analysis_continuation_id", columns)
+            self.assertIn("analysis_result_id", columns)
+            self.assertEqual(2, count)
+            self.assertEqual("58", marker)
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
+                stored = reopened.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                self.assertEqual("preview-1", stored.preview_id)
+                assert reopened.get_manual_recovery_preparation("prep-2") is not None
+            columns, count, marker = _facts()
+            self.assertNotIn("analysis_continuation_id", columns)
+            self.assertNotIn("analysis_result_id", columns)
+            self.assertEqual(2, count)
 
     def _source_task_and_item(self, repository):
         from mediaflow.application.task_runtime import PersistentTaskCoordinator

@@ -459,6 +459,15 @@ class ProcessingCheckpointService:
                 for value in audits
             ],
             "recovery_requests": [value.document() for value in recovery_requests],
+            # The retired old-chain continuation projection once hashed its
+            # document here; every checkpoint the current Task kernel can
+            # produce hashes a null at this exact key.  The key must stay: the
+            # checkpoint version is a durable concurrency fence, and a summary
+            # or request pinned by earlier accepted code keeps its exact
+            # identity only while the hash input of the same unchanged business
+            # state is byte-identical.  Removing the key (not the value) would
+            # silently invalidate every surviving pinned confirmation.
+            "recovery_continuation": None,
             "failure": failure.document() if failure else None,
         }
         checkpoint_version = hashlib.sha256(

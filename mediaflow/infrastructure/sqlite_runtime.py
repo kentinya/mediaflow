@@ -2098,14 +2098,14 @@ class SQLiteTaskRepository:
             self._connection.execute(
                 """INSERT INTO manual_recovery_preparations (
                     preparation_id, source_task_id, source_item_id,
-                    analysis_continuation_id, analysis_task_id, analysis_result_id,
+                    analysis_task_id,
                     intent_id, preview_id, intent_version, checkpoint_version,
                     input_fingerprint,
                     configuration_snapshot_id, configuration_snapshot_digest, actor,
                     status, current, authorization_id, execution_id,
                     selected_item_ids_json, allow_overwrite, allow_source_cleanup,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._manual_recovery_preparation_values(preparation),
             )
 
@@ -19324,9 +19324,7 @@ class SQLiteTaskRepository:
                 CREATE TABLE IF NOT EXISTS manual_recovery_preparations (
                     preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
                     source_item_id TEXT NOT NULL,
-                    analysis_continuation_id TEXT NOT NULL,
                     analysis_task_id TEXT NOT NULL,
-                    analysis_result_id TEXT NOT NULL,
                     intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
                     intent_version INTEGER NOT NULL,
                     checkpoint_version TEXT NOT NULL,
@@ -19960,8 +19958,102 @@ class SQLiteTaskRepository:
                     f"DEFAULT '{LEGACY_LOCK_OWNER_TOKEN}'"
                 )
             self._migrate_manual_execution_task_scope_locked()
+            self._migrate_manual_recovery_preparation_legacy_columns_locked()
             self._migrate_task_initial_executions_locked()
             self._migrate_task_scheduling_locked()
+
+    def _migrate_manual_recovery_preparation_legacy_columns_locked(self) -> None:
+        """Schema 58: the shared summary table keeps no retired old-chain column.
+
+        ``manual_recovery_preparations`` is the current same-Task summary table,
+        but databases created by earlier accepted code still carry the two
+        retired old-chain columns ``analysis_continuation_id`` and
+        ``analysis_result_id`` as ``NOT NULL`` without a default, so the
+        current insert that no longer writes them would be refused.  The
+        minimal structural adjustment is one idempotent table rebuild to the
+        current shape: every row keeps its exact identity, status, pin,
+        checkpoint version, preview/intent relation, confirmed selection and
+        execution link byte-for-byte, and only the two pure retired values are
+        dropped with their columns.  No summary, confirmation or effect record
+        is deleted, and the inert ``recovery_continuations`` table of an old
+        database is not touched.  Like every initialization migration it runs
+        inside the ``_initialize`` transaction, so a failure before the fresh
+        table is renamed leaves the previous schema and every row usable by
+        the previous code; a later open safely completes the rebuild.
+        """
+
+        if not self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_recovery_preparations'"
+        ).fetchone():
+            return
+        present = {
+            row["name"]
+            for row in self._connection.execute(
+                "PRAGMA table_info(manual_recovery_preparations)"
+            ).fetchall()
+        }
+        if not present & {"analysis_continuation_id", "analysis_result_id"}:
+            return
+        self._connection.execute(
+            """
+            CREATE TABLE manual_recovery_preparations_migrate58 (
+                preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+                source_item_id TEXT NOT NULL,
+                analysis_task_id TEXT NOT NULL,
+                intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
+                intent_version INTEGER NOT NULL,
+                checkpoint_version TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                configuration_snapshot_id TEXT NOT NULL,
+                configuration_snapshot_digest TEXT NOT NULL,
+                actor TEXT NOT NULL, status TEXT NOT NULL, current INTEGER NOT NULL,
+                authorization_id TEXT UNIQUE, execution_id TEXT,
+                selected_item_ids_json TEXT NOT NULL DEFAULT '[]',
+                allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+                FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                FOREIGN KEY(authorization_id)
+                    REFERENCES manual_execution_authorizations(authorization_id),
+                FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            INSERT INTO manual_recovery_preparations_migrate58 (
+                preparation_id, source_task_id, source_item_id,
+                analysis_task_id, intent_id, preview_id, intent_version,
+                checkpoint_version, input_fingerprint,
+                configuration_snapshot_id, configuration_snapshot_digest,
+                actor, status, current, authorization_id, execution_id,
+                selected_item_ids_json, allow_overwrite, allow_source_cleanup,
+                created_at, updated_at
+            )
+            SELECT
+                preparation_id, source_task_id, source_item_id,
+                analysis_task_id, intent_id, preview_id, intent_version,
+                checkpoint_version, input_fingerprint,
+                configuration_snapshot_id, configuration_snapshot_digest,
+                actor, status, current, authorization_id, execution_id,
+                selected_item_ids_json, allow_overwrite, allow_source_cleanup,
+                created_at, updated_at
+            FROM manual_recovery_preparations
+            """
+        )
+        self._connection.execute("DROP TABLE manual_recovery_preparations")
+        self._connection.execute(
+            "ALTER TABLE manual_recovery_preparations_migrate58 "
+            "RENAME TO manual_recovery_preparations"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS manual_recovery_preparations_source "
+            "ON manual_recovery_preparations(source_task_id, source_item_id, "
+            "current, created_at, preparation_id)"
+        )
 
     def _migrate_manual_execution_task_scope_locked(self) -> None:
         """Schema 55: one organizing Task may host more than one confirmed subset.
@@ -20798,9 +20890,7 @@ class SQLiteTaskRepository:
             preparation.preparation_id,
             preparation.source_task_id,
             preparation.source_item_id,
-            "",
             preparation.analysis_task_id,
-            "",
             preparation.intent_id,
             preparation.preview_id,
             preparation.intent_version,

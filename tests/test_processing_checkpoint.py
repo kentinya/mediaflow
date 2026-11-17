@@ -22,14 +22,18 @@ from mediaflow.domain.organizer import (
     PlanOperation,
 )
 from mediaflow.domain.processing_checkpoint import (
+    CheckpointAudit,
     CheckpointBlocker,
     CheckpointStage,
     EffectCertainty,
 )
+from mediaflow.domain.recovery import RecoveryRequest, RecoveryRequestStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
+    PersistentTask,
     PersistentTaskItem,
+    PersistentTaskStatus,
     TaskItemStatus,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -697,6 +701,140 @@ class ProcessingCheckpointTests(unittest.TestCase):
                 checkpoint = ProcessingCheckpointService(spy).get(item.item_id)
                 self.assertEqual(spy.calls, 1)
                 self.assertEqual(checkpoint.permitted_action_ids, ())
+
+
+class CheckpointIdentityContinuityTests(unittest.TestCase):
+    """Task55.3 B55.3-04: a pinned checkpoint version survives projection retirement.
+
+    The same unchanged TaskItem, pin, decision and effect must keep its exact
+    checkpoint version across an update.  The retired old-chain continuation
+    projection once hashed its document into every checkpoint; the current
+    kernel can only produce a null at that key, so the key stays in the hash
+    input while the projection is gone.  The pinned digest below was computed
+    with the actual Task Base code (``b73c3635``) over the identical fixture
+    (``.git/validation-evidence/task55-3-fix/checkpoint-identity-digest.py``);
+    any change to the hash input changes this digest and must be reviewed as
+    a durable-fence break, not silently accepted.
+    """
+
+    PINNED_BASE_DIGEST = "24889e88984422ba28979d5dd3f911c83f35d4ffee20fdae6ac20ed3a5ba66bc"
+
+    @staticmethod
+    def _continuation_context():
+        from mediaflow.domain.processing_checkpoint import ProcessingCheckpointContext
+
+        task = PersistentTask(
+            "task-fixed-0001",
+            "organize",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            total_items=1,
+            configuration_snapshot_id="snap-fixed-0001",
+            configuration_snapshot_digest="digest-fixed-0001",
+        )
+        item = PersistentTaskItem(
+            "item-fixed-0001",
+            "task-fixed-0001",
+            "source",
+            "mediaflow:resource:source",
+            "Movies/One.2001.mkv",
+            "One.2001.mkv",
+            TaskItemStatus.WAITING_CONFIRM,
+            "continuation_planned",
+            2,
+            NOW,
+            NOW,
+            plan_id="plan-fixed-0001",
+            destination_storage_id="target",
+            destination_path="Organized/Movies/One (2001).mkv",
+        )
+        blocker = CheckpointBlocker(
+            "recognition",
+            "review-fixed-0001",
+            "resolved",
+            "task-fixed-0001",
+            "item-fixed-0001",
+            "/api/v1/recognition-reviews/review-fixed-0001",
+        )
+        audit = CheckpointAudit(
+            "decision-fixed-0001",
+            "recognition_review",
+            NOW,
+            "admin",
+        )
+        request = RecoveryRequest(
+            "request-fixed-0001",
+            "task-fixed-0001",
+            "item-fixed-0001",
+            "retry",
+            "previous-version-fixed-0001",
+            "source",
+            "Movies/One.2001.mkv",
+            "snap-fixed-0001",
+            "digest-fixed-0001",
+            "admin",
+            NOW,
+            status=RecoveryRequestStatus.COMPLETED,
+            review_kind="recognition",
+            review_id="review-fixed-0001",
+        )
+        return ProcessingCheckpointContext(
+            task=task,
+            item=item,
+            results=(),
+            blockers=(blocker,),
+            audits=(audit,),
+            recovery_requests=(request,),
+            verified_recovery_follow_up=False,
+        )
+
+    class _FixtureRepository:
+        def __init__(self, context) -> None:
+            self._context = context
+
+        def get_processing_checkpoint_context(self, item_id, *, result_limit=32, audit_limit=64):
+            return self._context
+
+    def test_base_pinned_checkpoint_version_is_unchanged_by_retired_projection_removal(
+        self,
+    ) -> None:
+        """The Base-pinned digest of the same unchanged state is reproduced exactly."""
+
+        context = self._continuation_context()
+
+        def validate_snapshot(revision_id: str, digest: str) -> None:
+            if revision_id != "snap-fixed-0001" or digest != "digest-fixed-0001":
+                raise RuntimeError("fixture snapshot mismatch")
+
+        service = ProcessingCheckpointService(
+            self._FixtureRepository(context), snapshot_validator=validate_snapshot
+        )
+        checkpoint = service.get("item-fixed-0001", task_id="task-fixed-0001")
+        self.assertEqual(
+            self.PINNED_BASE_DIGEST,
+            checkpoint.checkpoint_version,
+            "the checkpoint version of the same unchanged business state changed; "
+            "every summary or request pinned before this change can no longer be "
+            "confirmed (stale_checkpoint) even though nothing happened to the item",
+        )
+        self.assertEqual("waiting_confirm", checkpoint.status)
+        self.assertEqual("continuation_planned", checkpoint.raw_stage)
+        self.assertEqual(("retry",), checkpoint.permitted_action_ids)
+
+        # Real business change still invalidates the pinned confirmation.
+        changed = replace(
+            context.item,
+            attempts=3,
+            updated_at=NOW + timedelta(minutes=1),
+        )
+        moved = ProcessingCheckpointService(
+            self._FixtureRepository(replace(context, item=changed)),
+            snapshot_validator=validate_snapshot,
+        ).get("item-fixed-0001", task_id="task-fixed-0001")
+        self.assertNotEqual(self.PINNED_BASE_DIGEST, moved.checkpoint_version)
 
 
 if __name__ == "__main__":
