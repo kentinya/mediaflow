@@ -8,7 +8,7 @@ Task55.1／55.2 的接受事实保持。Slice55 仍 ACTIVE，尚未满足全部�
 
 用户现明确要求“激活Task吧”，据此将已规划的 Task55.4 激活为正式实施 Task。
 Goal／Scope／Task Base／High／T4／验收与测试分工保持原计划。
-Next Action: **DEVELOPER FIXES TASK55.4 — B55.4-04／05**。
+Next Action: **DEVELOPER FINISHES TASK55.4 B55.4-05 CURRENT CONSUMER ASSERTION**。
 本轮仅激活 TASK；SLICE／Roadmap／Progress 保持原合同和接受身份。
 
 Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6、AC-03／05／07／08／11／12。
@@ -291,106 +291,97 @@ Status: READY FOR B REVIEW
   “不把整个 Slice TARGET 提前改 CURRENT”的边界，留待 Slice 接受时协调。
 - 未推送、未发布、未改动用户数据库／媒体／秘密。
 
-### B Review Result — 2026-11-17，再审 FIX REQUIRED
+### B Review Result — 2062f7f4 再审
 
-固定范围 `64006c8d3b0a2791e5228417420250a064c75cea..299d6e2599eacd7ccbb51d8af02b5611034b2524`；
-实现候选 `f6ab37c82be6f0dea5022b50997db7cdcaf7c348`，其后仅 TASK 报告。
-main，复核前 tracked／untracked 工作区干净，治理 PASS。核对完整138文件变更清单和原
-实现／修正、共享检查调用链、Base 数据及交付消费者；Task Base、Goal、High／T4 不变。
+**FIX REQUIRED，仍为 Task55.4；B55.4-04 修正通过，B55.4-05 尚未完整通过。**
+完整审查范围 `64006c8d3b0a2791e5228417420250a064c75cea..2062f7f4bebd6241e46e073e2651d2f64f1d5708`，
+139个文件；实现候选 `60aced5eedd4ddccf2b60d830bdd1a43843ca79e`，之后只有 TASK 报告。
+main，复核前 tracked／untracked 工作区干净，治理 PASS。固定 Base／Goal／High／T4 保持。
+上一轮结论、原失败和指导保留于
+[323f5918:TASK.md](https://github.com/kentinya/mediaflow/blob/323f59184917550019751f2961fef545c77240ee/TASK.md)。
 
-**上一轮 B55.4-01–03 的失败入口已修正：** B 重新用 `64006c8d` 源码经正式 API 创建
-首次草稿、经 CLI 导入／校验／激活原示例，候选直接重开同一库。原首次草稿 checked
-activate 返回200；原 Active 为 HEALTHY，storage list exit0，原后继草稿校验成功；
-默认和自定 tokenEnv 的生成文件均可直接导入／校验／激活。原失败和指导保留在
-[cbf930ed:TASK.md](https://github.com/kentinya/mediaflow/blob/cbf930edfd5a1093f65df5c4ca5cafcec0efd6b7/TASK.md#b-review-result)。
-这些修正不等于本 Task 全部结果已通过，当前仍有下面两项。
+#### 已验证的交付结果
 
-#### B55.4-04 / P1 — 现有规则能打开，普通修改却无法发布
+- B55.4-01–03：真实 Base 首次草稿在候选继续 checked activate 成功；原 Active／后继
+  草稿可读／可校验，storage list 正常。生成器 portable 输入修正保持。
+- B55.4-04：B 以 Task Base 实际 CLI 建立 Active，候选经原规则 GET／PUT 只改分类 A
+  描述，返回200；真实 Python 浏览器 Save 同样200并关闭编辑卡。已检查 desktop／
+  390px／矮窗口画面；原路径继续完整显示。新增 parse_classification_policy 复用
+  runtime 的同一领域读取，新输入仍受现有提交边界约束。
+- Task Base 与 Slice Base 均有真实受理／继续使用证明：Base CLI 发布配置，Base Files
+  API 保存 C→A 选择并受理分析；候选发布后继配置、继续原分析、读取精确计划并明确确认，
+  由真实 Worker 各完成一次 MOVE。原 pin／digest／revision 文档保留，C 仍为 C，目标为
+  原 `Movies/Movies/Anime/Alpha Movie…`，一次 SUCCESS／verified_complete。再次 Worker
+  run-next 无待处理工作，Result ID、目标字节和 mtime 不变，无重放。
+  Slice Base 的 V2 样本未配置本来就已退出的 schedules 产品；原未绑定 Task 的分析通过
+  现有同请求核对入口接回原 discovery／pin 后继续，符合55.3已接受行为。最初包含旧
+  schedules 的示例样本被准确拒绝，该结果不作为稳定 V2 回归。
+- 新输入拒绝、权限／精确发布／并发／原 pins 等由本候选全量与直接旅程共同核对。
+  没有用户配置、用户库／媒体或外部 Provider 参与；Provider 为本地 fake。
 
-**真实用户旅程：** 管理员已有电影分类 A、电视剧分类 B 和整理策略，升级后打开
-“整理规则 → 分类规则 → A → 编辑”，只改描述并保存。当前完整路径正确显示，输入
-保留，但保存返回409 `rules_destination_check_failed`；界面要求修改目的地，用户实际
-没有改动任何目的地。B 用 Base 正式 CLI 建立配置和 Active，再通过当前 API 及真实
-Python 服务的浏览器编辑卡复现；相同编辑在 Base 返回200，候选返回409。
+#### B55.4-05 剩余交付：原生路径断言仍期待已退出的表达
 
-**已定位的两个真实样本：**
+**实测和用户结果：** 当前真实 Worker 结果显示
+`媒体库 movies，相对路径 Movies/Anime；规则 japanese-animation 命中…`，原最终目标
+保持。`web/tests/e2e/operations-inventory.python.spec.ts:1190` 仍精确期待相对路径
+`Anime`，因此原生门禁在真实整理已经完成后失败。当前规范把原 library 前缀纳入 path；
+这个消费者尚未跟随本 Task 的示例／投影变化。
 
-- Base 规范示例保留其原 `organizePolicies[*].overwrite=false` 时，共享发布检查首先
-  在读取整理策略 A 时失败：`organizePolicies contains unsupported field 'overwrite'`。
-- 另一份由 Base CLI 正常接受的配置不含可选 overwrite；同样只编辑分类 A，检查又在
-  读取完全未修改的分类 B 时失败：`rules[0].result contains unsupported field 'library'`。
+**Developer 开发指导：** 将该既有断言接到当前规范 fixture 明确的 `Movies/Anime`，
+保留识别、命名、最终完整目标、导出和重启读回的断言。运行这个直接受影响的既有旅程：
 
-**根因：** `ConfigurationObjectService._policy_resolution_catalog → _organize_policy`
-及 `_resolve_destination → _classification_policy` 用新输入的 `_normalize` 读取原已
-接受规则。新字段限制因此进入了 checked Save 的整图读取链。原 runtime loader 能
-读、编辑投影能显示完整路径，均不足以完成发布。此问题违反 AC-3／4，不是新输入拒绝
-规则本身需要放宽。
+```sh
+# cwd: web/
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "a real Manual Organize Worker run keeps its reviewed plan"
+npx eslint tests/e2e/operations-inventory.python.spec.ts
+npx prettier --check tests/e2e/operations-inventory.python.spec.ts
+```
 
-**Developer 开发指导与验收：**
+交同一 Task 的 coherent checkpoint／READY FOR B REVIEW。当前未要求新的领域行为、
+新探测工具或全仓回归；B 按输入一致性核对可复用证据并完成余下验收。
 
-1. 在现有共享检查链复用领域中读取已接受规则的职责，保持新提交只用当前表达。
-   修正上述整理／分类读取，让原规则参与检查；不要求用户逐一重建兄弟策略，不改写
-   原 revision／digest／pin，也不以跳过目的地检查让保存通过。
-2. 保留“编辑 A、B 不变”的 Base 真实样本。候选名称／描述编辑和复制能 checked
-   发布；A 的完整目标与原目标相同，B 的原文档不被顺带转换，原工作 pin 继续可读。
-   覆盖两个已复现样本，避免只修第一个报错后留下第二个。新输入中的 overwrite／
-   library 及混合写法继续拒绝。保存／分析仍无媒体变更。
-3. 在现有 `tests.test_v2_rules_workspace_commands`、
-   `tests.test_classification_destination_contract`、`tests.test_configuration_destination_precheck`
-   和 `tests.test_configuration_organize` 中补直接受影响用例；沿用已有共享发布和并发
-   断言。交接真实 Base 样本的继续使用结果。
+#### B 实际验证、失败定位与后续责任
 
-#### B55.4-05 / P1 — 本单元当前消费者未同步，原生验收无法启动
+证据根 `.git/validation-evidence/2062f7f4/task55-4-b/`；各 JSON 含实际命令／区间／退出码，
+完整日志、截图、trace、wheel 和同源 archive 保留。报告中的通过、失败和复用分别记录。
 
-Task 的步骤6及 AC-6／7 要求现有消费者跟随规范输入。B 原样执行所列两组真实 Python
-Playwright 命令，均在 `operations_inventory_harness.py:854` 启动阶段报
-`KeyError: 'webhooks'`，相应业务测试尚未开始。原因是本 Task 将示例 Webhook 移至
-根级，夹具仍读 `document["notifications"]["webhooks"]`；同一生产者在823–825行还
-向新的配置输入添加已退出的 overwrite 字段。
+- 新候选 Python 全量：**2385 tests OK，7 skipped，294.597秒**。Ruff format／check、
+  compileall、pip check、两份规范示例 config validate、治理／whitespace 通过。
+- Web source／lockfile／单元测试／Node fake 与299d6e25无差异（完整差异证明在
+  `web-evidence-reuse.json`）；复用 B 的 **103 files／1636 tests**、typecheck／lint／
+  format 和 **Node E2E 285 passed**。当前重新构建前端通过。Python 原生夹具变化部分
+  均重新执行，没有复用其旧结果。
+- 两组原生命令：Files／手工整理／Task 组 **57 passed、2 failed**；一处为上述路径
+  断言，另一处为跨 spec 共用实例的固定 Task 总数假设。Automation 组 **46 passed、
+  1 failed**，失败在满额拒绝用例把前序 Copy 已有的两个目标当成此次新增效果。
+  同候选独立实例只跑完整 Settings spec **18 passed**，真实共享容量／拒绝无新效果成立。
+  原失败日志与 trace 均保留；不把这些旧状态假设表述为新业务效果。
+- B 后续须用明确初态核对跨 spec 的计数／文件状态，并保留零新增效果、已有成功结果
+  不丢失的断言。另一次独立 Operations 重复在共享 fixture 状态上扩大失败，B 已中止，
+  记录为 exit130／未完成；这次重复不计为通过，也未增加产品返工项。
+- 精确 HEAD archive 的 wheel 构建和 `scripts/wheel_smoke_test.py <wheel>` 源码外安装／
+  consumers 通过；同源 Docker 构建通过。artifact 身份在 `artifact-identities.json`。
+- 同候选 `docker_smoke_test.py` 与 `docker_restart_fault_smoke_test.py` **通过**。
+  前者验证四服务与 API 重启；后者验证真实发布／定义 Task、Worker／Scheduler 重启、
+  逐项证据／未知通知与原效果保留。
+- empty-baseline：B 用仓库当前 Settings 浏览器旅程替代旧按钮词的验收接线，真实四服务
+  健康、首 Draft→精确版本 checked activate→空 Active 成功，零媒体 Task／投递，token
+  未持久化。随后旧 media-free fixture 声明未挂载的 `/media/incoming`，发布准确拒绝。
+  B 后续负责准备存在的隔离测试根并继续该门禁。
+- release-security：镜像扫描／非 root／挂载／当前静态资源通过；旧 smoke 在首次 Active
+  之前要求退休 POST /tasks 返回404，实际为无 Active 的503。该脚本的普通配置前提需由
+  B 调整：保留无 Active 鉴权／零效果检查，在激活后核对退休入口404；当前未记整项 PASS。
+  两项 Docker 验收接线问题不转成新的业务开发要求。
 
-**Developer 开发指导与验收：** 将这个现有夹具改为生成当前规范输入，订阅当前事件，
-覆盖策略继续用 conflictStrategy 表达；保持原真实任务／通知生产、作用域和断言。
-直接启动该既有入口确认可运行，不新增探测框架。两组原生业务旅程及完整矩阵仍由 B
-执行；B 不把此次启动失败表述为手工整理或自动化产品同时故障。AC-6／7。
+**结论：B55.4-01–04 的业务修正通过；05 还剩上述当前断言同步，完整 T4 尚未完成。**
+Developer 只处理明确的当前消费者改动；初态隔离和余下矩阵由 B 继续，不转交全量测试。
+测试／构建合并墙钟小于本轮50%，实际计时见 `review-timing.json`。
 
-#### 本轮 B 实际门禁、证据与未完成项
-
-证据根 `.git/validation-evidence/299d6e25/task55-4-b/`；命令／区间／退出码保存在各
-JSON，完整日志与产物留在该忽略目录。无用户库、媒体或秘密参与。
-
-- Python：`.venv/bin/python -m unittest discover -s tests`，**2376 tests OK，7 skipped**，
-  280.100秒；已有外部服务／endurance 可选跳过及 SQLite ResourceWarning 留在日志。
-- Web：typecheck／lint／format:check／build 全部通过；**103 files、1636 tests 通过**。
-  `npm run test:e2e`（独立产物目录）**285 passed，3.5分钟**。
-- 全仓 Ruff format／check、compileall、pip check、两份规范示例 config validate、
-  禁止依赖搜索、治理与 whitespace 通过。
-- 精确 HEAD archive 构建 wheel，`scripts/wheel_smoke_test.py <wheel>` 源码外安装及
-  consumers 通过；仅 mediaflow console。wheel SHA-256
-  `29c298bd0d15bf3c1d595b33d97363da243ebfeedc6d4d95f6591931d5e836f7`。
-  同源 Docker 构建通过；镜像身份在 `artifact-identities.json`。
-- `scripts/storage_settings_browser_proof.py` 通过：真实 Python 页面完成首 Draft／恢复／
-  空 Active／来源返回，健康 Active 显示两个 Local Storage，未创建媒体任务、未存 token。
-- B55.4-04：`classification-save-candidate.json`／`classification-save-base.json`、第二
-  样本和 `configuration-reader*-diagnostic.json` 保留响应与根因；实际浏览器的409和
-  输入保留在 `classification-browser.log`。已查看 desktop／390px／矮窗口三张截图。
-  初次截图断言用了未核对的中文词，改为实际“保存未生效”后通过，原失败日志保留。
-- 两组真实 Python E2E：启动失败，见 B55.4-05，未记业务用例通过。
-- Docker：使用已运行的独立 `colima-mediaflow-review`，默认 context 不变。初次 receiver／
-  bind 失败由 B 定位为该 VM 仅挂载旧 review 临时目录；改用其挂载内的新隔离子目录后，
-  四服务空实例健康／常驻注册及管理 Web 通过。empty-baseline smoke 随后停在过时的
-  “需要创建首个 Draft”标题断言，实际页为“需要首次设置”；此项由 B 后续核对，不是
-  产品返工。其余 Docker 媒体／restart／security 及 Base 在途实际 Worker 效果未完成。
-
-**决定与下一步：FIX REQUIRED，仍为 Task55.4。** 已证明上述产品／交付阻塞后停止
-追加昂贵门禁。Developer 修04／05并跑失败案例及直接受影响检查，提交新的 coherent
-checkpoint／READY FOR B REVIEW；B 在修正后的精确候选补齐 T4，已有全量不冒充新实现
-的通过结果。测试／构建合并墙钟占本轮时间小于50%，明细见 `review-timing.json`。
-
-**全部 Slice 结果重评：** RO-1 与55.2／55.3已接受部分保持；本 Task 的 RO-3／5／6
-因上述问题尚未交付。RO-2 全局审核／manual-*，RO-3 其余领域模型，RO-4 schema／
-五态清理，RO-5 其余 session／协议及 RO-6 最终全部交付物门禁仍在原后续边界。
-不规划下一 Task，不提交 Closure Packet，不改 Slice／Roadmap／Progress；Slice55
-继续 ACTIVE，55.1–55.3 PASS 保持。
+**全部 Slice 结果重评：** RO-1 及55.2／55.3已接受部分保持。RO-3 的本单元配置核心
+已经上述真实入口核对，RO-5／6 的本单元消费者／完整验收仍待05完成；原后续 RO-2
+全局审核／manual-*、RO-3 其余领域模型、RO-4 schema／五态、RO-5 其余 session／协议及
+RO-6 最终交付物门禁保持原边界。Slice55仍 ACTIVE，55.1–55.3 PASS 保持；不新建 Task，
+不提交 Closure Packet，不改 Slice／Roadmap／Progress。
 
 ### Developer Fix Report — 2026-11-17（B55.4-01–03）
 
