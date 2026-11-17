@@ -8,18 +8,18 @@
 Task ID: 55.5
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.5 IMPLEMENTATION AUTHORIZED
-Next Action: B REVIEWS TASK55.5 CANDIDATE 3bff923de4127506c02a55b76cc7263b868554a6
+Next Action: DEVELOPER FIXES B55.5-01 AND B55.5-02 IN TASK55.5
 ```
 
 规划时 main／上述 HEAD，tracked／untracked 干净，工作区和 Git 可写，治理 PASS。
 Base 为本单元实施前的真实提交，后续草案／激活提交不重设 Base。
-Task55.1–55.4 的已接受结果保持；本单元尚无实现候选或 PASS／FIX REQUIRED 判断。
+Task55.1–55.4 的已接受结果保持；本单元当前候选及 B 判断见下方独立复核记录。
 
 激活前 main／HEAD `6c1852579b8953bad97c2310adfcc880a21a35cf`，工作区干净、文档与 Git
 可写，治理 PASS；Task Base..HEAD 仅 TASK.md 草案变更。原 Base、Goal、Scope、验收及
@@ -249,6 +249,109 @@ Status: READY FOR B REVIEW
 - 更新后的三份风险 E2E spec 只做了静态格式／lint 检查，尚未由 Developer 运行；B 需按
   Task 验收计划在候选上执行。
 - 未运行 wheel／镜像及源码外消费者验证；B 的 T4 验收需覆盖。
+
+### B 独立复核 — 2026-11-18 / FIX REQUIRED
+
+```text
+Reviewed Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Implementation Candidate: 3bff923de4127506c02a55b76cc7263b868554a6
+Reviewed Handoff Head: 9c1322a742f2b5270c88bafedffcad58fb85a032
+Decision: FIX REQUIRED
+Next Action: DEVELOPER FIXES THE SAME TASK
+```
+
+B 从干净的 main／上述交接 Head 开始，治理 PASS、工作区和 Git 可写，独立审查完整
+Base..Head 的41个文件。candidate..handoff Head 只有 TASK.md 交接说明；本轮执行输入
+就是上述产品候选。以下两项留在同一 Task，原 Base、Goal、Scope、High／T4 不变。
+
+**B55.5-01 — 已核对到选中兄弟的原执行，界面仍停在未知确认（P1；AC-2／AC-4）。**
+
+实际用户旅程：Files 同一批中的 One、Two 均完成识别决定与分析；在 Task Center 打开
+One 的新计划摘要，取消选择 One，只确认 Two。真实 Execute 返回202，浏览器丢失这次
+响应，再点击“重新读取条目后再继续”。原 admission GET 已返回 `outcome=known`，包含
+精确选中的 Two、原 executionId 和同一 taskId；One 的逐项摘要仍为 prepared，因为用户
+本来没有选择它。页面却显示“已读回同一预览的受理执行，但未核对到本次计划摘要”，保留
+锁定和“正在受理…”。此次原请求读取没有解除锁定。日志仅有一次 Execute POST。
+
+原因在 `TaskItemRecoveryPanel.tsx` 的 `reconcile`：已绑定原提交的 admission 证明为 known
+后，又要求当前打开文件的摘要必须 confirmed 且 executionId 一致。当前文件和用户选择的
+子集可以不同；One 未被执行不应推翻 Two 的已受理事实。这个判断由候选 `3bff923d`
+（2026-11-18 01:37:49 +0800）加入。本轮直接证明该候选有上述阻塞；未据此推断 Base
+在同一丢响应场景的完整表现。
+
+**开发指导：** 用本次提交保存的 Preview、选择、intent version、效果许可及对应 admission
+证据完成原请求核对；known 后展示返回的原 execution／Task 受理事实，并刷新当前文件的
+合法状态。修正集中在当前 panel 的核对完成与反馈，沿用现有 admission service；当前打开
+的未选文件继续保有自己的待处理状态。把上述 One 摘要只确认 Two 的操作加到现有 panel
+测试及 `operations-inventory.python.spec.ts` 的真实旅程，覆盖关闭重开、
+刷新／重新认证和兄弟重新分析后的原请求核对。验收时原执行只受理一次，Two 的结果归属
+原 Task，One 可按当前状态继续处理。
+
+**B55.5-02 — 任务详情的迟到确认回归用例仍使用旧测试数据（AC-7 门禁阻塞）。**
+
+`RunDetailTabs.test.tsx` 的 `keeps a late confirmation success from navigating a closed card`
+在全量和单独运行均失败：生成摘要后找不到“新计划摘要”。其 `preparedSummaryDocument`
+没有本次新增必填的 `intent_version`，因此当前 normalizer 拒绝该响应；同一测试稍后的
+确认返回值也仍是旧确认接口的简短结构，缺少当前 Execute 的 items／actions／计数等。
+测试尚未进入原本要证明的“提交中切换文件、关闭弹卡、迟到成功、重开读原结果”阶段。
+这是测试消费者接线问题，不是已经证明生产界面会因迟到响应跳转。
+
+同一 Task Base 的原测试在隔离源码中为 **1 passed**，候选为 **1 failed**
+（两者其余24项均按测试名称过滤，未执行）。引入点同为 `3bff923d`：新 normalizer／Execute
+返回契约已切换，该测试只更新了 URL 匹配。
+
+**开发指导：** 将本用例的 preparation 和确认返回接到当前真实契约，可复用现有当前
+organize execution fixture，并使用真实同 Task 身份；完整保留原本的单次提交、文件间隔离、
+关闭不导航和重开读取已受理事实的断言。随后运行整个 RunDetailTabs 模块，确认实际执行到
+这些断言。
+
+**Developer 本次修复的直接测试（cwd `web/`）：**
+
+```sh
+npm run test -- run src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunDetailTabs.test.tsx src/entities/operations/task-item-recovery.test.ts src/shared/api/api-client.test.ts
+npm run typecheck
+npm run lint
+npm run format:check
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+```
+
+将新场景放进该现有原生 spec，通过正常 Files 受理、Task 决定／分析和当前 Execute／admission
+完成；沿用现有临时 SQLite／Local／Provider 夹具。交接修正候选及实际 affected 结果。
+本轮未完成的 T4／Base 数据／制品验收继续由 B 执行。
+
+**B 实际结果与证据：** 稳定本地目录
+`.git/validation-evidence/3bff923d/task55-5-b/`；`runs.jsonl` 记录命令、cwd、时间和退出码，
+原始日志、`subset-requests.json`、真实桌面截图 `subset-unknown.png` 一并保留。这些是本地
+证据，没有声称远程可访问。复现只用了现有 Files／Task recovery／Execute／admission
+入口和现有临时夹具；未读取用户配置、数据库、凭据或媒体，未修改产品代码或开发过程工具。
+
+- Python 直接组：**68 tests OK**；完整回归：**2385 tests OK，skipped=7**
+  （真实 SMB／OpenList／S3 及 endurance 环境的既有可选项）。Ruff format／check、compileall、
+  pip check 均 PASS。完整回归保留 ResourceWarning 和故障注入运行信息。
+- Web typecheck／lint／format:check／build PASS；完整 Vitest 为 **102 files passed／1 failed，
+  1636 tests passed／1 failed**，失败即 B55.5-02。单独运行重现同一失败。
+- 已有真实 Python 浏览器六条恢复旅程 **6 passed**：识别、Metadata 候选／修正、分类、
+  冲突 Rename／明确 Overwrite，均通过同 Task 确认和实际 Worker 结果；其中既有390px
+  分类／容量旅程通过。B55.5-01 的另一次真实浏览器复现记录 known 证据与页面持续锁定。
+- Base 单项回归首次放在 `.git` 下的隔离源码时，Vite 无法读取 setup，尚未执行测试；
+  改用仓库外临时源码后原用例通过。两次原始日志均保留，未把 setup 失败归因产品。
+- 确认上述阻塞后按工作流提前 FIX REQUIRED。完整默认 E2E、两组完整风险 E2E、Slice Base
+  数据由候选继续使用、完整窄／矮窗口检查、wheel／源码外消费者和 Docker 安全／重启尚未
+  完成，均不记 PASS。Docker 初始未运行；本轮启动 Colima 后因已证明阻塞而未开始镜像
+  门禁，已停止本轮启动的临时环境。当前测试输入改变后的所需门禁由 B 在修正候选重跑。
+
+**本轮时间：** 以首次明确时间记录 2026-11-18 07:07:52 至
+2026-11-18 07:23:56（+0800）计，复核至少 16.08 分钟；
+`runs.jsonl` 中测试／构建命令累计 475.9 秒（49.3%），另有不足1秒的
+治理短检查，合计仍小于50%。失败运行计入；计时保存在同目录 `timing.json`。
+
+**全部 Slice 结果重评：** RO-1 的55.1／55.4 已接受结果保持；RO-2 的本次旧传输退出代码
+及正常恢复路径已核对，但 B55.5-01 使当前确认恢复未完成，Pause 专门处理仍未交付；
+RO-3 的已接受配置结果保持，旧 Task／ScanTask 模型仍未交付；RO-4 的全局 schema／暂停
+清理未交付，本轮也未完成 Base 真实数据继续使用验收；RO-5 的本次未知确认仍需修正，
+其他已列出的 session 清理仍未交付；RO-6 因 Web 回归失败及最终制品门禁待验收而未完成。
+Slice55 继续 ACTIVE；本轮只交还 Task55.5 修复，不规划下一 Task，不作 Slice 关闭结论。
 
 ### 规划阶段检查记录（激活前）
 
