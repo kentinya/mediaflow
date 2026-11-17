@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: B REVIEWS TASK55.3 B55.3-05 FIX CANDIDATE（READY FOR B REVIEW，SAME TASK FIX LOOP）。
+Next Action: DEVELOPER FIXES TASK55.3 B55.3-05 CONCURRENT READ-BACK（SAME TASK FIX REQUIRED）。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -234,198 +234,117 @@ session／协议适配留在 Slice 后续完整单元。本 Task 的旧链专属
 下一步由 Developer 实施正式 Task55.3。Slice55 保持 ACTIVE，SLICE/Roadmap/Progress
 边界保持；实施验收 PASS 后再核对全部 RO，决定 NEXT TASK 或 Closure Packet。
 
-### B independent review — FIX REQUIRED（2026-11-17，候选20500963）
+### B independent review — FIX REQUIRED（2026-11-17，候选01d7ee7f）
 
-完整审查范围：`b73c36353e5427cbe60fbb7c1b8cc85b139edca4..205009635b73f4dbe8c8e618aad0b3ba7949088a`。
-本轮源码检查点 `dfcf028471b8a79f68800b73e209439759290b38`；候选 HEAD 为其文档交接。
-main，初始 tracked/untracked 工作区干净；治理 PASS。基于此前完整范围审查，核对本轮
-六文件全部变化、正式入口、独立 Worker 删除及当前 Task claim／持久化关系。
-原 Base、Goal、Scope、High/T4 不变；本轮没有修改生产代码。
+完整审查范围：`b73c36353e5427cbe60fbb7c1b8cc85b139edca4..01d7ee7f0f10e583179504b901184b645ca1843d`。
+本轮产品修正：`ad199146077981f1609b5ac526ace4988a8ecb09`；候选为其文档交接。
+main，初始tracked/untracked工作区干净，治理PASS；在此前完整范围审查上，核对本轮
+四文件全部变化、正式入口、当前Task领取与事务／请求核对。Base、Goal、Scope、High/T4
+保持；本轮未修改生产代码。
 
 前轮完整验收与原失败见
 [145ded12:TASK.md](https://github.com/kentinya/mediaflow/blob/145ded121ba555b8c73ab39eacbe28c3c5f36224/TASK.md)，
-上轮 B 结论与指导见
-[f737be57:TASK.md](https://github.com/kentinya/mediaflow/blob/f737be573818bac9372896ec66d6368aaedb5c97/TASK.md)，
-Developer 本轮 affected 结果、失败原子性与风险原文见
-[20500963:TASK.md](https://github.com/kentinya/mediaflow/blob/205009635b73f4dbe8c8e618aad0b3ba7949088a/TASK.md)。
-历史证据保持各自候选边界，不作为本候选完整 T4 通过。
+上轮B复现／指导见
+[f3ae2a69:TASK.md](https://github.com/kentinya/mediaflow/blob/f3ae2a69c638883ef25d18b267e6860e619459b7/TASK.md)，
+Developer本轮affected结果和风险见
+[01d7ee7f:TASK.md](https://github.com/kentinya/mediaflow/blob/01d7ee7f0f10e583179504b901184b645ca1843d/TASK.md)。
+历史结果保留各自候选边界，不作为本候选完整T4通过。
 
-**结论：SAME TASK FIX REQUIRED。原存量分析分支已修正；B55.3-05 尚有已确认待执行
-工作无法继续，重复核对还产生额外 Task。AC-6、Slice AC-05 与原请求身份要求未满足。**
-B55.3-01–04 沿用已接受修正，不规划新 Task。
+**结论：SAME TASK FIX REQUIRED。上轮无法执行、额外创建Task的两处复现已通过；
+B55.3-05剩余的是并发核对误报失败，AC-5的同一请求收敛／准确耐久状态未满足。**
+本次响应问题为P2；已验证的执行和身份保持结果仍有效。
+B55.3-01–04及已通过修正保持，不规划新Task。
 
 #### 已验证修正
 
-使用 Task Base 真代码，经原资源库 Files API 创建 intent 并请求分析，停在原
-analyzing 状态，再由候选打开同库、继续原 intent：201，原 discoveryId 与 pin 保持；
-当前引擎领取新增的唯一 Task，生成 preview。上轮完全无人领取的短复现通过。
-本轮独立运行 API contract／V2 整理／持久化三模块，73 tests OK，4.453秒。
-当前测试覆盖分析补 Task、原摘要确认、实际同 Task 效果及结构写入回滚；这些通过事实
-保持，不把本轮未完成的完整验收写成 PASS。
+Task Base真实代码通过现有API创建intent、保存C识别／A命名分类、生成摘要并确认，
+在Worker执行前由候选打开同一临时库，原请求再次确认：202回读原execution／Task。
+原Task补上queued/execution调度，当前真实Task engine领取并完成原Task／execution，
+产生1条Result，Task数始终1，discovery链接原Task，pin保持。
+原“无人执行”和“Task从1增为2”均已修正。Developer的当前同Task正向断言保留。
 
-#### B55.3-05 / P1 — 已确认的原工作仍无人执行，核对请求产生第二个 Task
+独立运行本Task相关八模块：225 tests OK，14.255秒，墙钟14.46秒；含V2整理、
+execution、内核、API contract、持久化、容量、fencing和来源竞争。未把这些affected
+结果替代完整T4。
 
-**用户完整旅程：** 改版前，用户选择 `Movies/One.2001.mkv` 整理，保存 C 识别类型与
-A 命名／分类，分析得到精确摘要，确认整理后收到202“已受理、等待 Worker”。此时升级
-并继续查看原工作，任务一直 running、执行一直 admitted，没有结果。用户按原请求核对
-同一确认，响应仍是原 Task／execution，库中却多出第二个 Task；原工作依然不会执行。
+#### B55.3-05剩余项 / P2 — 两个相同核对请求，一个成功、一个误报失败
 
-本轮分别用 Task Base `b73c3635` 与 Slice Base `2b2e7c18` 的真实代码，经现存正式
-API 完整生成以上数据，再交候选打开同库。没有手工构造 Task／execution 行。
-Slice Base 在首次发布前使用正常 V2 配置的旧 schedules 空槽，未改写已发布文档。
-入口依次为：
+**实际完整旅程：** 用户此前已确认整理，程序更新后继续原工作。两个客户端同时核对
+同一项原确认（相同用户、摘要、选中项、版本、破坏性权限），一个收到202及原execution，
+另一个收到409“已经确认的工作无法重新登记到当前Task内核”。此时原工作实际已经进入
+queued，Task数仍1。第二个客户端看到“受理变化／拒绝”而不是原工作身份，不能从本次
+响应得知这项工作已排队。
 
-1. `POST /api/v1/resource-libraries/library/files/organize`，201，取得原 intent。
-2. 原 `/api/v1/operations/organize/intents/{intentId}/items/{itemId}/choice` 保存决定，200；
-   原 `/api/v1/operations/organize/intents/{intentId}/previews` 请求分析，201。
-   Base 当时正式独立 discovery Worker 生成 previewed 摘要。
+本轮分别用Task Base `b73c3635`、Slice Base `2b2e7c18`真代码，经正式入口建立数据：
+
+1. `POST /api/v1/resource-libraries/library/files/organize`，201。
+2. 原intent逐项choice API保存C／A／A，200；原intent/previews API分析，201；
+   Base当时正式discovery Worker生成previewed摘要。
 3. `POST /api/v1/operations/organize/previews/{previewId}/execute`，正常确认体，202。
-   库中已有1项 Task、原 execution 与 TaskItem，原 Task 没有 scheduling，discovery
-   未链接 Task。这是 Base 正式入口的合法结果。
-4. 候选注册当前 Worker，真实 Task engine 领取结果为 None。重复第3步的同一请求，
-   202回读同 executionId／taskId；原 Task 的 scheduling 仍为空。
-5. Task 数量从1变为2，discovery链接新 Task；原 Task仍running，原execution仍admitted，
-   Result数量0。重复之后当前引擎仍无可领取工作，原 pin保持。
+4. 候选打开同库，通过第3步的同一正式WSGI入口，同时发起两个完全相同请求。
+   仅在请求开始前同步两个客户端线程；没有挂钩内部事务、手工插入业务行或改写状态。
+5. **两种Base数据都得到202／409**；409为`admission_changed`，原因ValueError，
+   提示`rejected_without_mutation`，没有原executionId。原工作此时已queued，Task数1。
 
-对照：Task Base 的相同正式请求由当时装配的独立 execution Worker 完成，保留原 Task，
-产生1条 Result及实际目标写入／源删除。全部媒体均在临时 Local 根，Provider 使用 fake。
+正常生产`api serve-production`使用Waitress并支持并发线程（final_cli.py:3360–3375），
+所以这是已有入口的真实并发语义；不依赖不存在的入口或内部故障注入。
+对照：Task Base同一正式入口的两个相同请求均202，回读同一execution，Task数1；
+其原Worker随后完成同一Task并产生1条Result。所有媒体在临时Local根，Provider为fake。
+八请求的首次并发观察同样保留在日志，最终判断使用上述两个请求的最小复现。
 
-**代码原因：** `_adopt_prechange_summary`（manual_organize_execution.py:924）按
-尚未链接 Task 的 discovery 新建 Task，未先采用已有 execution 所属的原 Task。
-`execute`在1417行调用它并独立提交，再进入 `admit_manual_execution` 检查已受理项。
-重复项被拒绝后，`begin_web_execution` 在498行回读原 execution，但先提交的新 Task
-不会回滚。因此既没有给原待执行 Task补上调度，也改变了核对请求的持久化关系。
-Developer 报告中的“已有 Task 但缺 scheduling”现已证实是正常 Base 正式入口可生成
-的数据，属于本 Task AC-6，不是可排除的畸形库或通用迁移范围。
+**代码原因：** `_continue_confirmed_execution`在事务外先读scheduling（649–655行），
+两个请求都可能读到不存在，随后依次进入`adopt_confirmed_manual_execution`。
+第一个事务登记调度，并把原Task从running改为pending。第二个事务在
+`sqlite_runtime.py:12080`先强制要求Task仍为running，抛ValueError；到12116行才读取
+“已经登记”的调度，因此本来用于幂等回读的分支无法处理这个正常竞争结果。
+应用服务最终把它映射为409。新增方法的“并发／重复收敛”承诺与实际响应不一致。
 
-#### Developer 指导与修正验收
+#### Developer指导与修正验收
 
-1. 沿原 intent→discovery→preview→execution→Task／TaskItem 的实际关系收敛同一工作。
-   对已确认、尚未执行的合法 Base 工作，采用原 execution 的 Task／TaskItem 身份，
-   补齐当前内核领取所需的调度与关联；保留原确认、选中范围、来源、pin、决定、请求
-   和效果证据。用户继续原工作并获得原 Task 的结果，无需重新选择或再次授权整理。
-2. 把“查明原请求是否已受理”与所需关联写入放在同一一致性边界处理。重复／丢响应
-   核对只返回原工作；原 Task／execution 已存在时，不能先提交新的 Task再由后续
-   duplicate_execution返回原 execution。并发核对收敛到原身份；写失败无额外 Task、
-   调度或 discovery 错链。使用当前共享容量、来源所有权、claim和逐效果fence。
-3. 本轮已通过的无 Task 分析、保存决定后分析、未确认原摘要直接确认保持。将同一
-   正式旅程延长到“Base已确认但Worker尚未执行→候选继续原Task→实际完成→原请求
-   回读”；同时核对成功／未知效果与兄弟项仍保留各自历史和当前可执行范围。
-   不恢复独立 Worker／全局领取，不建设通用迁移或新恢复类型。
-4. 在现有 V2／内核／持久化夹具加入已确认工作断言：原 Task／TaskItem／execution／
-   preview／intent ID、pin均保持，Task数量不增长，当前Worker实际执行原工作，
-   Result与效果独立准确；先核对和执行后核对都返回原工作。上轮要求的“较早请求在
-   兄弟工作之后仍可核对”仍需保留当前真实旅程断言，不能只读执行列表代替原提交回读。
+1. 在`adopt_confirmed_manual_execution`的同一个事务中，先识别该原Task／execution
+   已经由同一工作登记的当前调度。精确身份和pin相同的重复请求回读原工作，不再套用
+   “尚未登记时必须running”的一次性前置条件，不重写现有queue／claim／效果状态。
+   只有确实尚未登记的首次补链才执行旧状态、容量、未开始及原确认检查和写入。
+2. 事务外读取只能减少一次写入调用，不能承担并发正确性。保留当前权限、原pin、来源、
+   精确确认与逐效果fence；不用捕获所有ValueError后直接当成功，也不重试／重建Task。
+   上轮已修正的原Task／TaskItem／execution身份保持和实际完成结果继续成立。
+3. 在现有`test_prechange_confirmed_execution_continues_on_its_original_task`旅程旁
+   加入两个真实API请求的并发核对：两者均返回同一execution／Task，Task数1、仅一条
+   scheduling，分析／核对阶段零媒体效果。随后当前Worker实际执行一次，结果与媒体
+   效果各一次；后续核对继续读取原工作。保留容量满、原确认不等价和已开始／已完成
+   不重放的现有断言。只调整这条事务的幂等顺序，不增加迁移／队列／探测工具。
 
 Developer运行新增／修改及直接受影响测试：
 `tests.test_v2_manual_organize`、`tests.test_manual_organize_execution`、
-`tests.test_manual_task_engine`、`tests.test_manual_operations_contract`、
-`tests.test_task_persistence`。若修改共享受理，加跑 `tests.test_task_scheduling`、
-`tests.test_task_scheduling_fencing`、`tests.test_task_source_ownership_race`。
-本次真实 Base 失败链优先验证；结构／关联写入保持失败原子性。完整 T4、原生、wheel、
-Docker与验收环境工作仍由B负责，不转交Developer。
+`tests.test_manual_task_engine`、`tests.test_task_persistence`、
+`tests.test_task_scheduling`、`tests.test_task_scheduling_fencing`；涉及API消费者时同时跑
+`tests.test_manual_operations_contract`。完整T4／原生／wheel／Docker仍由B承担。
 
-#### 本轮证据、门禁与全部 Slice 结果重评
+#### 本轮证据、门禁与全部Slice结果重评
 
-本地稳定忽略证据根：`.git/validation-evidence/20500963/task55-3-b/`。
+本地稳定忽略证据根：`.git/validation-evidence/01d7ee7f/task55-3-b/`。
 
 | 验证 | 实际结果 |
 |---|---|
-| 原存量分析→候选 | 原discovery／pin保持，1项Task被领取并生成preview；base-pending.log |
-| API contract／V2／持久化 | 73 tests OK，4.453秒，墙钟4.70秒；focused.log |
-| Base已确认→候选 | Task Base与Slice Base均停滞；同请求202返回原execution但Task从1增为2；base-queued-execution.log、slice-base-queued.log |
-| Base原execution Worker对照 | completed，同Task，1条Result及实际媒体效果；base-queued-control.log |
-| 治理／文档／whitespace | check_governance.py PASS；tests.test_governance 20 tests OK，6.486秒；完整Base..Head及文档git diff --check通过 |
-| 当前候选完整T4／原生／产物／Docker | 本轮未执行；明确产品阻塞后按工作流提前FIX REQUIRED，未记PASS |
+| 上轮原待执行工作复现 | 同Task／execution完成，1条Result，1项Task，pin保持；base-queued-execution.log |
+| 本Task八模块 | 225 tests OK，14.255秒，墙钟14.46秒；focused.log |
+| Task Base→候选双请求 | 202／409，原工作queued，Task数1；two-requests.log |
+| Slice Base→候选双请求 | 同样202／409；slice-base-two-requests.log |
+| Task Base原行为对照 | 双请求均202同execution，随后原Worker完成；base-two-control.log |
+| 首次八请求观察 | 7个202／1个409，保留原日志；concurrent-repeat.log |
+| 治理／文档／whitespace | check_governance.py PASS；tests.test_governance 20 tests OK，6.364秒；完整Base..Head及文档git diff --check通过 |
+| 当前候选完整T4／原生／产物／Docker | 本轮未执行；已证实AC-5缺口后按工作流提前FIX REQUIRED，不记PASS |
 
-首次证据重定向因目录建在源码归档内而失败，随后改用仓库绝对证据路径，未更改产品或
-Base源码。ResourceWarning保留于focused.log；历史原生组合失败与Docker未通过事实
-保留于前轮Git报告及原始日志，没有删断言或改成通过。
+ResourceWarning保留在focused.log；前轮原生组合失败与Docker未通过事实仍在Git指向
+报告和原证据目录中。本轮不改写历史结果或将验收环境工作转交Developer。
 
-全部RO重评：RO-1保留55.1接受事实；RO-2保留55.2与55.3已接受清理，当前新请求和
-存量分析已接入Task，但已确认存量execution仍阻塞55.3；全局V1审核留在原后续边界。
-RO-3完整JSON权威／管理员回落、RO-4其他旧flow／升级清理、RO-5其余session／协议
-仍按原后续范围；已确认合法工作继续条件属于本Task。RO-6最终候选完整门禁仍待B。
-Slice55保持ACTIVE，SLICE／Roadmap／Progress不变，不声明Task或Slice PASS。
+全部RO重评：RO-1保留55.1接受事实；RO-2保留55.2及55.3已接受清理，当前新请求、
+存量分析及已确认未执行工作均可由Task继续；本Task剩余并发核对准确性待修正，全局V1
+审核保持原后续边界。RO-3完整JSON权威／管理员回落、RO-4其余旧flow／升级清理、
+RO-5其余session／协议仍待后续；本轮原请求核对属于55.3。RO-6最终候选完整门禁待B。
+Slice55保持ACTIVE；SLICE／Roadmap／Progress不变，不声明Task或Slice PASS。
 
-计时：已记录复核区间2026-11-17 12:08:18–12:13:25（Asia/Shanghai），5分07秒。
-73项相关测试墙钟4.70秒，20项治理测试墙钟6.52秒，真实入口复现及治理短命令计入后
-测试／验证按不足20秒记录，小于本轮50%。下一步Developer修正同一B55.3-05后交B。
-
-
-## Developer 修正交接 — 2026-11-17（B55.3-05 round 2）— READY FOR B REVIEW
-
-```text
-Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
-Fix checkpoint: ad199146
-Branch: main
-Initial workspace: clean (tracked/untracked), governance PASS
-B findings addressed: B55.3-05 (P1)
-```
-
-本轮只修正已确认、尚未执行的合法 Base 工作无法继续，以及重复核对产生额外 Task 的
-问题；未改 Base／Goal／Scope／AC，未恢复独立 Worker、全局领取、页面或恢复类型。
-
-**根因与修正**
-
-- 根因：`execute` 先调用 `_adopt_prechange_summary` 为未链接 Task 的 discovery 提交
-  新 Task，然后才进入 `admit_manual_execution`；原 execution 已存在时按
-  `duplicate_execution` 回读原 execution，但先提交的新 Task 不回滚。原 Task 没有
-  scheduling，当前内核永远领取不到。
-- 收敛：`begin_web_execution` 在创建任何 authority 之前，用本次提交的 Preview、意图
-  版本、pin、精确选中项、逐项版本／指纹、principal、两处破坏性权限与既有
-  execution 的持久化确认证据比对；仅 exact submission 收敛回原 execution。启动／
-  完成的 execution 不走此捷径，保持原授权再核对与不重放。
-- 原子补链：新增 `SQLiteTaskRepository.adopt_confirmed_manual_execution`，在一个
-  `BEGIN IMMEDIATE` 内复核 execution 仍为 admitted、0 attempts、无 claim、授权为
-  精确 consumed、Task 为未结束的原 pin owner、无 Result、每个 execution item 与
-  TaskItem 仍未开始，然后一起写 scheduling（queued／execution）、Task pending 与
-  仍未链接、同 intent／Preview 的 discovery 关联。共享容量不足抛
-  `TaskQueueFull`（409 capacity_full）；任何写入失败整体回滚，不留 Task／调度／
-  错链。重复领取收敛同一执行身份，已登记调度时不重写。
-- 不先建 Task：`execute` 对 exact existing execution 只撤销本次未使用的 authority
-  并返回原工作；非等价的重叠提交跳过 prechange 采纳，让 admission 以自身原因拒绝
-  且不提交 Task。
-- 原 Task、TaskItem、execution、Preview、intent、pin、保存决定、锁与确认证据保持；
-  当前 Worker 按既有 claim／心跳／逐效果 fence 执行并产生原 Task 的 Result。
-
-**实际验证（仓库根目录，最终候选 ad199146）**
-
-- 新增回归
-  `test_prechange_confirmed_execution_continues_on_its_original_task`：两个文件经真实
-  Preview 与 execute 入口形成 Base 形态（1 Task、0 scheduling、未链接 discovery），
-  再走现有 API 重发同一确认。断言原 Task／execution／Preview／intent ID、pin、
-  TaskItem 身份保持；Task 数仍 1；scheduling queued／execution；discovery 链回原
-  Task；无媒体变更。随后真实 `ManualTaskEngineWorker` 领取原 Task 完成，2 条 C 结果、
-  2 次源删除／目标写入，执行前后 admission 核对均返回原 execution。
-  临时去掉本次生产改动时该测试在原断言失败 `1 != 2`，即 B 报告的第二 Task；恢复后
-  通过。
-- `python3 scripts/check_governance.py` → PASS；`git diff --check` → PASS。
-- `ruff check`（三个改动文件）→ PASS；`ruff format --check`（三个改动文件）→ PASS。
-- `.venv/bin/python -m unittest tests.test_v2_manual_organize
-  tests.test_manual_organize_execution tests.test_manual_task_engine
-  tests.test_manual_operations_contract tests.test_task_persistence
-  tests.test_task_scheduling tests.test_task_scheduling_fencing
-  tests.test_task_source_ownership_race` → **225 tests OK，墙钟 13.06 秒**。
-- 相邻消费者另跑 `tests.test_automation_task_admission`、
-  `tests.test_processing_recovery_admission` → 22 tests OK，0.67 秒；
-  `tests.test_automation_entrance_recovery`、`tests.test_execution_authorization`、
-  `tests.test_manual_operations`、`tests.test_processing_worker_readiness`、
-  `tests.test_task_item_metadata_search`、`tests.test_operations_task_center` →
-  88 tests OK；同批另指定了不存在的 `tests.test_automation_run_once`，仅该模块
-  导入报 ModuleNotFoundError，未计为通过。ResourceWarning 为既有 SQLite 测试
-  痕迹，未见产品失败。
-
-**剩余风险／未执行**
-
-- 完整 T4、全量 Python/Web、Node 原生、wheel、候选镜像 Docker 与浏览器验收仍由 B
-  执行；本报告不声明这些通过。
-- 已开始（execution attempts>0／running）的 Base execution 不重放、不重建调度，
-  保持原耐久记录；本轮只承诺 B 所指的“已确认、尚未执行”工作。
-- 满额路径映射为既有 `capacity_full` 409，未在本轮新增满额夹具；共享容量本身由既有
-  scheduling 测试覆盖。
-- Web src、README、Docker harness 未改；本轮无新增入口、配置键或恢复类型。
-
-计时：本轮开始约 12:20，交接约 12:38（Asia/Shanghai）。实际测试墙钟合计约 40 秒
-（含缺模块导入批次），约占总耗时 4%，低于 30%，也低于 Task 规定的 50%。
-Slice55 保持 ACTIVE，Roadmap／Progress 不变，不声明 Task 或 Slice PASS。
+计时：已记录复核区间2026-11-17 13:00:22–13:04:49（Asia/Shanghai），4分27秒。
+225项相关测试墙钟14.46秒，20项治理测试墙钟6.39秒；真实入口短复现和治理命令计入后，
+测试／验证合计按不足30秒记录，小于本轮50%。
+下一步Developer修正同一B55.3-05并发核对后交B。
