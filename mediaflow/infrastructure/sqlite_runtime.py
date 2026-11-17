@@ -11983,6 +11983,223 @@ class SQLiteTaskRepository:
                 raise
         return self.get_media_discovery(discovery.discovery_id)
 
+    def adopt_confirmed_manual_execution(
+        self,
+        execution_id: str,
+        *,
+        scheduling: TaskSchedulingState,
+        capacity: int,
+        now: datetime,
+        discovery_id: str | None = None,
+        expected_discovery_version: int | None = None,
+    ) -> ManualExecution:
+        """Give one confirmed pre-change execution back to the current kernel.
+
+        Before Task55.3 an execution could be durably confirmed while its Task
+        had no scheduling row and the analysis discovery was never linked to
+        that Task: the retired standalone execution Worker was the only owner.
+        Confirming that same reviewed submission again is still legal V2 work,
+        so the continuation must settle *that* work instead of minting a second
+        Task.  The scheduling row, the Task's queued boundary and the discovery
+        link commit in one transaction, only for a still-unstarted execution of
+        an unfinished Task with the exact pin, item identities and no recorded
+        result.  The execution itself, its selected scope, item identities,
+        Preview, intent, saved decisions, one-shot authority, locks, display
+        evidence and per-item outcomes stay untouched.
+
+        A repeated adoption is idempotent: an already-adopted Task keeps its
+        machine state and only a still-unlinked discovery is connected.  A
+        concurrent adoption serializes on the same transaction, so exactly one
+        scheduling row and one Task link ever commit.
+        """
+
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("manual execution identity is required")
+        if not isinstance(scheduling, TaskSchedulingState):
+            raise ValueError("manual execution Task scheduling facts are invalid")
+        if not isinstance(scheduling.task_id, str) or not scheduling.task_id.strip():
+            raise ValueError("manual execution Task scheduling identity is invalid")
+        if scheduling.queue_state is not TaskQueueState.QUEUED:
+            raise ValueError("a confirmed pre-change execution is re-queued only once")
+        if scheduling.machine_stage is not TaskMachineStage.EXECUTION:
+            raise ValueError("a confirmed pre-change execution re-enters at execution")
+        if expected_discovery_version is not None and (
+            isinstance(expected_discovery_version, bool)
+            or not isinstance(expected_discovery_version, int)
+            or expected_discovery_version < 1
+        ):
+            raise ValueError("discovery expected version is invalid")
+        if now.tzinfo is None:
+            raise ValueError("Task scheduling timestamp needs timezone")
+        require_capacity(capacity)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM manual_executions WHERE execution_id=?",
+                    (execution_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("the confirmed manual execution no longer exists")
+                if (
+                    row["status"] != ManualExecutionStatus.ADMITTED.value
+                    or int(row["attempts"]) != 0
+                    or row["worker_id"] is not None
+                    or row["claim_token"] is not None
+                    or row["claimed_at"] is not None
+                ):
+                    # A started execution is never re-owned or replayed; its
+                    # recorded attempts and effects stay exactly as they are.
+                    self._connection.rollback()
+                    return self.get_manual_execution(execution_id)
+                if scheduling.task_id != row["task_id"]:
+                    raise ValueError("the pre-change execution Task identity does not match")
+                if scheduling.admission_principal != row["actor"]:
+                    raise ValueError("the pre-change admission principal does not match")
+                authorization = self._connection.execute(
+                    "SELECT status, execution_id FROM manual_execution_authorizations "
+                    "WHERE authorization_id=?",
+                    (row["authorization_id"],),
+                ).fetchone()
+                if (
+                    authorization is None
+                    or authorization["status"] != ManualExecutionAuthorizationStatus.CONSUMED.value
+                    or authorization["execution_id"] != execution_id
+                ):
+                    raise ValueError(
+                        "the pre-change execution lost its exact consumed confirmation"
+                    )
+                task = self._connection.execute(
+                    "SELECT status, command, configuration_snapshot_id, "
+                    "configuration_snapshot_digest FROM tasks WHERE task_id=?",
+                    (row["task_id"],),
+                ).fetchone()
+                if (
+                    task is None
+                    or task["command"] != "manual_organize"
+                    or task["status"] != PersistentTaskStatus.RUNNING.value
+                    or task["configuration_snapshot_id"] != row["configuration_snapshot_id"]
+                    or task["configuration_snapshot_digest"] != row["configuration_snapshot_digest"]
+                ):
+                    raise ValueError(
+                        "the pre-change execution Task is no longer its unfinished pin owner"
+                    )
+                if (
+                    self._connection.execute(
+                        "SELECT 1 FROM task_results WHERE task_id=? LIMIT 1",
+                        (row["task_id"],),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError("the pre-change execution Task already recorded a result")
+                item_rows = self._connection.execute(
+                    "SELECT task_item_id, status FROM manual_execution_items WHERE execution_id=?",
+                    (execution_id,),
+                ).fetchall()
+                for item_row in item_rows:
+                    if item_row["status"] != ManualExecutionItemStatus.ADMITTED.value:
+                        raise ValueError(
+                            "the pre-change execution already attempted an item effect"
+                        )
+                    task_item = self._connection.execute(
+                        "SELECT status, attempts FROM task_items WHERE task_id=? AND item_id=?",
+                        (row["task_id"], item_row["task_item_id"]),
+                    ).fetchone()
+                    if (
+                        task_item is None
+                        or task_item["status"] != TaskItemStatus.PENDING.value
+                        or int(task_item["attempts"]) != 0
+                    ):
+                        raise ValueError(
+                            "the pre-change TaskItem is no longer its unstarted identity"
+                        )
+                state = self._scheduled_state_locked(row["task_id"])
+                if state is None:
+                    # The Task must still be in its admitted, never-scheduled
+                    # boundary: the pre-change admission published it RUNNING,
+                    # and only this continuation may turn it back into queued
+                    # machine work.
+                    if self._scheduled_capacity_use_locked() >= capacity:
+                        raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
+                    self._connection.execute(
+                        _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                    )
+                    updated = self._connection.execute(
+                        "UPDATE tasks SET status=?, updated_at=? WHERE task_id=? AND status=?",
+                        (
+                            PersistentTaskStatus.PENDING.value,
+                            now.isoformat(),
+                            row["task_id"],
+                            PersistentTaskStatus.RUNNING.value,
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("the pre-change execution Task changed before its requeue")
+                if discovery_id is not None:
+                    self._link_confirmed_execution_discovery_locked(
+                        discovery_id,
+                        expected_version=expected_discovery_version,
+                        intent_id=row["intent_id"],
+                        preview_id=row["preview_id"],
+                        task_id=row["task_id"],
+                        now=now,
+                    )
+                self._connection.commit()
+            except (TaskQueueFull, ValueError):
+                self._connection.rollback()
+                raise
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_manual_execution(execution_id)
+
+    def _link_confirmed_execution_discovery_locked(
+        self,
+        discovery_id: str,
+        *,
+        expected_version: int | None,
+        intent_id: str,
+        preview_id: str,
+        task_id: str,
+        now: datetime,
+    ) -> None:
+        """Connect one still-unowned pre-change discovery to its exact Task.
+
+        Only an unlinked (or dangling) discovery of the same intent and Preview
+        is connected.  A discovery another live Task already owns is left
+        exactly as it is: this continuation preserves recorded relationships
+        and never rewrites one work's link onto another.
+        """
+
+        row = self._connection.execute(
+            "SELECT version, organize_task_id, intent_id, preview_id "
+            "FROM media_discoveries WHERE discovery_id=?",
+            (discovery_id,),
+        ).fetchone()
+        if row is None:
+            return
+        if expected_version is not None and int(row["version"]) != expected_version:
+            return
+        if row["intent_id"] != intent_id or row["preview_id"] != preview_id:
+            return
+        held = row["organize_task_id"]
+        if isinstance(held, str) and held:
+            if held == task_id:
+                return
+            if (
+                self._connection.execute("SELECT 1 FROM tasks WHERE task_id=?", (held,)).fetchone()
+                is not None
+            ):
+                return
+        self._connection.execute(
+            "UPDATE media_discoveries SET organize_task_id=?, updated_at=?, "
+            "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL "
+            "WHERE discovery_id=? AND (organize_task_id IS NULL "
+            "OR organize_task_id=? OR NOT EXISTS (SELECT 1 FROM tasks "
+            "WHERE task_id=media_discoveries.organize_task_id))",
+            (task_id, now.isoformat(), discovery_id, task_id),
+        )
+
     def extend_media_discovery_scope(
         self,
         discovery: MediaDiscovery,

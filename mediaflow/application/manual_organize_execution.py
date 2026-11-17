@@ -472,8 +472,34 @@ class ManualOrganizeExecutionService:
         allowed effects, then consumes it through atomic admission.  A repeated
         or concurrent submission of the same reviewed work resolves to that one
         durable execution instead of creating a second Task or mutation
-        attempt.
+        attempt.  A submission that was already confirmed before the current
+        Task kernel (a pre-change execution with its own unfinished Task and no
+        scheduling row) resolves to that same execution as well, and that exact
+        original Task is re-registered for the Worker in the same boundary.
         """
+
+        actor = self._actor(actor)
+        permission = self._permission(permission)
+        self._require_confirmation(confirmation)
+        self._require_bool(allow_overwrite, "allowOverwrite")
+        self._require_bool(allow_source_cleanup, "allowSourceCleanup")
+        preview = self._durable_preview(preview_id)
+        existing = self._existing_reviewed_submission(
+            preview,
+            item_ids,
+            expected_intent_version=expected_intent_version,
+            actor=actor,
+            permission=permission,
+            allow_overwrite=allow_overwrite,
+            allow_source_cleanup=allow_source_cleanup,
+        )
+        if existing is not None and existing.status is ManualExecutionStatus.ADMITTED:
+            # A lost-response repeat or a concurrent resubmission of the same
+            # exact confirmed work is answered by that same unstarted work.  It
+            # never mints a fresh one-shot authority, a second Task or a second
+            # execution.  A started or finished execution keeps the ordinary
+            # authorization revalidation and is never replayed.
+            return self._continue_confirmed_execution(existing)
 
         authority = self.authorize(
             preview_id,
@@ -506,6 +532,191 @@ class ManualOrganizeExecutionService:
     execute_web = begin_web_execution
     web_execute = begin_web_execution
 
+    def _existing_reviewed_submission(
+        self,
+        preview: ManualOrganizePreview,
+        item_ids: Sequence[str],
+        *,
+        expected_intent_version: int | None,
+        actor: str,
+        permission: str,
+        allow_overwrite: bool,
+        allow_source_cleanup: bool,
+    ) -> ManualExecution | None:
+        """The durable execution already admitted for this exact submission.
+
+        A confirmation can only be folded into existing work when that work
+        reviewed the same Preview, intent version, pin, exact selected item set,
+        per-item versions and fingerprints, principal and destructive
+        authority.  The comparison runs against the Preview this submission
+        names, so a changed choice or stale version is a different reviewed
+        submission and never resolves to older work.
+        """
+
+        if (
+            isinstance(expected_intent_version, bool)
+            or not isinstance(expected_intent_version, int)
+            or expected_intent_version < 1
+            or expected_intent_version != preview.intent_version
+        ):
+            return None
+        selected = self._select_preview_items(preview, item_ids)
+        if any(
+            item.plan_fingerprint is None or item.source_fingerprint is None for item in selected
+        ):
+            return None
+        now = self._clock()
+        expected = ManualExecutionAuthorization(
+            "already-reviewed-submission",
+            preview.preview_id,
+            preview.intent_id,
+            preview.intent_version,
+            preview.configuration_snapshot_id,
+            preview.configuration_snapshot_digest,
+            actor,
+            permission,
+            True,
+            allow_overwrite,
+            allow_source_cleanup,
+            tuple(
+                ManualExecutionScopeItem(
+                    item.item_id,
+                    item.preview_item_id,
+                    item.item_version,
+                    item.source_fingerprint,
+                    item.plan_fingerprint,
+                    item.source,
+                    item.choice,
+                )
+                for item in selected
+            ),
+            now,
+            now + timedelta(seconds=1),
+        )
+        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+        if not callable(reader):
+            return None
+        try:
+            values = reader(preview.preview_id, limit=MAX_MANUAL_EXECUTION_ITEMS)
+        except Exception:
+            return None
+        for value in values:
+            if self._is_equivalent_admitted_execution(value, expected):
+                return value
+        return None
+
+    def _selection_already_admitted(self, authority: ManualExecutionAuthorization) -> bool:
+        """Whether any durable execution already holds a selected Preview item.
+
+        A differently bound (narrower, broader or differently authorized)
+        submission never resolves to that other work, but it also must not mint
+        a Task before admission can answer the existing admission.  The
+        admission transaction then refuses it with its own reason and writes
+        nothing.
+        """
+
+        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+        if not callable(reader):
+            return False
+        selected = {scope.item_id for scope in authority.scope}
+        try:
+            values = reader(authority.preview_id, limit=MAX_MANUAL_EXECUTION_ITEMS)
+        except Exception:
+            return False
+        return any(selected.intersection(value.selected_item_ids) for value in values)
+
+    def _continue_confirmed_execution(
+        self, execution: ManualExecution, *, admit_only: bool = True
+    ) -> ManualExecution:
+        """Continue one already-confirmed execution through the current kernel.
+
+        A pre-change confirmation left its execution ``admitted`` while the
+        retired standalone Worker was the only owner: its Task had no
+        scheduling row and the analysis discovery was not linked.  That is
+        still legal, unstarted V2 work, so the exact original Task is
+        re-registered here (one atomic scheduling/status/link write) and the
+        Worker executes that same Task, execution, TaskItem, Preview, pin and
+        saved decisions.  An execution that already started or finished keeps
+        its recorded attempts and effects untouched: only its durable read-back
+        is returned, never a replay.
+        """
+
+        if not admit_only or execution.status is not ManualExecutionStatus.ADMITTED:
+            return execution
+        adopter = getattr(self._repository, "adopt_confirmed_manual_execution", None)
+        if not callable(adopter):
+            return execution
+        state_reader = getattr(self._repository, "get_task_scheduling", None)
+        if callable(state_reader):
+            try:
+                if state_reader(execution.task_id) is not None:
+                    # Already owned by the current kernel; this is a plain
+                    # repeat read-back of that same durable state.
+                    return self.get(execution.execution_id)
+            except Exception:
+                return execution
+        capacity = self._current_scheduling_capacity()
+        if capacity is None:
+            raise ManualExecutionError(
+                "the current system Task scheduling capacity is unavailable",
+                code="capacity_unavailable",
+                status=503,
+                next_action=(
+                    "restore the current Active system runtime settings, then confirm "
+                    "this same summary again"
+                ),
+            )
+        require_capacity(capacity)
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        discovery = None
+        if callable(finder):
+            try:
+                discovery = finder(execution.intent_id)
+            except Exception:  # noqa: BLE001 - an unreadable link keeps the Task adoption
+                discovery = None
+        now = self._clock()
+        scheduling = TaskSchedulingState(
+            task_id=execution.task_id,
+            queue_state=TaskQueueState.QUEUED,
+            admission_trigger=TaskTrigger.MANUAL,
+            admission_principal=execution.actor,
+            admission_request_id=None,
+            created_at=now,
+            updated_at=now,
+            machine_stage=TaskMachineStage.EXECUTION,
+        )
+        try:
+            return adopter(
+                execution.execution_id,
+                scheduling=scheduling,
+                capacity=capacity,
+                now=now,
+                discovery_id=(discovery.discovery_id if discovery is not None else None),
+                expected_discovery_version=(discovery.version if discovery is not None else None),
+            )
+        except TaskQueueFull as full:
+            raise ManualExecutionError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human "
+                    "decision, then confirm this same summary again"
+                ),
+            ) from full
+        except Exception as error:  # noqa: BLE001 - the refusal keeps the original work
+            raise ManualExecutionError(
+                "the already-confirmed work could not be re-registered with the current "
+                "Task kernel",
+                code="admission_changed",
+                status=409,
+                next_action=(
+                    "inspect the original Task and its execution; nothing was re-executed "
+                    "or replayed"
+                ),
+                details={"reason": type(error).__name__},
+            ) from error
+
     def _existing_admitted_execution(
         self, authority: ManualExecutionAuthorization, error: ManualExecutionError
     ) -> ManualExecution | None:
@@ -534,6 +745,13 @@ class ManualOrganizeExecutionService:
             "authorization_consumed",
         }:
             return None
+        return self._equivalent_execution_for_authority(authority)
+
+    def _equivalent_execution_for_authority(
+        self, authority: ManualExecutionAuthorization
+    ) -> ManualExecution | None:
+        """This authority's single *exactly equivalent* durable execution, if any."""
+
         reader = getattr(self._repository, "list_manual_executions_for_preview", None)
         if not callable(reader):
             return None
@@ -1350,6 +1568,22 @@ class ManualOrganizeExecutionService:
             )
         preview = self._preview(authority.preview_id)
         selected = self._selected_authorized_items(preview, authority)
+        existing = self._equivalent_execution_for_authority(authority)
+        if existing is not None:
+            # The exact submitted work was already confirmed.  A repeated or
+            # lost-response confirmation answers with that same execution and
+            # may re-register its original unfinished Task, but never mints
+            # another Task or replays a mutation.  This request's unused
+            # one-shot authority is revoked so no second live credential stays
+            # behind.
+            self._revoke_unused_authority(
+                authority,
+                ManualExecutionError(
+                    "the submitted work is already confirmed",
+                    code="existing_execution",
+                ),
+            )
+            return self._continue_confirmed_execution(existing, admit_only=admit_only)
         # Asked before the generic current-Preview projection so a decided
         # recovery source reports its own exact reason rather than a generic
         # staleness code.  The exact authorized selection is passed so a mixed
@@ -1413,7 +1647,7 @@ class ManualOrganizeExecutionService:
         # when it is the exact unfinished Task of this same library/Storage binding
         # and pin; anything else keeps its own new Task, so history is never merged.
         adopted_task_id = self._adopted_organize_task(intent, authority)
-        if adopted_task_id is None:
+        if adopted_task_id is None and not self._selection_already_admitted(authority):
             adopted_task_id = self._adopt_prechange_summary(
                 intent,
                 authority,
