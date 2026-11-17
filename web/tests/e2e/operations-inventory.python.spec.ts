@@ -615,7 +615,7 @@ test("server-side filtered selection and return keep the list context", async ({
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await views.getByRole("button", { name: "已结束", exact: true }).click();
   await expect(page).toHaveURL(/view=ended/);
-  const failedRow = page.getByRole("row").filter({ hasText: "失败" });
+  const failedRow = page.getByRole("row").filter({ hasText: RICH_RUN_SCOPE });
   await expect(failedRow).toHaveCount(1);
   await expect(page).toHaveURL(/view=ended/);
 
@@ -668,6 +668,10 @@ test("historical identity survives a real restart of the runtime database", asyn
 test("the selected run follows polling, header refresh and history navigation", async ({
   page,
 }) => {
+  const admitted = await page.request.post(
+    `${BASE}/__harness__/seed-queued-task`,
+  );
+  expect(admitted.ok()).toBeTruthy();
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
@@ -3926,6 +3930,8 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   // resident Task engine over the remaining definition-pinned Task: its
   // terminal commit is the durable boundary that publishes the outbox row.
   const api = recordApiCalls(page);
+  const admitted = await request.post(`${BASE}/__harness__/seed-queued-task`);
+  expect(admitted.ok()).toBeTruthy();
   const worker = await request.post(`${BASE}/__harness__/run-worker`);
   expect(worker.ok()).toBeTruthy();
   const settled = (await worker.json()) as {

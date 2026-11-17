@@ -96,7 +96,7 @@ async function publishRunOnceDefinition(page: Page): Promise<string> {
   const link = row.getByRole("link", { name: "查看任务" });
   const href = await link.getAttribute("href");
   if (!href) throw new Error("admitted list row has no Task Center link");
-  const taskId = new URL(href, page.url()).pathname.split("/").pop();
+  const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
   expect(page.url()).toContain("/ui-v2/operations/automation");
   return taskId;
