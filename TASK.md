@@ -8,7 +8,7 @@ Task55.1／55.2 的接受事实保持。Slice55 仍 ACTIVE，尚未满足全部�
 
 用户现明确要求“激活Task吧”，据此将已规划的 Task55.4 激活为正式实施 Task。
 Goal／Scope／Task Base／High／T4／验收与测试分工保持原计划。
-Next Action: **DEVELOPER FIXES TASK55.4 — B55.4-01–03**。
+Next Action: **B REVIEWS TASK55.4 FIXES — B55.4-01–03**。
 本轮仅激活 TASK；SLICE／Roadmap／Progress 保持原合同和接受身份。
 
 Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6、AC-03／05／07／08／11／12。
@@ -394,3 +394,89 @@ Task55.1–55.3 PASS 保持，Slice55 仍 ACTIVE。
 历史规划核验（6463cee9）：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK
 本地链接及 `git diff --check` 通过；仅 TASK 改动。这些是规划检查，不是 Task55.4 的产品
 T4 验收。
+
+### Developer Fix Report — 2026-11-17（B55.4-01–03）
+
+```text
+Task: 55.4
+Fix Candidate: f6ab37c82be6f0dea5022b50997db7cdcaf7c348
+Range: cbf930ed..f6ab37c8 (fix implementation); this report commit follows
+Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
+Status: READY FOR B REVIEW
+```
+
+**根因与实际修正**
+
+- **B55.4-01 — 已保存首次设置草稿：** 根因是 `validate`／`activate` 用
+  `_base_document`（仅 `base_active_revision_id`）判断提交格式；首次草稿没有基线，
+  已被接受的服务器生成字节被当成“无基线的全新输入”。现 `_accepted_baseline` 对已
+  持久化的 revision 使用其自身不可变字节作为已接受基线：新输入仍只在 import／edit
+  边界按当前格式判断，读取／校验／激活不重写原文档、ID、digest 或审计关系。
+- **B55.4-02 — 已接受通知阻断读取：** 根因是 loader 的 `WebhookDefinition.from_document`
+  对新输入与旧 Active／pin 共用一个严格枚举解析。现 `domain/notification.py` 提供单一
+  读取映射 `accepted_notification_event_type`／`accepted_webhook_definition`（job.* 对应
+  同一 Task 生命周期事件，重复别名收敛为一次），由 managed runtime loader、Webhook
+  投影、Webhook 测试与已持久化投递行共用；新配置输入、typed Save 与变更对象仍由
+  `reject_retired_configuration_input` 拒绝 job.*。`_reject_webhook_events` 也按对象
+  比较：baseline 中已接受且未改动的定义可继续携带，改动对象必须使用当前事件名。
+  原 revision 文档／digest、通知 ID／payload／投递状态与嵌套拼写保持原字节。
+- **B55.4-03 — 生成的配置无法导入：** 根因是生成器把示例的 `local-admin` 身份写进
+  配置输入，与生成的 `admin` bootstrap 冲突。`make_deployment_configuration` 现在输出
+  与 managed export 相同的 portable 文档：不含 `persistence` 与 `api.principals`，导入时
+  由接收 bootstrap 绑定自身 locator／principal，部署身份检查保持不变；默认及
+  `--token-env` 输出都可直接成对使用。`scripts/docker_smoke_test.py` 删除夹具中替
+  生成器覆盖身份的做法，并把 `http_request` 返回的 bytes 先解析为 JSON 再读取
+  `revisionId`／`version`／`status`；断言保留。`docs/deployment.md` 同步该行为。
+
+**实际验证（最终候选；仓库根目录）**
+
+- **B55.4-01 真实 Base 样本：** 用 `64006c8d` 源码（`git archive`）创建真实首次
+  Draft（无 base Active、嵌套空 Webhook 节），候选在同一隔离库上 validate →
+  `validated`、无错误；activate → `active`；revision ID／digest／document 相同，
+  `authority=MANAGED, runtimeConfigured=true, emptyActive=true, setupRequired=false`。
+  原始脚本与结果：`.git/validation-evidence/f6ab37c8/task55-4-fixes/`
+  `base_create.py`、`candidate_first_draft.py`、`*-first-draft.json`。
+- **B55.4-02 真实 Base 样本：** 用 `64006c8d` CLI 在隔离目录执行规范示例
+  validate／draft-import／draft-validate／activate，并建立后继 Draft（通知为
+  `job.*`）。候选对同一库：`config status` 为 `MANAGED, runtimeConfigured=true,
+  workflowAvailable=true`；`storage list` 正常列出 2 个 Storage（exit 0）；后继 Draft
+  validate 为 `validated`、无错误；无关 `operationalLogging` 保存成功并再次校验通过；
+  pin 读取得到原 Storage 与 Webhook，事件读取为对应 task.* 语义，持久化字节仍是
+  原 `job.completed/failed/cancelled, schedule.emitted`。证据
+  `base-example-candidate.json`、`base-example-cli.txt`。
+- **B55.4-03 生成器成对输出：** 真实运行
+  `scripts/make_deployment_config.py --output ... --configuration-output ...`，分别用
+  默认与 `--token-env CUSTOM_ADMIN_TOKEN`；只把 bootstrap 的 `databasePath` 指向隔离
+  库（配置输入不含 locator，无需修改），直接经 `config draft-import --file` →
+  `config draft-validate` → `config activate`，两组均 exit 0 且 Active。证据
+  `generated-pair.json`。
+- **新增／修改回归：** `.venv/bin/python -m unittest` 上述 Task 指定四组 affected
+  模块，另加 `tests.test_v2_notification_operations`、`tests.test_webhook_url_security`
+  → **470 tests OK，0 skipped，测试报告18.955秒／命令墙钟19.167秒**；日志
+  `.git/validation-evidence/f6ab37c8/task55-4-fixes/focused-tests.log`。新增用例：
+  Base 形态首次草稿继续激活、已接受嵌套 `job.*` 通知的运行时读取与“未改动可携带／
+  改动须当前名”、快照草稿继续发布、历史 Webhook 投影为可读定义、生成器成对输出可
+  直接导入。原“新 job.* 输入拒绝”断言保留并通过。
+- `.venv/bin/ruff check`／`ruff format --check`（全部改动 Python 文件）：PASS
+  （`configuration_input.py` 原有格式漂移随本次格式化收敛）。
+  `python3 scripts/check_governance.py` PASS；`git diff --check` PASS；两份规范样例
+  `config validate` 均成功。
+
+**已知失败／跳过与剩余风险**
+
+- Docker／wheel／浏览器原生 E2E 未由 Developer 运行；按工作流由 B 在
+  `f6ab37c8` 上执行。本轮未运行 Docker 脚本，只修正其消费者接线。
+- 已接受 Webhook 的普通字节可继续读取并向运行时交付；但经 typed 表单显式编辑该
+  对象时，提交内容必须采用当前事件名（拒绝信息已给出具体替换），这是本单元“新输入
+  只用当前表达”的既定边界，不提供静默转换。
+- `docs/architecture.md` 的 CURRENT `JSON_BOOTSTRAP` 段落仍未提前改为 TARGET；
+  按 Task 边界留待 Slice 接受时协调。
+- 未推送、未发布、未改动用户数据库／媒体／私密配置；B55.4-01 单元用例中的“已接受
+  revision”通过 repository 持久化模拟旧版本留下的不可变行，真实 Base 代码样本另在
+  上述隔离证据中验证。
+
+**计时：** 本轮约 20:02–20:24（Asia/Shanghai，约22分钟）；产品测试与真实入口探测
+墙钟合计约 1 分 10 秒（约 5%），小于本轮 30%。
+
+下一步：B 独立审查 `64006c8d..本报告候选`，重跑三条失败旅程并按其 T4 验收计划给出
+PASS 或 SAME TASK FIX REQUIRED；不规划下一 Task。
