@@ -23,7 +23,10 @@ from mediaflow.domain.library import (
     ScanRuleKind,
 )
 from mediaflow.domain.logging import LogLevel
-from mediaflow.domain.notification import WebhookDefinition
+from mediaflow.domain.notification import (
+    WebhookDefinition,
+    accepted_webhook_definition,
+)
 from mediaflow.domain.security import (
     ApiCredentialStatus,
     ApiPrincipalDefinition,
@@ -1084,10 +1087,16 @@ def _positive_number(value: object, label: str) -> float:
 
 
 def _webhook(value: dict) -> WebhookDefinition:
-    """Parse one Webhook definition with the shared domain validator."""
+    """Parse one Webhook definition with the shared domain validator.
+
+    The loader also reads already accepted Active revisions and legal pinned
+    snapshots, so an event name accepted by an earlier version is mapped to the
+    Task lifecycle event it names.  New submissions are judged by the
+    configuration-input boundary, which never admits those names.
+    """
 
     try:
-        return WebhookDefinition.from_document(value)
+        return accepted_webhook_definition(value)
     except ValueError as error:
         raise ValueError(str(error)) from error
 

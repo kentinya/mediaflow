@@ -372,16 +372,20 @@ class ManagedConfigurationService:
             return document
         return self._loader(copy.deepcopy(document))
 
-    def _base_document(self, revision: ManagedConfigurationRevision) -> object:
-        """The immutable document a new publication is derived from, if any."""
+    def _accepted_baseline(self, revision: ManagedConfigurationRevision) -> object:
+        """The already accepted content a stored revision is checked against.
 
-        if not revision.base_active_revision_id:
-            return None
-        try:
-            base = self._repository.get_revision(revision.base_active_revision_id)
-        except Exception:
-            return None
-        return base.document if base is not None else None
+        A persisted revision is immutable and was accepted by this deployment
+        when it was imported, edited, or created as the server-owned first
+        Draft.  New input is therefore judged at those submission boundaries;
+        validating or activating the stored revision compares it with its own
+        bytes, which keeps an unchanged historical object (for example the
+        empty nested Webhook section of a first setup Draft) readable while a
+        changed object still has to use the current spelling.  The baseline
+        never supplies values to the revision.
+        """
+
+        return revision.document
 
     def _bind_deployment_authority(self, document: dict[str, object]) -> dict[str, object]:
         """One fail-closed deployment-authority boundary for a submitted document.
@@ -742,7 +746,7 @@ class ManagedConfigurationService:
                     raise ValueError("configuration Draft digest does not match its payload")
                 reject_retired_remote_execution_input(revision.document)
                 reject_retired_configuration_input(
-                    revision.document, baseline=self._base_document(revision)
+                    revision.document, baseline=self._accepted_baseline(revision)
                 )
                 self._loader(copy.deepcopy(revision.document))
             except Exception as error:
@@ -904,7 +908,7 @@ class ManagedConfigurationService:
         try:
             reject_retired_remote_execution_input(revision.document)
             reject_retired_configuration_input(
-                revision.document, baseline=self._base_document(revision)
+                revision.document, baseline=self._accepted_baseline(revision)
             )
             self._loader(copy.deepcopy(revision.document))
         except Exception as error:

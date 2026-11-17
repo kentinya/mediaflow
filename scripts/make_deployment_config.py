@@ -60,14 +60,24 @@ def make_deployment_configuration() -> dict:
     activated by the current lifecycle.  It is not a service runtime bootstrap;
     it declares Local Storage roots and therefore needs the optional media-mount
     overlay when the activated configuration is actually consumed.
+
+    The rendered document is the same portable input the managed export
+    produces: deployment startup authority (the durable database locator and
+    the API principal/token identity) is excluded, so importing it binds the
+    receiving bootstrap's own authority instead of this example's identity.
     """
 
     project = Path(__file__).resolve().parents[1]
     source = project / "config" / "strategy.example.json"
     document = json.loads(source.read_text(encoding="utf-8"))
     document = copy.deepcopy(document)
+    document.pop("persistence", None)
+    api = document.get("api")
+    if isinstance(api, dict):
+        api.pop("principals", None)
+        if not api:
+            document.pop("api")
     document["historyPath"] = "/data/history.jsonl"
-    document["persistence"] = {"databasePath": "/data/mediaflow.sqlite3"}
     storages = document.get("storages", [])
     if len(storages) < 2 or storages[0].get("type") != "local":
         raise ValueError("canonical example must begin with two Local Storage definitions")

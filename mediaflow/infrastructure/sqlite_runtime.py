@@ -123,6 +123,7 @@ from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
     NotificationEventType,
+    accepted_notification_event_type,
 )
 from mediaflow.domain.operations_run import (
     COMMAND_LABELS,
@@ -1157,16 +1158,11 @@ def _historical_notification_event_type(value: str) -> NotificationEventType:
     """Read a persisted delivery row whose durable name predates Task event names.
 
     New configuration and new deliveries only use the current event literals.
-    An already persisted delivery keeps its original row and payload; this
-    narrow read-time mapping is not accepted as new configuration input.
+    An already persisted delivery keeps its original row and payload; the
+    shared read-time mapping is not accepted as new configuration input.
     """
 
-    historical = {
-        "job.completed": NotificationEventType.TASK_COMPLETED,
-        "job.failed": NotificationEventType.TASK_FAILED,
-        "job.cancelled": NotificationEventType.TASK_CANCELLED,
-    }
-    return historical.get(value) or NotificationEventType(value)
+    return accepted_notification_event_type(value)
 
 
 class SQLiteTaskRepository:

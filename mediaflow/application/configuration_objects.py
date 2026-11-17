@@ -108,7 +108,11 @@ from mediaflow.domain.naming import (
     NamingPolicy,
     NamingResult,
 )
-from mediaflow.domain.notification import WebhookDefinition, redact_webhook_url_value
+from mediaflow.domain.notification import (
+    WebhookDefinition,
+    accepted_webhook_definition,
+    redact_webhook_url_value,
+)
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     ConflictType,
@@ -8667,7 +8671,11 @@ class ConfigurationObjectService:
             structural_valid = True
             validation_error: str | None = None
             try:
-                WebhookDefinition.from_document(candidate)
+                # The projection reads an already accepted revision, so a
+                # Webhook accepted with the earlier event names is still a
+                # readable, deliverable definition; editing it is what has to
+                # adopt the current names.
+                accepted_webhook_definition(candidate)
             except ValueError as error:
                 structural_valid = False
                 validation_error = cls._bounded_utf8(str(error), 384)

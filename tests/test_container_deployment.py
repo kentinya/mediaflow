@@ -354,13 +354,83 @@ class ContainerArtifactTests(unittest.TestCase):
     def test_deployment_config_helper_is_container_shaped_and_secret_free(self) -> None:
         document = make_deployment_configuration()
         rendered = json.dumps(document, ensure_ascii=False)
-        self.assertEqual(document["persistence"]["databasePath"], "/data/mediaflow.sqlite3")
+        # Deployment startup authority stays with the generated bootstrap; the
+        # input is the same portable document the managed export produces, so
+        # importing it binds the receiving deployment's own locator/identity.
+        self.assertNotIn("persistence", document)
+        self.assertNotIn("principals", document.get("api", {}))
         self.assertEqual(document["historyPath"], "/data/history.jsonl")
         self.assertEqual(document["storages"][0]["rootPath"], "/media/incoming")
         self.assertEqual(document["storages"][1]["rootPath"], "/media/organized")
         self.assertNotIn("MEDIAFLOW_API_TOKEN=", rendered)
         self.assertNotIn("Bearer", rendered)
         self.assertNotIn("schedules", document["automation"])
+
+    def test_generated_bootstrap_and_configuration_input_import_as_generated(self) -> None:
+        """The documented generated pair imports without rewriting identities.
+
+        An operator runs the deployment helper once, starts the management
+        bootstrap and imports the second file as produced.  The default and a
+        custom ``--token-env`` bootstrap must both accept it, so the rendering
+        may never carry the example's unrelated principal identity.
+        """
+
+        for token_env in (DEFAULT_ADMIN_TOKEN_ENV, "CUSTOM_ADMIN_TOKEN"):
+            with self.subTest(token_env=token_env), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                database = str(root / "runtime.sqlite3")
+                bootstrap_path = root / "mediaflow.json"
+                configuration_path = root / "mediaflow.activation.json"
+                subprocess.check_output(
+                    [
+                        os.sys.executable,
+                        str(ROOT / "scripts" / "make_deployment_config.py"),
+                        "--output",
+                        str(bootstrap_path),
+                        "--configuration-output",
+                        str(configuration_path),
+                        "--token-env",
+                        token_env,
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                )
+                bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+                self.assertEqual(bootstrap["api"]["principals"][0]["tokenEnv"], token_env)
+                # The deployment owns the durable locator, so only the
+                # bootstrap is pointed at this isolated database.
+                bootstrap["persistence"] = {"databasePath": database}
+                bootstrap_path.write_text(
+                    json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8"
+                )
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = final_main(
+                    [
+                        "--config",
+                        str(bootstrap_path),
+                        "config",
+                        "draft-import",
+                        "--file",
+                        str(configuration_path),
+                    ],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                self.assertEqual(code, 0, stderr.getvalue())
+                revision_id = json.loads(stdout.getvalue())["revisionId"]
+                for arguments in (
+                    ["config", "draft-validate", revision_id],
+                    ["config", "activate", revision_id, "--expected-version", "1"],
+                ):
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    code = final_main(
+                        ["--config", str(bootstrap_path), *arguments],
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
+                    self.assertEqual(code, 0, stderr.getvalue())
+                self.assertEqual(json.loads(stdout.getvalue())["status"], "active")
 
     def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
         """The default deployment bootstrap is usable with durable data alone.

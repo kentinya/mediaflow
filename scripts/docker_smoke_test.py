@@ -152,16 +152,9 @@ def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path, Path]
     ]
     subprocess.check_output(generator, cwd=ROOT, text=True)
     config_file.chmod(0o644)
-    bootstrap = json.loads(config_file.read_text(encoding="utf-8"))
-    activation = json.loads(activation_file.read_text(encoding="utf-8"))
-    # The managed document binds its deployment authority from the running
-    # bootstrap; never carry the example's unrelated principal identity.
-    activation["api"] = bootstrap["api"]
-    activation["persistence"] = bootstrap["persistence"]
-    activation_file.write_text(
-        json.dumps(activation, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    # The rendered pair is imported exactly as generated: the configuration
+    # input carries no deployment startup authority, so the receiving
+    # bootstrap binds its own database locator and principal identity.
     activation_file.chmod(0o644)
 
     environment_file = root / "deployment.env"
@@ -276,7 +269,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
             activation = json.loads(activation_file.read_text(encoding="utf-8"))
-            status, draft = http_request(
+            status, draft_body = http_request(
                 f"{base}/api/v1/configuration/drafts",
                 method="POST",
                 token=token,
@@ -284,21 +277,23 @@ def smoke(project: str, image: str, keep: bool) -> None:
             )
             if status != 201:
                 raise RuntimeError(f"configuration Draft import returned HTTP {status}")
-            revision = draft["revisionId"]
-            status, validated = http_request(
+            revision = json.loads(draft_body)["revisionId"]
+            status, validated_body = http_request(
                 f"{base}/api/v1/configuration/revisions/{revision}/validate",
                 method="POST",
                 token=token,
                 body=b"{}",
             )
+            validated = json.loads(validated_body)
             if status != 200 or validated.get("status") != "validated":
                 raise RuntimeError(f"configuration validation failed: {validated}")
-            status, active = http_request(
+            status, active_body = http_request(
                 f"{base}/api/v1/configuration/revisions/{revision}/activate",
                 method="POST",
                 token=token,
                 body=json.dumps({"expectedVersion": validated["version"]}).encode(),
             )
+            active = json.loads(active_body)
             if status != 200 or active.get("status") != "active":
                 raise RuntimeError(f"configuration activation failed: {active}")
 

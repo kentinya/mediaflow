@@ -22,10 +22,15 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
 )
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationObjectKind,
     ConfigurationVersionConflict,
+    ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
 )
@@ -243,6 +248,59 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         expected_version=changed.version,
                         actor="tester",
                     )
+
+    def test_accepted_draft_with_historical_webhook_validates_and_activates(self) -> None:
+        """A Draft accepted before this version keeps its exact bytes.
+
+        The previous version stored the notification Webhook under
+        ``notifications`` with the then-current event names.  An upgraded
+        instance validates and activates that same durable revision without
+        rejecting the deployment-produced bytes or rewriting its ID, digest,
+        document or lifecycle evidence.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "runtime.sqlite3")
+            document = example_document()
+            webhook = document.pop("webhooks")[0]
+            webhook["events"] = ["job.completed", "job.failed", "schedule.emitted"]
+            document["notifications"]["webhooks"] = [webhook]
+            document["persistence"]["databasePath"] = database
+            now = datetime.now(UTC)
+            with SQLiteConfigurationRepository(
+                Path(directory) / "configuration.sqlite3"
+            ) as repository:
+                accepted = repository.create_revision(
+                    ManagedConfigurationRevision(
+                        "previous-version-draft",
+                        1,
+                        ManagedConfigurationStatus.DRAFT,
+                        MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+                        canonical_document_digest(document),
+                        document,
+                        now,
+                        now,
+                    )
+                )
+                service = ManagedConfigurationService(repository)
+                validated = service.validate(accepted.revision_id, actor="tester")
+                self.assertEqual(validated.status, ManagedConfigurationStatus.VALIDATED)
+                self.assertEqual(validated.validation_errors, ())
+                self.assertEqual(validated.document, document)
+                self.assertEqual(validated.digest, accepted.digest)
+                active = service.activate(
+                    accepted.revision_id,
+                    expected_version=validated.version,
+                    actor="tester",
+                )
+                self.assertEqual(active.status, ManagedConfigurationStatus.ACTIVE)
+                self.assertEqual(active.document, document)
+                self.assertEqual(active.digest, accepted.digest)
+                self.assertEqual(repository.get_active_revision().revision_id, accepted.revision_id)
+                self.assertEqual(
+                    [item.action for item in repository.list_revision_audits(accepted.revision_id)],
+                    ["activate", "validate"],
+                )
 
     def test_activation_replaces_active_atomically_and_stale_activation_preserves_old(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

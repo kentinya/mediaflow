@@ -13,7 +13,12 @@ from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
     ManagedConfigurationRevision,
 )
-from mediaflow.domain.notification import NotificationEventType, WebhookDefinition, WebhookRequest
+from mediaflow.domain.notification import (
+    NotificationEventType,
+    WebhookDefinition,
+    WebhookRequest,
+    accepted_webhook_definition,
+)
 from mediaflow.domain.security import SecurityAuditRecord
 
 
@@ -79,7 +84,7 @@ class WebhookTestService:
                 f"{revision.revision_id!r}"
             )
         try:
-            definition = WebhookDefinition.from_document(raw)
+            definition = accepted_webhook_definition(raw)
         except ValueError as error:
             return self._result(
                 revision=revision,

@@ -189,6 +189,54 @@ class NotificationEventType(StrEnum):
         return cls(value)
 
 
+#: Event literals an already accepted configuration document or persisted
+#: delivery row may still carry.  They name the same Task lifecycle event as
+#: their current spelling, so reading them keeps an accepted notification
+#: definition consumable without admitting the name as new input.
+_ACCEPTED_TASK_EVENT_ALIASES = {
+    "job.completed": NotificationEventType.TASK_COMPLETED,
+    "job.failed": NotificationEventType.TASK_FAILED,
+    "job.cancelled": NotificationEventType.TASK_CANCELLED,
+}
+
+
+def accepted_notification_event_type(value: object) -> NotificationEventType:
+    """Read one event literal from already accepted configuration or delivery data.
+
+    This is the single read-time mapping shared by the managed runtime loader
+    and the persisted delivery rows.  It never admits new input: the
+    configuration-input boundary rejects these names before anything is
+    persisted, and newly produced events only use the current literals.
+    """
+
+    if isinstance(value, str):
+        historical = _ACCEPTED_TASK_EVENT_ALIASES.get(value)
+        if historical is not None:
+            return historical
+    return NotificationEventType.parse(value)
+
+
+def accepted_webhook_definition(value: Mapping[str, object]) -> WebhookDefinition:
+    """Read one Webhook definition from already accepted configuration data.
+
+    The stored events keep their Task lifecycle meaning, so an accepted
+    definition stays readable and deliverable.  The current-input validator is
+    still the boundary that makes a *changed* definition adopt the current
+    event names.
+    """
+
+    definition = dict(value)
+    events = definition.get("events")
+    if isinstance(events, list):
+        mapped: list[object] = []
+        for event in events:
+            accepted = accepted_notification_event_type(event)
+            if accepted not in mapped:
+                mapped.append(accepted)
+        definition["events"] = mapped
+    return WebhookDefinition.from_document(definition)
+
+
 class NotificationDeliveryStatus(StrEnum):
     PENDING = "pending"
     DELIVERING = "delivering"

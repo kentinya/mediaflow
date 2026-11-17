@@ -5,13 +5,19 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationObjectKind,
+    ManagedConfigurationRevision,
     ManagedConfigurationStatus,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -144,6 +150,52 @@ def _activate(harness):
 
 
 class WebhookManagementTests(unittest.TestCase):
+    def test_accepted_historical_webhook_is_projected_as_readable(self) -> None:
+        """An accepted definition keeps its meaning on the managed read path.
+
+        The previous version stored the Webhook with the then-current event
+        names.  The projection must present it as a readable, deliverable
+        definition with its original bytes; only a changed definition has to
+        adopt the current names.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            harness = WebhookManagementHarness(directory)
+            try:
+                legacy = example_document()
+                webhook = legacy.pop("webhooks")[0]
+                webhook["events"] = ["job.completed", "job.failed", "schedule.emitted"]
+                legacy["notifications"]["webhooks"] = [webhook]
+                legacy["persistence"]["databasePath"] = harness.runtime_database
+                now = datetime.now(UTC)
+                accepted = harness.config_repository.create_revision(
+                    ManagedConfigurationRevision(
+                        "previous-version-webhook",
+                        1,
+                        ManagedConfigurationStatus.DRAFT,
+                        MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+                        canonical_document_digest(legacy),
+                        legacy,
+                        now,
+                        now,
+                    )
+                )
+                status, detail = request(
+                    harness.api,
+                    f"/api/v1/configuration/revisions/{accepted.revision_id}/objects",
+                )
+                self.assertEqual(status, 200, detail)
+                projected = detail["objects"]["webhooks"][0]
+                self.assertTrue(projected["structuralValid"])
+                self.assertEqual(
+                    projected["events"],
+                    ["job.completed", "job.failed", "schedule.emitted"],
+                    "the accepted definition keeps its stored bytes",
+                )
+                self.assertEqual(projected["secretReadiness"][0]["env"], "MEDIAFLOW_WEBHOOK_SECRET")
+            finally:
+                harness.close()
+
     def test_typed_lifecycle_create_edit_copy_enable_disable_delete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookManagementHarness(directory)

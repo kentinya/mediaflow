@@ -79,11 +79,13 @@ The second document rewrites the example's Local Storage roots to
 `/media/incoming` and `/media/organized`, so it is only usable together with the
 optional media mount overlay below. Import it through
 `/ui-v2/configuration` (or `mediaflow config import`) and complete the normal
-validate/check/activate journey. It is never passed to a service as startup
-authority: `mediaflow.json` stays the management-only bootstrap, uses
-`/data/mediaflow.sqlite3`, and the activation document adds
-`/data/history.jsonl`. `config/mediaflow.json` and the activation input are
-Git-ignored.
+validate/check/activate journey. It never carries deployment startup authority:
+the database locator and the API principal identity stay in
+`mediaflow.json` (so a `--token-env` bootstrap and its configuration input stay
+consistent), and the imported document binds them from the receiving
+bootstrap. `mediaflow.json` keeps `/data/mediaflow.sqlite3` and the
+configuration input adds `/data/history.jsonl`. `config/mediaflow.json` and the
+activation input are Git-ignored.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to

@@ -20,6 +20,7 @@ from mediaflow.domain.configuration_input import reject_retired_configuration_in
 from mediaflow.domain.duplicates import HashMode
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.naming import NamingContext
+from mediaflow.domain.notification import NotificationEventType
 from mediaflow.domain.organizer import OrganizeOperationType
 from mediaflow.domain.parser import ParseResult
 from mediaflow.final_cli import final_main
@@ -254,6 +255,52 @@ class CurrentConfigurationInputTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+
+    def test_accepted_nested_webhook_with_job_events_remains_consumable(self) -> None:
+        """An accepted Active keeps its notification meaning after the upgrade.
+
+        The previous version stored the Webhook under ``notifications`` with
+        the then-current event names.  Re-reading those immutable bytes through
+        the shared loader must not fail, and an unchanged object may still be
+        carried through a later save; a changed object has to adopt the current
+        names, which is what a new submission is judged by.
+        """
+
+        document = copy.deepcopy(self.document)
+        webhook = document.pop("webhooks")[0]
+        webhook["events"] = ["job.completed", "job.failed", "job.cancelled", "schedule.emitted"]
+        document["notifications"]["webhooks"] = [webhook, {**webhook, "id": "legacy-task"}]
+        document["notifications"]["webhooks"][1]["events"] = ["job.completed", "task.completed"]
+
+        runtime = load_runtime_configuration(copy.deepcopy(document))
+        self.assertEqual(
+            runtime.webhooks[0].events,
+            (
+                NotificationEventType.TASK_COMPLETED,
+                NotificationEventType.TASK_FAILED,
+                NotificationEventType.TASK_CANCELLED,
+                NotificationEventType.SCHEDULE_EMITTED,
+            ),
+        )
+        self.assertEqual(runtime.webhooks[1].events, (NotificationEventType.TASK_COMPLETED,))
+
+        accepted = copy.deepcopy(document)
+        reject_retired_configuration_input(accepted, baseline=copy.deepcopy(accepted))
+        changed = copy.deepcopy(accepted)
+        changed["notifications"]["webhooks"][0]["events"] = [
+            "job.completed",
+            "task.completed",
+        ]
+        with self.assertRaisesRegex(ValueError, "notifications.webhooks is retired"):
+            reject_retired_configuration_input(changed, baseline=accepted)
+
+        root = copy.deepcopy(self.document)
+        root["webhooks"][0]["events"] = ["job.completed", "schedule.emitted"]
+        reject_retired_configuration_input(root, baseline=copy.deepcopy(root))
+        root_changed = copy.deepcopy(root)
+        root_changed["webhooks"][0]["enabled"] = True
+        with self.assertRaisesRegex(ValueError, "retired job"):
+            reject_retired_configuration_input(root_changed, baseline=root)
 
     def _reject(self, mutate) -> None:
         value = copy.deepcopy(self.document)

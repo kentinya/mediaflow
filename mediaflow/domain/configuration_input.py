@@ -69,9 +69,7 @@ _NAMING_LEGACY_FIELDS = frozenset(
 _CLASSIFICATION_LEGACY_RESULT_FIELDS = frozenset({"library", "category", "subcategory"})
 
 
-def reject_retired_configuration_input(
-    document: object, *, baseline: object = None
-) -> None:
+def reject_retired_configuration_input(document: object, *, baseline: object = None) -> None:
     """Reject a retired spelling in newly submitted configuration.
 
     ``baseline`` is the exact document the submission is derived from (the
@@ -101,20 +99,14 @@ def reject_retired_configuration_input(
                     raise ValueError(
                         "automation.staleJobAgeSeconds is retired and has no replacement setting"
                     )
-                raise ValueError(
-                    "automation.schedules is retired; use automationTaskDefinitions"
-                )
+                raise ValueError("automation.schedules is retired; use automationTaskDefinitions")
 
     notifications = document.get("notifications")
     if isinstance(notifications, Mapping) and "webhooks" in notifications:
         base_notifications = base.get("notifications")
-        base_notifications = (
-            base_notifications if isinstance(base_notifications, Mapping) else {}
-        )
+        base_notifications = base_notifications if isinstance(base_notifications, Mapping) else {}
         if notifications.get("webhooks") != base_notifications.get("webhooks"):
-            raise ValueError(
-                "notifications.webhooks is retired; use the root webhooks section"
-            )
+            raise ValueError("notifications.webhooks is retired; use the root webhooks section")
 
     _reject_storage_fields(document, base)
     _reject_simple_section_fields(
@@ -142,7 +134,7 @@ def reject_retired_configuration_input(
         fields={field: field for field in _NAMING_LEGACY_FIELDS},
     )
     _reject_classification_fields(document, base)
-    _reject_webhook_events(document)
+    _reject_webhook_events(document, base)
 
 
 def _reject_authority(document: Mapping[str, Any]) -> None:
@@ -190,9 +182,7 @@ def _reject_simple_section_fields(
             )
 
 
-def _reject_classification_fields(
-    document: Mapping[str, Any], base: Mapping[str, Any]
-) -> None:
+def _reject_classification_fields(document: Mapping[str, Any], base: Mapping[str, Any]) -> None:
     base_policies = {
         str(item.get("id")): item
         for item in _list(base.get("classificationPolicies"))
@@ -232,16 +222,14 @@ def _reject_classification_fields(
                     f"classification rule {rule.get('id', '?')}.result.{field} is retired; "
                     "express the complete destination as mediaLibraryId plus path"
                 )
-            if "destinationContract" in (
-                result if isinstance(result, Mapping) else {}
-            ) and (previous is None or rule != previous):
+            if "destinationContract" in (result if isinstance(result, Mapping) else {}) and (
+                previous is None or rule != previous
+            ):
                 raise ValueError(
                     f"classification rule {rule.get('id', '?')}.result.destinationContract "
                     "is a read-only projection, not configuration input"
                 )
-            if not _is_current_classification_rule(rule) and (
-                previous is None or rule != previous
-            ):
+            if not _is_current_classification_rule(rule) and (previous is None or rule != previous):
                 raise ValueError(
                     f"classification rule {rule.get('id', '?')} uses the retired flat shape; "
                     "use conditions and result objects"
@@ -249,38 +237,52 @@ def _reject_classification_fields(
 
 
 def _is_current_classification_rule(rule: Mapping[str, Any]) -> bool:
-    return isinstance(rule.get("conditions"), Mapping) and isinstance(
-        rule.get("result"), Mapping
-    )
+    return isinstance(rule.get("conditions"), Mapping) and isinstance(rule.get("result"), Mapping)
 
 
-def _reject_webhook_events(document: Mapping[str, Any]) -> None:
-    webhooks = document.get("webhooks")
-    if not isinstance(webhooks, list):
-        notifications = document.get("notifications")
-        webhooks = (
-            notifications.get("webhooks") if isinstance(notifications, Mapping) else ()
-        )
-    for webhook in _list(webhooks):
-        if not isinstance(webhook, Mapping):
-            continue
-        events = webhook.get("events")
-        if isinstance(events, list) and any(
-            isinstance(event, str) and event.startswith("job.") for event in events
-        ):
+def _webhook_sections(document: Mapping[str, Any]):
+    """Yield every Webhook item list in one document, current spelling first."""
+
+    root = document.get("webhooks")
+    if isinstance(root, list):
+        yield root
+    notifications = document.get("notifications")
+    if isinstance(notifications, Mapping):
+        nested = notifications.get("webhooks")
+        if isinstance(nested, list):
+            yield nested
+
+
+def _reject_webhook_events(document: Mapping[str, Any], base: Mapping[str, Any]) -> None:
+    accepted = {
+        str(item.get("id")): item
+        for section in _webhook_sections(base)
+        for item in section
+        if isinstance(item, Mapping)
+    }
+    for section in _webhook_sections(document):
+        for webhook in section:
+            if not isinstance(webhook, Mapping):
+                continue
+            events = webhook.get("events")
+            if not isinstance(events, list) or not any(
+                isinstance(event, str) and event.startswith("job.") for event in events
+            ):
+                continue
+            # An accepted definition that is carried forward unchanged keeps
+            # its Task lifecycle meaning when the Active snapshot is read; only
+            # a submitted change has to adopt the current event names.
+            if accepted.get(str(webhook.get("id"))) == webhook:
+                continue
             raise ValueError(
                 f"Webhook {webhook.get('id', '?')} uses a retired job.* event; "
                 "use task.completed, task.failed, task.cancelled or schedule.emitted"
             )
 
 
-def _paired_objects(
-    document: Mapping[str, Any], base: Mapping[str, Any], section: str
-):
+def _paired_objects(document: Mapping[str, Any], base: Mapping[str, Any], section: str):
     previous = {
-        str(item.get("id")): item
-        for item in _list(base.get(section))
-        if isinstance(item, Mapping)
+        str(item.get("id")): item for item in _list(base.get(section)) if isinstance(item, Mapping)
     }
     for item in _list(document.get(section)):
         if isinstance(item, Mapping):
