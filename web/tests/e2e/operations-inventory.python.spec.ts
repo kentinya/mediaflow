@@ -672,6 +672,8 @@ test("the selected run follows polling, header refresh and history navigation", 
     `${BASE}/__harness__/seed-queued-task`,
   );
   expect(admitted.ok()).toBeTruthy();
+  const queued = (await admitted.json()) as { readonly taskId: string };
+  seededRunTotal += 1;
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
@@ -732,6 +734,11 @@ test("the selected run follows polling, header refresh and history navigation", 
   await expect(
     desktopDetail.getByRole("button", { name: "关闭详情" }),
   ).toBeVisible();
+  const cancelled = await page.request.post(
+    `${BASE}/api/v1/tasks/${queued.taskId}/cancel`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(cancelled.ok()).toBeTruthy();
 });
 
 // -- Task 42.2: native run detail, progress and operation evidence ----------
@@ -3932,6 +3939,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   const api = recordApiCalls(page);
   const admitted = await request.post(`${BASE}/__harness__/seed-queued-task`);
   expect(admitted.ok()).toBeTruthy();
+  seededRunTotal += 1;
   const worker = await request.post(`${BASE}/__harness__/run-worker`);
   expect(worker.ok()).toBeTruthy();
   const settled = (await worker.json()) as {
