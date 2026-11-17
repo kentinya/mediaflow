@@ -27,7 +27,9 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -986,6 +988,125 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertIsNone(value.task_engine.run_next())
 
+            status, outcome = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_document['previewId']}"
+                f"/admission?{query}",
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("known", outcome["outcome"])
+            self.assertEqual(execution_id, outcome["executionId"])
+            self.assertEqual("completed", outcome["status"])
+
+    def test_prechange_confirmed_execution_concurrent_readback_keeps_one_task(self) -> None:
+        """B55.3-05: two identical confirmations converge on the original work.
+
+        Both requests cross the real Execute WSGI entry concurrently after one
+        pre-change confirmation.  The second settlement must read the exactly
+        registered Task/pin/principal back instead of re-applying the one-time
+        RUNNING precondition, while no analysis, admission or readback mutates
+        media.  The current Worker then executes the original Task once.
+        """
+
+        names = ("One.2001.mkv", "Two.2002.mkv")
+        with self.journey(names=names) as value:
+            intent = self._reviewed_multi_item(value, names)
+            preview = value.previews.create(
+                intent["intentId"],
+                expected_version=intent["version"],
+                actor="operator",
+            )
+            status, preview_document = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview.preview_id}",
+            )
+            self.assertEqual(200, status, preview_document)
+            status, original = self._execute(value, preview_document, intent)
+            self.assertEqual(202, status, original)
+            task_id = original["taskId"]
+            execution_id = original["executionId"]
+            self.assertIsNone(value.repository.get_task_scheduling(task_id))
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(1, len(value.repository.list_tasks()))
+
+            legacy = self._seed_prechange_confirmed_discovery(
+                value, intent, preview_document["previewId"]
+            )
+            self.assertIsNone(legacy.organize_task_id)
+            stored_before = value.repository.get_manual_execution(execution_id)
+
+            barrier = threading.Barrier(2)
+
+            def confirm() -> tuple[int, dict]:
+                barrier.wait()
+                return self._execute(value, preview_document, intent)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = [
+                    future.result()
+                    for future in (executor.submit(confirm), executor.submit(confirm))
+                ]
+
+            for status, confirmation in outcomes:
+                self.assertEqual(202, status, confirmation)
+                self.assertEqual(execution_id, confirmation["executionId"])
+                self.assertEqual(task_id, confirmation["taskId"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            scheduling = value.repository.get_task_scheduling(task_id)
+            self.assertIsNotNone(scheduling)
+            self.assertEqual("queued", scheduling.queue_state.value)
+            self.assertEqual("execution", scheduling.machine_stage.value)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            linked = value.repository.find_media_discovery_for_intent(intent["intentId"])
+            self.assertEqual(legacy.discovery_id, linked.discovery_id)
+            self.assertEqual(task_id, linked.organize_task_id)
+            self.assertEqual(preview_document["previewId"], linked.preview_id)
+            stored_execution = value.repository.get_manual_execution(execution_id)
+            self.assertEqual("admitted", stored_execution.status.value)
+            self.assertEqual(task_id, stored_execution.task_id)
+            self.assertEqual(2, len(stored_execution.items))
+            self.assertEqual(
+                stored_before.configuration_snapshot_digest,
+                stored_execution.configuration_snapshot_digest,
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # A later lost-response reconciliation reads the same original work
+            # without adding a Task, scheduling row or media effect.
+            status, repeated = self._execute(value, preview_document, intent)
+            self.assertEqual(202, status, repeated)
+            self.assertEqual(execution_id, repeated["executionId"])
+            self.assertEqual(task_id, repeated["taskId"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            advanced = value.task_engine.run_next()
+            self.assertIsNotNone(advanced)
+            self.assertEqual(task_id, advanced.task_id)
+            for _index in range(4):
+                value.task_engine.run_next()
+            completed = value.repository.get_task(task_id)
+            self.assertEqual("completed", completed.status.value)
+            finished = value.repository.get_manual_execution(execution_id)
+            self.assertEqual("completed", finished.status.value)
+            results = value.repository.list_results(task_id)
+            self.assertEqual(2, len(results))
+            self.assertEqual({"C"}, {result.recognition_type for result in results})
+            self.assertEqual(2, value.source.mutations.count("delete"))
+            self.assertEqual(2, value.target.mutations.count("write"))
+            self.assertEqual(2, len(list(value.target_root.rglob("*.mkv"))))
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertIsNone(value.task_engine.run_next())
+
+            item_ids = [item["itemId"] for item in preview_document["items"]]
+            query = (
+                f"itemIds={','.join(item_ids)}"
+                f"&expectedIntentVersion={intent['version']}"
+                "&allowOverwrite=false&allowSourceCleanup=false"
+            )
             status, outcome = self._request(
                 value,
                 f"/api/v1/operations/organize/previews/{preview_document['previewId']}"

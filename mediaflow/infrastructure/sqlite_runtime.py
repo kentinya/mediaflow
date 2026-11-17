@@ -12007,10 +12007,12 @@ class SQLiteTaskRepository:
         Preview, intent, saved decisions, one-shot authority, locks, display
         evidence and per-item outcomes stay untouched.
 
-        A repeated adoption is idempotent: an already-adopted Task keeps its
-        machine state and only a still-unlinked discovery is connected.  A
-        concurrent adoption serializes on the same transaction, so exactly one
-        scheduling row and one Task link ever commit.
+        A repeated adoption is idempotent: an already-registered Task is read
+        back from its scheduling row before the one-time RUNNING, consumed
+        authority and unstarted-item checks, so it keeps its machine state and
+        only a still-unlinked discovery is connected.  A concurrent adoption
+        serializes on the same transaction, so exactly one scheduling row and
+        one Task link ever commit.
         """
 
         if not isinstance(execution_id, str) or not execution_id.strip():
@@ -12056,6 +12058,40 @@ class SQLiteTaskRepository:
                     raise ValueError("the pre-change execution Task identity does not match")
                 if scheduling.admission_principal != row["actor"]:
                     raise ValueError("the pre-change admission principal does not match")
+                task = self._connection.execute(
+                    "SELECT status, command, configuration_snapshot_id, "
+                    "configuration_snapshot_digest FROM tasks WHERE task_id=?",
+                    (row["task_id"],),
+                ).fetchone()
+                if (
+                    task is None
+                    or task["command"] != "manual_organize"
+                    or task["configuration_snapshot_id"] != row["configuration_snapshot_id"]
+                    or task["configuration_snapshot_digest"] != row["configuration_snapshot_digest"]
+                ):
+                    raise ValueError("the pre-change execution Task is no longer its pin owner")
+                state = self._scheduled_state_locked(row["task_id"])
+                if state is not None:
+                    # A concurrent or repeated settlement of this same confirmed
+                    # work already registered the original Task.  The first
+                    # adopter owns the one-time RUNNING boundary; later requests
+                    # only read that exact Task/pin/principal back and never
+                    # rewrite its queue, claim, item or effect state.
+                    if state.admission_principal != row["actor"]:
+                        raise ValueError(
+                            "the registered scheduling does not belong to this execution"
+                        )
+                    if discovery_id is not None:
+                        self._link_confirmed_execution_discovery_locked(
+                            discovery_id,
+                            expected_version=expected_discovery_version,
+                            intent_id=row["intent_id"],
+                            preview_id=row["preview_id"],
+                            task_id=row["task_id"],
+                            now=now,
+                        )
+                    self._connection.commit()
+                    return self.get_manual_execution(execution_id)
                 authorization = self._connection.execute(
                     "SELECT status, execution_id FROM manual_execution_authorizations "
                     "WHERE authorization_id=?",
@@ -12069,18 +12105,7 @@ class SQLiteTaskRepository:
                     raise ValueError(
                         "the pre-change execution lost its exact consumed confirmation"
                     )
-                task = self._connection.execute(
-                    "SELECT status, command, configuration_snapshot_id, "
-                    "configuration_snapshot_digest FROM tasks WHERE task_id=?",
-                    (row["task_id"],),
-                ).fetchone()
-                if (
-                    task is None
-                    or task["command"] != "manual_organize"
-                    or task["status"] != PersistentTaskStatus.RUNNING.value
-                    or task["configuration_snapshot_id"] != row["configuration_snapshot_id"]
-                    or task["configuration_snapshot_digest"] != row["configuration_snapshot_digest"]
-                ):
+                if task["status"] != PersistentTaskStatus.RUNNING.value:
                     raise ValueError(
                         "the pre-change execution Task is no longer its unfinished pin owner"
                     )
@@ -12113,28 +12138,26 @@ class SQLiteTaskRepository:
                         raise ValueError(
                             "the pre-change TaskItem is no longer its unstarted identity"
                         )
-                state = self._scheduled_state_locked(row["task_id"])
-                if state is None:
-                    # The Task must still be in its admitted, never-scheduled
-                    # boundary: the pre-change admission published it RUNNING,
-                    # and only this continuation may turn it back into queued
-                    # machine work.
-                    if self._scheduled_capacity_use_locked() >= capacity:
-                        raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
-                    self._connection.execute(
-                        _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
-                    )
-                    updated = self._connection.execute(
-                        "UPDATE tasks SET status=?, updated_at=? WHERE task_id=? AND status=?",
-                        (
-                            PersistentTaskStatus.PENDING.value,
-                            now.isoformat(),
-                            row["task_id"],
-                            PersistentTaskStatus.RUNNING.value,
-                        ),
-                    )
-                    if updated.rowcount != 1:
-                        raise ValueError("the pre-change execution Task changed before its requeue")
+                # The Task must still be in its admitted, never-scheduled
+                # boundary: the pre-change admission published it RUNNING, and
+                # only this continuation may turn it back into queued machine
+                # work.
+                if self._scheduled_capacity_use_locked() >= capacity:
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
+                self._connection.execute(
+                    _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                )
+                updated = self._connection.execute(
+                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=? AND status=?",
+                    (
+                        PersistentTaskStatus.PENDING.value,
+                        now.isoformat(),
+                        row["task_id"],
+                        PersistentTaskStatus.RUNNING.value,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("the pre-change execution Task changed before its requeue")
                 if discovery_id is not None:
                     self._link_confirmed_execution_discovery_locked(
                         discovery_id,
