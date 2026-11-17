@@ -19,7 +19,7 @@ Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6�
 Task ID: 55.4
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
 Difficulty: High
 Test Level: T4
@@ -219,15 +219,86 @@ Task PASS 后 B 重评全部 RO，仍有必需缺口才规划下一单元；满�
 
 ### Developer Completion Report
 
-由 Developer 实施后填：精确候选 SHA、READY FOR B REVIEW、实际改动／删除与保留
-理由、affected commands／结果、已知失败和剩余风险。B 全量验收仍由 B 执行。
+```text
+Task: 55.4
+Candidate: 7962432a5aefbe8af9940b6d30eb9d7a6281e2d7
+Range: 64a8f69e..7962432a (implementation); this report commit follows
+Status: READY FOR B REVIEW
+```
+
+**实际改动／删除与保留理由**
+
+- **启动与权威：** `final_cli._configuration` 不再在无 managed Active 时回落完整
+  `load_runtime_configuration`；无 Active 只保留明确的
+  `RuntimeSnapshotUnavailable(active_missing)`，API／四个常驻服务仍使用
+  management-only bootstrap，合法 pinned revision 仍按原 ID／digest 读取。
+  `configuration_snapshot.status_document` 不再产生 `JSON_BOOTSTRAP`；无 managed 激活时
+  统一显示 `MANAGEMENT_BOOTSTRAP`、`setupRequired`、`runtimeConfigured=false`。
+- **身份：** `RuntimeConfiguration`／`ManagementBootstrapConfiguration`、
+  `MediaFlowApi`、`_ConfiguredPermissionAuthority` 和
+  `_CurrentConfiguredPermissionAuthority` 删除 legacy-admin／单 bearer 回落；
+  `api.tokenEnv` 在新输入、bootstrap 与 managed 文档中均被明确拒绝，
+  `api.principals[*].tokenEnv` 环境引用保留。`bind_deployment_authority` 不再把单 token
+  与 principals 视为等价，只接受精确 principal 身份。
+- **新输入收敛：** 新增 `domain/configuration_input.py`，在现有 import／edit／validate／
+  activate、typed Save／对象测试和 `config validate` 边界拒绝纯废弃写法：顶层 Storage
+  连接字段、ResourceLibrary.rootPath、automation.taskDefinitions／schedules／
+  staleJobAgeSeconds、notifications.webhooks、MetadataPolicy.mediaType、
+  OrganizePolicy.overwrite、旧命名模板、分类 library/category/subcategory／扁平形状及
+  job.* Webhook 事件。与当前字段混用同样拒绝；只有相对 baseline 完全未改变的历史对象可
+  随无关编辑保留，原 Active／digest／pin 不重写。
+- **分类目标：** 编辑投影把历史 `library` 前缀折叠进完整 `path`，普通保存即发布当前
+  MediaLibrary＋path 表达且目标不变；删除旧前缀提示／“移除旧版前缀”迁移按钮。后端 typed
+  Save 不再接受 library/category/subcategory，旧 Active 的运行时目标语义仍由 domain 保留。
+- **事件与默认装配：** `NotificationEventType` 删除 JOB_* 与 job.* 解析别名；新 Webhook
+  只接受 task.*／schedule.emitted。删除 `strategy-test` console 注册、`mediaflow/cli.py`
+  独立 parser／runner／默认策略和 `RecognitionTypePolicyRegistry`；保留当前 `mediaflow`
+  入口、`analyze`、规则对象测试／规划、C→A 身份及共享引擎。已持久化旧 job.* 投递行仅在
+  `sqlite_runtime` 读取时做窄的历史映射，新配置不再接受。
+- **消费者：** 两份规范示例改为根级 Webhooks、task.*、无 overwrite、分类前缀折叠；
+  部署生成器只输出 management bootstrap 或经
+  `--configuration-output`／`--configuration` 产出的规范配置输入；Docker/harness 的配置
+  文件与激活输入分离，实际运行仍通过 import／validate／activate 发布业务配置。
+  README／deployment 文案同步本单元行为。
+
+**验证命令与实际结果**
+
+- `.venv/bin/python -m unittest discover -s tests`：`Ran 2371 tests ... OK (skipped=7)`，
+  263–268 秒；覆盖本轮全部 affected 组及既有回归。
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot
+  tests.test_api_security tests.test_configuration_management
+  tests.test_configuration_package_exchange` 等 Task 指定 affected 组：通过。
+- Web：`npm run typecheck` 通过；指定五个测试文件
+  `124 passed`；改动文件 ESLint／Prettier 通过。
+- `.venv/bin/ruff check <changed-python-files>` 与
+  `.venv/bin/ruff format --check <changed-python-files>`：通过（121 files formatted）。
+- `python3 scripts/check_governance.py`：PASS；`git diff --check` 通过。
+- `config/strategy.example.json config validate`、
+  `config/mediaflow.phase13.2.example.json config validate`：均成功。
+- 现有入口探测：legacy `api.tokenEnv`、分类 `result.library`、`job.completed` 三项
+  `config validate` 均 exit 2 并给出字段级拒绝；最小 bootstrap `config status` 返回
+  `authority=MANAGEMENT_BOOTSTRAP, runtimeConfigured=false, workflowAvailable=false,
+  setupRequired=true, active=null, bootstrapMode=MANAGEMENT_ONLY`。
+
+**已知失败／跳过与剩余风险**
+
+- Docker／wheel／浏览器 E2E 门禁未由 Developer 执行；按工作流由 B 在精确候选上运行。
+- `scripts/docker_upgrade_recovery_smoke_test.py` 仍保留跨版本旧 schedule fixture，本 Task
+  未运行该脚本；它不属于本轮启动／身份／输入收敛的验证范围，B 需按适用性决定。
+- `sqlite_runtime` 对已持久化 `job.*` 投递记录保留只读历史映射，仅为保留原 ID／payload／
+  状态／效果，不提供新配置别名或生产。
+- `docs/architecture.md` 的 CURRENT `JSON_BOOTSTRAP` 段落未提前改为 TARGET；按 Task
+  “不把整个 Slice TARGET 提前改 CURRENT”的边界，留待 Slice 接受时协调。
+- 未推送、未发布、未改动用户数据库／媒体／秘密。
 
 ### B Review Result
 
-尚无 Task55.4 产品候选；本轮仅激活正式 Task，未给本 Task 产品 PASS／FIX REQUIRED。
-后续独立审查完整 Base..Head，按上述 AC 给出结论；产品返工留在同一 Task。
-Task55.3 PASS 保持。Slice55 Required Outcomes 尚未全部满足，下一步为 Developer 实施。
+尚无 Task55.4 的 B 独立审查结果。Developer 候选
+`7962432a5aefbe8af9940b6d30eb9d7a6281e2d7` 已提交，状态 **READY FOR B REVIEW**。
+B 应独立审查 `64a8f69e..HEAD`（实现候选为 `7962432a`，其后的 TASK 报告提交仅文档），
+复现上述入口并执行 Task 规定的完整 acceptance／T4 门禁；产品返工留在同一 Task。
+Task55.3 PASS 保持，Slice55 Required Outcomes 尚未全部满足。
 
-草案规划核验（6463cee9）：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK 本地链接及
-`git diff --check` 通过；仅 TASK 改动。已有入口验证0.784秒，合计测试不足10秒，
-小于本轮规划耗时50%。这些是规划检查，不是 Task55.4 的产品 T4 验收。
+历史规划核验（6463cee9）：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK
+本地链接及 `git diff --check` 通过；仅 TASK 改动。这些是规划检查，不是 Task55.4 的产品
+T4 验收。
