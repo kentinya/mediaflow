@@ -1173,7 +1173,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   ).toBeVisible();
   await expect(itemEvidence.getByText(/执行记录 1（.*）：成功/)).toBeVisible();
   // The successful Worker result states recognition, match, naming and the
-  // Anime classification reason without opening the raw plan diagnostics.
+  // Movies/Anime classification reason without opening the raw plan diagnostics.
   await expect(
     itemEvidence.getByText("从文件名识别为《One》 (2001)；识别类型 C"),
   ).toBeVisible();
@@ -1187,7 +1187,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   ).toBeVisible();
   await expect(
     itemEvidence.getByText(
-      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+      "媒体库 movies，相对路径 Movies/Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
   // The same long names and classification basis stay readable on a narrow
@@ -1195,7 +1195,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     itemEvidence.getByText(
-      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+      "媒体库 movies，相对路径 Movies/Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
   expect(
@@ -1282,7 +1282,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   ).toBeVisible();
   await expect(
     reloadedEvidence.getByText(
-      "媒体库 movies，相对路径 Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
+      "媒体库 movies，相对路径 Movies/Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
   await reloadedEvidence
