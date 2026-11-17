@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER FIXES TASK55.3 B55.3-05（SAME TASK FIX REQUIRED，保留合法存量分析工作的继续条件）。
+Next Action: B RE-REVIEWS TASK55.3 B55.3-05 FIX（SAME TASK，READY FOR B REVIEW）。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -333,3 +333,86 @@ RO-1 保持55.1接受事实；RO-2 保持55.2与本Task已接受清理，新请�
 48项测试墙钟3.41秒，治理20项6.410秒，四次真实入口短复现合计不足2秒，
 包含治理短命令后按测试／验证不足15秒记录，小于本轮50%。
 下一步 Developer 修正同一 B55.3-05 后交 B。
+
+## Developer 修正交接 — 2026-11-17（B55.3-05）— READY FOR B REVIEW
+
+```text
+Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
+Source checkpoint: dfcf0284
+Branch: main
+Initial workspace: clean (tracked/untracked), governance PASS
+B findings addressed: B55.3-05 (P1)
+```
+
+本轮只修正 B55.3-05 的合法存量整理继续条件，未改 Base／Goal／Scope／验收，
+未恢复独立 discovery/execution Worker、全局领取或数据转换工具。
+
+**根因与修正**
+
+- 根因：候选的 intent 分析入口找到改造前已受理的 discovery 后，`pending` 分支
+  直接回读原记录；该记录没有 `organize_task_id`，而当前 Task engine 只领取 Task
+  scheduling 记录，摘要永远没有消费者。直接确认改造前已有摘要也会创建没有
+  scheduling 的 Task，同样无人执行。
+- `begin_intent_analysis` 与既有冻结分析/重分析入口现在区分“已有内核 Task”和
+  “改造前无 Task 分析”。对后者，新增
+  `SQLiteTaskRepository.adopt_files_organize_work` 在一个 `BEGIN IMMEDIATE` 中提交
+  Task、scheduling、display 与 discovery 的精确投影；原 discovery/intent ID、pin、
+  digest、范围、来源、已保存决定和旧摘要保持，旧 claim 字段清空，由当前引擎按原
+  discovery 身份领取。
+- 已开始未完成的分析保持原记录并补 Task；已保存决定或已有待确认摘要经原 intent
+  分析入口重新进入时，仍由同一 discovery 生成新摘要并确认。
+- 改造前仍为 current 的待确认摘要可直接确认：新的 summary adoption 在既有精确
+  admission 之前，为该项旧工作建立同一 Task，并将摘要中每个来源投影为独立
+  TaskItem（ready 为 waiting_confirm，四类问题保留对应等待态，技术失败保留失败），
+  确认只登记被选中的执行工作；未选兄弟保持独立等待，不重放、不合并。
+- 并发/丢响应：两个继续请求由 `BEGIN IMMEDIATE` 串行化，输家回读同一 discovery
+  和 Task；不会产生第二个 Task/discovery。容量满返回既有 `capacity_full`，不写
+  Task、item 或 discovery 链接。
+
+**实际验证（仓库根目录；最终源码候选 dfcf0284）**
+
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过；
+  `compileall -q mediaflow tests` → 通过；
+  `ruff format --check mediaflow tests/test_v2_manual_organize.py
+  tests/test_task_persistence.py` → 165 files already formatted；
+  `ruff check mediaflow tests/test_v2_manual_organize.py
+  tests/test_task_persistence.py` → PASS。
+- Task 指定 affected 15 模块（含 `test_media_discovery`、`test_task_persistence`）：
+  `.venv/bin/python -m unittest tests.test_execution_authorization
+  tests.test_manual_task_engine tests.test_automation_task_admission
+  tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_automation_entrance_recovery tests.test_v2_manual_organize
+  tests.test_operations_task_center tests.test_task_item_metadata_search
+  tests.test_task_source_ownership_race tests.test_manual_operations
+  tests.test_manual_operations_contract tests.test_processing_worker_readiness
+  tests.test_media_discovery tests.test_task_persistence`
+  → **291 tests OK，16.300s，0 skipped**。
+- 直接受影响服务：`tests.test_manual_organize_execution
+  tests.test_manual_organize_preview tests.test_manual_organize_intent`
+  → **60 tests OK，1.974s**。
+- `tests.test_v2_manual_organize tests.test_media_discovery
+  tests.test_manual_task_engine tests.test_manual_operations_contract`
+  → **95 tests OK，11.823s**；新增旅程覆盖未完成分析补 Task、已保存决定/
+  待确认摘要继续分析、直接确认旧摘要、同 discovery/同 Task、pin/范围保持、
+  丢响应重复收敛、源/目标在分析阶段零变更及确认后的真实结果。
+- 结构失败原子性：`tests.test_task_persistence.DiscoveryAdmissionIdentityTests.
+  test_prechange_adoption_rolls_back_task_scheduling_and_items_together`
+  → OK；重复 item identity 触发写失败后，Task、scheduling、item 与 discovery link
+  均无残留。
+- 未运行（仍属 B 的 T4 验收）：全量 Python/Web/Node E2E、原生 playwright、
+  wheel／源码外安装、Docker 三项 smoke；本轮没有把未跑写成 PASS。
+
+**剩余风险／交 B**
+
+- 直接确认改造前摘要时，若旧摘要中的来源处于四类问题等待态，候选只投影相同的
+  等待状态，不重建当时的 review/conflict 证据；需要新证据时可经原 intent 分析
+  入口重新分析，Task 保持开放，不会自动重放或执行该来源。
+- 已有 Task 行但缺少 scheduling 的混合旧形态仍不会被本修正接管；B 的真实 Base
+  数据若出现该形态需在同一 Task 内进一步确认。
+- 本轮未执行完整 T4／原生／产物／Docker 门禁，不能视为 Task 或 Slice PASS。
+
+**计时**：本轮开发约 2026-11-17 11:36–12:01（Asia/Shanghai，约 25 分钟）；
+测试与真实入口复现墙钟合计约 1 分钟，小于本轮 30%。
+
+下一步：B 独立复审 Base..dfcf0284 与本文档检查点，按 T4 验收给出 PASS 或
+SAME TASK FIX REQUIRED。
