@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER FIXES TASK55.3 B55.3-05；修正后提交 READY FOR B REVIEW。
+Next Action: B REVIEWS TASK55.3 B55.3-05 FIX CANDIDATE（READY FOR B REVIEW，SAME TASK FIX LOOP）。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -418,3 +418,87 @@ RO-1沿用55.1已接受入口退休；RO-2沿用55.2 schedules/grant与本55.3�
 清理仍未完成，本次仅完成当前摘要结构与安全收敛；RO-5旧Run once／Copy session与
 其余协议承接仍待后续；RO-6本单元仍欠真实安全旅程与完整原生门禁。未提前协调CURRENT
 或关闭Slice。**Slice55保持ACTIVE；下一步Developer修正同Task的B55.3-05后交B。**
+
+
+## Developer 修正交接 — 2026-11-17（B55.3-05）— READY FOR B REVIEW
+
+```text
+Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
+Fix checkpoint: 70410601f1462610400c60bae749884f9f5360f7
+Branch: main
+Initial workspace: clean (tracked/untracked), governance PASS
+B findings addressed: B55.3-05 (P1)
+```
+
+本轮只修正 B55.3-05 的现行整理受理链路，未改 Base／Goal／Scope／验收，未扩队列、
+页面或治理工具。
+
+**根因与修正**
+
+- 根因：`MediaDiscoveryService._admit_intent_analysis` 仍用
+  `create_media_discovery` 直写没有 Task 的 discovery；独立 discovery/execution
+  Worker 退出后，这条正式入口无人领取，plan 永远不出现。
+- 首次 Files 受理（`POST /resource-libraries/{id}/files/organize`）保持既有契约：
+  只建 durable intent，不建 Task／Preview。intent 的页面分析入口
+  (`POST /operations/organize/intents/{id}/previews`) 现在把该 intent 已解析的精确
+  来源作为一项真实 organizing Task，经 `create_files_organize_work` 原子受理：
+  intent 原 pin、范围、display、共享容量和逐来源预留与冻结 discovery 同一提交。
+  常驻 Task engine 用真实 claim／心跳／fence 调用 `_analyze` 并发布精确 plan，
+  Task 进入人工等待；确认时既有 `_adopted_organize_task` 采用同一 Task 执行。
+- 并发／丢响应：同 intent 的并发分析请求由先提交者胜出，重复请求收敛到同一
+  discovery／Task；另一未结工作持有的来源按 `owned_source_refusal` 拒绝并给出既有
+  工作引用；共享额度满返回 `capacity_full`，不建 Task。
+- 重分析 requeue 与受理共用有界的 pinned-runtime 回退（preview 服务持有的 pin），
+  组合装配仍能重新登记同一 Task 的分析。
+- 测试消费者：contract 旅程改为真实 `ManualTaskEngineWorker` 领取并断言确认后的
+  execution／完成结果就是该分析 Task；V2 旅程所有 intent 分析改用真实引擎，新增
+  丢响应重复受理、worker 缺失时 Task 保持 queued 且无伪造 plan、真实发布的 pending
+  conflict decision 解析；Docker release security 增加“analysis→execution→
+  completion 同一 Task”断言。Web fixture 随真实文档重新生成（preview 的
+  `organizeFlow` 由 null 变为真实 Task）；未改 Web src。
+
+**实际验证（仓库根目录；均为最终候选）**
+
+- `python3 scripts/check_governance.py` → PASS。
+- `ruff check mediaflow tests scripts` → PASS；`ruff format --check mediaflow tests
+  scripts` → 345 files already formatted；`compileall -q mediaflow tests scripts` → PASS。
+- affected 18 模块（Task 指定清单 + `test_media_discovery*` / 自动化现有消费者）：
+  `.venv/bin/python -m unittest tests.test_execution_authorization
+  tests.test_manual_task_engine tests.test_automation_task_admission
+  tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_automation_entrance_recovery tests.test_v2_manual_organize
+  tests.test_operations_task_center tests.test_task_item_metadata_search
+  tests.test_task_source_ownership_race tests.test_manual_operations
+  tests.test_manual_operations_contract tests.test_processing_worker_readiness
+  tests.test_media_discovery tests.test_media_discovery_provider_manifest
+  tests.test_v2_automation_operations tests.test_v2_automation_run_once
+  tests.test_manual_organize_preview` → **344 tests OK，28.584s，0 skipped**。
+- Web（`web/`）fixture 消费者：`npm run test -- run
+  src/entities/operations/manual-actions.test.ts
+  src/entities/operations/manual-operations-contract.test.ts
+  src/features/operations/OrganizePlanConfirmation.test.tsx
+  src/features/operations/OrganizeRouter.test.tsx
+  src/features/operations/RunDetailTabs.test.tsx
+  src/features/operations/ManualOrganizeDialog.test.tsx
+  src/features/operations/TaskItemRecoveryPanel.test.tsx`
+  → **7 files / 107 tests PASS，22.93s**。
+- 未运行（仍属 B 的 T4 验收）：全量 Python/Web/Node E2E、原生 playwright、
+  wheel／源码外安装、Docker 三项 smoke（含本轮加入断言但未实际运行的
+  `docker_release_security_smoke_test.py`）。本轮没有把未跑写成 PASS。
+
+**剩余风险／交 B**
+
+- 存量**无 Task 的 discovery** 仍没有 Task claim 消费者；本 Task 按边界不实施数据
+  转换，正常 V2 已存摘要／intent 的原 ID、pin、确认与结果保持可继续。
+- 同一来源被另一未结工作持有时，intent 分析现在 409 拒绝（真实来源所有权），与旧
+  无 Task 分析不同；B 需在真实 Files 旅程确认提示与下一步。
+- 多文件 intent 的逐项确认遵守 Task 单执行槽：每次执行完成后需重新分析剩余范围再
+  确认（与既有 Files 准备语义一致）；`test_exact_repeat_resolves_across_the_full_preview_bound`
+  已按该语义改写，重复提交解析、逐项唯一执行与既有权限／脱敏断言保留。
+- 架构／迁移文档的 CURRENT/TARGET reconciliation 仍待 B/A 收口。
+- 本轮未执行 Docker／原生完整门禁，不能视为通过。
+
+**计时**：本轮约 09:37–10:17（Asia/Shanghai，约 40 分钟）；测试墙钟合计约 3 分钟
+（含早期失败运行，约 7%），小于本轮 30%。
+
+下一步：B 独立审查 Base..本候选并按 T4 验收给出 PASS 或 SAME TASK FIX REQUIRED。
