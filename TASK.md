@@ -1,6 +1,6 @@
 # Task55.3 — 整理受理、执行与续作只由当前 Task 内核拥有
 
-Next Action: DEVELOPER FIXES TASK55.3 B55.3-05 CONCURRENT READ-BACK（SAME TASK FIX REQUIRED）。
+Next Action: B REVIEWS TASK55.3 B55.3-05 CONCURRENCY FIX CANDIDATE（READY FOR B REVIEW，SAME TASK FIX LOOP）。
 
 Task55.2 的 B 独立复核为 **PASS**，完整范围
 `ebec19bb7592306980a4f288c78378b264f3321f..96ae77450e96b9103007ef29714ce29dcb4669cd`。
@@ -19,7 +19,7 @@ Authority: committed [SLICE.md](SLICE.md) 的 RO-2 中远程票据、非内核�
 Task ID: 55.3
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
 Difficulty: High
 Test Level: T4
@@ -348,3 +348,77 @@ Slice55保持ACTIVE；SLICE／Roadmap／Progress不变，不声明Task或Slice P
 225项相关测试墙钟14.46秒，20项治理测试墙钟6.39秒；真实入口短复现和治理命令计入后，
 测试／验证合计按不足30秒记录，小于本轮50%。
 下一步Developer修正同一B55.3-05并发核对后交B。
+
+## Developer 修正交接 — 2026-11-17（B55.3-05 并发核对）— READY FOR B REVIEW
+
+```text
+Task Base: b73c36353e5427cbe60fbb7c1b8cc85b139edca4
+Fix checkpoint: 42b9a3ee9ece8de8cab2a5fa5320ecac7a034e1e
+Branch: main
+Initial workspace: clean (tracked/untracked), governance PASS
+B finding addressed: B55.3-05 (P2)
+```
+
+本轮只修正已确认、尚未执行的原 Task 在两个相同核对请求下返回 202／409 的并发
+语义；未改 Base／Goal／Scope／AC，未新增入口、迁移、队列或探测工具。
+
+**根因与修正**
+
+- 根因：应用层 `_continue_confirmed_execution` 在事务外读取 scheduling，两个并发
+  请求都可能读到“尚未登记”；第一个事务登记并把原 Task 从 running 改为 pending，
+  第二个事务仍先要求 Task 为 running，于是在读到“已登记”之前抛 ValueError，最终
+  被映射为 409 `admission_changed`。
+- 修正 `SQLiteTaskRepository.adopt_confirmed_manual_execution`：在同一个
+  `BEGIN IMMEDIATE` 内先读取原 Task pin 与该 Task 的 scheduling；scheduling 已存在
+  时，只在 principal／Task／pin 精确一致下回读原工作，连接仍未链接的 discovery，
+  不重写 queue／claim／item／effect 状态。只有确实尚未登记的首次补链才执行原
+  RUNNING、consumed authority、无 Result、TaskItem 未开始和共享容量检查并写入。
+- 事务外读取仍只作为减少写入调用的快路径，不承担并发正确性；未捕获所有
+  ValueError 当成功，未重试、重建 Task 或重放媒体效果。
+- 原 execution、TaskItem、Preview、intent、pin、保存决策、确认证据和逐效果 fence
+  保持；首次登记仍写一条 scheduling 并把原 Task 置为 pending。
+
+**实际验证（仓库根目录）**
+
+- 新增
+  `tests.test_v2_manual_organize.V2ManualOrganizeJourneyTests.test_prechange_confirmed_execution_concurrent_readback_keeps_one_task`：
+  经真实 Files intent／choice、Preview、execute 和 admission 入口形成 Base 形态
+  （1 Task、0 scheduling、未链接 discovery），再通过同一正式 WSGI execute 入口以
+  两个线程在请求发出前同步，并发提交两个完全相同的核对请求。
+- 断言两请求均 202 并返回原 execution／Task；Task 数 1、scheduling 仅 1 条且为
+  queued／execution；discovery 链回原 Task；pin 与 TaskItem 身份保持；核对阶段
+  源／目标媒体效果为零。随后第三次核对仍返回原工作，真实 Task engine 只执行一次，
+  产生 2 条 C Result、2 次源删除／目标写入和 2 个目标文件；完成后 admission 核对
+  仍读原 execution 并报告 completed。
+- 反证：仅在测试前恢复 Base 源码、保留新测试，同一用例 10/10 次以 409
+  `admission_changed`（reason ValueError）失败；恢复修正后 10/10 次通过。
+- `.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_manual_organize_execution tests.test_manual_task_engine
+  tests.test_task_persistence tests.test_task_scheduling
+  tests.test_task_scheduling_fencing tests.test_manual_operations_contract`
+  → **213 tests OK，13.363 秒，墙钟 13.672 秒**。
+- `.venv/bin/python -m unittest tests.test_execution_authorization
+  tests.test_manual_task_engine tests.test_automation_task_admission
+  tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_automation_entrance_recovery tests.test_v2_manual_organize
+  tests.test_operations_task_center tests.test_task_item_metadata_search
+  tests.test_task_source_ownership_race tests.test_manual_operations
+  tests.test_manual_operations_contract tests.test_processing_worker_readiness`
+  → **267 tests OK，15.254 秒，墙钟 15.473 秒**。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → PASS；
+  `ruff check` 与 `ruff format --check`（两个改动文件）→ PASS。
+- ResourceWarning 为既有 SQLite 测试痕迹，未见产品失败。
+
+**剩余风险／未执行**
+
+- 完整 T4、全量 Python/Web、Node 原生、wheel、候选镜像 Docker 与浏览器验收仍由 B
+  执行；本报告不声明这些通过。
+- 容量满、原确认不等价、已开始／已完成不重放等既有断言保留并由上述模块实际通过；
+  本轮未新增满额夹具，未改变其生产路径。
+- Web src、README、Docker harness 未改；本轮无新配置键、页面或恢复类型。
+- 真实并发由两个正式 API 请求验证，请求前同步客户端线程；未挂钩内部事务或手工
+  插入业务行。
+
+计时：本轮约 13:55–14:05（Asia/Shanghai）。实际测试墙钟合计约 32 秒（含两次
+10 次反证／稳定性重跑），约占总耗时 6%，低于 30%。Slice55 保持 ACTIVE，
+SLICE／Roadmap／Progress 不变，不声明 Task 或 Slice PASS。
