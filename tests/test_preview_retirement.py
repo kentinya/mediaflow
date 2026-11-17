@@ -289,7 +289,7 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             # The historical analysis record remains readable through its own
             # supported durable evidence; it is never promoted into execution
             # or re-admitted through the new normal Run once entry.
-            preview_id = journey._run_shared_analysis(value)
+            preview_id = journey._seed_retained_analysis_plan(value)
             preview = value.repository.get_manual_preview(preview_id)
             self.assertIsNotNone(preview)
             self.assertTrue(preview.zero_mutation)
@@ -359,7 +359,7 @@ class RetiredAuthoritySurfaceTests(unittest.TestCase):
 
         journey = AutomationOperatorJourneyTests()
         with journey._journey() as value:
-            preview_id = journey._run_shared_analysis(value)
+            preview_id = journey._seed_retained_analysis_plan(value)
             self.assertTrue(preview_id)
             # The frozen shared analysis carries no authority at all.
             self.assertEqual(_authority_rows(value.repository), {})

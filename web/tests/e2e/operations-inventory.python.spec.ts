@@ -3984,6 +3984,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   ).json()) as {
     readonly status: string;
     readonly completed_at: string | null;
+    readonly items: readonly unknown[];
   };
   expect(taskBefore.status).toBe("completed");
 
@@ -4055,7 +4056,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   };
   expect(taskAfter.status).toBe("completed");
   expect(taskAfter.completed_at).toBe(taskBefore.completed_at);
-  expect(taskAfter.items).toHaveLength(0);
+  expect(taskAfter.items).toEqual(taskBefore.items);
   expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
     [],
   );

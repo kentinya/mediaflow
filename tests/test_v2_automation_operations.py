@@ -303,15 +303,13 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                         root=root,
                     )
 
-    def _run_shared_analysis(self, value, *, definition_id: str = _DEFINITION["id"]) -> str:
-        """Drive a definition-bound Run once to a frozen, analyzed shared plan.
+    def _seed_retained_analysis_plan(self, value, *, definition_id: str = _DEFINITION["id"]) -> str:
+        """Seed an old zero-mutation plan for read-only retirement assertions.
 
-        Returns the linked exact Preview id: the shared zero-mutation organize
-        analysis the definition Run once journey produces for its exact scope and
-        bounds.  This mirrors the production Run-once journey the Web and API
-        expose: the exact plan is durable Worker work of the same run, never
-        inline HTTP analysis; only Storage reads and a zero-mutation analysis
-        happen here, never a media mutation.
+        This fixture builds the frozen intent and persisted plan evidence only.
+        Calling today's analysis continuation would admit a current Task, so it
+        cannot represent the historical analysis-only record these tests read.
+        Current organizing and Worker behavior is covered by the Task journeys.
         """
         discovery = value.api._media_discovery.admit_definition_run_once(
             definition_id=definition_id, actor="admin"
@@ -329,19 +327,15 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         else:
             raise AssertionError("shared analysis did not settle in the step budget")
         current = value.api._media_discovery.get(discovery.discovery_id)
-        _analyzing, _plan = value.api._automation_run_once.finalize(
+        frozen = value.api._media_discovery.finalize(
             discovery.discovery_id, actor="admin", expected_version=current.version
         )
-        self.assertIsNone(_plan)
-        self.assertEqual("analyzing", _analyzing.status.value)
-        analyzed = claim_and_run(
-            value.api._media_discovery,
-            worker_id="analysis-worker-final",
-            claim_token="analysis-token-final",
+        self.assertIsNone(frozen.organize_task_id)
+        intent = value.api._manual_intents.get(frozen.intent_id)
+        preview = value.api._manual_previews.create(
+            intent.intent_id, expected_version=intent.version, actor="admin"
         )
-        self.assertIsNotNone(analyzed)
-        self.assertIsNotNone(analyzed.preview_id)
-        preview = value.api._manual_previews.get_readonly(analyzed.preview_id)
+        self.assertTrue(preview.zero_mutation)
         self.assertEqual("previewed", preview.status.value)
         return preview.preview_id
 
@@ -411,7 +405,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         """
 
         with self._journey() as value:
-            self._run_shared_analysis(value)
+            self._seed_retained_analysis_plan(value)
             grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
             for method, body in (
                 ("POST", {"revisionId": value.active.revision_id, "confirmation": True}),
