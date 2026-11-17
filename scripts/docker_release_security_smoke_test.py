@@ -822,13 +822,15 @@ def assert_projection_exports(
         raise RuntimeError(f"cookie-bearing Tasks request returned HTTP {status}")
 
 
-def _request_intent_plan_via_durable_analysis(base: str, admin: str, intent: dict) -> dict:
-    """Run the durable intent-page analysis and return the linked exact plan.
+def _request_intent_plan_via_durable_analysis(
+    base: str, admin: str, intent: dict
+) -> tuple[dict, dict]:
+    """Run the durable intent-page analysis and return its exact plan and run.
 
-    The exact plan is the resident Worker's output over the intent's own
-    durable organize run; the API request only records the versioned durable
-    stage.  No production path creates a plan inline, so neither does this
-    release harness.
+    The exact plan is the resident Task Worker's output over the intent's own
+    admitted organizing Task; the API request only records the versioned
+    durable stage.  No production path creates a plan inline, so neither does
+    this release harness.
     """
 
     status, analysis = json_request(
@@ -867,7 +869,10 @@ def _request_intent_plan_via_durable_analysis(base: str, admin: str, intent: dic
     )
     if status != 200:
         raise RuntimeError(f"manual Organize plan read returned HTTP {status}: {preview}")
-    return preview
+    task_id = run.get("organizeTaskId")
+    if not isinstance(task_id, str) or not task_id:
+        raise RuntimeError(f"manual Organize analysis was not owned by a durable Task: {run}")
+    return preview, run
 
 
 def assert_v2_manual_organize(
@@ -979,7 +984,8 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     )
     if status != 200:
         raise RuntimeError(f"manual Organize choice returned HTTP {status}: {intent}")
-    preview = _request_intent_plan_via_durable_analysis(base, admin, intent)
+    preview, analysis_run = _request_intent_plan_via_durable_analysis(base, admin, intent)
+    analysis_task_id = analysis_run["organizeTaskId"]
     if not preview.get("zeroMutation"):
         raise RuntimeError("manual Organize Preview was not exact zero-mutation evidence")
     preview_item = next(
@@ -1019,6 +1025,10 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
         raise RuntimeError(
             f"manual Organize execution admission returned HTTP {status}: {execution}"
         )
+    if execution.get("taskId") != analysis_task_id:
+        raise RuntimeError(
+            f"manual Organize execution did not continue the admitted analysis Task: {execution}"
+        )
 
     def execution_complete() -> bool:
         current_status, detail = json_request(
@@ -1040,6 +1050,8 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     )
     if status != 200 or detail.get("status") != "completed":
         raise RuntimeError(f"manual Organize execution did not complete successfully: {detail}")
+    if detail.get("taskId") != analysis_task_id:
+        raise RuntimeError(f"manual Organize completion was not the admitted Task: {detail}")
     items = detail.get("items") or []
     if len(items) != 1 or items[0].get("status") != "success":
         raise RuntimeError(f"manual Organize item did not complete successfully: {items}")
@@ -1141,7 +1153,7 @@ def assert_manual_organize_fails_closed(
     )
     if status != 200:
         raise RuntimeError(f"manual Organize live-policy choice returned HTTP {status}: {intent}")
-    preview = _request_intent_plan_via_durable_analysis(base, admin, intent)
+    preview, _analysis_run = _request_intent_plan_via_durable_analysis(base, admin, intent)
     if not preview.get("zeroMutation"):
         raise RuntimeError("manual Organize live-policy Preview was not zero-mutation evidence")
     live_item = next(

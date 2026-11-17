@@ -106,6 +106,7 @@ from mediaflow.domain.source_evidence import (
     occurrence_id_for,
     source_fingerprint,
     source_version_evidence,
+    stored_source_version_evidence,
 )
 from mediaflow.domain.storage import (
     Storage,
@@ -2536,16 +2537,16 @@ class MediaDiscoveryService:
             ) from error
 
     def _admit_intent_analysis(self, intent, actor: str) -> MediaDiscovery:
-        """Admit one durable analysis run pinned to an intent without a run.
+        """Admit one durable analysis Task pinned to an intent without a run.
 
-        The record is created already frozen with its linked intent and enters
-        the durable ``analyzing`` stage directly: the exact admitted sources are
-        the intent's own server-resolved identities, the pin is the intent's
-        exact configuration snapshot (never the current Active revision), and
-        the resident Worker claims the record through the ordinary discovery
-        lease and runs the complete zero-mutation analysis.  A pause or cancel
-        is acknowledged at the same safe boundary as every other run, and a
-        lost publication race leaves no plan row at all.
+        The intent's own server-resolved sources are admitted as one organizing
+        Task through the same kernel boundary a Files selection uses: the Task
+        carries the intent's exact configuration pin, the admitted scope and the
+        source reservation, so the resident Task engine claims it and runs the
+        complete zero-mutation analysis.  No independent discovery worker and no
+        inline HTTP analysis exists for this journey.  A pause or cancel is
+        acknowledged at the same safe boundary as every other run, and a lost
+        publication race leaves no plan row at all.
         """
 
         sources = tuple(item.source for item in intent.items)
@@ -2565,28 +2566,7 @@ class MediaDiscoveryService:
                 next_action=("organize each ResourceLibrary's sources in its own bounded run"),
             )
         resource_library_id, storage_id = libraries.pop()
-        try:
-            runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
-        except DiscoveryError:
-            # The discovery service may not carry the pinned runtime authority
-            # itself (a composed assembly where the exact-analysis service owns
-            # it).  The preview service is the analysis's own runtime authority;
-            # reuse it instead of refusing a legal intent's analysis.
-            loader = getattr(self._preview_service, "_load_runtime", None)
-            if not callable(loader):
-                raise
-            try:
-                runtime = loader(intent.snapshot_id, intent.snapshot_digest)
-            except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
-                raise DiscoveryUnavailable(
-                    "the intent's pinned configuration snapshot is unavailable or unreadable",
-                    details={"reason": type(error).__name__},
-                ) from error
-        except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
-            raise DiscoveryUnavailable(
-                "the intent's pinned configuration snapshot is unavailable or unreadable",
-                details={"reason": type(error).__name__},
-            ) from error
+        runtime = self._pinned_runtime(intent.snapshot_id, intent.snapshot_digest)
         library = self._runtime_library(runtime, resource_library_id)
         if library.storage_id != storage_id:
             raise DiscoveryError(
@@ -2596,6 +2576,8 @@ class MediaDiscoveryService:
                 next_action="create a new organize intent from the current Files selection",
             )
         now = self._clock()
+        scope = tuple(DiscoveryScopeEntry(value.path, DiscoveryEntryKind.FILE) for value in sources)
+        organize_task_id = str(uuid4())
         record = MediaDiscovery(
             discovery_id=str(uuid4()),
             actor=actor,
@@ -2608,9 +2590,7 @@ class MediaDiscoveryService:
             budgets=DiscoveryBudgets(),
             progress=DiscoveryProgress(
                 "analyzing",
-                tuple(
-                    DiscoveryScopeEntry(value.path, DiscoveryEntryKind.FILE) for value in sources
-                ),
+                scope,
                 DiscoveryCounters(),
                 DiscoveryIncompleteReason.NONE,
                 message=(
@@ -2624,20 +2604,163 @@ class MediaDiscoveryService:
             intent_id=intent.intent_id,
             frozen_at=now,
             auto_prepare=True,
+            organize_task_id=organize_task_id,
+            storage_scope=self._storage_scope(library, scope),
         )
-        creator = getattr(self._repository, "create_media_discovery", None)
-        if not callable(creator):
-            raise DiscoveryUnavailable(
-                "the durable organize run store is unavailable",
-                details={"intentId": intent.intent_id},
-            )
+        organize_task = PersistentTask(
+            organize_task_id,
+            MANUAL_ORGANIZE_TASK_COMMAND,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+            False,
+            library.root_path,
+            self._budgets.max_primary_sources,
+            intent.snapshot_id,
+            intent.snapshot_digest,
+        )
+        scheduling = self._task_admission_state(
+            organize_task,
+            actor=actor,
+            admission_request_id=None,
+            now=now,
+        )
+        creator = self._organize_work_boundary()
+        # The reservation re-checks, inside the admission transaction, that no
+        # other unfinished work already holds one of these exact sources.  The
+        # intent's own observed identity is the comparable evidence, so a file
+        # really replaced since admission is not reported as another work's.
+        reserve_sources = self._intent_source_reservation(sources)
+        for _attempt in range(2):
+            try:
+                return self._create_work(
+                    creator,
+                    record,
+                    organize_task,
+                    library=library,
+                    scope=scope,
+                    reserve_sources=reserve_sources,
+                    scheduling=scheduling,
+                    capacity=self._shared_capacity(runtime),
+                )
+            except TaskQueueFull as full:
+                raise DiscoveryError(
+                    str(full),
+                    code="capacity_full",
+                    status=409,
+                    next_action=(
+                        "wait for another organizing Task to finish or wait for a human "
+                        "decision, then explicitly request this analysis again"
+                    ),
+                ) from full
+            except DiscoveryConflict as error:
+                # A concurrent request for the same intent may have committed the
+                # run first; that accepted work is the honest convergence target
+                # of a repeated or lost-response request.
+                existing = self._find_intent_run(intent.intent_id)
+                if existing is not None:
+                    return existing
+                refused = tuple(
+                    entry
+                    for entry in (error.details or {}).get("refusedSources", ())
+                    if isinstance(entry, DiscoveryScopeEntry)
+                )
+                owned = (
+                    (refused[0], self._owned_source_work(library, refused[0])) if refused else None
+                )
+                if owned is None or owned[1] is None:
+                    # The conflicting work settled between the reservation read
+                    # and this answer, so the same admission is genuinely free
+                    # again; one retry proves it instead of reporting a phantom
+                    # owner.  A real owner is reported below.
+                    continue
+                entry, owner = owned
+                refusal = self._owned_source_refusal(entry, owner, actor=actor)
+                raise DiscoveryError(
+                    refusal.message,
+                    code=refusal.code,
+                    status=409,
+                    next_action=refusal.next_action,
+                    details={
+                        "relativePath": refusal.path,
+                        "reason": refusal.reason,
+                        **(
+                            {"existingWorkId": refusal.existing_work_id}
+                            if refusal.existing_work_id is not None
+                            else {}
+                        ),
+                    },
+                ) from error
+        raise DiscoveryError(
+            "the intent analysis could not be admitted; no analysis was started",
+            code="analysis_not_admitted",
+            status=409,
+            next_action="refresh the intent and request the analysis again",
+            details={"intentId": intent.intent_id},
+        )
+
+    def _pinned_runtime(self, snapshot_id: str, snapshot_digest: str):
+        """The exact pinned runtime of one organizing analysis.
+
+        The discovery service may not carry the pinned runtime authority itself
+        (a composed assembly where the exact-analysis service owns it).  The
+        preview service is the analysis's own runtime authority, so reuse it
+        instead of refusing a legal intent's analysis.
+        """
+
         try:
-            return creator(record)
-        except DiscoveryConflict as error:
-            raise DiscoveryConflict(
-                "this intent analysis already has a durable run",
-                details={"intentId": intent.intent_id},
+            return self._load_runtime(snapshot_id, snapshot_digest)
+        except DiscoveryError:
+            loader = getattr(self._preview_service, "_load_runtime", None)
+            if not callable(loader):
+                raise
+            try:
+                return loader(snapshot_id, snapshot_digest)
+            except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
+                raise DiscoveryUnavailable(
+                    "the pinned configuration snapshot is unavailable or unreadable",
+                    details={"reason": type(error).__name__},
+                ) from error
+        except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
+            raise DiscoveryUnavailable(
+                "the pinned configuration snapshot is unavailable or unreadable",
+                details={"reason": type(error).__name__},
             ) from error
+
+    def _intent_source_reservation(self, sources):
+        """The per-source reservation of one intent's own admitted identities."""
+
+        observed = {value.path: value for value in sources}
+
+        def reserve(
+            storage_id: str,
+            source_path: str,
+            storage_path: str | None,
+            resource_library_id: str,
+        ):
+            finder = getattr(self._repository, "find_owned_source_work", None)
+            if not callable(finder):
+                return None
+            source = observed.get(source_path)
+            return finder(
+                storage_id=storage_id,
+                source_path=source_path,
+                storage_path=storage_path,
+                resource_library_id=resource_library_id,
+                source_fingerprint=getattr(source, "fingerprint", None),
+                source_version=stored_source_version_evidence(
+                    getattr(source, "fingerprint_evidence", None)
+                ),
+            )
+
+        return reserve
 
     def begin_frozen_analysis(
         self, discovery_id: str, *, actor: str, expected_version: int
@@ -2754,7 +2877,7 @@ class MediaDiscoveryService:
             raise DiscoveryUnavailable(
                 "the Task scheduling kernel cannot re-register this machine stage"
             )
-        runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
+        runtime = self._pinned_runtime(discovery.snapshot_id, discovery.snapshot_digest)
         try:
             return requeue(
                 discovery.organize_task_id,

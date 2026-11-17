@@ -1180,7 +1180,11 @@
     ],
     "journey": "organize",
     "nextAction": "inspect each exact plan; authorize selected items for execution",
-    "organizeFlow": null,
+    "organizeFlow": {
+      "continuable": true,
+      "status": "running",
+      "taskId": "<uuid>"
+    },
     "previewId": "<uuid>",
     "recoverySourceTaskId": null,
     "scope": null,
@@ -1436,7 +1440,11 @@
     ],
     "journey": "organize",
     "nextAction": "inspect each exact plan; authorize selected items for execution",
-    "organizeFlow": null,
+    "organizeFlow": {
+      "continuable": true,
+      "status": "running",
+      "taskId": "<uuid>"
+    },
     "previewId": "<uuid>",
     "recoverySourceTaskId": null,
     "scope": null,

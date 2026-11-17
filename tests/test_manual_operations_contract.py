@@ -39,10 +39,12 @@ from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -57,7 +59,7 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.source_fixtures import source_identity_from_storage
-from tests.task_engine_test_helpers import ManualOrganizeExecutionWorker, claim_and_run
+from tests.task_engine_test_helpers import ManualOrganizeExecutionWorker
 from tests.test_manual_organize_preview import manual_snapshot
 from tests.test_manual_preview import MutationSpyStorage
 
@@ -230,7 +232,7 @@ class ManualOperationsContractTests(unittest.TestCase):
                     "contract-worker",
                     "contract worker",
                     30.0,
-                    ("scan", "organize"),
+                    ("scan", "organize", "manual_organize"),
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 )
@@ -266,6 +268,14 @@ class ManualOperationsContractTests(unittest.TestCase):
                     previews=previews,
                     execution=execution,
                     organize_worker=organize_worker,
+                    task_engine=ManualTaskEngineWorker(
+                        repository,
+                        TaskSchedulingService(repository, capacity=100),
+                        api._media_discovery,
+                        execution,
+                        worker_id="contract-worker",
+                        notice=lambda line: None,
+                    ),
                     record=record,
                     source=source,
                     target=target,
@@ -354,15 +364,12 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertEqual("analyzing", analysis["phase"])
         analysis_run = api._media_discovery
         preview_id = None
-        for index in range(8):
-            claimed = claim_and_run(
-                analysis_run,
-                worker_id=f"contract-analysis-{index}",
-                claim_token=f"contract-analysis-{index}",
-            )
-            self.assertIsNotNone(claimed)
-            if claimed.terminal or claimed.preview_id is not None:
-                preview_id = claimed.preview_id
+        for _index in range(8):
+            advanced = value.task_engine.run_next()
+            self.assertIsNotNone(advanced)
+            current = analysis_run.get(analysis["discoveryId"])
+            if current.preview_id is not None:
+                preview_id = current.preview_id
                 break
         self.assertIsNotNone(preview_id)
         status, organize_preview_detail = _request(
@@ -415,6 +422,13 @@ class ManualOperationsContractTests(unittest.TestCase):
             query=f"previewId={organize_preview_detail['previewId']}",
         )
         self.assertEqual(200, status)
+        # The analysis and the confirmed execution are one admitted organizing
+        # Task: the API plan was produced by the Task engine over the intent's
+        # own Task, and the exact confirmation adopted that same Task.
+        analysis_discovery = analysis_run.discovery_for_intent(organize_intent["intentId"])
+        self.assertIsNotNone(analysis_discovery.organize_task_id)
+        self.assertEqual(analysis_discovery.organize_task_id, organize_execution["taskId"])
+        self.assertEqual("completed", organize_execution_detail["status"])
 
         return {
             "actionMatrix": action_matrix,

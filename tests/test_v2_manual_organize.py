@@ -35,17 +35,19 @@ from pathlib import Path
 from shutil import copyfile
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
 
 from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
@@ -58,7 +60,6 @@ from mediaflow.domain.organizer import (
     RollbackPolicy,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import ConfirmationStatus, ConflictConfirmation
 from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import (
@@ -77,7 +78,6 @@ from tests.source_fixtures import LiveLibraryView, source_identity_from_storage
 from tests.storage_fixtures import PagedMemoryStorage
 from tests.task_engine_test_helpers import (
     ManualOrganizeExecutionWorker,
-    claim_and_run,
     claim_next_execution,
 )
 from tests.test_configuration_objects import example_document
@@ -322,7 +322,7 @@ class _JourneyFixtureMixin:
                     "worker-1",
                     "worker one",
                     10.0,
-                    ("scan", "organize"),
+                    ("scan", "organize", "manual_organize"),
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -380,6 +380,14 @@ class _JourneyFixtureMixin:
                 previews=previews,
                 execution=execution,
                 worker=worker,
+                task_engine=ManualTaskEngineWorker(
+                    repository,
+                    TaskSchedulingService(repository, capacity=100),
+                    api._media_discovery,
+                    execution,
+                    worker_id="worker-1",
+                    notice=lambda line: None,
+                ),
                 worker_service=worker_service,
                 configuration=configuration,
                 provider=provider,
@@ -510,21 +518,19 @@ class _JourneyFixtureMixin:
 
     @staticmethod
     def _drive_intent_analysis(value, discovery_id, *, steps=8):
-        """Drive the resident Worker until the run links its exact plan."""
+        """Drive the resident Task engine until the run links its exact plan."""
 
-        for index in range(steps):
-            result = claim_and_run(
-                value.api._media_discovery,
-                worker_id=f"intent-analysis-worker-{index}",
-                claim_token=f"intent-analysis-token-{index}",
-            )
-            if result is None:
-                raise AssertionError("the intent analysis run was not claimable")
-            if result.terminal or result.preview_id is not None:
+        current = value.api._media_discovery.get(discovery_id)
+        for _index in range(steps):
+            advanced = value.task_engine.run_next()
+            if advanced is None:
+                raise AssertionError("the intent analysis Task was not claimable")
+            current = value.api._media_discovery.get(discovery_id)
+            if current.terminal or current.preview_id is not None:
                 break
         else:
             raise AssertionError("the intent analysis did not settle")
-        return result.preview_id
+        return current.preview_id
 
 
 class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
@@ -808,6 +814,39 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(
                 (), value.repository.list_manual_executions_for_preview(preview["previewId"])
             )
+
+    def test_repeated_intent_analysis_request_converges_on_one_admitted_task(self) -> None:
+        """A lost-response repeat converges on the same intent Task, not a second one."""
+
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            body = {"expectedVersion": intent["version"]}
+            status, first = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                body,
+            )
+            self.assertEqual(201, status, first)
+            status, repeated = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                body,
+            )
+            self.assertEqual(201, status, repeated)
+            self.assertEqual(first["analysis"]["discoveryId"], repeated["analysis"]["discoveryId"])
+            discovery = value.api._media_discovery.get(first["analysis"]["discoveryId"])
+            self.assertIsNotNone(discovery.organize_task_id)
+            tasks = value.repository.list_tasks()
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(discovery.organize_task_id, tasks[0].task_id)
+            self.assertEqual("pending", tasks[0].status.value)
+            self.assertEqual("analyzing", discovery.status.value)
+            # The exact plan is the claimed Task's analysis, produced only after
+            # the resident Worker runs it.
+            preview = self._preview_via_durable_analysis(value, intent)
+            self.assertIsNotNone(preview["previewId"])
 
     def test_intent_exposes_its_latest_durable_plan_for_same_page_reload(self) -> None:
         """A reload re-reads the exact plan this intent produced, without analysis.
@@ -1144,9 +1183,45 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIn("worker", matrix["actions"]["organize"]["reason"].lower())
 
             intent = self._create_reviewed_intent(value)
-            preview = self._create_preview(value, intent)
-            self.assertFalse(preview["actions"]["execute"]["available"])
-            self.assertFalse(preview["worker"]["ready"])
+            # The analysis is Task work: without a resident Worker the admitted
+            # Task stays queued and no plan or execution authority is invented.
+            status, analysis = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, analysis)
+            self.assertEqual("analyzing", analysis["analysis"]["phase"])
+            self.assertIsNone(analysis["analysis"]["previewId"])
+            self.assertIsNone(analysis["latestPlan"])
+            discovery = value.api._media_discovery.get(analysis["analysis"]["discoveryId"])
+            self.assertIsNotNone(discovery.organize_task_id)
+            self.assertEqual(
+                "pending", value.repository.get_task(discovery.organize_task_id).status.value
+            )
+            self.assertEqual((), value.repository.list_items(discovery.organize_task_id))
+
+            # A Worker that returns later finishes the same Task, and once it
+            # goes away again the summary's own execute action is withheld.
+            value.worker_service.register_worker(
+                "worker-1",
+                "worker one",
+                10.0,
+                ("scan", "organize", "manual_organize"),
+                configuration_snapshot_id=SNAPSHOT_ID,
+                configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                runtime_schema_version=SCHEMA_VERSION,
+            )
+            preview = self._preview_via_durable_analysis(value, intent)
+            value.worker_service.stop_worker("worker-1")
+            status, replayed = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertFalse(replayed["actions"]["execute"]["available"])
+            self.assertFalse(replayed["worker"]["ready"])
 
     def test_recognition_type_c_is_preserved_in_the_executed_result(self) -> None:
         with self.journey() as value:
@@ -1183,30 +1258,26 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-            # A recorded explicit overwrite decision makes the fresh exact plan
-            # executable, but the destructive effect still needs its own
-            # separate confirmation before any mutation.
-            raw = value.previews.get_readonly(blocked["previewId"])
-            plan = raw.items[0].plan
-            value.repository.create_confirmation(
-                ConflictConfirmation(
-                    str(uuid4()),
-                    "conflict-task",
-                    "conflict-item",
-                    plan["planId"],
-                    "DESTINATION_EXISTS",
-                    "source",
-                    plan["source"]["path"],
-                    "target",
-                    destination,
-                    "overwrite",
-                    ConfirmationStatus.RESOLVED,
-                    NOW,
-                    NOW,
-                    selected_strategy="overwrite",
-                    overwrite_authorized=True,
-                    actor="operator",
-                )
+            # The blocked analysis published its own pending conflict decision on
+            # the exact Task item; that recorded decision is what the operator
+            # resolves through the shared conflict service.
+            task_id = value.api._media_discovery.discovery_for_intent(
+                intent["intentId"]
+            ).organize_task_id
+            self.assertIsNotNone(task_id)
+            pending = next(
+                confirmation
+                for confirmation in value.repository.list_confirmations(status=None)
+                if confirmation.task_id == task_id and confirmation.status.value == "pending"
+            )
+            conflict_item = value.repository.get_item(pending.item_id)
+            self.assertIsNotNone(conflict_item)
+            self.assertEqual("waiting_confirm", conflict_item.status.value)
+            ConfirmationService(value.repository).resolve(
+                pending.confirmation_id,
+                ConflictStrategy.OVERWRITE,
+                confirm_overwrite=True,
+                actor="operator",
             )
             fresh = self._create_preview(value, intent)
             implications = fresh["items"][0]["plan"]["destructiveImplications"]
@@ -1323,10 +1394,15 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
         return value.repository.list_manual_executions_for_preview(preview_id)
 
     def test_exact_repeat_resolves_across_the_full_preview_bound(self) -> None:
-        """An exact repeat resolves even past the newest few durable executions."""
+        """An exact repeat resolves while the preview already holds bound-size work.
 
-        # MAX_ITEMS + 1 disjoint one-item admissions push the oldest execution
-        # out of any bounded "newest few" read.
+        One organizing Task owns the whole admitted selection and holds one
+        execution slot at a time, so the preview's one-item executions are
+        confirmed and completed in order.  A repeated submission is issued for
+        every execution while it is still pending, and the product's own read
+        must still cover every execution the supported preview bound produces.
+        """
+
         names = tuple(f"Show{index}.2001.mkv" for index in range(1, 12))
         with self.journey(names=names) as value:
             self.assertGreater(len(value.file_ids), 10)
@@ -1335,7 +1411,9 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
             self.assertEqual(len(names), len(preview["items"]))
 
             admitted_ids = []
-            for item in preview["items"]:
+            seen: set[str] = set()
+            for index in range(len(names)):
+                item = next(value for value in preview["items"] if value["itemId"] not in seen)
                 status, execution = self._execute(
                     value,
                     preview,
@@ -1344,37 +1422,55 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
                 )
                 self.assertEqual(202, status, execution)
                 admitted_ids.append(execution["executionId"])
-            self.assertEqual(len(set(admitted_ids)), len(admitted_ids))
-            self.assertEqual(len(names), len(self._executions(value, preview["previewId"])))
-
-            # The exact repeat of the *oldest* admission is the same reviewed
-            # submission and must resolve to it, not be refused as a duplicate.
-            oldest = admitted_ids[0]
-            status, repeated = self._execute(
-                value,
-                preview,
-                intent,
-                itemIds=[preview["items"][0]["itemId"]],
-            )
-            self.assertIn(status, (200, 202), repeated)
-            self.assertEqual(oldest, repeated["executionId"])
-            self.assertEqual(len(names), len(self._executions(value, preview["previewId"])))
-
-            # The repeat consumed only its own one-shot authority; no sibling
-            # item was admitted a second time and nothing was mutated yet.
-            for other in preview["items"][1:]:
-                executions = [
-                    candidate
-                    for candidate in self._executions(value, preview["previewId"])
-                    if other["itemId"] in candidate.selected_item_ids
-                ]
-                self.assertEqual(1, len(executions))
-            self.assertEqual([], value.source.mutations)
-
-            # Every disjoint execution still runs exactly once.
-            for _ in range(len(names)):
+                # The exact repeat of this pending submission is the same
+                # reviewed request and resolves to its one durable execution
+                # instead of being refused as a duplicate.
+                mutations_before = len(value.source.mutations)
+                status, repeated = self._execute(
+                    value,
+                    preview,
+                    intent,
+                    itemIds=[item["itemId"]],
+                )
+                self.assertIn(status, (200, 202), repeated)
+                self.assertEqual(execution["executionId"], repeated["executionId"])
+                self.assertEqual(mutations_before, len(value.source.mutations))
+                seen.add(item["itemId"])
+                # The confirmed subset completes before the next sibling is
+                # confirmed; the Task returns to human waiting with the rest.
                 completed = value.worker.run_next()
                 self.assertIsNotNone(completed)
+                if index == len(names) - 1:
+                    break
+                # The executed subset supersedes this summary on the same Task;
+                # its own analysis publishes the exact remaining scope.
+                status, analyzed = self._request(
+                    value,
+                    f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                    "POST",
+                    {"expectedVersion": intent["version"]},
+                )
+                self.assertEqual(201, status, analyzed)
+                preview_id = self._drive_intent_analysis(value, analyzed["analysis"]["discoveryId"])
+                self.assertIsNotNone(preview_id)
+                status, preview = self._request(
+                    value, f"/api/v1/operations/organize/previews/{preview_id}"
+                )
+                self.assertEqual(200, status, preview)
+            self.assertEqual(len(names), len(seen))
+            self.assertEqual(len(set(admitted_ids)), len(admitted_ids))
+
+            # Every execution the journey produced stays readable, and each
+            # item was admitted exactly once.
+            executions = value.repository.list_manual_executions_for_intent(
+                intent["intentId"], limit=len(names) + 1
+            )
+            self.assertEqual(len(names), len(executions))
+            self.assertTrue(all(len(execution.selected_item_ids) == 1 for execution in executions))
+            self.assertEqual(
+                len(names),
+                len({execution.selected_item_ids[0] for execution in executions}),
+            )
             self.assertIsNone(value.worker.run_next())
             self.assertEqual(len(names), len(list(value.target_root.rglob("*.mkv"))))
 
@@ -2096,7 +2192,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 "worker-1",
                 "worker one",
                 10.0,
-                ("scan", "organize"),
+                ("scan", "organize", "manual_organize"),
                 configuration_snapshot_id=SNAPSHOT_ID,
                 configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 runtime_schema_version=SCHEMA_VERSION,
@@ -2138,6 +2234,14 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                     previews=previews,
                     execution=execution,
                     worker=worker,
+                    task_engine=ManualTaskEngineWorker(
+                        repository,
+                        TaskSchedulingService(repository, capacity=100),
+                        api._media_discovery,
+                        execution,
+                        worker_id="worker-1",
+                        notice=lambda line: None,
+                    ),
                     configuration=configuration,
                     index=library_view,
                     source=source,
