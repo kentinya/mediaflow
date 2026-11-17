@@ -35,6 +35,7 @@ from pathlib import Path
 from shutil import copyfile
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -464,6 +465,79 @@ class _JourneyFixtureMixin:
     def _create_preview(self, value, intent):
         return self._preview_via_durable_analysis(value, intent)
 
+    def _seed_prechange_intent_run(self, value, intent, *, analyze=False):
+        """Write the exact discovery shape the retired standalone Worker admitted.
+
+        The operator entry below is the real intent analysis/confirmation API;
+        only the historical record shape is seeded here, because the standalone
+        admission boundary that produced it is retired and cannot be invoked in
+        this candidate.  The record carries the same intent, pin, observed
+        sources and no organizing Task, exactly like the pre-change analysis.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        raw = value.intents.get(intent["intentId"])
+        now = datetime.now(UTC)
+        record = MediaDiscovery(
+            str(uuid4()),
+            "operator",
+            "library",
+            "source",
+            raw.snapshot_id,
+            raw.snapshot_digest,
+            DiscoveryStatus.ANALYZING,
+            1,
+            DiscoveryBudgets(),
+            DiscoveryProgress(
+                "analyzing",
+                tuple(
+                    DiscoveryScopeEntry(item.source.path, DiscoveryEntryKind.FILE)
+                    for item in raw.items
+                ),
+                DiscoveryCounters(),
+                DiscoveryIncompleteReason.NONE,
+                message=(
+                    "the intent's sources are durable; the resident Worker is running the "
+                    "complete zero-mutation analysis to build the exact plan"
+                ),
+            ),
+            now,
+            now,
+            sources=tuple(item.source.document() for item in raw.items),
+            intent_id=raw.intent_id,
+            frozen_at=now,
+            auto_prepare=True,
+        )
+        stored = value.repository.create_media_discovery(record)
+        if not analyze:
+            return stored, None
+        token = "retired-discovery-worker"
+        claimed = value.repository.claim_media_discovery(
+            stored.discovery_id,
+            now,
+            worker_id="retired-discovery-worker",
+            claim_token=token,
+            lease_seconds=60,
+        )
+        self.assertIsNotNone(claimed)
+        value.api._media_discovery.run_claimed(
+            stored.discovery_id,
+            worker_id="retired-discovery-worker",
+            claim_token=token,
+        )
+        stored = value.repository.get_media_discovery(stored.discovery_id)
+        return stored, stored.preview_id
+
     def _execute(self, value, preview, intent, *, token=OPERATOR_TOKEN, **overrides):
         body = {
             "confirmation": True,
@@ -534,6 +608,186 @@ class _JourneyFixtureMixin:
 
 
 class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
+    def test_prechange_unfinished_intent_analysis_is_claimed_by_its_own_task(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            legacy, _old_preview = self._seed_prechange_intent_run(value, intent)
+            self.assertIsNone(legacy.organize_task_id)
+            self.assertEqual((), value.repository.list_tasks())
+
+            status, analysis = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, analysis)
+            self.assertEqual(legacy.discovery_id, analysis["analysis"]["discoveryId"])
+            self.assertEqual("analyzing", analysis["analysis"]["phase"])
+            stored = value.repository.get_media_discovery(legacy.discovery_id)
+            self.assertIsNotNone(stored.organize_task_id)
+            self.assertEqual(legacy.version, stored.version)
+            self.assertEqual(legacy.snapshot_id, stored.snapshot_id)
+            self.assertEqual(legacy.snapshot_digest, stored.snapshot_digest)
+            self.assertEqual(legacy.intent_id, stored.intent_id)
+            self.assertEqual(legacy.progress.scope_entries, stored.progress.scope_entries)
+            tasks = value.repository.list_tasks()
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(stored.organize_task_id, tasks[0].task_id)
+            self.assertEqual("pending", tasks[0].status.value)
+            self.assertEqual(stored.snapshot_digest, tasks[0].configuration_snapshot_digest)
+
+            # A lost-response repeat converges on the same run and Task.
+            status, repeated = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, repeated)
+            self.assertEqual(legacy.discovery_id, repeated["analysis"]["discoveryId"])
+            self.assertEqual(tasks, value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            advanced = value.task_engine.run_next()
+            self.assertIsNotNone(advanced)
+            self.assertEqual(stored.organize_task_id, advanced.task_id)
+            analyzed = value.repository.get_media_discovery(legacy.discovery_id)
+            self.assertIsNotNone(analyzed.preview_id)
+            status, preview = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+            self.assertEqual(stored.organize_task_id, execution["taskId"])
+            for _index in range(5):
+                value.task_engine.run_next()
+            completed = value.repository.get_task(stored.organize_task_id)
+            self.assertEqual("completed", completed.status.value)
+            self.assertIn("delete", value.source.mutations)
+            self.assertIn("write", value.target.mutations)
+
+    def test_prechange_pending_summary_continues_analysis_and_confirmation_on_same_task(
+        self,
+    ) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            legacy, old_preview = self._seed_prechange_intent_run(value, intent, analyze=True)
+            self.assertEqual("completed", legacy.status.value)
+            self.assertIsNotNone(old_preview)
+            self.assertEqual(old_preview, legacy.preview_id)
+
+            # A saved decision makes the old summary historical; the existing
+            # intent entry then re-analyzes the same durable discovery.
+            status, detail = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status, detail)
+            item = detail["items"][0]
+            status, edited = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": detail["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "A",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, edited)
+            status, analysis = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": edited["version"]},
+            )
+            self.assertEqual(201, status, analysis)
+            self.assertEqual(legacy.discovery_id, analysis["analysis"]["discoveryId"])
+            self.assertEqual("analyzing", analysis["analysis"]["phase"])
+            self.assertIsNone(analysis["analysis"]["previewId"])
+            stored = value.repository.get_media_discovery(legacy.discovery_id)
+            self.assertEqual(legacy.version + 1, stored.version)
+            self.assertEqual(legacy.snapshot_digest, stored.snapshot_digest)
+            tasks = value.repository.list_tasks()
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(stored.organize_task_id, tasks[0].task_id)
+
+            status, repeated = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": edited["version"]},
+            )
+            self.assertEqual(201, status, repeated)
+            self.assertEqual(legacy.discovery_id, repeated["analysis"]["discoveryId"])
+            self.assertEqual(tasks, value.repository.list_tasks())
+
+            advanced = value.task_engine.run_next()
+            self.assertIsNotNone(advanced)
+            analyzed = value.repository.get_media_discovery(legacy.discovery_id)
+            self.assertIsNotNone(analyzed.preview_id)
+            self.assertNotEqual(old_preview, analyzed.preview_id)
+            status, preview = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            self.assertEqual("A", preview["items"][0]["choice"]["recognitionTypeId"])
+            status, execution = self._execute(value, preview, edited)
+            self.assertEqual(202, status, execution)
+            self.assertEqual(stored.organize_task_id, execution["taskId"])
+            for _index in range(5):
+                value.task_engine.run_next()
+            self.assertEqual(
+                "completed",
+                value.repository.get_task(stored.organize_task_id).status.value,
+            )
+            results = value.repository.list_results(stored.organize_task_id)
+            self.assertEqual(1, len(results))
+            self.assertEqual("A", results[0].recognition_type)
+            self.assertIn("delete", value.source.mutations)
+            self.assertIn("write", value.target.mutations)
+
+    def test_prechange_current_summary_confirmation_adopts_its_own_task(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            legacy, preview_id = self._seed_prechange_intent_run(value, intent, analyze=True)
+            self.assertIsNotNone(preview_id)
+            self.assertIsNone(legacy.organize_task_id)
+            status, preview = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+            self.assertEqual(execution["taskId"], execution["items"][0]["taskId"])
+            stored = value.repository.get_media_discovery(legacy.discovery_id)
+            self.assertEqual(execution["taskId"], stored.organize_task_id)
+            self.assertEqual(preview_id, stored.preview_id)
+            self.assertEqual(legacy.snapshot_digest, stored.snapshot_digest)
+            scheduling = value.repository.get_task_scheduling(execution["taskId"])
+            self.assertIsNotNone(scheduling)
+            advanced = value.task_engine.run_next()
+            self.assertIsNotNone(advanced)
+            self.assertEqual(execution["taskId"], advanced.task_id)
+            for _index in range(4):
+                value.task_engine.run_next()
+            completed = value.repository.get_task(execution["taskId"])
+            self.assertEqual("completed", completed.status.value)
+            results = value.repository.list_results(execution["taskId"])
+            self.assertEqual(1, len(results))
+            self.assertIn("delete", value.source.mutations)
+            self.assertIn("write", value.target.mutations)
+
     # --- the journey -------------------------------------------------------
 
     def test_long_source_path_survives_intent_and_preview_projection(self) -> None:

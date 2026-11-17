@@ -11816,6 +11816,173 @@ class SQLiteTaskRepository:
                 raise
         return self.get_media_discovery(discovery.discovery_id)
 
+    def adopt_files_organize_work(
+        self,
+        discovery: MediaDiscovery,
+        task: PersistentTask,
+        *,
+        expected_version: int,
+        scheduling: TaskSchedulingState,
+        capacity: int,
+        display: RunDisplayContext | None = None,
+        items: tuple[PersistentTaskItem, ...] = (),
+    ) -> MediaDiscovery:
+        """Attach one pre-change admitted discovery to the current Task kernel.
+
+        Task55.3 retired the standalone discovery Worker, so an analysis record
+        admitted by that boundary has no living owner.  The continuation commits
+        the kernel Task, its scheduling row and the exact discovery projection in
+        one transaction: the original discovery identity, immutable pin, admitted
+        scope, saved decisions and prior summaries stay where they are, and only
+        the caller's explicit analysis projection plus the new organizing Task
+        link are written.  A repeat or concurrent continuation can never mint a
+        second Task for the same discovery: the loser reads the winner back.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if not isinstance(task, PersistentTask):
+            raise ValueError("PersistentTask projection is required")
+        if discovery.organize_task_id != task.task_id:
+            raise ValueError("discovery organizing Task identity does not match")
+        if not isinstance(scheduling, TaskSchedulingState):
+            raise ValueError("discovery Task scheduling facts are invalid")
+        if scheduling.task_id != task.task_id:
+            raise ValueError("discovery Task scheduling identity does not match")
+        if any(not isinstance(item, PersistentTaskItem) for item in items):
+            raise ValueError("discovery Task item projection is invalid")
+        if any(item.task_id != task.task_id for item in items):
+            raise ValueError("discovery Task item identity does not match")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        require_capacity(capacity)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._connection.execute(
+                    "SELECT version, organize_task_id FROM media_discoveries WHERE discovery_id=?",
+                    (discovery.discovery_id,),
+                ).fetchone()
+                if current is None:
+                    raise DiscoveryConflict(
+                        "the admitted discovery no longer exists",
+                        details={"discoveryId": discovery.discovery_id},
+                    )
+                if int(current["version"]) != expected_version:
+                    raise DiscoveryConflict(
+                        "the discovery changed before its Task was linked",
+                        details={
+                            "discoveryId": discovery.discovery_id,
+                            "currentVersion": int(current["version"]),
+                        },
+                    )
+                held = current["organize_task_id"]
+                if (
+                    isinstance(held, str)
+                    and held
+                    and self._connection.execute(
+                        "SELECT 1 FROM tasks WHERE task_id=?", (held,)
+                    ).fetchone()
+                    is not None
+                ):
+                    raise DiscoveryConflict(
+                        "this discovery already belongs to a Task",
+                        details={
+                            "discoveryId": discovery.discovery_id,
+                            "taskId": held,
+                        },
+                    )
+                if self._scheduled_capacity_use_locked() >= capacity:
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
+                self._connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._task_values(task),
+                )
+                self._connection.execute(
+                    _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                )
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
+                for item in items:
+                    self._connection.execute(_TASK_ITEM_INSERT, self._item_values(item))
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
+                    "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
+                    "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
+                    "next_observation_at=?, preview_id=?, storage_scope_json=?, "
+                    "organize_task_id=?, claim_worker_id=NULL, claim_token=NULL, "
+                    "claim_expires_at=NULL "
+                    "WHERE discovery_id=? AND version=? "
+                    "AND (organize_task_id IS NULL OR NOT EXISTS ("
+                    "SELECT 1 FROM tasks WHERE task_id=media_discoveries.organize_task_id))",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.budgets.document(),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            discovery.progress.document(),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                        discovery.intent_id,
+                        (
+                            discovery.frozen_at.isoformat()
+                            if discovery.frozen_at is not None
+                            else None
+                        ),
+                        discovery.attempts,
+                        1 if discovery.pause_requested else 0,
+                        1 if discovery.cancel_requested else 0,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        (
+                            discovery.next_observation_at.isoformat()
+                            if discovery.next_observation_at is not None
+                            else None
+                        ),
+                        discovery.preview_id,
+                        json.dumps(
+                            [list(item) for item in discovery.storage_scope],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        discovery.organize_task_id,
+                        discovery.discovery_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise DiscoveryConflict(
+                        "the discovery changed before its Task was linked",
+                        details={"discoveryId": discovery.discovery_id},
+                    )
+                self._connection.commit()
+            except (DiscoveryConflict, TaskQueueFull):
+                self._connection.rollback()
+                raise
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise DiscoveryConflict(
+                    "this discovery Task link identity already exists",
+                    details={
+                        "discoveryId": discovery.discovery_id,
+                        "taskId": task.task_id,
+                    },
+                ) from error
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_media_discovery(discovery.discovery_id)
+
     def extend_media_discovery_scope(
         self,
         discovery: MediaDiscovery,

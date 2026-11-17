@@ -312,6 +312,87 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
             recovery_excluded_paths=excluded,
         )
 
+    def test_prechange_adoption_rolls_back_task_scheduling_and_items_together(self) -> None:
+        """One failed structural link leaves no Task, item or discovery link."""
+
+        from mediaflow.domain.task_persistence import PersistentTask
+        from mediaflow.domain.task_scheduling import (
+            TaskMachineStage,
+            TaskQueueState,
+            TaskSchedulingState,
+            TaskTrigger,
+        )
+
+        now = datetime(2026, 10, 19, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "legacy-adoption.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                original = self._discovery("legacy-analysis", status=None)
+                repository.create_media_discovery(original)
+                task_id = "adopted-task"
+                task = PersistentTask(
+                    task_id,
+                    "manual_organize",
+                    PersistentTaskStatus.PENDING,
+                    True,
+                    now,
+                    now,
+                    None,
+                    None,
+                    0,
+                    0,
+                    0,
+                    None,
+                    False,
+                    None,
+                    100,
+                    "snap",
+                    "digest",
+                )
+                scheduling = TaskSchedulingState(
+                    task_id,
+                    TaskQueueState.QUEUED,
+                    TaskTrigger.MANUAL,
+                    "operator",
+                    None,
+                    now,
+                    now,
+                    machine_stage=TaskMachineStage.ANALYSIS,
+                )
+                duplicate = PersistentTaskItem(
+                    "duplicate-item",
+                    task_id,
+                    "storage",
+                    "library",
+                    "Sub/One.2001.mkv",
+                    "storage:Sub/One.2001.mkv",
+                    TaskItemStatus.WAITING_CONFIRM,
+                    "waiting_confirm",
+                    0,
+                    now,
+                    now,
+                )
+                with self.assertRaises(Exception) as caught:
+                    repository.adopt_files_organize_work(
+                        replace(
+                            original,
+                            organize_task_id=task_id,
+                            status=original.status,
+                        ),
+                        task,
+                        expected_version=original.version,
+                        scheduling=scheduling,
+                        capacity=10,
+                        items=(duplicate, duplicate),
+                    )
+                self.assertEqual("DiscoveryConflict", type(caught.exception).__name__)
+                self.assertIsNone(repository.get_task(task_id))
+                self.assertIsNone(repository.get_task_scheduling(task_id))
+                self.assertEqual((), repository.list_items(task_id))
+                stored = repository.get_media_discovery(original.discovery_id)
+                self.assertIsNone(stored.organize_task_id)
+                self.assertEqual(original.version, stored.version)
+
     def test_ordinary_definition_and_recovery_admissions_never_alias(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "identity.sqlite3")

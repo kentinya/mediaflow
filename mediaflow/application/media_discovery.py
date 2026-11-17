@@ -2449,11 +2449,14 @@ class MediaDiscoveryService:
                 next_action=next_action or "start a new preparation if the same scope is wanted",
             )
         if pending:
-            # A repeated request converges on the analysis already queued: the
-            # Worker re-runs the analysis under the same immutable intent.
-            return discovery
+            if self._kernel_task_id(discovery) is not None:
+                # A repeated request converges on the analysis already queued:
+                # the Worker re-runs the analysis under the same immutable intent.
+                return discovery
+            return self._adopt_prechange_analysis(discovery, actor=actor)
         return self._enter_analysis(
             discovery,
+            actor=actor,
             message=(
                 "the resident Worker is re-running the complete zero-mutation analysis "
                 "under the same pinned configuration"
@@ -2498,9 +2501,14 @@ class MediaDiscoveryService:
             return self._admit_intent_analysis(intent, actor)
         available, code, next_action, pending = self.analysis_availability(discovery)
         if pending:
-            # A repeated or lost-response request converges on the analysis
-            # already queued for this exact run and intent.
-            return discovery
+            if self._kernel_task_id(discovery) is not None:
+                # A repeated or lost-response request converges on the analysis
+                # already queued for this exact run and intent.
+                return discovery
+            # A record admitted before the standalone discovery Worker retired
+            # has no Task owner.  The same continuation links it to the current
+            # kernel instead of answering with work no Worker can ever claim.
+            return self._adopt_prechange_analysis(discovery, actor=actor)
         if not available:
             raise DiscoveryError(
                 next_action or "this intent's run cannot start an analysis in its current state",
@@ -2510,6 +2518,7 @@ class MediaDiscoveryService:
             )
         return self._enter_analysis(
             discovery,
+            actor=actor,
             message=(
                 "the frozen source list is durable; the resident Worker is running the "
                 "complete zero-mutation analysis to build the exact plan"
@@ -2809,13 +2818,16 @@ class MediaDiscoveryService:
             )
         return self._enter_analysis(
             discovery,
+            actor=actor,
             message=(
                 "the frozen source list is durable; the resident Worker is running the "
                 "complete zero-mutation analysis to build the exact plan"
             ),
         )
 
-    def _enter_analysis(self, discovery: MediaDiscovery, *, message: str) -> MediaDiscovery:
+    def _enter_analysis(
+        self, discovery: MediaDiscovery, *, actor: str, message: str
+    ) -> MediaDiscovery:
         """Publish one versioned ANALYZING stage for a frozen preparation."""
 
         now = self._clock()
@@ -2837,7 +2849,125 @@ class MediaDiscoveryService:
         )
         if self._kernel_task_id(discovery) is not None:
             return self._requeue_kernel_analysis(discovery, updated)
-        return self._persist(updated, expected_version=discovery.version)
+        return self._adopt_prechange_analysis(
+            discovery,
+            updated=updated,
+            actor=actor,
+            message=message,
+        )
+
+    def _adopt_prechange_analysis(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        actor: str,
+        updated: MediaDiscovery | None = None,
+        message: str | None = None,
+    ) -> MediaDiscovery:
+        """Give a pre-change admitted analysis its current Task owner.
+
+        The retired standalone discovery Worker admitted intent analyses without
+        an organizing Task.  That work is still legitimate durable V2 work: its
+        intent, discovery, pinned configuration, observed sources and saved
+        decisions stay exactly as they were, but there is no current owner to
+        claim it.  The continuation therefore commits one kernel Task and its
+        scheduling row together with the exact discovery projection the same
+        request would have published, so the current engine claims the original
+        discovery identity.  A concurrent or repeated continuation converges on
+        the Task that won; no second discovery and no second Task is minted.
+        """
+
+        if discovery.intent_id is None:
+            # Only a frozen intent run can be re-entered from the analysis
+            # surface; everything else keeps its ordinary persistence path.
+            current = updated or discovery
+            return self._persist(current, expected_version=discovery.version)
+        runtime = self._pinned_runtime(discovery.snapshot_id, discovery.snapshot_digest)
+        library = self._runtime_library(runtime, discovery.resource_library_id)
+        if library.storage_id != discovery.storage_id:
+            raise DiscoveryError(
+                "the intent's pinned ResourceLibrary/Storage binding changed",
+                code="source_stale",
+                status=409,
+                next_action="create a new organize intent from the current Files selection",
+            )
+        now = self._clock()
+        task_id = str(uuid4())
+        task = PersistentTask(
+            task_id,
+            MANUAL_ORGANIZE_TASK_COMMAND,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+            False,
+            library.root_path,
+            discovery.budgets.max_primary_sources,
+            discovery.snapshot_id,
+            discovery.snapshot_digest,
+        )
+        scheduling = TaskSchedulingState(
+            task_id=task_id,
+            queue_state=TaskQueueState.QUEUED,
+            admission_trigger=TaskTrigger.MANUAL,
+            admission_principal=actor,
+            admission_request_id=None,
+            created_at=now,
+            updated_at=now,
+            machine_stage=(
+                TaskMachineStage.ANALYSIS
+                if discovery.frozen and discovery.intent_id is not None
+                else TaskMachineStage.DISCOVERY
+            ),
+        )
+        projection = replace(
+            updated or discovery,
+            organize_task_id=task_id,
+            updated_at=now,
+        )
+        adopter = getattr(self._repository, "adopt_files_organize_work", None)
+        if not callable(adopter):
+            raise DiscoveryUnavailable(
+                "the Task scheduling kernel cannot adopt this pre-change analysis"
+            )
+        try:
+            return adopter(
+                projection,
+                task,
+                expected_version=discovery.version,
+                scheduling=scheduling,
+                capacity=self._shared_capacity(runtime),
+                display=self._organize_display(library, discovery.progress.scope_entries),
+            )
+        except TaskQueueFull as full:
+            raise DiscoveryError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human decision, "
+                    "then explicitly request this analysis again"
+                ),
+            ) from full
+        except DiscoveryConflict as conflict:
+            current = self._read(discovery.discovery_id)
+            if current is not None and self._kernel_task_id(current) is not None:
+                if updated is None or current.status is DiscoveryStatus.ANALYZING:
+                    # Another continuation of the same run won the link; a
+                    # repeat or lost response reads that exact work back.
+                    return current
+                return self._enter_analysis(
+                    current,
+                    actor=actor,
+                    message=message or current.progress.message,
+                )
+            raise conflict
 
     def _kernel_task_id(self, discovery: MediaDiscovery) -> str | None:
         """The Task engine identity of this discovery, when it has one."""

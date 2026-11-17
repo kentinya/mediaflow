@@ -37,12 +37,17 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionStatus,
 )
 from mediaflow.domain.manual_organize import MAX_MANUAL_ID_LENGTH
-from mediaflow.domain.manual_organize_preview import ManualOrganizePreview
+from mediaflow.domain.manual_organize_preview import (
+    ManualOrganizePreview,
+    ManualPreviewItemStatus,
+    manual_preview_plan_problem,
+)
 from mediaflow.domain.manual_safety import (
     contains_manual_secret,
     redact_manual_value,
     safe_manual_error,
 )
+from mediaflow.domain.media_discovery import DiscoveryStatus
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.organizer import (
     AttachmentPlan,
@@ -64,6 +69,7 @@ from mediaflow.domain.storage import StorageEntry, StorageEntryType, StorageErro
 from mediaflow.domain.task_persistence import (
     SETTLED_TASK_FLOW_STATUSES,
     PersistentResultRecord,
+    PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
     RunDisplayContext,
@@ -71,7 +77,14 @@ from mediaflow.domain.task_persistence import (
     task_item_counts,
     task_work_status,
 )
-from mediaflow.domain.task_scheduling import TaskQueueFull, require_capacity
+from mediaflow.domain.task_scheduling import (
+    TaskMachineStage,
+    TaskQueueFull,
+    TaskQueueState,
+    TaskSchedulingState,
+    TaskTrigger,
+    require_capacity,
+)
 
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
@@ -908,6 +921,214 @@ class ManualOrganizeExecutionService:
                     return task_id
         return self._adopted_continuation_task(intent, authority)
 
+    def _adopt_prechange_summary(
+        self,
+        intent,
+        authority: ManualExecutionAuthorization,
+        preview: ManualOrganizePreview,
+        *,
+        scheduling_capacity: int | None,
+    ) -> str | None:
+        """Give one pre-change analyzed summary its current Task owner.
+
+        A summary produced by the retired standalone discovery Worker is
+        linked to its discovery but not to any organizing Task.  Confirming it
+        is still legal V2 work: this boundary commits that one Task with the
+        exact reviewed sources, each with the same independent wait/problem
+        state the summary already recorded, and leaves the discovery, intent,
+        Preview, pin and saved decisions untouched.  The ordinary admission
+        then adopts this Task and re-registers only the confirmed machine work.
+        A concurrent continuation converges on the Task that won.
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return None
+        try:
+            discovery = finder(intent.intent_id)
+        except Exception:  # noqa: BLE001 - an unreadable link keeps the ordinary path
+            return None
+        if discovery is None:
+            return None
+        task_id = getattr(discovery, "organize_task_id", None)
+        if isinstance(task_id, str) and task_id:
+            task_reader = getattr(self._repository, "get_task", None)
+            task = task_reader(task_id) if callable(task_reader) else None
+            if task is not None:
+                return None
+        if (
+            getattr(discovery, "actor", None) != authority.actor
+            or getattr(discovery, "intent_id", None) != authority.intent_id
+            or getattr(discovery, "preview_id", None) != preview.preview_id
+            or getattr(discovery, "snapshot_id", None) != authority.configuration_snapshot_id
+            or getattr(discovery, "snapshot_digest", None)
+            != authority.configuration_snapshot_digest
+            or getattr(discovery, "status", None)
+            not in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS}
+        ):
+            return None
+        adopter = getattr(self._repository, "adopt_files_organize_work", None)
+        if not callable(adopter):
+            return None
+        capacity = (
+            scheduling_capacity
+            if scheduling_capacity is not None
+            else self._current_scheduling_capacity()
+        )
+        if capacity is None:
+            raise ManualExecutionError(
+                "the current system Task scheduling capacity is unavailable",
+                code="capacity_unavailable",
+                status=503,
+                next_action=(
+                    "restore the current Active system runtime settings, then confirm "
+                    "this same summary again"
+                ),
+            )
+        require_capacity(capacity)
+        now = self._clock()
+        new_task_id = str(uuid4())
+        canonical_paths = {
+            str(value[0]): str(value[1])
+            for value in getattr(discovery, "storage_scope", ())
+            if isinstance(value, (list, tuple)) and len(value) == 2
+        }
+        task_items = tuple(
+            self._prechange_summary_item(
+                value,
+                task_id=new_task_id,
+                canonical_paths=canonical_paths,
+                now=now,
+            )
+            for value in preview.items
+        )
+        task = PersistentTask(
+            new_task_id,
+            "manual_organize",
+            PersistentTaskStatus.RUNNING,
+            True,
+            now,
+            now,
+            now,
+            None,
+            len(task_items),
+            0,
+            0,
+            None,
+            False,
+            None,
+            len(task_items),
+            authority.configuration_snapshot_id,
+            authority.configuration_snapshot_digest,
+        )
+        scheduling = TaskSchedulingState(
+            task_id=new_task_id,
+            queue_state=TaskQueueState.WAITING_HUMAN,
+            admission_trigger=TaskTrigger.MANUAL,
+            admission_principal=authority.actor,
+            admission_request_id=None,
+            created_at=now,
+            updated_at=now,
+            machine_stage=TaskMachineStage.ANALYSIS,
+        )
+        try:
+            adopter(
+                replace(
+                    discovery,
+                    organize_task_id=new_task_id,
+                    updated_at=now,
+                ),
+                task,
+                expected_version=discovery.version,
+                scheduling=scheduling,
+                capacity=capacity,
+                items=task_items,
+            )
+        except TaskQueueFull as full:
+            raise ManualExecutionError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human "
+                    "decision, then confirm this same summary again"
+                ),
+            ) from full
+        except Exception as error:
+            # A concurrent continuation may already have linked the exact same
+            # discovery.  Read that winner back; anything else stays the bounded
+            # admission error it really was.
+            current = finder(intent.intent_id)
+            winner = getattr(current, "organize_task_id", None)
+            if (
+                current is not None
+                and isinstance(winner, str)
+                and winner
+                and getattr(current, "preview_id", None) == preview.preview_id
+            ):
+                return winner
+            raise ManualExecutionError(
+                "the pre-change summary could not be linked to the current Task kernel",
+                code="admission_changed",
+                status=409,
+                next_action=(
+                    "reload the current plan summary and confirm it again; nothing was executed"
+                ),
+                details={"reason": type(error).__name__},
+            ) from error
+        return new_task_id
+
+    def _prechange_summary_item(
+        self,
+        value,
+        *,
+        task_id: str,
+        canonical_paths: dict[str, str],
+        now: datetime,
+    ) -> PersistentTaskItem:
+        """The durable TaskItem one pre-change summary item already described."""
+
+        if value.status is ManualPreviewItemStatus.PREVIEWED:
+            status, stage = TaskItemStatus.WAITING_CONFIRM, "waiting_confirm"
+        else:
+            problem = manual_preview_plan_problem(value.plan)
+            status, stage = {
+                "recognition": (TaskItemStatus.WAITING_RECOGNITION, "waiting_recognition"),
+                "metadata": (TaskItemStatus.WAITING_METADATA, "waiting_metadata"),
+                "metadata_correction": (
+                    TaskItemStatus.WAITING_METADATA_CORRECTION,
+                    "waiting_metadata_correction",
+                ),
+                "classification": (
+                    TaskItemStatus.WAITING_CLASSIFICATION,
+                    "waiting_classification",
+                ),
+                "conflict": (TaskItemStatus.WAITING_CONFIRM, "waiting_confirm"),
+            }.get(problem, (TaskItemStatus.FAILED, "analysis_failed"))
+        return PersistentTaskItem(
+            str(uuid4()),
+            task_id,
+            value.source.storage_id,
+            value.source.resource_library_id,
+            value.source.path,
+            f"{value.source.storage_id}:{value.source.path}",
+            status,
+            stage,
+            0,
+            now,
+            now,
+            error=value.error,
+            source_occurrence_id=value.source.occurrence_id,
+            source_fingerprint=value.source.fingerprint,
+            source_fingerprint_state=(
+                "verified"
+                if value.source.occurrence_state == "verified" and value.source.fingerprint
+                else "unverified"
+            ),
+            source_observed_at=value.source.observed_at,
+            source_storage_path=canonical_paths.get(value.source.path),
+        )
+
     def _adopted_continuation_task(self, intent, authority) -> str | None:
         """The automatic source Task one continuation summary was prepared for.
 
@@ -1192,6 +1413,13 @@ class ManualOrganizeExecutionService:
         # when it is the exact unfinished Task of this same library/Storage binding
         # and pin; anything else keeps its own new Task, so history is never merged.
         adopted_task_id = self._adopted_organize_task(intent, authority)
+        if adopted_task_id is None:
+            adopted_task_id = self._adopt_prechange_summary(
+                intent,
+                authority,
+                preview,
+                scheduling_capacity=scheduling_capacity,
+            )
         task_id = adopted_task_id or str(uuid4())
         now = self._clock()
         execution_items = tuple(
