@@ -923,9 +923,9 @@ class ManagementSetupTests(unittest.TestCase):
             ),
         ):
             for path, body in (
-                ("/api/v1/manual-intents", {"source": "x"}),
+                ("/api/v1/tasks/example/cancel", {}),
                 ("/api/v1/automation/task-definitions", {"definition": {}}),
-                ("/api/v1/manual-executions", {"taskId": "x"}),
+                ("/api/v1/files/example/transfers", {}),
             ):
                 with self.subTest(path=path):
                     status, response = request(self.api, path, method="POST", body=body)

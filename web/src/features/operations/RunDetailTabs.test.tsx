@@ -943,10 +943,7 @@ function stubDetailJourney(
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }
-    if (
-      url.startsWith("/api/v1/operations/organize/previews/") ||
-      url.startsWith("/api/v1/manual-recovery-preparations/")
-    ) {
+    if (url.startsWith("/api/v1/operations/organize/previews/")) {
       if (options.planSummary !== undefined) {
         return options.planSummary(input, init);
       }

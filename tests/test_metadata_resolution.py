@@ -229,7 +229,7 @@ class MetadataResolutionTests(unittest.TestCase):
         self.assertEqual(result.metadata.status, MetadataIdentificationStatus.PROVIDER_ERROR)
         self.assertIsNone(result.metadata.identity)
 
-    def test_cli_and_api_resolution_permissions_fields_and_zero_storage(self) -> None:
+    def test_retired_global_cli_and_api_resolution_are_not_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -241,13 +241,13 @@ class MetadataResolutionTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataReviewService(repository).create(item, identification(), "C")
-            output = io.StringIO()
+            output, errors = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
                 side_effect=AssertionError("resolution constructed Storage"),
             ):
-                self.assertEqual(
+                with self.assertRaises(SystemExit) as raised:
                     final_main(
                         [
                             "--config",
@@ -261,16 +261,10 @@ class MetadataResolutionTests(unittest.TestCase):
                             "local-operator",
                         ],
                         stdout=output,
-                        stderr=io.StringIO(),
-                    ),
-                    0,
-                )
-            self.assertIn("Selected candidate: tmdb:101", output.getvalue())
+                        stderr=errors,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
-                _, _, second_item = create_processing_item(repository, 2)
-                second = MetadataReviewService(repository).create(
-                    second_item, identification(), "A"
-                )
                 principals = (
                     ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),
                     ResolvedApiPrincipal(
@@ -280,30 +274,35 @@ class MetadataResolutionTests(unittest.TestCase):
                     ),
                 )
                 api = MediaFlowApi(repository, principals=principals)
-                status, _ = api_request(
-                    api,
-                    f"/api/v1/metadata-reviews/{second.review_id}/resolve",
-                    method="POST",
-                    token="viewer",
-                    document={"candidateRank": 1},
+                for token, path, document in (
+                    (
+                        "viewer",
+                        f"/api/v1/metadata-reviews/{review.review_id}/resolve",
+                        {"candidateRank": 1},
+                    ),
+                    (
+                        "operator",
+                        f"/api/v1/metadata-reviews/{review.review_id}/resolve",
+                        {"candidateRank": 2},
+                    ),
+                    ("operator", "/api/v1/metadata-reviews/missing/resolve", {"candidateRank": 1}),
+                ):
+                    with self.subTest(path=path, token=token):
+                        status, _ = api_request(
+                            api,
+                            path,
+                            method="POST",
+                            token=token,
+                            document=document,
+                        )
+                        self.assertEqual(status, 404)
+                self.assertIs(
+                    repository.get_metadata_review(review.review_id).status.value, "pending"
                 )
-                self.assertEqual(status, 403)
-                status, _ = api_request(
-                    api,
-                    f"/api/v1/metadata-reviews/{second.review_id}/resolve",
-                    method="POST",
-                    document={"candidateRank": 2},
-                )
-                self.assertEqual(status, 200)
-                resolved = repository.get_metadata_review(second.review_id)
-                self.assertEqual(resolved.actor, "operator")
                 self.assertFalse(hasattr(repository, "list_jobs"))
-                status, _ = api_request(
-                    api,
-                    "/api/v1/metadata-reviews/missing/resolve",
-                    method="POST",
-                    document={"candidateRank": 1, "providerId": "injected", "execute": True},
+                self.assertFalse(
+                    any(
+                        value.route.startswith("/api/v1/metadata-reviews")
+                        for value in repository.list_security_audit()
+                    )
                 )
-                self.assertEqual(status, 400)
-                routes = [entry.route for entry in repository.list_security_audit()]
-                self.assertIn("/api/v1/metadata-reviews/{id}/resolve", routes)

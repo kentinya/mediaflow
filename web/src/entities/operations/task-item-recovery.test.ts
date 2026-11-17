@@ -44,6 +44,47 @@ describe("Task item recovery contract", () => {
     expect(JSON.stringify(result)).not.toMatch(/\/tmp\/|token|password/i);
   });
 
+  it("normalizes the reviewed intent version on a plan summary", () => {
+    const result = normalizeTaskItemRecovery({
+      task_id: "task-1",
+      item_id: "item-1",
+      checkpoint: {
+        status: "waiting_confirm",
+        stage: "waiting_confirm",
+        raw_stage: "waiting_confirm",
+        effects: { certainty: "none" },
+        retry_safety: "unsafe",
+        checkpoint_version: checkpointVersion,
+        permitted_action_ids: ["resolve_conflict"],
+        refusal_reason: null,
+        next_action: "review the summary",
+      },
+      manualRecoveryAvailable: true,
+      next_action: "review the summary",
+      manualRecoveryPreparation: {
+        preparation_id: "preparation-1",
+        preview_id: "preview-1",
+        intent_id: "intent-1",
+        intent_version: 3,
+        source_task_id: "task-1",
+        source_item_id: "item-1",
+        status: "prepared",
+        checkpoint_version: checkpointVersion,
+        configuration_snapshot_id: "active-1",
+        configuration_snapshot_digest: "d".repeat(64),
+        authorization_id: null,
+        execution_id: null,
+        hasExecutionAuthority: false,
+        next_action: "review and confirm",
+      },
+    });
+
+    expect(result.manualRecoveryPreparation?.intentVersion).toBe(3);
+    expect(result.manualRecoveryPreparation?.preparationId).toBe(
+      "preparation-1",
+    );
+  });
+
   it("normalizes the bounded native-analysis scheduling projection", () => {
     const result = normalizeTaskItemRecovery({
       task_id: "task-1",

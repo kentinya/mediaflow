@@ -41,6 +41,16 @@ export interface TaskItemRecoveryAnalysisState {
   readonly code: string | null;
 }
 
+/** The exact confirmation this page submitted, kept for unknown-outcome reads. */
+export interface TaskItemRecoverySubmittedConfirmation {
+  readonly preparationId: string;
+  readonly previewId: string;
+  readonly itemIds: readonly string[];
+  readonly expectedIntentVersion: number;
+  readonly allowOverwrite: boolean;
+  readonly allowSourceCleanup: boolean;
+}
+
 export interface TaskItemRecoverySessionState {
   /** One recovery command of this exact item is still awaiting its response. */
   readonly busy: boolean;
@@ -50,8 +60,8 @@ export interface TaskItemRecoverySessionState {
   readonly message: string | null;
   /** An unknown outcome locks further submissions until reconciliation. */
   readonly repeatLocked: boolean;
-  /** The exact prepared summary whose confirmation outcome is unresolved. */
-  readonly submittedPreparationId: string | null;
+  /** The exact confirmation whose outcome is unresolved. */
+  readonly submittedConfirmation: TaskItemRecoverySubmittedConfirmation | null;
   /** The latest analysis admission observed for this exact item. */
   readonly analysis: TaskItemRecoveryAnalysisState | null;
 }
@@ -61,7 +71,7 @@ const EMPTY_SESSION: TaskItemRecoverySessionState = {
   pendingAction: null,
   message: null,
   repeatLocked: false,
-  submittedPreparationId: null,
+  submittedConfirmation: null,
   analysis: null,
 };
 

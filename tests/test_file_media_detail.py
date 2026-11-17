@@ -744,12 +744,18 @@ class FileMediaDetailTests(unittest.TestCase):
                         ),
                     ),
                 )
-                status, recognition = api_request(api, "/api/v1/recognition-reviews")
+                status, recognition = api_request(
+                    api,
+                    f"/api/v1/tasks/{task.task_id}/items/{recognition_item.item_id}",
+                )
                 self.assertEqual(status, 200)
-                self.assertEqual(recognition["items"][0]["source_path"], "Recognition.mkv")
-                status, correction = api_request(api, "/api/v1/metadata-corrections")
+                self.assertEqual(recognition["source_path"], "Recognition.mkv")
+                status, correction = api_request(
+                    api,
+                    f"/api/v1/tasks/{task.task_id}/items/{correction_item.item_id}",
+                )
                 self.assertEqual(status, 200)
-                self.assertEqual(correction["items"][0]["source_path"], "Correction.mkv")
+                self.assertEqual(correction["source_path"], "Correction.mkv")
 
     def test_complete_item_evidence_write_rolls_back_result_and_item(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

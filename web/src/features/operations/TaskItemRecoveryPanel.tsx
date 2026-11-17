@@ -2,8 +2,9 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  confirmTaskItemRecoveryPreparation,
   continueTaskItemAnalysis,
+  executeOrganizePreview,
+  fetchOrganizeAdmissionOutcome,
   ignoreTaskItemReview,
   prepareTaskItemRecoverySummary,
   searchTaskItemMetadata,
@@ -379,7 +380,7 @@ export function TaskItemRecoveryPanel({
     pendingAction,
     message,
     repeatLocked,
-    submittedPreparationId,
+    submittedConfirmation,
     analysis: analysisObservation,
   } = recoverySession.state;
   const updateRecoverySession = recoverySession.update;
@@ -421,6 +422,7 @@ export function TaskItemRecoveryPanel({
   const [preparation, setPreparation] = useState<{
     readonly preparationId: string;
     readonly previewId: string;
+    readonly intentVersion: number;
     readonly status: string;
     readonly checkpointVersion: string;
   } | null>(null);
@@ -447,6 +449,7 @@ export function TaskItemRecoveryPanel({
         ? {
             preparationId: durablePreparation.preparationId,
             previewId: durablePreparation.previewId,
+            intentVersion: durablePreparation.intentVersion,
             status: "prepared" as const,
             checkpointVersion: durablePreparation.checkpointVersion,
           }
@@ -455,6 +458,7 @@ export function TaskItemRecoveryPanel({
         ? {
             preparationId: preparation.preparationId,
             previewId: preparation.previewId,
+            intentVersion: preparation.intentVersion,
             status: preparation.status,
             checkpointVersion: preparation.checkpointVersion,
           }
@@ -767,6 +771,7 @@ export function TaskItemRecoveryPanel({
         setPreparation({
           preparationId: result.model.preparationId,
           previewId: result.model.previewId,
+          intentVersion: result.model.intentVersion,
           status: result.model.status,
           checkpointVersion: result.model.checkpointVersion,
         });
@@ -799,24 +804,23 @@ export function TaskItemRecoveryPanel({
     ) {
       return;
     }
-    const preparationId = activePreparation.preparationId;
+    const submission = {
+      preparationId: activePreparation.preparationId,
+      previewId: activePreparation.previewId,
+      itemIds: [...confirmSelection],
+      expectedIntentVersion: activePreparation.intentVersion,
+      allowOverwrite: allowOverwriteConfirm,
+      allowSourceCleanup: allowCleanupConfirm,
+    } as const;
     beginAction("confirm");
-    updateRecoverySession({ submittedPreparationId: preparationId });
+    updateRecoverySession({ submittedConfirmation: submission });
     try {
-      const result = await confirmTaskItemRecoveryPreparation(
-        token,
-        preparationId,
-        {
-          itemIds: confirmSelection,
-          allowOverwrite: allowOverwriteConfirm,
-          allowSourceCleanup: allowCleanupConfirm,
-        },
-      );
+      const result = await executeOrganizePreview(token, submission);
       if (result.ok) {
         updateRecoverySession({
           message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。`,
           repeatLocked: false,
-          submittedPreparationId: null,
+          submittedConfirmation: null,
         });
         setPreparation(null);
         setConfirmSelection(null);
@@ -829,13 +833,13 @@ export function TaskItemRecoveryPanel({
         // other item context stays untouched; the accepted result is kept in
         // the durable session and re-read on the next reopen.
       } else {
-        // An unknown response is never treated as a refusal.  Keep the
-        // submission locked and let the operator explicitly re-read the
-        // durable preparation, which reveals whether this exact confirmation
-        // was admitted.
+        // An unknown response is never treated as a refusal.  Keep the exact
+        // submitted request identity and let the operator explicitly re-read
+        // the current admission evidence, which reveals whether this exact
+        // confirmation was admitted.
         await reportUnknown(result.code, result.status);
         if (!isUnknown(result.status, result.code)) {
-          updateRecoverySession({ submittedPreparationId: null });
+          updateRecoverySession({ submittedConfirmation: null });
         }
         refreshLinkedReads();
       }
@@ -993,44 +997,79 @@ export function TaskItemRecoveryPanel({
       return;
     }
     const durable = result.data.model.manualRecoveryPreparation ?? null;
-    // The reconciliation is bound to the exact summary this page submitted.
-    // Reading a different current preparation, or only a successful TaskItem
-    // GET, must not unlock a submission whose own admission is still unknown.
-    if (submittedPreparationId !== null) {
-      if (
-        durable === null ||
-        durable.preparationId !== submittedPreparationId
-      ) {
+    // The reconciliation is bound to the exact confirmation this page
+    // submitted.  The official admission read proves whether that exact
+    // reviewed selection, intent version and effects were admitted; a newer
+    // summary, a sibling's execution or only a successful TaskItem GET never
+    // unlocks the unknown submission.
+    if (submittedConfirmation !== null) {
+      let outcome;
+      try {
+        outcome = await fetchOrganizeAdmissionOutcome(
+          token,
+          submittedConfirmation,
+        );
+      } catch {
         updateRecoverySession({
           repeatLocked: true,
           message:
-            "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
+            "本次确认的受理证据仍无法读取；保持提交锁定，恢复读取后再检查。 ",
         });
         return;
       }
-      if (durable.status === "prepared") {
-        // The admission did not commit; the same prepared summary is safe to
-        // confirm again deliberately.
+      if (!outcome.ok) {
         updateRecoverySession({
-          repeatLocked: false,
-          submittedPreparationId: null,
+          repeatLocked: true,
           message:
-            "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
+            "尚未读回本次提交对应的受理证据；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
         });
         return;
       }
-      if (durable.status === "confirmed" && durable.executionId !== null) {
-        updateRecoverySession({
-          repeatLocked: false,
-          submittedPreparationId: null,
-          message: "已读取持久状态：本次确认已经受理。 ",
-        });
+      if (outcome.model.outcome === "known") {
+        if (
+          durable?.status === "confirmed" &&
+          durable.executionId === outcome.model.executionId
+        ) {
+          updateRecoverySession({
+            repeatLocked: false,
+            submittedConfirmation: null,
+            message: "已读取持久状态：本次确认已经受理。 ",
+          });
+          refreshLinkedReads();
+        } else {
+          updateRecoverySession({
+            repeatLocked: true,
+            message:
+              "已读回同一预览的受理执行，但未核对到本次计划摘要；保持提交锁定，请按当前摘要重新处理。 ",
+          });
+        }
+        return;
+      }
+      if (outcome.model.outcome === "not_admitted") {
+        if (
+          durable?.preparationId === submittedConfirmation.preparationId &&
+          durable.status === "prepared"
+        ) {
+          updateRecoverySession({
+            repeatLocked: false,
+            submittedConfirmation: null,
+            message:
+              "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
+          });
+        } else {
+          updateRecoverySession({
+            repeatLocked: false,
+            submittedConfirmation: null,
+            message:
+              "本次确认未获受理；当前计划摘要已变化，请按当前状态继续。 ",
+          });
+        }
         return;
       }
       updateRecoverySession({
         repeatLocked: true,
         message:
-          "该计划摘要已被更新或不再可用；保持提交锁定，请刷新页面后按当前摘要重新处理。 ",
+          "同一预览下存在其他受理记录，但没有证明本次提交；保持提交锁定，请核对原 Task 与当前摘要。 ",
       });
       return;
     }
@@ -1439,7 +1478,7 @@ export function TaskItemRecoveryPanel({
     pendingAction !== null ||
     message !== null ||
     repeatLocked ||
-    submittedPreparationId !== null;
+    submittedConfirmation !== null;
   if (hostedDiagnostics && !hasLiveRecoveryAction && !hasSessionFeedback) {
     return null;
   }

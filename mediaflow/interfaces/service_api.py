@@ -35,10 +35,8 @@ from mediaflow.application.automation_workspace_commands import (
     AUTOMATION_DEFINITION_FORM_FIELDS,
     AutomationWorkspaceCommandService,
 )
-from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
@@ -59,14 +57,12 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationError,
     ManualRecoveryContinuationService,
-    native_preparation_discovery_id,
 )
 from mediaflow.application.manual_task_continuation import (
     ManualTaskContinuationError,
     ManualTaskContinuationService,
 )
 from mediaflow.application.media_discovery import MediaDiscoveryService
-from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import (
     NotificationPublisher,
     task_terminal_observer,
@@ -178,7 +174,6 @@ from mediaflow.domain.operations_run import (
     OperationsRunView,
     known_command_label,
 )
-from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.package_exchange import (
     MAX_CONFIGURATION_PACKAGE_BYTES,
     PackageExchangeError,
@@ -191,7 +186,6 @@ from mediaflow.domain.system_settings import (
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     SETTLED_TASK_FLOW_STATUSES,
-    ConfirmationStatus,
     PersistentTaskStatus,
     direct_command_task_command,
 )
@@ -1546,23 +1540,14 @@ class MediaFlowApi:
         supported_roots = {
             "auth",
             "automation",
-            "classification-reviews",
             "configuration",
-            "confirmations",
             "explore",
             "files",
             "logs",
             "management",
-            "manual-executions",
-            "manual-intents",
-            "manual-previews",
-            "manual-recovery-preparations",
             "media-libraries",
-            "metadata-corrections",
-            "metadata-reviews",
             "notifications",
             "operations",
-            "recognition-reviews",
             "recovery",
             "resource-libraries",
             "security-audit",
@@ -1943,6 +1928,7 @@ class MediaFlowApi:
                 "expectedIntentVersion",
                 "allowOverwrite",
                 "allowSourceCleanup",
+                "preparationId",
             }
             if set(document).difference(allowed):
                 raise ValueError(
@@ -1969,16 +1955,48 @@ class MediaFlowApi:
             for name in ("allowOverwrite", "allowSourceCleanup"):
                 if name in document and not isinstance(document[name], bool):
                     raise ValueError(f"operations organize execute {name} must be boolean")
-            try:
-                execution = self._manual_execution.begin_web_execution(
-                    parts[5],
-                    item_ids,
-                    expected_intent_version=expected_version,
-                    actor=principal.principal_id,
-                    confirmation=True,
-                    allow_overwrite=document.get("allowOverwrite", False),
-                    allow_source_cleanup=document.get("allowSourceCleanup", False),
+            preparation_id = document.get("preparationId")
+            if preparation_id is not None and (
+                not isinstance(preparation_id, str)
+                or not preparation_id.strip()
+                or len(preparation_id) > 256
+            ):
+                raise ValueError(
+                    "operations organize execute preparationId must be a bounded identity"
                 )
+            try:
+                if preparation_id is not None:
+                    if self._manual_recovery is None:
+                        raise ManualExecutionError(
+                            "the recovery plan summary service is unavailable",
+                            code="service_unavailable",
+                            status=503,
+                            next_action=(
+                                "restore the recovery summary service, then reload the current "
+                                "plan summary"
+                            ),
+                        )
+                    execution = self._manual_recovery.confirm_from_execute(
+                        preparation_id,
+                        preview_id=parts[5],
+                        item_ids=item_ids,
+                        expected_intent_version=expected_version,
+                        actor=principal.principal_id,
+                        permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                        confirmation=True,
+                        allow_overwrite=document.get("allowOverwrite", False),
+                        allow_source_cleanup=document.get("allowSourceCleanup", False),
+                    )
+                else:
+                    execution = self._manual_execution.begin_web_execution(
+                        parts[5],
+                        item_ids,
+                        expected_intent_version=expected_version,
+                        actor=principal.principal_id,
+                        confirmation=True,
+                        allow_overwrite=document.get("allowOverwrite", False),
+                        allow_source_cleanup=document.get("allowSourceCleanup", False),
+                    )
             except ManualExecutionError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(
@@ -5955,504 +5973,6 @@ class MediaFlowApi:
             return self._library_file_operation_origin(
                 start_response, environ, parts[4], media_library=None
             )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[4] == "previews"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "list_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference({"resourceLibrary", "resourceLibraryId", "limit"}) or any(
-                len(value) != 1 for value in values.values()
-            ):
-                raise ValueError("file Preview list query accepts one ResourceLibrary and limit")
-            resource_library_alias = values.get("resourceLibrary", [None])[0]
-            resource_library_canonical = values.get("resourceLibraryId", [None])[0]
-            if (
-                resource_library_alias is not None
-                and resource_library_canonical is not None
-                and resource_library_alias != resource_library_canonical
-            ):
-                raise ValueError("file Preview list ResourceLibrary fields disagree")
-            resource_library_id = resource_library_alias or resource_library_canonical
-            if not resource_library_id:
-                raise ValueError("file Preview list requires resourceLibrary")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
-            previews = self._manual_previews.list_current("file", parts[3], limit=limit)
-            if any(
-                any(value.source.resource_library_id != resource_library_id for value in item.items)
-                for item in previews
-            ):
-                raise ValueError("file Preview list ResourceLibrary does not match the source")
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [self._manual_preview_document(value) for value in previews],
-                    "limit": limit,
-                    "total": len(previews),
-                    "scopeKind": "file",
-                    "scopeId": parts[3],
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "previews"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "list_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference({"limit"}) or any(
-                len(value) != 1 for value in values.values()
-            ):
-                raise ValueError("ResourceLibrary Preview list query accepts limit once")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
-            previews = self._manual_previews.list_current("resource_library", parts[3], limit=limit)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [self._manual_preview_document(value) for value in previews],
-                    "limit": limit,
-                    "total": len(previews),
-                    "scopeKind": "resourceLibrary",
-                    "scopeId": parts[3],
-                },
-            )
-        if parts == ["api", "v1", "manual-previews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference(
-                {
-                    "scopeKind",
-                    "scopeId",
-                    "fileId",
-                    "resourceLibrary",
-                    "resourceLibraryId",
-                    "intentId",
-                    "limit",
-                }
-            ) or any(len(value) != 1 for value in values.values()):
-                raise ValueError("current-source Preview list query contains unsupported fields")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
-            intent_id = values.get("intentId", [None])[0]
-            file_id = values.get("fileId", [None])[0]
-            resource_library_id = values.get("resourceLibraryId", [None])[0]
-            resource_library_alias = values.get("resourceLibrary", [None])[0]
-            if (
-                resource_library_id is not None
-                and resource_library_alias is not None
-                and resource_library_id != resource_library_alias
-            ):
-                raise ValueError("Preview list ResourceLibrary fields disagree")
-            resource_library_id = resource_library_id or resource_library_alias
-            scope_kind = values.get("scopeKind", [None])[0]
-            scope_id = values.get("scopeId", [None])[0]
-            if scope_kind == "resourceLibrary":
-                scope_kind = "resource_library"
-            if intent_id is not None:
-                if any(
-                    value is not None
-                    for value in (file_id, resource_library_id, scope_kind, scope_id)
-                ):
-                    raise ValueError("Preview list intentId cannot be combined with a source scope")
-                items = self._manual_previews.list_readonly(intent_id, limit=limit)
-            else:
-                if file_id is not None and resource_library_id is not None:
-                    raise ValueError("Preview list cannot combine fileId and resourceLibraryId")
-                if file_id is not None:
-                    if resource_library_id is None:
-                        raise ValueError("file Preview list requires resourceLibraryId")
-                    if scope_kind not in (None, "file"):
-                        raise ValueError("file Preview list scopeKind must be file")
-                    if scope_id not in (None, file_id):
-                        raise ValueError("file Preview list scopeId disagrees with fileId")
-                    scope_kind, scope_id = "file", file_id
-                elif resource_library_id is not None:
-                    if scope_kind not in (None, "resource_library"):
-                        raise ValueError("ResourceLibrary Preview list scopeKind is invalid")
-                    if scope_id not in (None, resource_library_id):
-                        raise ValueError("ResourceLibrary Preview list scopeId disagrees")
-                    scope_kind, scope_id = "resource_library", resource_library_id
-                elif scope_kind is not None or scope_id is not None:
-                    if scope_kind not in {"file", "resource_library"} or not scope_id:
-                        raise ValueError(
-                            "Preview list scope requires a valid scopeKind and scopeId"
-                        )
-                    if scope_kind == "file":
-                        file_id, scope_id = scope_id, scope_id
-                    else:
-                        resource_library_id, scope_id = scope_id, scope_id
-                else:
-                    raise ValueError("Preview list requires intentId or a bounded source scope")
-                items = self._manual_previews.list_current(scope_kind, scope_id, limit=limit)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [self._manual_preview_document(value) for value in items],
-                    "limit": limit,
-                    "total": len(items),
-                    "scopeKind": "resourceLibrary"
-                    if scope_kind == "resource_library"
-                    else scope_kind,
-                    "scopeId": scope_id,
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[4] == "manual-intent"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            self._require_empty_query(environ, "single-file manual intent creation")
-            if environ.get("CONTENT_LENGTH", "0") not in ("", "0", 0, None):
-                document = self._document(environ)
-                if document:
-                    raise ValueError("single-file manual intent accepts an empty request body")
-            intent = self._manual_intents.create([parts[3]], actor=principal.principal_id)
-            return self._response(start_response, 201, self._manual_intent_document(intent))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-intents"]
-            and parts[4] == "preview"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "manual Preview")
-            document = self._document(environ)
-            allowed = {
-                "expectedVersion",
-                "expectedItemVersions",
-                "itemIds",
-                "snapshotId",
-                "snapshotDigest",
-            }
-            if set(document).difference(allowed) or "expectedVersion" not in document:
-                raise ValueError(
-                    "manual Preview requires expectedVersion and only bounded selection fields"
-                )
-            expected_version = document["expectedVersion"]
-            if (
-                isinstance(expected_version, bool)
-                or not isinstance(expected_version, int)
-                or expected_version < 1
-            ):
-                raise ValueError("manual Preview expectedVersion must be a positive integer")
-            item_ids = document.get("itemIds")
-            if item_ids is not None and not isinstance(item_ids, list):
-                raise ValueError("manual Preview itemIds must be an array")
-            expected_item_versions = document.get("expectedItemVersions")
-            if expected_item_versions is not None and not isinstance(
-                expected_item_versions, (dict, list)
-            ):
-                raise ValueError("manual Preview expectedItemVersions must be an object or array")
-            for name in ("snapshotId", "snapshotDigest"):
-                if name in document and (
-                    not isinstance(document[name], str) or not document[name].strip()
-                ):
-                    raise ValueError(f"manual Preview {name} must be a non-empty string")
-            preview = self._manual_previews.create(
-                parts[3],
-                item_ids,
-                expected_version=expected_version,
-                expected_item_versions=expected_item_versions,
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 201, self._manual_preview_document(preview))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-intents"]
-            and parts[4] == "previews"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Preview service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference({"limit"}) or any(
-                len(value) != 1 for value in values.values()
-            ):
-                raise ValueError("manual Preview query accepts limit once")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "manual Preview")
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._manual_preview_document(value)
-                        for value in self._manual_previews.list_readonly(parts[3], limit=limit)
-                    ],
-                    "limit": limit,
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-intents"]
-            and parts[4] == "preview"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "current manual Preview")
-            return self._response(
-                start_response,
-                200,
-                self._manual_preview_document(self._manual_previews.latest_readonly(parts[3])),
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-previews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "manual Preview detail")
-            return self._response(
-                start_response,
-                200,
-                self._manual_preview_document(self._manual_previews.get_readonly(parts[3])),
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-executions"]
-            and parts[4] == "reconcile"
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution reconciliation")
-            document = self._document(environ)
-            if set(document) != {"confirmation"} or document["confirmation"] is not True:
-                raise ValueError("manual execution reconciliation requires confirmation=true")
-            execution = self._manual_execution.reconcile(
-                parts[3],
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-            )
-            return self._response(
-                start_response,
-                200,
-                self._manual_execution.document(execution.execution_id),
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-executions"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_execution is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual execution service is unavailable",
-                )
-            self._require_empty_query(environ, "manual execution detail")
-            return self._response(
-                start_response,
-                200,
-                self._manual_execution.document(parts[3]),
-            )
-        if parts == ["api", "v1", "manual-intents"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference({"limit"}) or any(
-                len(value) != 1 for value in values.values()
-            ):
-                raise ValueError("manual intent query accepts limit once")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "manual intent")
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._manual_intent_document(item, include_audit=False)
-                        for item in self._manual_intents.list(limit=limit)
-                    ],
-                    "limit": limit,
-                },
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-intents"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            self._require_empty_query(environ, "manual intent detail")
-            return self._response(
-                start_response,
-                200,
-                self._manual_intent_document(self._manual_intents.get(parts[3])),
-            )
-        if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "manual-intents"]
-            and parts[4] == "items"
-            and parts[6] == "choice"
-            and method == "PUT"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            self._require_empty_query(environ, "manual intent choice")
-            document = self._document(environ)
-            allowed = {
-                "expectedVersion",
-                "expectedItemVersion",
-                "snapshotId",
-                "snapshotDigest",
-                "recognitionTypeId",
-                "metadata",
-                "metadataIdentity",
-                "namingPolicyId",
-                "classificationPolicyId",
-                "organizePolicyId",
-            }
-            if set(document).difference(allowed):
-                raise ValueError("manual intent choice fields are invalid")
-            if "expectedVersion" not in document:
-                raise ValueError("manual intent choice requires expectedVersion")
-            if "metadata" in document and "metadataIdentity" in document:
-                raise ValueError(
-                    "manual intent choice accepts metadata or metadataIdentity, not both"
-                )
-            expected = document["expectedVersion"]
-            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
-                raise ValueError("manual intent expectedVersion must be a positive integer")
-            expected_item = document.get("expectedItemVersion")
-            if expected_item is not None and (
-                isinstance(expected_item, bool)
-                or not isinstance(expected_item, int)
-                or expected_item < 1
-            ):
-                raise ValueError("manual intent expectedItemVersion must be a positive integer")
-            patch = {
-                key: document[key]
-                for key in (
-                    "recognitionTypeId",
-                    "metadata",
-                    "namingPolicyId",
-                    "classificationPolicyId",
-                    "organizePolicyId",
-                )
-                if key in document
-            }
-            if "metadataIdentity" in document:
-                patch["metadata"] = document["metadataIdentity"]
-            if not patch:
-                raise ValueError("manual intent choice requires at least one normalized choice")
-            intent = self._manual_intents.update_choice(
-                parts[3],
-                parts[5],
-                patch,
-                expected_version=expected,
-                expected_item_version=expected_item,
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 200, self._manual_intent_document(intent))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-intents"]
-            and parts[4] == "cancel"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            self._require_empty_query(environ, "manual intent cancellation")
-            document = self._document(environ)
-            if set(document) != {"expectedVersion"}:
-                raise ValueError("manual intent cancellation requires only expectedVersion")
-            expected = document["expectedVersion"]
-            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
-                raise ValueError("manual intent expectedVersion must be a positive integer")
-            intent = self._manual_intents.cancel(
-                parts[3], expected_version=expected, actor=principal.principal_id
-            )
-            return self._response(start_response, 200, self._manual_intent_document(intent))
         if parts == ["api", "v1", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
@@ -6495,146 +6015,6 @@ class MediaFlowApi:
                 else:
                     document = self._explore.options(params)
             return self._response(start_response, 200, document)
-        if parts == ["api", "v1", "metadata-reviews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            limit = self._metadata_review_limit(environ)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._value(item)
-                        for item in self._repository.list_metadata_reviews(limit=limit)
-                    ]
-                },
-            )
-        if parts == ["api", "v1", "recognition-reviews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            limit = self._recognition_review_limit(environ)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._value(item)
-                        for item in self._repository.list_recognition_reviews(limit=limit)
-                    ]
-                },
-            )
-        if parts == ["api", "v1", "metadata-corrections"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            limit = self._metadata_correction_limit(environ)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._value(item)
-                        for item in self._repository.list_metadata_corrections(limit=limit)
-                    ]
-                },
-            )
-        if parts == ["api", "v1", "classification-reviews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            limit = self._classification_review_limit(environ)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._value(item)
-                        for item in self._repository.list_classification_reviews(limit=limit)
-                    ]
-                },
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            review = self._repository.get_metadata_review(parts[3])
-            if review is None:
-                raise LookupError(f"metadata review {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                {
-                    **self._value(review),
-                    "candidates": [
-                        self._value(item)
-                        for item in self._repository.list_metadata_review_candidates(parts[3])
-                    ],
-                    "audit": [
-                        self._metadata_review_audit_value(item)
-                        for item in self._repository.list_metadata_review_audit(parts[3])
-                    ],
-                },
-            )
-        if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "recognition-reviews"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            review = self._repository.get_recognition_review(parts[3])
-            if review is None:
-                raise LookupError(f"recognition review {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                {
-                    **self._value(review),
-                    "choices": [
-                        self._value(item)
-                        for item in self._repository.list_recognition_review_choices(parts[3])
-                    ],
-                    "audit": [
-                        self._value(item)
-                        for item in self._repository.list_recognition_review_audit(parts[3])
-                    ],
-                },
-            )
-        if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "metadata-corrections"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            review = self._repository.get_metadata_correction(parts[3])
-            if review is None:
-                raise LookupError(f"metadata correction {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                {
-                    **self._value(review),
-                    "audit": [
-                        self._metadata_correction_audit_value(item)
-                        for item in self._repository.list_metadata_correction_audit(parts[3])
-                    ],
-                },
-            )
-        if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "classification-reviews"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            review = self._repository.get_classification_review(parts[3])
-            if review is None:
-                raise LookupError(f"classification review {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                {
-                    **self._value(review),
-                    "choices": [
-                        self._value(item)
-                        for item in self._repository.list_classification_review_choices(parts[3])
-                    ],
-                    "audit": [
-                        self._classification_review_audit_value(item)
-                        for item in self._repository.list_classification_review_audit(parts[3])
-                    ],
-                },
-            )
         if method == "GET":
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
@@ -6876,90 +6256,6 @@ class MediaFlowApi:
             )
         if (
             len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
-            and parts[4] == "confirm"
-            and method == "POST"
-        ):
-            self._require_manual_execution(principal)
-            if self._manual_recovery is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual recovery continuation service is unavailable",
-                )
-            self._require_empty_query(environ, "manual recovery plan summary confirmation")
-            document = self._document(environ)
-            allowed = {"itemIds", "confirmation", "allowOverwrite", "allowSourceCleanup"}
-            if set(document).difference(allowed):
-                raise ValueError("manual recovery plan summary confirmation fields are invalid")
-            if not {"itemIds", "confirmation"}.issubset(document):
-                raise ValueError(
-                    "manual recovery plan summary confirmation requires itemIds and confirmation"
-                )
-            if document["confirmation"] is not True:
-                raise ValueError(
-                    "manual recovery plan summary confirmation requires confirmation=true"
-                )
-            item_ids = document["itemIds"]
-            if not isinstance(item_ids, list) or not item_ids:
-                raise ValueError("manual recovery plan summary confirmation requires itemIds")
-            if native_preparation_discovery_id(parts[3]) is not None:
-                # A kernel-managed Task's own linked Files preparation is the
-                # durable summary.  Its confirmation reuses the existing Files
-                # Preview/execution admission, which re-registers the same Task;
-                # no legacy preparation, Job or child Task exists or is minted.
-                try:
-                    execution = self._manual_recovery.confirm_native_preparation(
-                        parts[3],
-                        item_ids=item_ids,
-                        actor=principal.principal_id,
-                        permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                        confirmation=True,
-                        allow_overwrite=bool(document.get("allowOverwrite", False)),
-                        allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
-                    )
-                except ManualRecoveryContinuationError as error:
-                    return self._error(
-                        start_response,
-                        error.status,
-                        error.code,
-                        str(error),
-                        details={
-                            "nextAction": error.next_action,
-                            "sideEffects": "none",
-                            **{
-                                "durableState": "rejected_without_mutation",
-                                "retrySafe": error.status < 500,
-                                **error.details,
-                            },
-                        },
-                    )
-            else:
-                execution = self._manual_recovery.confirm_prepared(
-                    parts[3],
-                    item_ids=item_ids,
-                    actor=principal.principal_id,
-                    permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                    confirmation=True,
-                    allow_overwrite=bool(document.get("allowOverwrite", False)),
-                    allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
-                )
-            return self._response(
-                start_response,
-                202,
-                {
-                    "executionId": execution.execution_id,
-                    "taskId": execution.task_id,
-                    "status": execution.status.value,
-                    "selectedItemIds": list(execution.selected_item_ids),
-                    "nextAction": execution.next_action,
-                    "executionPath": "/api/v1/manual-executions/" + execution.execution_id,
-                    "sideEffects": "execution_admitted",
-                },
-            )
-        if (
-            len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
             and parts[4] in {"cancel", "pause", "resume"}
             and method == "POST"
@@ -7089,72 +6385,6 @@ class MediaFlowApi:
                             results_complete=result_cursor is None and not has_next_results,
                         )
                     ),
-                },
-            )
-        if parts == ["api", "v1", "confirmations"] and method == "GET":
-            status, limit = self._confirmation_query(environ)
-            values = self._repository.list_confirmations(status=status, limit=limit)
-            return self._response(
-                start_response,
-                200,
-                {"items": [self._confirmation_value(item) for item in values]},
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"] and method == "GET":
-            value = self._repository.get_confirmation(parts[3])
-            if value is None:
-                raise LookupError(f"confirmation {parts[3]!r} was not found")
-            return self._response(start_response, 200, self._confirmation_value(value))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "metadata-reviews"]
-            and parts[4] == "resolve"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.RESOLVE_METADATA_REVIEW)
-            document = self._document(environ)
-            if set(document) != {"candidateRank"}:
-                raise ValueError("metadata review resolution requires only candidateRank")
-            candidate_rank = document["candidateRank"]
-            if isinstance(candidate_rank, bool) or not isinstance(candidate_rank, int):
-                raise ValueError("candidateRank must be an integer")
-            value = MetadataReviewService(self._repository).resolve(
-                parts[3], candidate_rank, actor=principal.principal_id
-            )
-            return self._response(start_response, 200, self._value(value))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "classification-reviews"]
-            and parts[4] == "resolve"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.RESOLVE_CLASSIFICATION_REVIEW)
-            document = self._document(environ)
-            if set(document) != {"choiceRank"}:
-                raise ValueError("classification review resolution requires only choiceRank")
-            choice_rank = document["choiceRank"]
-            if isinstance(choice_rank, bool) or not isinstance(choice_rank, int):
-                raise ValueError("choiceRank must be an integer")
-            value = ClassificationReviewService(self._repository).resolve(
-                parts[3], choice_rank, actor=principal.principal_id
-            )
-            return self._response(start_response, 200, self._value(value))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "confirmations"]
-            and parts[4] == "audit"
-            and method == "GET"
-        ):
-            value = self._repository.get_confirmation(parts[3])
-            if value is None:
-                raise LookupError(f"confirmation {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        self._confirmation_audit_value(item)
-                        for item in self._repository.list_confirmation_audit(parts[3])
-                    ]
                 },
             )
         if parts == ["api", "v1", "notifications"] and method == "GET":
@@ -7296,27 +6526,6 @@ class MediaFlowApi:
                     ),
                 },
             )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "confirmations"]
-            and parts[4] == "resolve"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.RESOLVE_CONFIRMATION)
-            document = self._document(environ)
-            unsupported = set(document).difference({"strategy"})
-            if unsupported:
-                raise ValueError(f"unsupported confirmation field {sorted(unsupported)[0]!r}")
-            try:
-                strategy = ConflictStrategy(document.get("strategy", ""))
-            except ValueError as error:
-                raise ValueError("remote confirmation strategy must be skip or rename") from error
-            if strategy not in {ConflictStrategy.SKIP, ConflictStrategy.RENAME}:
-                raise ValueError("remote confirmation strategy must be skip or rename")
-            value = ConfirmationService(self._repository).resolve(
-                parts[3], strategy, actor=principal.principal_id
-            )
-            return self._response(start_response, 200, self._confirmation_value(value))
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _authenticate(self, environ: dict) -> ResolvedApiPrincipal | None:
@@ -8334,17 +7543,10 @@ class MediaFlowApi:
             return False
         if tuple(parts[:3]) in {
             ("api", "v1", "tasks"),
-            ("api", "v1", "manual-intents"),
-            ("api", "v1", "manual-previews"),
-            ("api", "v1", "manual-executions"),
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "automation"),
             ("api", "v1", "files"),
             ("api", "v1", "recovery"),
-            ("api", "v1", "confirmations"),
-            ("api", "v1", "recognition-reviews"),
-            ("api", "v1", "metadata-corrections"),
-            ("api", "v1", "classification-reviews"),
         }:
             return True
         return False
@@ -8594,7 +7796,6 @@ class MediaFlowApi:
             return "/api/v1/<unmatched>"
         exact = {
             ("api", "v1", "tasks"),
-            ("api", "v1", "confirmations"),
             ("api", "v1", "notifications"),
             ("api", "v1", "logs"),
             ("api", "v1", "resource-libraries"),
@@ -8604,10 +7805,6 @@ class MediaFlowApi:
             ("api", "v1", "configuration", "packages"),
             ("api", "v1", "configuration", "packages", "export", "configuration"),
             ("api", "v1", "configuration", "packages", "export", "results"),
-            ("api", "v1", "metadata-reviews"),
-            ("api", "v1", "classification-reviews"),
-            ("api", "v1", "recognition-reviews"),
-            ("api", "v1", "metadata-corrections"),
             ("api", "v1", "automation", "task-definitions"),
             ("api", "v1", "files"),
             ("api", "v1", "storage", "files"),
@@ -8728,12 +7925,6 @@ class MediaFlowApi:
             and parts[6:8] == ["recovery", "prepare-summary"]
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
-            and parts[4] == "confirm"
-        ):
-            return "/api/v1/manual-recovery-preparations/{id}/confirm"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
@@ -8879,128 +8070,7 @@ class MediaFlowApi:
             return "/api/v1/media-libraries/{id}/removal-preview"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"]:
             return "/api/v1/media-libraries/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"]:
-            return "/api/v1/confirmations/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"]:
-            return "/api/v1/metadata-reviews/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "classification-reviews"]:
-            return "/api/v1/classification-reviews/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "recognition-reviews"]:
-            return "/api/v1/recognition-reviews/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-corrections"]:
-            return "/api/v1/metadata-corrections/{id}"
-        if len(parts) == 4 and parts[:3] in (
-            ["api", "v1", "manual-previews"],
-            ["api", "v1", "manual-executions"],
-        ):
-            return f"/api/v1/{parts[2]}/{{id}}"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "manual-executions"]
-            and parts[4] == "reconcile"
-        ):
-            return "/api/v1/manual-executions/{id}/reconcile"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "metadata-reviews"]
-            and parts[4] == "resolve"
-        ):
-            return "/api/v1/metadata-reviews/{id}/resolve"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "classification-reviews"]
-            and parts[4] == "resolve"
-        ):
-            return "/api/v1/classification-reviews/{id}/resolve"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "confirmations"]
-            and parts[4]
-            in {
-                "audit",
-                "resolve",
-            }
-        ):
-            return f"/api/v1/confirmations/{{id}}/{parts[4]}"
         return "/api/v1/<unmatched>"
-
-    @staticmethod
-    def _confirmation_query(
-        environ: dict,
-    ) -> tuple[ConfirmationStatus | None, int]:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        unknown = set(values).difference({"status", "limit"})
-        if unknown:
-            raise ValueError("confirmation query contains an unsupported field")
-        if any(len(value) != 1 for value in values.values()):
-            raise ValueError("confirmation query fields must be specified once")
-        raw_status = values.get("status", ["pending"])[0]
-        if raw_status == "all":
-            status = None
-        else:
-            try:
-                status = ConfirmationStatus(raw_status)
-            except ValueError as error:
-                raise ValueError("confirmation status must be pending, resolved, or all") from error
-        try:
-            limit = int(values.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("confirmation limit must be an integer") from error
-        if limit < 1 or limit > 100:
-            raise ValueError("confirmation limit must be between 1 and 100")
-        return status, limit
-
-    @staticmethod
-    def _metadata_review_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("metadata review query accepts one limit field")
-        try:
-            limit = int(values.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("metadata review limit must be an integer") from error
-        if limit < 1 or limit > 100:
-            raise ValueError("metadata review limit must be between 1 and 100")
-        return limit
-
-    @staticmethod
-    def _classification_review_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("classification review query accepts one limit field")
-        try:
-            limit = int(values.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("classification review limit must be an integer") from error
-        if limit < 1 or limit > 100:
-            raise ValueError("classification review limit must be between 1 and 100")
-        return limit
-
-    @staticmethod
-    def _recognition_review_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("recognition review query accepts one limit field")
-        try:
-            limit = int(values.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("recognition review limit must be an integer") from error
-        if limit < 1 or limit > 100:
-            raise ValueError("recognition review limit must be between 1 and 100")
-        return limit
-
-    @staticmethod
-    def _metadata_correction_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("metadata correction query accepts one limit field")
-        try:
-            limit = int(values.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("metadata correction limit must be an integer") from error
-        if limit < 1 or limit > 100:
-            raise ValueError("metadata correction limit must be between 1 and 100")
-        return limit
 
     @staticmethod
     def _explore_query(environ: dict) -> dict[str, list[str]]:
@@ -10456,44 +9526,6 @@ class MediaFlowApi:
             return "resource_library"
         return value
 
-    @staticmethod
-    def _same_request_alias(document: dict, first: str, second: str, label: str) -> str | None:
-        first_value = document.get(first)
-        second_value = document.get(second)
-        if first_value is not None and second_value is not None and first_value != second_value:
-            raise ValueError(f"current-source Preview {label} fields disagree")
-        return first_value if first_value is not None else second_value
-
-    @classmethod
-    def _confirmation_value(cls, value) -> dict:
-        document = cls._value(value)
-        document.pop("note", None)
-        return document
-
-    @classmethod
-    def _confirmation_audit_value(cls, value) -> dict:
-        document = cls._value(value)
-        document.pop("note", None)
-        return document
-
-    @classmethod
-    def _metadata_review_audit_value(cls, value) -> dict:
-        document = cls._value(value)
-        document.pop("note", None)
-        return document
-
-    @classmethod
-    def _metadata_correction_audit_value(cls, value) -> dict:
-        document = cls._value(value)
-        document.pop("note", None)
-        return document
-
-    @classmethod
-    def _classification_review_audit_value(cls, value) -> dict:
-        document = cls._value(value)
-        document.pop("note", None)
-        return document
-
     def _safe_audit(self, *args) -> None:
         try:
             if len(args) >= 6 and self._suppress_file_detail_audit(args[4], args[3], args[2]):
@@ -10516,18 +9548,6 @@ class MediaFlowApi:
             ["api", "v1", "workers", "readiness"],
             ["api", "v1", "workers"],
         ):
-            return True
-        if parts[:3] == ["api", "v1", "manual-intents"]:
-            return True
-        if parts[:3] == ["api", "v1", "manual-previews"]:
-            return True
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "previews"
-        ):
-            return True
-        if parts[:3] == ["api", "v1", "manual-executions"]:
             return True
         if parts[:3] == ["api", "v1", "tasks"]:
             return True
@@ -10555,6 +9575,14 @@ class MediaFlowApi:
                 and parts[5] in {"text", "delete-impact"}
             )
         )
+
+    @staticmethod
+    def _same_request_alias(document: dict, first: str, second: str, label: str) -> str | None:
+        first_value = document.get(first)
+        second_value = document.get(second)
+        if first_value is not None and second_value is not None and first_value != second_value:
+            raise ValueError(f"current-source Preview {label} fields disagree")
+        return first_value if first_value is not None else second_value
 
     @staticmethod
     def _document(environ: dict) -> dict:
@@ -10958,24 +9986,6 @@ class MediaFlowApi:
         if not storage_id or not path:
             raise ValueError("file by-source query requires storageId and path")
         return storage_id, path, values.get("resourceLibrary", [None])[0]
-
-    def _manual_intent_document(self, intent, *, include_audit: bool = True) -> dict:
-        document = intent.document(include_audit=include_audit)
-        if self._manual_execution is not None:
-            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_intent(
-                intent.intent_id
-            )
-        return redact_manual_value(document)
-
-    def _manual_preview_document(self, preview) -> dict:
-        document = preview.document()
-        if self._manual_execution is not None:
-            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_preview(
-                preview.preview_id
-            )
-        return redact_manual_value(document)
-
-    # --- V2 manual Organize journey projections ----------------------------
 
     def _manual_step_error(self, start_response: Callable, error) -> list[bytes]:
         """One bounded, secret-free failure for a manual Organize step."""

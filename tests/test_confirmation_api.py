@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.organizer import (
@@ -24,6 +25,9 @@ from mediaflow.domain.organizer import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import ConfirmationStatus, TaskItemStatus
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -104,9 +108,14 @@ def plan(number: int) -> OrganizePlan:
     )
 
 
-def create_confirmation(repository: SQLiteTaskRepository, number: int):
+def create_confirmation(repository: SQLiteTaskRepository, revision, number: int):
     coordinator = PersistentTaskCoordinator(repository, repository)
-    task = coordinator.create("organize", execute_authorized=False)
+    task = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        configuration_snapshot_id=revision.revision_id,
+        configuration_snapshot_digest=revision.digest,
+    )
     item = coordinator.begin_item(
         task.task_id,
         "source",
@@ -122,244 +131,373 @@ def create_confirmation(repository: SQLiteTaskRepository, number: int):
     return repository.list_confirmations()[-1], item
 
 
-class ConfirmationApiTests(unittest.TestCase):
-    def test_read_list_show_audit_query_and_authorization(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                first, _ = create_confirmation(repository, 1)
-                second, _ = create_confirmation(repository, 2)
-                ConfirmationService(repository).resolve(
-                    first.confirmation_id,
-                    ConflictStrategy.SKIP,
-                    actor="local",
-                    note="credential=super-secret",
-                )
-                api = MediaFlowApi(repository, principals=api_principals())
+def managed_authority(directory: str):
+    database = Path(directory, "runtime.sqlite3")
+    document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+    document["persistence"] = {"databasePath": str(database)}
+    configuration_repository = SQLiteConfigurationRepository(database)
+    service = ManagedConfigurationService(
+        configuration_repository,
+        bootstrap_database_path=str(database),
+        bootstrap_document=document,
+    )
+    draft = service.import_draft(document, actor="tester")
+    validated = service.validate(draft.revision_id, actor="tester")
+    if validated.status.value != "validated":
+        raise AssertionError(validated.validation_errors)
+    revision = service.activate(
+        validated.revision_id,
+        expected_version=validated.version,
+        actor="tester",
+    )
+    return configuration_repository, service, revision
 
-                self.assertEqual(request(api, "GET", "/api/v1/confirmations")[0], 401)
-                for role in ("viewer", "auditor", "operator", "executor", "admin"):
-                    with self.subTest(role=role):
-                        self.assertEqual(
-                            request(
-                                api,
-                                "GET",
-                                "/api/v1/confirmations",
-                                token=f"{role}-token",
-                            )[0],
-                            200,
-                        )
-                status, pending = request(
-                    api,
-                    "GET",
-                    "/api/v1/confirmations",
-                    token="viewer-token",
-                    query="status=pending&limit=1",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(
-                    [item["confirmation_id"] for item in pending["items"]], [second.confirmation_id]
-                )
-                resolved = request(
-                    api,
-                    "GET",
-                    "/api/v1/confirmations",
-                    token="viewer-token",
-                    query="status=resolved&limit=10",
-                )[1]
-                self.assertEqual(resolved["items"][0]["confirmation_id"], first.confirmation_id)
-                shown = request(
-                    api,
-                    "GET",
-                    f"/api/v1/confirmations/{first.confirmation_id}",
-                    token="viewer-token",
-                )[1]
-                self.assertEqual(shown["status"], "resolved")
-                self.assertNotIn("note", shown)
-                audit = request(
-                    api,
-                    "GET",
-                    f"/api/v1/confirmations/{first.confirmation_id}/audit",
-                    token="auditor-token",
-                )[1]
-                self.assertEqual(audit["items"][0]["actor"], "local")
-                self.assertNotIn("note", audit["items"][0])
-                self.assertNotIn("super-secret", repr(audit))
-                for query in ("status=bad", "limit=0", "limit=101", "secret=value"):
-                    self.assertEqual(
-                        request(
-                            api,
-                            "GET",
-                            "/api/v1/confirmations",
-                            token="viewer-token",
-                            query=query,
-                        )[0],
-                        400,
+
+class ConfirmationApiTests(unittest.TestCase):
+    def test_current_task_recovery_decision_carries_rbac_and_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configuration_repository, managed, revision = managed_authority(directory)
+            try:
+                with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                    first, first_item = create_confirmation(repository, revision, 1)
+                    second, second_item = create_confirmation(repository, revision, 2)
+                    api = MediaFlowApi(
+                        repository,
+                        principals=api_principals(),
+                        configuration_service=managed,
                     )
-                self.assertEqual(
-                    request(
+
+                    status, detail = request(
                         api,
                         "GET",
-                        "/api/v1/confirmations/unknown",
-                        token="viewer-token",
-                    )[0],
-                    404,
-                )
+                        f"/api/v1/tasks/{second.task_id}/items/{second_item.item_id}/recovery",
+                        token="operator-token",
+                    )
+                    self.assertEqual(status, 200, detail)
+                    self.assertEqual("conflict", detail["decision"]["kind"])
+                    checkpoint = detail["checkpoint"]["checkpoint_version"]
 
-    def test_remote_skip_rename_permissions_atomic_transition_and_no_job(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, principals=api_principals())
-                for number, role, strategy, expected in (
-                    (1, "operator", "skip", TaskItemStatus.SKIPPED),
-                    (2, "executor", "rename", TaskItemStatus.PENDING),
-                    (3, "admin", "skip", TaskItemStatus.SKIPPED),
-                ):
-                    confirmation, item = create_confirmation(repository, number)
+                    for role in ("viewer", "auditor"):
+                        with self.subTest(role=role):
+                            status, denied = request(
+                                api,
+                                "POST",
+                                f"/api/v1/tasks/{second.task_id}/items/"
+                                f"{second_item.item_id}/recovery/decision",
+                                token=f"{role}-token",
+                                document={
+                                    "kind": "conflict",
+                                    "expectedCheckpointVersion": checkpoint,
+                                    "strategy": "skip",
+                                },
+                            )
+                            self.assertEqual(403, status, denied)
+
                     status, resolved = request(
                         api,
                         "POST",
-                        f"/api/v1/confirmations/{confirmation.confirmation_id}/resolve",
-                        token=f"{role}-token",
-                        document={"strategy": strategy},
+                        f"/api/v1/tasks/{second.task_id}/items/"
+                        f"{second_item.item_id}/recovery/decision",
+                        token="operator-token",
+                        document={
+                            "kind": "conflict",
+                            "expectedCheckpointVersion": checkpoint,
+                            "strategy": "skip",
+                            "note": "credential=super-secret",
+                        },
                     )
-                    self.assertEqual(status, 200)
-                    self.assertEqual(resolved["actor"], role)
-                    self.assertEqual(repository.get_item(item.item_id).status, expected)
-                    audit = repository.list_confirmation_audit(confirmation.confirmation_id)
-                    self.assertEqual((len(audit), audit[0].actor), (1, role))
-                confirmation, _ = create_confirmation(repository, 4)
-                for role in ("viewer", "auditor"):
-                    self.assertEqual(
-                        request(
-                            api,
+                    self.assertEqual(200, status, resolved)
+                    self.assertEqual("operator", resolved["decision_result"]["actor"])
+                    self.assertIs(
+                        repository.get_item(second_item.item_id).status,
+                        TaskItemStatus.SKIPPED,
+                    )
+                    audit = repository.list_confirmation_audit(second.confirmation_id)
+                    self.assertEqual((len(audit), audit[0].actor), (1, "operator"))
+                    self.assertNotIn("super-secret", repr(repository.list_security_audit(limit=50)))
+                    self.assertEqual(0, repository.count_scheduled_capacity_use())
+
+                    # A different exact reviewed decision keeps its own
+                    # optimistic checkpoint and is not borrowed from the sibling.
+                    status, reopened = request(
+                        api,
+                        "GET",
+                        f"/api/v1/tasks/{first.task_id}/items/{first_item.item_id}/recovery",
+                        token="operator-token",
+                    )
+                    self.assertEqual(200, status, reopened)
+                    self.assertEqual("pending", reopened["decision"]["status"])
+                    status, first_resolved = request(
+                        api,
+                        "POST",
+                        f"/api/v1/tasks/{first.task_id}/items/{first_item.item_id}/recovery/decision",
+                        token="operator-token",
+                        document={
+                            "kind": "conflict",
+                            "expectedCheckpointVersion": reopened["checkpoint"][
+                                "checkpoint_version"
+                            ],
+                            "strategy": "skip",
+                        },
+                    )
+                    self.assertEqual(200, status, first_resolved)
+                    self.assertIs(
+                        repository.get_item(first_item.item_id).status,
+                        TaskItemStatus.SKIPPED,
+                    )
+            finally:
+                configuration_repository.close()
+
+    def test_retired_global_review_and_manual_routes_are_not_registered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configuration_repository, managed, revision = managed_authority(directory)
+            try:
+                with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                    confirmation, _ = create_confirmation(repository, revision, 1)
+                    api = MediaFlowApi(
+                        repository,
+                        principals=api_principals(),
+                        configuration_service=managed,
+                    )
+                    routes = (
+                        ("GET", "/api/v1/confirmations", None, ""),
+                        (
+                            "GET",
+                            f"/api/v1/confirmations/{confirmation.confirmation_id}",
+                            None,
+                            "",
+                        ),
+                        (
                             "POST",
                             f"/api/v1/confirmations/{confirmation.confirmation_id}/resolve",
-                            token=f"{role}-token",
-                            document={"strategy": "skip"},
-                        )[0],
-                        403,
+                            {"strategy": "skip"},
+                            "",
+                        ),
+                        (
+                            "GET",
+                            f"/api/v1/confirmations/{confirmation.confirmation_id}/audit",
+                            None,
+                            "",
+                        ),
+                        ("GET", "/api/v1/recognition-reviews", None, ""),
+                        ("GET", "/api/v1/metadata-reviews", None, ""),
+                        ("GET", "/api/v1/metadata-corrections", None, ""),
+                        ("GET", "/api/v1/classification-reviews", None, ""),
+                        ("GET", "/api/v1/manual-intents", None, ""),
+                        ("GET", "/api/v1/manual-previews", None, ""),
+                        ("GET", "/api/v1/manual-executions", None, ""),
+                        (
+                            "POST",
+                            "/api/v1/manual-recovery-preparations/preparation/confirm",
+                            {"itemIds": ["x"], "confirmation": True},
+                            "",
+                        ),
+                        ("GET", "/api/v1/files/file-1/previews", None, "resourceLibrary=library"),
+                        (
+                            "POST",
+                            "/api/v1/files/file-1/manual-intent",
+                            {},
+                            "",
+                        ),
+                        (
+                            "GET",
+                            "/api/v1/resource-libraries/library/previews",
+                            None,
+                            "",
+                        ),
                     )
-                self.assertEqual(0, repository.count_scheduled_capacity_use())
-
-    def test_remote_high_risk_and_injected_fields_are_rejected_and_redacted(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, principals=api_principals())
-                forbidden_documents = (
-                    {"strategy": "manual"},
-                    {"strategy": "overwrite"},
-                    {"strategy": "skip", "actor": "attacker"},
-                    {"strategy": "rename", "proposedDestinationPath": "../escape"},
-                    {"strategy": "skip", "execute": True},
-                    {"strategy": "skip", "executionToken": "super-secret"},
-                )
-                for number, document in enumerate(forbidden_documents, 1):
-                    confirmation, item = create_confirmation(repository, number)
-                    for role in ("operator", "executor", "admin"):
-                        with self.subTest(document=document, role=role):
-                            self.assertEqual(
-                                request(
-                                    api,
-                                    "POST",
-                                    f"/api/v1/confirmations/{confirmation.confirmation_id}/resolve",
-                                    token=f"{role}-token",
-                                    document=document,
-                                )[0],
-                                400,
+                    for method, path, document, query in routes:
+                        with self.subTest(path=path):
+                            status, response = request(
+                                api,
+                                method,
+                                path,
+                                token="admin-token",
+                                document=document,
+                                query=query,
                             )
-                    self.assertEqual(
-                        repository.get_confirmation(confirmation.confirmation_id).status,
-                        ConfirmationStatus.PENDING,
+                            self.assertEqual(404, status, response)
+                            self.assertEqual("not_found", response["error"]["code"])
+                    self.assertIs(
+                        repository.get_item(repository.list_confirmations()[0].item_id).status,
+                        TaskItemStatus.WAITING_CONFIRM,
                     )
-                    self.assertEqual(
-                        repository.get_item(item.item_id).status, TaskItemStatus.WAITING_CONFIRM
+            finally:
+                configuration_repository.close()
+
+    def test_invalid_current_decision_fields_are_rejected_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configuration_repository, managed, revision = managed_authority(directory)
+            try:
+                with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                    api = MediaFlowApi(
+                        repository,
+                        principals=api_principals(),
+                        configuration_service=managed,
                     )
-                security_audit = repr(repository.list_security_audit(limit=100))
-                self.assertNotIn("super-secret", security_audit)
-                self.assertNotIn("escape", security_audit)
-                self.assertTrue(
-                    any(
-                        value.route == "/api/v1/confirmations/{id}/resolve"
-                        for value in repository.list_security_audit(limit=100)
-                    )
-                )
+                    for number, document in enumerate(
+                        (
+                            {"kind": "conflict", "strategy": "manual"},
+                            {"kind": "conflict", "strategy": "skip", "actor": "attacker"},
+                            {"kind": "conflict", "strategy": "skip", "execute": True},
+                            {
+                                "kind": "conflict",
+                                "strategy": "skip",
+                                "executionToken": "super-secret",
+                            },
+                        ),
+                        1,
+                    ):
+                        confirmation, item = create_confirmation(repository, revision, number)
+                        status, detail = request(
+                            api,
+                            "GET",
+                            f"/api/v1/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
+                            token="operator-token",
+                        )
+                        self.assertEqual(200, status, detail)
+                        payload = {
+                            **document,
+                            "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                        }
+                        status, refused = request(
+                            api,
+                            "POST",
+                            f"/api/v1/tasks/{confirmation.task_id}/items/"
+                            f"{item.item_id}/recovery/decision",
+                            token="operator-token",
+                            document=payload,
+                        )
+                        self.assertIn(status, (400, 409), refused)
+                        self.assertIs(
+                            repository.get_confirmation(confirmation.confirmation_id).status,
+                            ConfirmationStatus.PENDING,
+                        )
+                        self.assertIs(
+                            repository.get_item(item.item_id).status,
+                            TaskItemStatus.WAITING_CONFIRM,
+                        )
+                    security_audit = repr(repository.list_security_audit(limit=100))
+                    self.assertNotIn("super-secret", security_audit)
+                    self.assertNotIn("attacker", security_audit)
+            finally:
+                configuration_repository.close()
 
     def test_concurrent_resolution_succeeds_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                confirmation, item = create_confirmation(repository, 1)
-            barrier = Barrier(2)
-            outcomes = []
-
-            def resolve(actor: str) -> None:
+            configuration_repository, _managed, revision = managed_authority(directory)
+            try:
+                database = Path(directory, "runtime.sqlite3")
                 with SQLiteTaskRepository(database) as repository:
-                    barrier.wait()
-                    try:
-                        ConfirmationService(repository).resolve(
-                            confirmation.confirmation_id, ConflictStrategy.SKIP, actor=actor
-                        )
-                        outcomes.append("resolved")
-                    except ValueError:
-                        outcomes.append("rejected")
+                    confirmation, item = create_confirmation(repository, revision, 1)
+                barrier = Barrier(2)
+                outcomes = []
 
-            workers = [Thread(target=resolve, args=(f"operator-{value}",)) for value in range(2)]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(sorted(outcomes), ["rejected", "resolved"])
-                self.assertEqual(
-                    len(repository.list_confirmation_audit(confirmation.confirmation_id)), 1
-                )
-                self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.SKIPPED)
+                def resolve(actor: str) -> None:
+                    with SQLiteTaskRepository(database) as repository:
+                        barrier.wait()
+                        try:
+                            ConfirmationService(repository).resolve(
+                                confirmation.confirmation_id,
+                                ConflictStrategy.SKIP,
+                                actor=actor,
+                            )
+                            outcomes.append("resolved")
+                        except ValueError:
+                            outcomes.append("rejected")
+
+                workers = [
+                    Thread(target=resolve, args=(f"operator-{value}",)) for value in range(2)
+                ]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join()
+                with SQLiteTaskRepository(database) as repository:
+                    self.assertEqual(sorted(outcomes), ["rejected", "resolved"])
+                    self.assertEqual(
+                        len(repository.list_confirmation_audit(confirmation.confirmation_id)), 1
+                    )
+                    self.assertIs(repository.get_item(item.item_id).status, TaskItemStatus.SKIPPED)
+            finally:
+                configuration_repository.close()
 
     def test_audit_insert_failure_rolls_back_confirmation_and_item(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                confirmation, item = create_confirmation(repository, 1)
-            connection = sqlite3.connect(database)
-            connection.execute(
-                """CREATE TRIGGER reject_confirmation_audit BEFORE INSERT
-                ON conflict_decision_audit BEGIN SELECT RAISE(ABORT, 'injected'); END"""
-            )
-            connection.commit()
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                with self.assertRaises(sqlite3.IntegrityError):
-                    ConfirmationService(repository).resolve(
-                        confirmation.confirmation_id, ConflictStrategy.SKIP, actor="operator"
+            configuration_repository, _managed, revision = managed_authority(directory)
+            try:
+                database = Path(directory, "runtime.sqlite3")
+                with SQLiteTaskRepository(database) as repository:
+                    confirmation, item = create_confirmation(repository, revision, 1)
+                connection = sqlite3.connect(database)
+                connection.execute(
+                    """CREATE TRIGGER reject_confirmation_audit BEFORE INSERT
+                    ON conflict_decision_audit BEGIN SELECT RAISE(ABORT, 'injected'); END"""
+                )
+                connection.commit()
+                connection.close()
+                with SQLiteTaskRepository(database) as repository:
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        ConfirmationService(repository).resolve(
+                            confirmation.confirmation_id,
+                            ConflictStrategy.SKIP,
+                            actor="operator",
+                        )
+                    self.assertIs(
+                        repository.get_confirmation(confirmation.confirmation_id).status,
+                        ConfirmationStatus.PENDING,
                     )
-                self.assertEqual(
-                    repository.get_confirmation(confirmation.confirmation_id).status,
-                    ConfirmationStatus.PENDING,
-                )
-                self.assertEqual(
-                    repository.get_item(item.item_id).status, TaskItemStatus.WAITING_CONFIRM
-                )
-                self.assertEqual(
-                    repository.list_confirmation_audit(confirmation.confirmation_id), ()
-                )
-
-    def test_api_does_not_construct_storage_or_execute_workflow(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                confirmation, _ = create_confirmation(repository, 1)
-                api = MediaFlowApi(repository, principals=api_principals())
-                with patch(
-                    "mediaflow.application.organizer.OrganizerExecutor.execute",
-                    side_effect=AssertionError("confirmation API executed OrganizerExecutor"),
-                ):
+                    self.assertIs(
+                        repository.get_item(item.item_id).status,
+                        TaskItemStatus.WAITING_CONFIRM,
+                    )
                     self.assertEqual(
-                        request(
+                        repository.list_confirmation_audit(confirmation.confirmation_id), ()
+                    )
+            finally:
+                configuration_repository.close()
+
+    def test_current_decision_does_not_construct_storage_or_execute_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configuration_repository, managed, revision = managed_authority(directory)
+            try:
+                with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                    confirmation, item = create_confirmation(repository, revision, 1)
+                    api = MediaFlowApi(
+                        repository,
+                        principals=api_principals(),
+                        configuration_service=managed,
+                    )
+                    status, detail = request(
+                        api,
+                        "GET",
+                        f"/api/v1/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
+                        token="operator-token",
+                    )
+                    self.assertEqual(200, status, detail)
+                    with patch(
+                        "mediaflow.application.organizer.OrganizerExecutor.execute",
+                        side_effect=AssertionError("conflict decision executed OrganizerExecutor"),
+                    ):
+                        status, resolved = request(
                             api,
                             "POST",
-                            f"/api/v1/confirmations/{confirmation.confirmation_id}/resolve",
+                            f"/api/v1/tasks/{confirmation.task_id}/items/"
+                            f"{item.item_id}/recovery/decision",
                             token="operator-token",
-                            document={"strategy": "skip"},
-                        )[0],
-                        200,
-                    )
-                self.assertEqual(0, repository.count_scheduled_capacity_use())
+                            document={
+                                "kind": "conflict",
+                                "expectedCheckpointVersion": detail["checkpoint"][
+                                    "checkpoint_version"
+                                ],
+                                "strategy": "skip",
+                            },
+                        )
+                    self.assertEqual(200, status, resolved)
+                    self.assertEqual(0, repository.count_scheduled_capacity_use())
+            finally:
+                configuration_repository.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

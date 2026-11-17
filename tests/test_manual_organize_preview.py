@@ -1134,7 +1134,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             directory.cleanup()
             target_directory.cleanup()
 
-    def test_api_rbac_uses_same_projection_and_preview_reads_are_not_audit_mutations(self):
+    def test_retired_global_manual_preview_routes_are_not_available(self):
         fixture = self._fixture(("One.2001.mkv",))
         (
             directory,
@@ -1172,44 +1172,31 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     "snapshotId": intent.snapshot_id,
                     "snapshotDigest": intent.snapshot_digest,
                 }
-                status, denied = request(
-                    api,
-                    f"/api/v1/manual-intents/{intent.intent_id}/preview",
-                    method="POST",
-                    body=body,
-                    token="viewer-token",
-                )
-                self.assertEqual(403, status)
-                self.assertEqual("forbidden", denied["error"]["code"])
-                status, created = request(
-                    api,
-                    f"/api/v1/manual-intents/{intent.intent_id}/preview",
-                    method="POST",
-                    body=body,
-                    token="operator-token",
-                )
-                self.assertEqual(201, status)
-                status, loaded = request(
-                    api,
-                    f"/api/v1/manual-previews/{created['previewId']}",
-                    token="viewer-token",
-                )
-                self.assertEqual(200, status)
-                self.assertEqual(created, loaded)
-                status, listed = request(
-                    api,
-                    f"/api/v1/manual-intents/{intent.intent_id}/previews?limit=10",
-                    token="viewer-token",
-                )
-                self.assertEqual(200, status)
-                self.assertEqual([created], listed["items"])
-                audits_after_post = len(repository.list_security_audit())
-                request(
-                    api,
-                    f"/api/v1/manual-previews/{created['previewId']}",
-                    token="viewer-token",
-                )
-                self.assertEqual(audits_after_post, len(repository.list_security_audit()))
+                for path, method, request_body, token in (
+                    (
+                        f"/api/v1/manual-intents/{intent.intent_id}/preview",
+                        "POST",
+                        body,
+                        "operator-token",
+                    ),
+                    (
+                        f"/api/v1/manual-intents/{intent.intent_id}/previews?limit=10",
+                        "GET",
+                        None,
+                        "viewer-token",
+                    ),
+                    ("/api/v1/manual-previews/preview-id", "GET", None, "viewer-token"),
+                ):
+                    with self.subTest(path=path):
+                        status, document = request(
+                            api,
+                            path,
+                            method=method,
+                            body=request_body,
+                            token=token,
+                        )
+                        self.assertEqual(404, status, document)
+                        self.assertEqual("not_found", document["error"]["code"])
         finally:
             directory.cleanup()
             target_directory.cleanup()

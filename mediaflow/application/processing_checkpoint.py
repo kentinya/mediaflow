@@ -196,21 +196,14 @@ class ProcessingCheckpointService:
                 if value.item_id == item_id
             )
         blockers: list[CheckpointBlocker] = []
+        review_path = f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery"
         review_specs = (
-            ("recognition", "get_recognition_review_for_item", "/api/v1/recognition-reviews/"),
-            ("metadata", "get_metadata_review_for_item", "/api/v1/metadata-reviews/"),
-            (
-                "metadata_correction",
-                "get_metadata_correction_for_item",
-                "/api/v1/metadata-corrections/",
-            ),
-            (
-                "classification",
-                "get_classification_review_for_item",
-                "/api/v1/classification-reviews/",
-            ),
+            ("recognition", "get_recognition_review_for_item"),
+            ("metadata", "get_metadata_review_for_item"),
+            ("metadata_correction", "get_metadata_correction_for_item"),
+            ("classification", "get_classification_review_for_item"),
         )
-        for kind, method_name, path_prefix in review_specs:
+        for kind, method_name in review_specs:
             getter = getattr(self._repository, method_name, None)
             review = getter(item_id) if callable(getter) else None
             if review is not None:
@@ -221,7 +214,7 @@ class ProcessingCheckpointService:
                         _enum_value(review.status),
                         review.task_id,
                         review.item_id,
-                        path_prefix + review.review_id,
+                        review_path,
                     )
                 )
         confirmations = getattr(self._repository, "list_confirmations", None)
@@ -235,7 +228,7 @@ class ProcessingCheckpointService:
                             _enum_value(confirmation.status),
                             confirmation.task_id,
                             confirmation.item_id,
-                            "/api/v1/confirmations/" + confirmation.confirmation_id,
+                            review_path,
                         )
                     )
         audits: list[CheckpointAudit] = []
@@ -584,13 +577,18 @@ class ProcessingCheckpointService:
 
     @staticmethod
     def _blocker_payload(value: CheckpointBlocker) -> dict[str, object]:
+        # The checkpoint version is a durable concurrency fence.  Its hash input
+        # keeps the historical resolution route for the same unchanged business
+        # state, so summaries and requests pinned by earlier accepted code keep
+        # their exact identity.  The operator projection below publishes only
+        # the current Task recovery path and never the retired URL.
         return {
             "kind": value.kind,
             "id": value.blocker_id,
             "status": value.status,
             "task_id": value.task_id,
             "item_id": value.item_id,
-            "resolution_path": value.resolution_path,
+            "resolution_path": _checkpoint_hash_blocker_resolution_path(value),
         }
 
 
@@ -627,6 +625,24 @@ def _safe_path(value) -> str | None:
     return text
 
 
+def _checkpoint_hash_blocker_resolution_path(value: CheckpointBlocker) -> str:
+    """Historical route input that keeps an unchanged checkpoint digest stable.
+
+    These strings are never returned to an operator, used for routing or read
+    as a current transport.  They reproduce the exact hash input accepted by
+    earlier checkpoints so existing preparations and requests remain confirmable.
+    """
+
+    prefix = {
+        "recognition": "/api/v1/recognition-reviews/",
+        "metadata": "/api/v1/metadata-reviews/",
+        "metadata_correction": "/api/v1/metadata-corrections/",
+        "classification": "/api/v1/classification-reviews/",
+        "conflict": "/api/v1/confirmations/",
+    }.get(value.kind)
+    return prefix + value.blocker_id if prefix is not None else value.resolution_path
+
+
 def _safe_effect(value) -> str:
     text = _bounded(value, 128)
     if text is None:
@@ -648,21 +664,15 @@ def _safe_identifier(value) -> str:
 
 def _safe_blocker(value: CheckpointBlocker) -> CheckpointBlocker:
     blocker_id = _safe_identifier(value.blocker_id)
+    task_id = _safe_identifier(value.task_id)
+    item_id = _safe_identifier(value.item_id)
     return CheckpointBlocker(
         _safe_identifier(value.kind),
         blocker_id,
         _safe_identifier(value.status),
-        _safe_identifier(value.task_id),
-        _safe_identifier(value.item_id),
-        "/api/v1/"
-        + {
-            "recognition": "recognition-reviews/",
-            "metadata": "metadata-reviews/",
-            "metadata_correction": "metadata-corrections/",
-            "classification": "classification-reviews/",
-            "conflict": "confirmations/",
-        }.get(value.kind, "checkpoints/")
-        + blocker_id,
+        task_id,
+        item_id,
+        f"/api/v1/tasks/{task_id}/items/{item_id}/recovery",
     )
 
 

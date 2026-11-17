@@ -942,9 +942,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_preview_service=previews,
                     manual_execution_service=service,
                 )
-                status, intent_document = request(api, f"/api/v1/manual-intents/{intent.intent_id}")
+                status, task_document = request(api, f"/api/v1/tasks/{run.task_id}")
                 self.assertEqual(200, status)
-                discovered = intent_document["manualExecutionDiscovery"]
+                discovered = task_document["manualExecutionDiscovery"]
                 self.assertEqual(
                     [run.execution_id], [item["executionId"] for item in discovered["executions"]]
                 )
@@ -954,15 +954,14 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 self.assertIn("execution", discovered["executions"][0]["links"])
 
-                status, preview_document = request(
-                    api, f"/api/v1/manual-previews/{preview.preview_id}"
+                status, item_document = request(
+                    api,
+                    f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}",
                 )
                 self.assertEqual(200, status)
                 self.assertEqual(
                     [intent.items[1].item_id],
-                    preview_document["manualExecutionDiscovery"]["executions"][0][
-                        "unselectedItemIds"
-                    ],
+                    item_document["manualExecutionDiscovery"]["executions"][0]["unselectedItemIds"],
                 )
         finally:
             fixture.cleanup()
@@ -981,8 +980,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     confirmation=True,
                 )
                 task_item_id = run.items[0].task_item_id
-                intent_id = intent.intent_id
-                preview_id = preview.preview_id
                 task_id = run.task_id
 
             with SQLiteTaskRepository(fixture.database) as repository:
@@ -1000,19 +997,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_execution_service=service,
                 )
                 audit_count = len(repository.list_security_audit())
-                status, intent_document = request(api, f"/api/v1/manual-intents/{intent_id}")
-                self.assertEqual(200, status)
-                discovery = intent_document["manualExecutionDiscovery"]
-                self.assertEqual("completed", discovery["executions"][0]["status"])
-                self.assertEqual(task_id, discovery["executions"][0]["taskId"])
-                self.assertIn("execution", discovery["executions"][0]["links"])
-
-                status, preview_document = request(api, f"/api/v1/manual-previews/{preview_id}")
-                self.assertEqual(200, status)
-                self.assertEqual(
-                    "completed",
-                    preview_document["manualExecutionDiscovery"]["executions"][0]["status"],
-                )
                 status, task_document = request(api, f"/api/v1/tasks/{task_id}")
                 self.assertEqual(200, status)
                 self.assertEqual(
@@ -1071,25 +1055,20 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_preview_service=previews,
                     manual_execution_service=service,
                 )
-                status, intent_document = request(api, f"/api/v1/manual-intents/{intent_id}")
-                self.assertEqual(200, status)
-                execution = intent_document["manualExecutionDiscovery"]["executions"][0]
-                self.assertEqual("admitted", execution["status"])
-                self.assertIn("reconcile", execution["links"])
-                task_id = execution["taskId"]
-                execution_id = execution["executionId"]
-                status, task_document = request(api, f"/api/v1/tasks/{task_id}")
+                raw_execution = repository.list_manual_executions_for_intent(intent_id)[0]
+                status, task_document = request(api, f"/api/v1/tasks/{raw_execution.task_id}")
                 self.assertEqual(200, status)
                 self.assertEqual(
                     "admitted", task_document["manualExecutionDiscovery"]["executions"][0]["status"]
                 )
-                status, reconciled = request(
-                    api,
-                    f"/api/v1/manual-executions/{execution_id}/reconcile",
-                    method="POST",
-                    body={"confirmation": True},
+                reconciled = service.document(
+                    service.reconcile(
+                        raw_execution.execution_id,
+                        actor="operator",
+                        permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                        confirmation=True,
+                    ).execution_id
                 )
-                self.assertEqual(200, status)
                 self.assertEqual("failed", reconciled["status"])
                 self.assertNotIn("reconcile", reconciled["links"])
                 self.assertTrue(Path(fixture.source_root, "One.2001.mkv").exists())
@@ -1577,25 +1556,14 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 self.assertEqual("admitted", raw.status.value)
                 self.assertIn("reconcile", raw.items[0].next_action)
                 self.assertTrue(repository.lock_owned("source", "One.2001.mkv", raw.task_id))
-                operator = ResolvedApiPrincipal(
-                    "operator",
-                    "operator-token",
-                    frozenset({ApiPermission.READ, ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+                document = service.document(
+                    service.reconcile(
+                        raw.execution_id,
+                        actor="operator",
+                        permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                        confirmation=True,
+                    ).execution_id
                 )
-                api = MediaFlowApi(
-                    repository,
-                    principals=(operator,),
-                    manual_intent_service=intents,
-                    manual_preview_service=previews,
-                    manual_execution_service=service,
-                )
-                status, document = request(
-                    api,
-                    f"/api/v1/manual-executions/{raw.execution_id}/reconcile",
-                    method="POST",
-                    body={"confirmation": True},
-                )
-                self.assertEqual(200, status)
                 self.assertEqual("failed", document["status"])
                 self.assertEqual("admission_interrupted", document["items"][0]["stage"])
                 self.assertFalse(repository.lock_owned("source", "One.2001.mkv", raw.task_id))

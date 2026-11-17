@@ -214,7 +214,7 @@ class ConflictResolutionTests(unittest.TestCase):
             DuplicateIdentity.from_media_identity(second),
         )
 
-    def test_cli_confirmation_commands_are_persistence_only(self) -> None:
+    def test_retired_confirmation_cli_commands_are_parser_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
@@ -234,35 +234,31 @@ class ConflictResolutionTests(unittest.TestCase):
                     OrganizePolicy("A", OrganizeOperationType.MOVE, ConflictStrategy.MANUAL),
                 )
                 confirmation_id = repository.list_confirmations()[0].confirmation_id
-            output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "confirmations", "list"],
-                    stdout=output,
-                    stderr=errors,
-                ),
-                0,
-            )
-            self.assertIn(confirmation_id, output.getvalue())
-            output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "confirmations",
-                        "resolve",
-                        confirmation_id,
-                        "--strategy",
-                        "skip",
-                        "--actor",
-                        "tester",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                ),
-                0,
-                errors.getvalue(),
-            )
+            for arguments in (
+                ["--config", str(config), "confirmations", "list"],
+                [
+                    "--config",
+                    str(config),
+                    "confirmations",
+                    "resolve",
+                    confirmation_id,
+                    "--strategy",
+                    "skip",
+                    "--actor",
+                    "tester",
+                ],
+            ):
+                with self.subTest(arguments=arguments):
+                    output, errors = io.StringIO(), io.StringIO()
+                    with self.assertRaises(SystemExit) as raised:
+                        final_main(arguments, stdout=output, stderr=errors)
+                    self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.SKIPPED)
+                self.assertIs(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_CONFIRM,
+                )
+                self.assertIs(
+                    repository.get_confirmation(confirmation_id).status,
+                    ConfirmationStatus.PENDING,
+                )

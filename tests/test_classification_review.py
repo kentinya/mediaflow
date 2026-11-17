@@ -391,7 +391,7 @@ class ClassificationReviewTests(unittest.TestCase):
                 self.assertEqual(len(repository.list_classification_reviews()), 1)
                 self.assertFalse(hasattr(repository, "list_jobs"))
 
-    def test_cli_api_rbac_injection_redaction_and_zero_storage(self) -> None:
+    def test_retired_global_cli_and_api_are_not_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -405,13 +405,13 @@ class ClassificationReviewTests(unittest.TestCase):
                 review = ClassificationReviewService(repository).create(
                     item, unclassified(), policy(), identity()
                 )
-            output = io.StringIO()
+            output, errors = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
-                side_effect=AssertionError("classification review constructed Storage"),
+                side_effect=AssertionError("retired classification review CLI constructed Storage"),
             ):
-                self.assertEqual(
+                with self.assertRaises(SystemExit) as raised:
                     final_main(
                         [
                             "--config",
@@ -425,16 +425,10 @@ class ClassificationReviewTests(unittest.TestCase):
                             "local",
                         ],
                         stdout=output,
-                        stderr=io.StringIO(),
-                    ),
-                    0,
-                )
-            self.assertIn("Selected rule: high", output.getvalue())
+                        stderr=errors,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
-                _, _, item = create_processing_item(repository, 2)
-                review = ClassificationReviewService(repository).create(
-                    item, unclassified("A"), policy(), identity()
-                )
                 principals = (
                     ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),
                     ResolvedApiPrincipal(
@@ -446,51 +440,48 @@ class ClassificationReviewTests(unittest.TestCase):
                     ),
                 )
                 api = MediaFlowApi(repository, principals=principals)
-                status, listed = api_request(
-                    api, "/api/v1/classification-reviews", query="limit=10"
-                )
-                self.assertEqual(status, 200)
-                self.assertTrue(listed["items"])
-                status, detail = api_request(
-                    api, f"/api/v1/classification-reviews/{review.review_id}"
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual([value["rank"] for value in detail["choices"]], [1, 2])
-                status, _ = api_request(api, "/api/v1/classification-reviews", query="limit=0")
-                self.assertEqual(status, 400)
-                status, _ = api_request(
-                    api,
-                    f"/api/v1/classification-reviews/{review.review_id}/resolve",
-                    method="POST",
-                    token="viewer",
-                    document={"choiceRank": 1},
-                )
-                self.assertEqual(status, 403)
-                status, _ = api_request(
-                    api,
-                    f"/api/v1/classification-reviews/{review.review_id}/resolve",
-                    method="POST",
-                    document={"choiceRank": 2},
-                )
-                self.assertEqual(status, 200)
+                for token, path, method, document, query in (
+                    ("operator", "/api/v1/classification-reviews", "GET", None, "limit=10"),
+                    (
+                        "operator",
+                        f"/api/v1/classification-reviews/{review.review_id}",
+                        "GET",
+                        None,
+                        "",
+                    ),
+                    (
+                        "viewer",
+                        f"/api/v1/classification-reviews/{review.review_id}/resolve",
+                        "POST",
+                        {"choiceRank": 1},
+                        "",
+                    ),
+                    (
+                        "operator",
+                        "/api/v1/classification-reviews/missing/resolve",
+                        "POST",
+                        {"choiceRank": 1, "path": "Injected", "execute": True},
+                        "",
+                    ),
+                ):
+                    with self.subTest(path=path):
+                        status, _ = api_request(
+                            api,
+                            path,
+                            method=method,
+                            token=token,
+                            document=document,
+                            query=query,
+                        )
+                        self.assertEqual(status, 404)
                 self.assertEqual(
-                    repository.get_classification_review(review.review_id).actor, "operator"
+                    repository.get_classification_review(review.review_id).status.value,
+                    "pending",
                 )
                 self.assertFalse(hasattr(repository, "list_jobs"))
-                status, detail = api_request(
-                    api, f"/api/v1/classification-reviews/{review.review_id}"
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(len(detail["audit"]), 1)
-                self.assertNotIn("note", detail["audit"][0])
-                status, _ = api_request(
-                    api,
-                    "/api/v1/classification-reviews/missing/resolve",
-                    method="POST",
-                    document={"choiceRank": 1, "path": "Injected", "execute": True},
-                )
-                self.assertEqual(status, 400)
-                self.assertIn(
-                    "/api/v1/classification-reviews/{id}/resolve",
-                    [entry.route for entry in repository.list_security_audit()],
+                self.assertFalse(
+                    any(
+                        value.route.startswith("/api/v1/classification-reviews")
+                        for value in repository.list_security_audit()
+                    )
                 )

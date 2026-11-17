@@ -228,7 +228,7 @@ class RecognitionBatchResolveTests(unittest.TestCase):
                     2,
                 )
 
-    def test_cli_batch_resolve_constructs_no_storage_or_provider(self) -> None:
+    def test_retired_cli_batch_resolve_is_an_ordinary_parser_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -245,30 +245,28 @@ class RecognitionBatchResolveTests(unittest.TestCase):
                 "create_storages",
                 side_effect=AssertionError("batch recognition resolve constructed Storage"),
             ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "recognition-reviews",
-                        "resolve-pending",
-                        "--recognition-type",
-                        "C",
-                        "--actor",
-                        "operator",
-                        "--limit",
-                        "1",
-                    ],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("BATCH RECOGNITION RESOLVE", output.getvalue())
-            self.assertIn("Resolved: 1", output.getvalue())
-            self.assertIn("Media mutation: 0", output.getvalue())
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "recognition-reviews",
+                            "resolve-pending",
+                            "--recognition-type",
+                            "C",
+                            "--actor",
+                            "operator",
+                            "--limit",
+                            "1",
+                        ],
+                        stdout=output,
+                        stderr=error,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(
                     repository.get_recognition_review(review.review_id).status,
-                    RecognitionReviewStatus.RESOLVED,
+                    RecognitionReviewStatus.PENDING,
                 )
 
     def test_c_preservation_and_retryable_selection_remain_unchanged(self) -> None:

@@ -196,7 +196,7 @@ class MetadataReviewBatchTests(unittest.TestCase):
                     len(repository.list_metadata_review_audit(second_review.review_id)), 1
                 )
 
-    def test_cli_batch_review_constructs_no_storage_or_provider(self) -> None:
+    def test_retired_cli_batch_review_is_an_ordinary_parser_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -213,30 +213,28 @@ class MetadataReviewBatchTests(unittest.TestCase):
                 "create_storages",
                 side_effect=AssertionError("batch metadata review constructed Storage"),
             ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "metadata-reviews",
-                        "resolve-pending",
-                        "--candidate-rank",
-                        "1",
-                        "--actor",
-                        "operator",
-                        "--limit",
-                        "1",
-                    ],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("BATCH METADATA REVIEW", output.getvalue())
-            self.assertIn("Resolved: 1", output.getvalue())
-            self.assertIn("Media mutation: 0", output.getvalue())
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "metadata-reviews",
+                            "resolve-pending",
+                            "--candidate-rank",
+                            "1",
+                            "--actor",
+                            "operator",
+                            "--limit",
+                            "1",
+                        ],
+                        stdout=output,
+                        stderr=error,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(
                     repository.get_metadata_review(review.review_id).status,
-                    MetadataReviewStatus.RESOLVED,
+                    MetadataReviewStatus.PENDING,
                 )
 
     def test_c_preservation_and_retryable_selection_remain_unchanged(self) -> None:

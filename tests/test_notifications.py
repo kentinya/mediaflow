@@ -507,11 +507,13 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
         self.assertEqual(1, len(ready), preview)
         status, confirmed = self.request(
             value,
-            f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
             "POST",
             {
+                "preparationId": preparation["preparation_id"],
                 "itemIds": ready,
                 "confirmation": True,
+                "expectedIntentVersion": preview["intentVersion"],
                 "allowOverwrite": False,
                 "allowSourceCleanup": False,
             },

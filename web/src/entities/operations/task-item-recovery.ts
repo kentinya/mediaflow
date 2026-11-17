@@ -73,6 +73,7 @@ export interface ManualRecoveryPreparationModel {
   readonly status: "prepared" | "confirmed" | "superseded" | "stale";
   readonly previewId: string;
   readonly intentId: string;
+  readonly intentVersion: number;
   readonly sourceTaskId: string;
   readonly sourceItemId: string;
   readonly checkpointVersion: string;
@@ -368,11 +369,17 @@ export function normalizeManualRecoveryPreparation(
   }
   const version = text(source, "checkpoint_version");
   if (!/^[a-f0-9]{64}$/.test(version)) return fail();
+  const intentVersion = normalizeBoundedCount(
+    source["intent_version"],
+    "intent_version",
+  );
+  if (intentVersion < 1) return fail();
   return {
     preparationId: text(source, "preparation_id"),
     status: status as ManualRecoveryPreparationModel["status"],
     previewId: text(source, "preview_id"),
     intentId: text(source, "intent_id"),
+    intentVersion,
     sourceTaskId: text(source, "source_task_id"),
     sourceItemId: text(source, "source_item_id"),
     checkpointVersion: version,

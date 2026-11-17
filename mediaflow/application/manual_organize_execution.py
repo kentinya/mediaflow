@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
@@ -3120,24 +3120,37 @@ class ManualOrganizeExecutionService:
     @staticmethod
     def _authorization_links(value: ManualExecutionAuthorization) -> dict[str, str]:
         links = {
-            "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
-            "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
+            "preview": (f"/api/v1/operations/organize/previews/{quote(value.preview_id, safe='')}"),
+            "intent": (f"/api/v1/operations/organize/intents/{quote(value.intent_id, safe='')}"),
         }
         if value.execution_id:
-            links["execution"] = f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}"
+            links["execution"] = (
+                f"/api/v1/operations/organize/executions/{quote(value.execution_id, safe='')}"
+            )
         return links
 
     @staticmethod
     def _execution_links(value: ManualExecution) -> dict[str, str]:
         links = {
-            "execution": f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}",
-            "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
-            "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
+            "execution": (
+                f"/api/v1/operations/organize/executions/{quote(value.execution_id, safe='')}"
+            ),
+            "preview": (f"/api/v1/operations/organize/previews/{quote(value.preview_id, safe='')}"),
+            "intent": f"/api/v1/operations/organize/intents/{quote(value.intent_id, safe='')}",
             "task": f"/api/v1/tasks/{quote(value.task_id, safe='')}",
         }
         if value.status in {ManualExecutionStatus.ADMITTED, ManualExecutionStatus.RUNNING}:
+            query = urlencode(
+                {
+                    "itemIds": ",".join(value.selected_item_ids),
+                    "expectedIntentVersion": value.intent_version,
+                    "allowOverwrite": "true" if value.allow_overwrite else "false",
+                    "allowSourceCleanup": "true" if value.allow_source_cleanup else "false",
+                }
+            )
             links["reconcile"] = (
-                f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}/reconcile"
+                "/api/v1/operations/organize/previews/"
+                f"{quote(value.preview_id, safe='')}/admission?{query}"
             )
         return links
 

@@ -2668,13 +2668,6 @@ class SQLiteTaskRepository:
             ("classification", "classification_reviews", "review_id"),
             ("conflict", "conflict_confirmations", "confirmation_id"),
         )
-        blocker_paths = {
-            "recognition": "/api/v1/recognition-reviews/",
-            "metadata": "/api/v1/metadata-reviews/",
-            "metadata_correction": "/api/v1/metadata-corrections/",
-            "classification": "/api/v1/classification-reviews/",
-            "conflict": "/api/v1/confirmations/",
-        }
         item_audit_specs = (
             ("task_retry", "task_retry_audit", "decision_id", "decided_at"),
             ("manual_ignore", "manual_ignore_audit", "decision_id", "decided_at"),
@@ -2809,7 +2802,7 @@ class SQLiteTaskRepository:
                         row["status"],
                         row["task_id"],
                         row["item_id"],
-                        blocker_paths[kind] + row["blocker_id"],
+                        f"/api/v1/tasks/{row['task_id']}/items/{row['item_id']}/recovery",
                     )
                 )
         audits_by_item: dict[str, list[CheckpointAudit]] = {}
@@ -2915,13 +2908,6 @@ class SQLiteTaskRepository:
                 ("classification", "classification_reviews", "review_id"),
                 ("conflict", "conflict_confirmations", "confirmation_id"),
             )
-            paths = {
-                "recognition": "/api/v1/recognition-reviews/",
-                "metadata": "/api/v1/metadata-reviews/",
-                "metadata_correction": "/api/v1/metadata-corrections/",
-                "classification": "/api/v1/classification-reviews/",
-                "conflict": "/api/v1/confirmations/",
-            }
             for kind, table, identifier_column in blocker_queries:
                 blocker_row = self._connection.execute(
                     f"""SELECT {identifier_column} AS blocker_id, task_id, item_id, status
@@ -2936,7 +2922,7 @@ class SQLiteTaskRepository:
                         value["status"],
                         value["task_id"],
                         value["item_id"],
-                        paths[kind] + value["blocker_id"],
+                        f"/api/v1/tasks/{value['task_id']}/items/{value['item_id']}/recovery",
                     )
                     for value in blocker_row
                 )

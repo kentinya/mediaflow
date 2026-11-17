@@ -245,7 +245,7 @@ class MetadataReviewTests(unittest.TestCase):
             history = (root / "history.jsonl").read_text(encoding="utf-8")
             self.assertIn("WAITING_METADATA", history)
 
-    def test_cli_api_rbac_limits_redaction_and_zero_storage(self) -> None:
+    def test_retired_global_cli_and_api_are_not_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -257,17 +257,13 @@ class MetadataReviewTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataReviewService(repository).create(item, identification(), "C")
-                stored = repository.list_metadata_reviews()
-                self.assertEqual(len(stored), 1)
-                self.assertEqual(stored[0].review_id, review.review_id)
-                self.assertEqual(stored[0].status, review.status)
-            output = io.StringIO()
+            output, error = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
-                side_effect=AssertionError("metadata review CLI constructed Storage"),
+                side_effect=AssertionError("retired metadata review CLI constructed Storage"),
             ):
-                self.assertEqual(
+                with self.assertRaises(SystemExit) as raised:
                     final_main(
                         [
                             "--config",
@@ -277,11 +273,9 @@ class MetadataReviewTests(unittest.TestCase):
                             review.review_id,
                         ],
                         stdout=output,
-                        stderr=io.StringIO(),
-                    ),
-                    0,
-                )
-            self.assertIn("METADATA REVIEW", output.getvalue())
+                        stderr=error,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
                 principals = tuple(
                     ResolvedApiPrincipal(role, f"{role}-token", frozenset({ApiPermission.READ}))
@@ -297,32 +291,24 @@ class MetadataReviewTests(unittest.TestCase):
                             token=f"{role}-token",
                             query="limit=1",
                         )[0],
-                        200,
+                        404,
                     )
-                status, shown = api_request(
-                    api,
-                    f"/api/v1/metadata-reviews/{review.review_id}",
-                    token="viewer-token",
+                self.assertEqual(
+                    api_request(
+                        api,
+                        f"/api/v1/metadata-reviews/{review.review_id}",
+                        token="viewer-token",
+                    )[0],
+                    404,
                 )
-                self.assertEqual(status, 200)
-                self.assertEqual(shown["recognition_type"], "C")
-                self.assertNotIn("overview", repr(shown))
-                for query in ("limit=0", "limit=101", "secret=token-value"):
-                    self.assertEqual(
-                        api_request(
-                            api,
-                            "/api/v1/metadata-reviews",
-                            token="viewer-token",
-                            query=query,
-                        )[0],
-                        400,
-                    )
                 self.assertEqual(
                     api_request(api, "/api/v1/metadata-reviews/unknown", token="viewer-token")[0],
                     404,
                 )
-                audit = repository.list_security_audit(limit=50)
-                self.assertTrue(
-                    any(value.route == "/api/v1/metadata-reviews/{id}" for value in audit)
+                self.assertFalse(
+                    any(
+                        value.route.startswith("/api/v1/metadata-reviews")
+                        for value in repository.list_security_audit(limit=50)
+                    )
                 )
-                self.assertNotIn("token-value", repr(audit))
+                self.assertNotIn("token-value", repr(repository.list_security_audit(limit=50)))

@@ -2041,14 +2041,16 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
 
             confirmation = {
+                "preparationId": prepared["preparation_id"],
                 "itemIds": ready,
                 "confirmation": True,
+                "expectedIntentVersion": preview["intentVersion"],
                 "allowOverwrite": False,
                 "allowSourceCleanup": False,
             }
             status, refused = self.request(
                 value,
-                f"/api/v1/manual-recovery-preparations/{prepared['preparation_id']}/confirm",
+                f"/api/v1/operations/organize/previews/{prepared['preview_id']}/execute",
                 "POST",
                 confirmation,
             )
@@ -2067,7 +2069,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             status, confirmed = self.request(
                 value,
-                f"/api/v1/manual-recovery-preparations/{prepared['preparation_id']}/confirm",
+                f"/api/v1/operations/organize/previews/{prepared['preview_id']}/execute",
                 "POST",
                 confirmation,
             )
@@ -2534,11 +2536,13 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview)
             status, confirmed = self.request(
                 value,
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
                 "POST",
                 {
+                    "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
                     "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
                     "allowOverwrite": False,
                     "allowSourceCleanup": False,
                 },
@@ -2651,11 +2655,13 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview)
             status, confirmed = self.request(
                 value,
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
                 "POST",
                 {
+                    "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
                     "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
                     "allowOverwrite": False,
                     "allowSourceCleanup": False,
                 },
@@ -2672,13 +2678,20 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     # -- Exact native confirmation, history and per-item scope ----------------
 
     def _native_confirm(self, value, preparation, ready, *, expect=202):
+        status, preview = self.request(
+            value,
+            f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+        )
+        self.assertEqual(200, status, preview)
         status, reply = self.request(
             value,
-            f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
             "POST",
             {
+                "preparationId": preparation["preparation_id"],
                 "itemIds": list(ready),
                 "confirmation": True,
+                "expectedIntentVersion": preview["intentVersion"],
                 "allowOverwrite": False,
                 "allowSourceCleanup": False,
             },

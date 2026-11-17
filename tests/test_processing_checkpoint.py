@@ -257,7 +257,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     "pending",
                     "task-1",
                     "item-1",
-                    "/api/v1/confirmations/confirmation-1",
+                    "/api/v1/tasks/task-1/items/item-1/recovery",
                 ),
                 "snapshot_resolvable": True,
                 "raw_stage": "waiting_confirm",
@@ -566,7 +566,14 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     self.assertIsNotNone(blocker)
                     self.assertEqual(blocker.kind, expected[table])
                     self.assertEqual(blocker.blocker_id, identifier)
-                    self.assertIn(identifier, blocker.resolution_path)
+                    self.assertEqual(
+                        f"/api/v1/tasks/{item.task_id}/items/{item.item_id}/recovery",
+                        blocker.resolution_path,
+                    )
+                    self.assertNotIn("/api/v1/recognition-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/v1/metadata-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/v1/classification-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/v1/confirmations", blocker.resolution_path)
 
     def test_checkpoint_digest_is_stable_changes_and_survives_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -756,7 +763,7 @@ class CheckpointIdentityContinuityTests(unittest.TestCase):
             "resolved",
             "task-fixed-0001",
             "item-fixed-0001",
-            "/api/v1/recognition-reviews/review-fixed-0001",
+            "/api/v1/tasks/task-fixed-0001/items/item-fixed-0001/recovery",
         )
         audit = CheckpointAudit(
             "decision-fixed-0001",

@@ -1463,7 +1463,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertTrue(detail["manualRecoveryAnalysisReady"])
 
             status, preview = self.request(
-                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -1474,8 +1474,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
                 token=OPERATOR_TOKEN,
             )
             self.assertEqual(403, status, refused)
@@ -1486,8 +1493,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(ready, confirmed["selectedItemIds"], confirmed)
@@ -1588,10 +1602,17 @@ class RunOnceApiTests(unittest.TestCase):
             status, repeat = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
-            self.assertEqual(202, status, repeat)
+            self.assertIn(status, (200, 202), repeat)
             self.assertEqual(confirmed["executionId"], repeat["executionId"], repeat)
             self.assertEqual(task_id, repeat["taskId"], repeat)
             self.assertEqual(1, len(value.repository.list_tasks()))
@@ -1793,7 +1814,7 @@ class RunOnceApiTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             status, preview = self.request(
-                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -1803,8 +1824,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
             self.assertEqual(202, status, confirmed)
 
@@ -2095,7 +2123,7 @@ class RunOnceApiTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             status, preview = self.request(
-                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2105,8 +2133,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"], confirmed)
@@ -2453,7 +2488,7 @@ class RunOnceApiTests(unittest.TestCase):
             )
 
             status, preview = self.request(
-                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2463,8 +2498,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
                 token=OPERATOR_TOKEN,
             )
             self.assertEqual(403, status, refused)
@@ -2475,8 +2517,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"])
@@ -2662,7 +2711,7 @@ class RunOnceApiTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertEqual("admin", preparation["actor"])
             status, preview = self.request(
-                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2672,8 +2721,15 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ready, "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
             )
             self.assertEqual(202, status, confirmed)
             settled = self._run_manual_execution_worker(

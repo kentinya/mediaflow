@@ -3403,26 +3403,24 @@ Status = Unrecognized
 ```
 
 当前实现：Task 跟踪的 Unrecognized 项进入持久 WAITING_RECOGNITION，保存启用
-RecognitionType 的有界快照并释放源锁。CLI 显式选择快照中且当前仍启用的类型，原子记录
-actor/note 审计，再由显式 resume 进入原有策略管线。没有隐藏 A 默认，不修改规则或配置；
-选择 C 后 RecognitionType 仍为 C。建立规则留后续。
+RecognitionType 的有界快照并释放源锁。Task Center 显式选择快照中且当前仍启用的类型，
+原子记录 actor/note 审计，再通过同一 Task 的零变更分析继续。没有隐藏 A 默认，不修改
+规则或配置；选择 C 后 RecognitionType 仍为 C。建立规则留后续。
 
 当前实现：Recognition 人工等待项可显式进入 IGNORED；review 与 TaskItem 原子更新并记录
 actor/note。该动作不删除或隐藏媒体、不建立规则、不影响未来扫描；同样支持有界批量忽略。
 
-当前实现：旧的 Recognition retry_requested 状态和
-`recognition-reviews retry-pending` 批量请求入口已退役；Recognition 等待项仍可显式指定
-启用类型或忽略，继续处理统一通过现有 Task resume/recovery 边界，不自动调用 Storage 或
-Provider。
+当前实现：Recognition retry_requested 状态、全局 Recognition 审核队列及其
+list/show/resolve/resolve-pending CLI/API 已退役。当前入口是 Task Center 中该 Task 的
+逐项识别决定；保存、零变更分析、精确摘要与确认继续都在同一 Task 完成，不自动调用
+Storage 或 Provider。
 
 当前实现：上述 Recognition 等待项也支持有界批量忽略
 `tasks ignore-pending --actor ... [--note ...] [--limit 1..100] [--task-id ...]`；最早到期的一组
 pending 项与匹配 review 在同一事务中标记为 IGNORED。
 
-当前实现：上述 pending RecognitionReview 也支持有界批量人工指定同一启用
-RecognitionType：
-`recognition-reviews resolve-pending --recognition-type TYPE --actor ... [--note ...]
-[--limit 1..100] [--task-id ...]`。每一项仍必须包含在快照中，且整批原子 RESOLVED。
+当前实现：全局批量 RecognitionType 指定已随旧审核队列退役；需要指定类型的项在
+Task Center 中逐项保存决定并显式继续。只有 `tasks ignore-pending` 的有界批量忽略保留。
 
 ### **元数据识别失败**
 
@@ -3450,15 +3448,13 @@ Ignored 不计成功、不参与 resume/retry，且不调用 Storage 或 Metadat
 当前实现：上述 Metadata 等待项同样支持有界批量忽略，范围、排序、原子性和
 安全边界与 Recognition 批量忽略一致。
 
-当前实现：Metadata NOT_FOUND 修正等待项也支持有界批量修正：
-`metadata-corrections resolve-pending --media-type movie|tv [--query QUERY | --provider-id
-PROVIDER_ID] [--year YEAR] --actor ... [--note ...] [--limit 1..100] [--task-id ...]`。
-整批使用同一组合法修正输入原子 RESOLVED，仍由显式 tasks resume 调用真实 Provider。
+当前实现：全局 Metadata 修正审核队列及其 list/show/resolve/resolve-pending CLI/API 已
+退役。当前入口是 Task Center 中该 Task 的逐项元数据修正决定；每一项使用同一持久选择
+继续自己的零变更分析，不批量承接其他 Task 或未就绪兄弟。
 
-当前实现：Metadata 候选等待项也支持有界批量候选选择：
-`metadata-reviews resolve-pending --candidate-rank RANK --actor ... [--note ...]
-[--limit 1..100] [--task-id ...]`。整批以同一持久候选 rank 原子 RESOLVED，仍由显式
-tasks resume 消费持久 MetadataSelection。
+当前实现：全局 Metadata 候选审核队列及其 list/show/resolve/resolve-pending CLI/API 已
+退役。当前入口是 Task Center 中该 Task 的逐项候选决定；保存的决定继续同一 Task 的
+零变更分析，并由显式摘要确认消费。
 
 ### **人工整理**
 

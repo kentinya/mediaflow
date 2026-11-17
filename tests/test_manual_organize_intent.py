@@ -532,14 +532,11 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 self.assertEqual(value.status.value, "cancelled")
                 self.assertEqual([item.position for item in value.items], [0, 1])
 
-    def test_api_rbac_projection_and_recovery(self) -> None:
+    def test_retired_global_manual_routes_are_not_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 manual = self._service(repository)
-                viewer = ResolvedApiPrincipal(
-                    "viewer", "viewer-token", frozenset({ApiPermission.READ})
-                )
                 operator = ResolvedApiPrincipal(
                     "operator",
                     "operator-token",
@@ -547,53 +544,32 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    principals=(viewer, operator),
+                    principals=(operator,),
                     manual_intent_service=manual,
                 )
                 intent = manual.create((self.sources["one"],), actor="operator")
-                created = api._manual_intent_document(intent)
-                self.assertEqual(created["sideEffects"], "none")
-                # The retired index-identity admission route no longer exists.
-                retired, _ = request(
-                    api,
-                    "/api/v1/manual-intents",
-                    method="POST",
-                    body={"fileIds": ["one"]},
-                    token="operator-token",
-                )
-                self.assertEqual(retired, 404)
-                status, listed = request(
-                    api, "/api/v1/manual-intents?limit=10", token="viewer-token"
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(len(listed["items"]), 1)
-                status, unverified = request(
-                    api,
-                    f"/api/v1/manual-intents/{created['intentId']}/items/{created['items'][0]['itemId']}/choice",
-                    method="PUT",
-                    body={
-                        "expectedVersion": 1,
-                        "metadata": {
-                            "provider": "tmdb",
-                            "providerId": "999999",
-                            "mediaType": "movie",
-                            "title": "Unverified",
-                        },
-                    },
-                    token="operator-token",
-                )
-                self.assertEqual(status, 400)
-                self.assertEqual(unverified["error"]["code"], "metadata_unverified")
-                self.assertEqual(unverified["error"]["details"]["sideEffects"], "none")
-                status, conflict = request(
-                    api,
-                    f"/api/v1/manual-intents/{created['intentId']}/items/{created['items'][0]['itemId']}/choice",
-                    method="PUT",
-                    body={"expectedVersion": 1, "recognitionTypeId": "missing"},
-                    token="operator-token",
-                )
-                self.assertEqual(status, 400)
-                self.assertEqual(conflict["error"]["details"]["sideEffects"], "none")
+                for path, method, body in (
+                    ("/api/v1/manual-intents", "GET", None),
+                    ("/api/v1/manual-intents", "POST", {"fileIds": ["one"]}),
+                    (f"/api/v1/manual-intents/{intent.intent_id}", "GET", None),
+                    (
+                        f"/api/v1/manual-intents/{intent.intent_id}/items/"
+                        f"{intent.items[0].item_id}/choice",
+                        "PUT",
+                        {"expectedVersion": 1, "recognitionTypeId": "A"},
+                    ),
+                    (
+                        "/api/v1/files/file-one/manual-intent",
+                        "POST",
+                        {},
+                    ),
+                ):
+                    with self.subTest(path=path):
+                        status, document = request(
+                            api, path, method=method, body=body, token="operator-token"
+                        )
+                        self.assertEqual(status, 404, document)
+                        self.assertEqual("not_found", document["error"]["code"])
 
 
 def request(api, path: str, *, method="GET", body=None, token="operator-token"):

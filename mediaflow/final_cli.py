@@ -28,12 +28,10 @@ from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
 )
 from mediaflow.application.automation_execution_authority import AutomationExecutionAuthority
-from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_snapshot import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     ManagedConfigurationService,
 )
-from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
@@ -44,8 +42,6 @@ from mediaflow.application.media_organizer import (
     MediaOrganizerService,
     incomplete_scope_failure,
 )
-from mediaflow.application.metadata_correction import MetadataCorrectionService
-from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import (
     NotificationPublisher,
     NotificationWorker,
@@ -53,7 +49,6 @@ from mediaflow.application.notification import (
 )
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.scanner import StorageScanner
@@ -72,14 +67,12 @@ from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
-from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
     SETTLED_ITEM_STATUSES,
-    ConfirmationStatus,
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
@@ -185,20 +178,6 @@ def final_main(
     # RO-6): new organizing starts from Files/CLI organize and an existing
     # Task's own four-type continuation; there is no separate failure-retry
     # command and no alias that would silently recreate one.
-    confirmations = commands.add_parser("confirmations", help="persistent conflict decisions")
-    confirmation_commands = confirmations.add_subparsers(dest="confirmation_command", required=True)
-    confirmation_list = confirmation_commands.add_parser("list")
-    confirmation_list.add_argument("--all", action="store_true")
-    confirmation_show = confirmation_commands.add_parser("show")
-    confirmation_show.add_argument("confirmation_id")
-    confirmation_resolve = confirmation_commands.add_parser("resolve")
-    confirmation_resolve.add_argument("confirmation_id")
-    confirmation_resolve.add_argument(
-        "--strategy", required=True, choices=[item.value for item in ConflictStrategy]
-    )
-    confirmation_resolve.add_argument("--confirm-overwrite", action="store_true")
-    confirmation_resolve.add_argument("--actor")
-    confirmation_resolve.add_argument("--note")
     storage_command = commands.add_parser("storage", help="Storage configuration and preflight")
     storage_commands = storage_command.add_subparsers(dest="storage_command", required=True)
     storage_commands.add_parser("list", help="list configured Storages without connecting")
@@ -290,92 +269,6 @@ def final_main(
     upgrade_check.add_argument("--max-backup-age-hours", type=float, default=24)
     upgrade_rehearse = upgrade_commands.add_parser("rehearse")
     upgrade_rehearse.add_argument("--backup", required=True)
-    metadata_reviews = commands.add_parser(
-        "metadata-reviews", help="persistent metadata candidate review queue"
-    )
-    metadata_review_commands = metadata_reviews.add_subparsers(
-        dest="metadata_review_command", required=True
-    )
-    metadata_review_list = metadata_review_commands.add_parser("list")
-    metadata_review_list.add_argument("--limit", type=int, default=100)
-    metadata_review_show = metadata_review_commands.add_parser("show")
-    metadata_review_show.add_argument("review_id")
-    metadata_review_resolve = metadata_review_commands.add_parser("resolve")
-    metadata_review_resolve.add_argument("review_id")
-    metadata_review_resolve.add_argument("--candidate-rank", required=True, type=int)
-    metadata_review_resolve.add_argument("--actor")
-    metadata_review_resolve.add_argument("--note")
-    metadata_review_batch_resolve = metadata_review_commands.add_parser("resolve-pending")
-    metadata_review_batch_resolve.add_argument("--candidate-rank", required=True, type=int)
-    metadata_review_batch_resolve.add_argument("--actor", required=True)
-    metadata_review_batch_resolve.add_argument("--note")
-    metadata_review_batch_resolve.add_argument("--limit", type=int, default=100)
-    metadata_review_batch_resolve.add_argument("--task-id")
-    metadata_corrections = commands.add_parser(
-        "metadata-corrections", help="persistent metadata query correction queue"
-    )
-    metadata_correction_commands = metadata_corrections.add_subparsers(
-        dest="metadata_correction_command", required=True
-    )
-    metadata_correction_list = metadata_correction_commands.add_parser("list")
-    metadata_correction_list.add_argument("--limit", type=int, default=100)
-    metadata_correction_show = metadata_correction_commands.add_parser("show")
-    metadata_correction_show.add_argument("review_id")
-    metadata_correction_resolve = metadata_correction_commands.add_parser("resolve")
-    metadata_correction_resolve.add_argument("review_id")
-    metadata_correction_resolve.add_argument("--query")
-    metadata_correction_resolve.add_argument("--year", type=int)
-    metadata_correction_resolve.add_argument("--media-type", required=True, choices=("movie", "tv"))
-    metadata_correction_resolve.add_argument("--provider-id")
-    metadata_correction_resolve.add_argument("--actor")
-    metadata_correction_resolve.add_argument("--note")
-    metadata_correction_batch_resolve = metadata_correction_commands.add_parser("resolve-pending")
-    metadata_correction_batch_resolve.add_argument("--query")
-    metadata_correction_batch_resolve.add_argument("--year", type=int)
-    metadata_correction_batch_resolve.add_argument(
-        "--media-type", required=True, choices=("movie", "tv")
-    )
-    metadata_correction_batch_resolve.add_argument("--provider-id")
-    metadata_correction_batch_resolve.add_argument("--actor", required=True)
-    metadata_correction_batch_resolve.add_argument("--note")
-    metadata_correction_batch_resolve.add_argument("--limit", type=int, default=100)
-    metadata_correction_batch_resolve.add_argument("--task-id")
-    classification_reviews = commands.add_parser(
-        "classification-reviews", help="persistent classification review queue"
-    )
-    classification_review_commands = classification_reviews.add_subparsers(
-        dest="classification_review_command", required=True
-    )
-    classification_review_list = classification_review_commands.add_parser("list")
-    classification_review_list.add_argument("--limit", type=int, default=100)
-    classification_review_show = classification_review_commands.add_parser("show")
-    classification_review_show.add_argument("review_id")
-    classification_review_resolve = classification_review_commands.add_parser("resolve")
-    classification_review_resolve.add_argument("review_id")
-    classification_review_resolve.add_argument("--choice-rank", required=True, type=int)
-    classification_review_resolve.add_argument("--actor")
-    classification_review_resolve.add_argument("--note")
-    recognition_reviews = commands.add_parser(
-        "recognition-reviews", help="persistent Unrecognized media review queue"
-    )
-    recognition_review_commands = recognition_reviews.add_subparsers(
-        dest="recognition_review_command", required=True
-    )
-    recognition_review_list = recognition_review_commands.add_parser("list")
-    recognition_review_list.add_argument("--limit", type=int, default=100)
-    recognition_review_show = recognition_review_commands.add_parser("show")
-    recognition_review_show.add_argument("review_id")
-    recognition_review_resolve = recognition_review_commands.add_parser("resolve")
-    recognition_review_resolve.add_argument("review_id")
-    recognition_review_resolve.add_argument("--recognition-type", required=True)
-    recognition_review_resolve.add_argument("--actor")
-    recognition_review_resolve.add_argument("--note")
-    recognition_review_batch_resolve = recognition_review_commands.add_parser("resolve-pending")
-    recognition_review_batch_resolve.add_argument("--recognition-type", required=True)
-    recognition_review_batch_resolve.add_argument("--actor", required=True)
-    recognition_review_batch_resolve.add_argument("--note")
-    recognition_review_batch_resolve.add_argument("--limit", type=int, default=100)
-    recognition_review_batch_resolve.add_argument("--task-id")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
@@ -621,172 +514,6 @@ def final_main(
                 )
                 stdout.write(render_upgrade_preflight(result))
             return 0
-        if arguments.command == "metadata-reviews":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                if arguments.metadata_review_command == "list":
-                    stdout.write(
-                        render_metadata_reviews(
-                            repository.list_metadata_reviews(limit=arguments.limit)
-                        )
-                    )
-                elif arguments.metadata_review_command == "show":
-                    review = repository.get_metadata_review(arguments.review_id)
-                    if review is None:
-                        raise LookupError(f"metadata review {arguments.review_id!r} was not found")
-                    stdout.write(
-                        render_metadata_review(
-                            review,
-                            repository.list_metadata_review_candidates(review.review_id),
-                            repository.list_metadata_review_audit(review.review_id),
-                        )
-                    )
-                elif arguments.metadata_review_command == "resolve-pending":
-                    reviews = MetadataReviewService(repository).resolve_pending(
-                        arguments.candidate_rank,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                        limit=arguments.limit,
-                        task_id=arguments.task_id,
-                    )
-                    stdout.write(render_metadata_review_batch(reviews))
-                else:
-                    review = MetadataReviewService(repository).resolve(
-                        arguments.review_id,
-                        arguments.candidate_rank,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(
-                        render_metadata_review(
-                            review,
-                            repository.list_metadata_review_candidates(review.review_id),
-                            repository.list_metadata_review_audit(review.review_id),
-                        )
-                    )
-            return 0
-        if arguments.command == "metadata-corrections":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = MetadataCorrectionService(
-                    repository, configuration.strategy.metadata_policies
-                )
-                if arguments.metadata_correction_command == "list":
-                    stdout.write(
-                        render_metadata_corrections(
-                            repository.list_metadata_corrections(limit=arguments.limit)
-                        )
-                    )
-                elif arguments.metadata_correction_command == "resolve-pending":
-                    reviews = service.resolve_pending(
-                        query=arguments.query,
-                        year=arguments.year,
-                        media_type=arguments.media_type,
-                        provider_id=arguments.provider_id,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                        limit=arguments.limit,
-                        task_id=arguments.task_id,
-                    )
-                    stdout.write(render_metadata_correction_batch(reviews))
-                else:
-                    if arguments.metadata_correction_command == "resolve":
-                        service.resolve(
-                            arguments.review_id,
-                            query=arguments.query,
-                            year=arguments.year,
-                            media_type=arguments.media_type,
-                            provider_id=arguments.provider_id,
-                            actor=arguments.actor,
-                            note=arguments.note,
-                        )
-                    review = repository.get_metadata_correction(arguments.review_id)
-                    if review is None:
-                        raise LookupError(
-                            f"metadata correction {arguments.review_id!r} was not found"
-                        )
-                    stdout.write(
-                        render_metadata_correction(
-                            review,
-                            repository.list_metadata_correction_audit(review.review_id),
-                        )
-                    )
-            return 0
-        if arguments.command == "recognition-reviews":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = RecognitionReviewService(
-                    repository, configuration.strategy.recognition_types
-                )
-                if arguments.recognition_review_command == "list":
-                    stdout.write(
-                        render_recognition_reviews(
-                            repository.list_recognition_reviews(limit=arguments.limit)
-                        )
-                    )
-                elif arguments.recognition_review_command == "resolve-pending":
-                    reviews = service.resolve_pending(
-                        arguments.recognition_type,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                        limit=arguments.limit,
-                        task_id=arguments.task_id,
-                    )
-                    stdout.write(render_recognition_batch_resolve(reviews))
-                else:
-                    if arguments.recognition_review_command == "resolve":
-                        service.resolve(
-                            arguments.review_id,
-                            arguments.recognition_type,
-                            actor=arguments.actor,
-                            note=arguments.note,
-                        )
-                    review = repository.get_recognition_review(arguments.review_id)
-                    if review is None:
-                        raise LookupError(
-                            f"recognition review {arguments.review_id!r} was not found"
-                        )
-                    stdout.write(
-                        render_recognition_review(
-                            review,
-                            repository.list_recognition_review_choices(review.review_id),
-                            repository.list_recognition_review_audit(review.review_id),
-                        )
-                    )
-            return 0
-        if arguments.command == "classification-reviews":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                if arguments.classification_review_command == "list":
-                    stdout.write(
-                        render_classification_reviews(
-                            repository.list_classification_reviews(limit=arguments.limit)
-                        )
-                    )
-                elif arguments.classification_review_command == "show":
-                    review = repository.get_classification_review(arguments.review_id)
-                    if review is None:
-                        raise LookupError(
-                            f"classification review {arguments.review_id!r} was not found"
-                        )
-                    stdout.write(
-                        render_classification_review(
-                            review,
-                            repository.list_classification_review_choices(review.review_id),
-                            repository.list_classification_review_audit(review.review_id),
-                        )
-                    )
-                else:
-                    review = ClassificationReviewService(repository).resolve(
-                        arguments.review_id,
-                        arguments.choice_rank,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(
-                        render_classification_review(
-                            review,
-                            repository.list_classification_review_choices(review.review_id),
-                            repository.list_classification_review_audit(review.review_id),
-                        )
-                    )
-            return 0
         if arguments.command == "notifications":
             if arguments.notification_command in {"list", "stale"} and arguments.limit < 1:
                 raise ValueError("notification limit must be positive")
@@ -912,36 +639,6 @@ def final_main(
                             repository.list_items(arguments.task_id),
                         )
                     )
-            return 0
-        if arguments.command == "confirmations":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = ConfirmationService(repository)
-                if arguments.confirmation_command == "list":
-                    values = repository.list_confirmations(
-                        status=None if arguments.all else ConfirmationStatus.PENDING
-                    )
-                    stdout.write(render_confirmations(values))
-                elif arguments.confirmation_command == "show":
-                    value = repository.get_confirmation(arguments.confirmation_id)
-                    if value is None:
-                        raise LookupError(
-                            f"confirmation {arguments.confirmation_id!r} was not found"
-                        )
-                    stdout.write(
-                        render_confirmation(
-                            value,
-                            repository.list_confirmation_audit(value.confirmation_id),
-                        )
-                    )
-                else:
-                    value = service.resolve(
-                        arguments.confirmation_id,
-                        ConflictStrategy(arguments.strategy),
-                        confirm_overwrite=arguments.confirm_overwrite,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(render_confirmation(value, ()))
             return 0
         if arguments.command == "files":
             # ``files list`` reads one exact Active library directory through the
@@ -1644,43 +1341,6 @@ def render_manual_ignore_batch(decisions) -> str:
     return "\n".join(lines)
 
 
-def render_confirmations(values) -> str:
-    lines = ["", "CONFIRMATIONS", ""]
-    for value in values:
-        lines.append(
-            f"{value.confirmation_id} | {value.status.value} | {value.conflict_type} | "
-            f"{value.source_storage_id}:{value.source_path} -> "
-            f"{value.destination_storage_id}:{value.destination_path}"
-        )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_confirmation(value, audit) -> str:
-    lines = [
-        "",
-        "CONFIRMATION",
-        "",
-        f"ID: {value.confirmation_id}",
-        f"Status: {value.status.value}",
-        f"Conflict: {value.conflict_type}",
-        f"Configured strategy: {value.configured_strategy}",
-        f"Selected strategy: {value.selected_strategy or '-'}",
-        f"Source: {value.source_storage_id}:{value.source_path}",
-        f"Destination: {value.destination_storage_id}:{value.destination_path}",
-        f"Overwrite authorized: {'YES' if value.overwrite_authorized else 'NO'}",
-        "",
-        "AUDIT",
-        "",
-    ]
-    lines.extend(
-        f"{entry.decided_at.isoformat()} | {entry.strategy} | {entry.actor or '-'}"
-        for entry in audit
-    )
-    lines.append("")
-    return "\n".join(lines)
-
-
 def render_storage_definitions(definitions) -> str:
     lines = ["", "STORAGES", ""]
     for value in definitions:
@@ -1813,244 +1473,6 @@ def render_security_audit(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_metadata_reviews(values) -> str:
-    lines = ["", "METADATA REVIEWS", ""]
-    lines.extend(
-        f"{item.review_id} | {item.status.value} | {item.outcome} | "
-        f"{item.source_storage_id}:{item.source_path} | {item.query}"
-        for item in values
-    )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_metadata_corrections(values) -> str:
-    lines = ["", "METADATA CORRECTIONS", ""]
-    lines.extend(
-        f"{item.review_id} | {item.status.value} | "
-        f"{item.source_storage_id}:{item.source_path} | "
-        f"query={item.original_query} | year={item.original_year or '-'} | "
-        f"type={item.original_media_type}"
-        for item in values
-    )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_metadata_correction(review, audit=()) -> str:
-    lines = [
-        "",
-        "METADATA CORRECTION",
-        "",
-        f"ID: {review.review_id}",
-        f"Status: {review.status.value}",
-        f"Source: {review.source_storage_id}:{review.source_path}",
-        f"RecognitionType: {review.recognition_type}",
-        f"MetadataPolicy: {review.metadata_policy_id}",
-        f"Provider: {review.provider_id}",
-        f"Original query: {review.original_query}",
-        f"Original year: {review.original_year or '-'}",
-        f"Original media type: {review.original_media_type}",
-        f"Corrected query: {review.corrected_query or '-'}",
-        f"Corrected year: {review.corrected_year or '-'}",
-        f"Corrected media type: {review.corrected_media_type or '-'}",
-        f"Direct provider ID: {review.direct_provider_id or '-'}",
-        "",
-        "AUDIT",
-        "",
-    ]
-    lines.extend(
-        f"{item.decided_at.isoformat()} | query={item.corrected_query or '-'} | "
-        f"year={item.corrected_year or '-'} | type={item.corrected_media_type} | "
-        f"providerId={item.direct_provider_id or '-'} | actor={item.actor or '-'}"
-        for item in audit
-    )
-    if not audit:
-        lines.append("None")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_metadata_correction_batch(reviews) -> str:
-    lines = [
-        "",
-        "BATCH METADATA CORRECTION",
-        "",
-        f"Resolved: {len(reviews)}",
-        "Media mutation: 0",
-        "",
-        "REVIEWS",
-        "",
-    ]
-    lines.extend(
-        f"{item.review_id} | query={item.corrected_query or '-'} | "
-        f"year={item.corrected_year or '-'} | type={item.corrected_media_type or '-'} | "
-        f"providerId={item.direct_provider_id or '-'} | actor={item.actor or '-'}"
-        for item in reviews
-    )
-    lines.extend(("", f"Total: {len(reviews)}", ""))
-    return "\n".join(lines)
-
-
-def render_recognition_reviews(values) -> str:
-    lines = ["", "RECOGNITION REVIEWS", ""]
-    lines.extend(
-        f"{item.review_id} | {item.status.value} | {item.source_storage_id}:{item.source_path}"
-        for item in values
-    )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_recognition_batch_resolve(reviews) -> str:
-    lines = [
-        "",
-        "BATCH RECOGNITION RESOLVE",
-        "",
-        f"Resolved: {len(reviews)}",
-        "Media mutation: 0",
-        "",
-        "REVIEWS",
-        "",
-    ]
-    lines.extend(
-        f"{item.review_id} | {item.selected_recognition_type} | {item.actor or '-'}"
-        for item in reviews
-    )
-    lines.extend(("", f"Total: {len(reviews)}", ""))
-    return "\n".join(lines)
-
-
-def render_recognition_review(review, choices, audit=()) -> str:
-    lines = [
-        "",
-        "RECOGNITION REVIEW",
-        "",
-        f"ID: {review.review_id}",
-        f"Status: {review.status.value}",
-        f"Source: {review.source_storage_id}:{review.source_path}",
-        f"Selected RecognitionType: {review.selected_recognition_type or '-'}",
-        "",
-        "CHOICES",
-        "",
-    ]
-    lines.extend(
-        f"{item.recognition_type_id} | {item.name} | {item.description}" for item in choices
-    )
-    lines.extend(("", "DECISION AUDIT", ""))
-    lines.extend(
-        f"{item.decided_at.isoformat()} | {item.recognition_type_id} | {item.actor or '-'}"
-        for item in audit
-    )
-    if not audit:
-        lines.append("None")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_metadata_review(review, candidates, audit=()) -> str:
-    lines = [
-        "",
-        "METADATA REVIEW",
-        "",
-        f"ID: {review.review_id}",
-        f"Status: {review.status.value}",
-        f"Outcome: {review.outcome}",
-        f"Source: {review.source_storage_id}:{review.source_path}",
-        f"RecognitionType: {review.recognition_type}",
-        f"MetadataPolicy: {review.metadata_policy_id}",
-        f"Query: {review.query}",
-        f"Selected rank: {review.selected_rank or '-'}",
-        f"Selected candidate: {review.selected_provider}:{review.selected_provider_id}"
-        if review.selected_provider_id
-        else "Selected candidate: -",
-        "",
-        "CANDIDATES",
-        "",
-    ]
-    lines.extend(
-        f"{item.rank} | {item.provider}:{item.provider_id} | {item.title} | "
-        f"year={item.canonical_year or '-'} | score={item.total_score}"
-        for item in candidates
-    )
-    lines.extend(("", "DECISION AUDIT", ""))
-    lines.extend(
-        f"{item.decided_at.isoformat()} | rank={item.selected_rank} | "
-        f"{item.provider}:{item.provider_id} | {item.actor or '-'}"
-        for item in audit
-    )
-    if not audit:
-        lines.append("None")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_metadata_review_batch(reviews) -> str:
-    lines = [
-        "",
-        "BATCH METADATA REVIEW",
-        "",
-        f"Resolved: {len(reviews)}",
-        "Media mutation: 0",
-        "",
-        "REVIEWS",
-        "",
-    ]
-    lines.extend(
-        f"{item.review_id} | rank={item.selected_rank or '-'} | "
-        f"{item.selected_provider or '-'}:{item.selected_provider_id or '-'} | "
-        f"{item.selected_media_type or '-'} | {item.actor or '-'}"
-        for item in reviews
-    )
-    lines.extend(("", f"Total: {len(reviews)}", ""))
-    return "\n".join(lines)
-
-
-def render_classification_reviews(values) -> str:
-    lines = ["", "CLASSIFICATION REVIEWS", ""]
-    lines.extend(
-        f"{item.review_id} | {item.status.value} | {item.source_storage_id}:"
-        f"{item.source_path} | {item.title}"
-        for item in values
-    )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_classification_review(review, choices, audit=()) -> str:
-    lines = [
-        "",
-        "CLASSIFICATION REVIEW",
-        "",
-        f"ID: {review.review_id}",
-        f"Status: {review.status.value}",
-        f"Source: {review.source_storage_id}:{review.source_path}",
-        f"RecognitionType: {review.recognition_type}",
-        f"ClassificationPolicy: {review.classification_policy_id}",
-        f"Media: {review.title} ({review.canonical_year or '-'})",
-        f"Selected rank: {review.selected_rank or '-'}",
-        f"Selected rule: {review.selected_rule_id or '-'}",
-        "",
-        "CHOICES",
-        "",
-    ]
-    lines.extend(
-        f"{item.rank} | {item.rule_id} | {item.media_library_id}:{item.relative_path} | "
-        f"priority={item.priority}"
-        for item in choices
-    )
-    lines.extend(("", "DECISION AUDIT", ""))
-    lines.extend(
-        f"{item.decided_at.isoformat()} | rank={item.selected_rank} | "
-        f"{item.rule_id} | {item.actor or '-'}"
-        for item in audit
-    )
-    if not audit:
-        lines.append("None")
-    lines.append("")
     return "\n".join(lines)
 
 

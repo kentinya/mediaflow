@@ -1907,7 +1907,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 (), value.repository.list_manual_executions_for_preview(preview["previewId"])
             )
 
-    def test_v1_manual_routes_and_documents_remain_compatible(self) -> None:
+    def test_retired_v1_manual_preview_route_is_not_available(self) -> None:
         with self.journey() as value:
             status, body = self._request(
                 value,
@@ -1923,7 +1923,8 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 "POST",
                 {"expectedVersion": body["version"]},
             )
-            self.assertEqual(201, status, preview)
+            self.assertEqual(404, status, preview)
+            self.assertEqual("not_found", preview["error"]["code"])
             status, tasks = self._request(value, "/api/v1/tasks")
             self.assertEqual(200, status, tasks)
 

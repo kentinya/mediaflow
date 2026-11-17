@@ -128,6 +128,8 @@ class ManualRecoveryContinuationService:
         actor: str,
         permission: str = MANUAL_EXECUTION_PERMISSION,
         confirmation: bool = False,
+        preview_id: str | None = None,
+        expected_intent_version: int | None = None,
         allow_overwrite: bool = False,
         allow_source_cleanup: bool = False,
     ) -> ManualExecution:
@@ -169,6 +171,21 @@ class ManualRecoveryContinuationService:
         selected = self._normalize_selection(item_ids)
         allow_overwrite = bool(allow_overwrite)
         allow_source_cleanup = bool(allow_source_cleanup)
+        if preview_id is not None and preparation.preview_id != preview_id:
+            raise ManualRecoveryContinuationError(
+                "the plan summary does not match the reviewed Preview",
+                code="preparation_stale",
+                next_action="reload the current plan summary and confirm it again",
+            )
+        if (
+            expected_intent_version is not None
+            and preparation.intent_version != expected_intent_version
+        ):
+            raise ManualRecoveryContinuationError(
+                "the plan summary does not match the reviewed intent version",
+                code="preparation_stale",
+                next_action="reload the current plan summary and confirm it again",
+            )
         if preparation.status is ManualRecoveryPreparationStatus.CONFIRMED:
             return self._confirmed_equivalent_execution(
                 preparation,
@@ -423,9 +440,11 @@ class ManualRecoveryContinuationService:
             return None
         document = dict(preparation.document())
         document["hasExecutionAuthority"] = False
-        document["previewPath"] = "/api/v1/manual-previews/" + preparation.preview_id
+        document["previewPath"] = "/api/v1/operations/organize/previews/" + preparation.preview_id
         document["executionPath"] = (
-            "/api/v1/manual-executions/" + execution.execution_id if execution is not None else None
+            "/api/v1/operations/organize/executions/" + execution.execution_id
+            if execution is not None
+            else None
         )
         document["next_action"] = preparation.next_action()
         if document.get(
@@ -512,9 +531,9 @@ class ManualRecoveryContinuationService:
                     "explicitly confirm the exact Organize action"
                 )
             ),
-            "previewPath": "/api/v1/manual-previews/" + preview.preview_id,
+            "previewPath": "/api/v1/operations/organize/previews/" + preview.preview_id,
             "executionPath": (
-                "/api/v1/manual-executions/" + execution.execution_id
+                "/api/v1/operations/organize/executions/" + execution.execution_id
                 if execution is not None
                 else None
             ),
@@ -544,6 +563,51 @@ class ManualRecoveryContinuationService:
                 return execution
         return None
 
+    def confirm_from_execute(
+        self,
+        preparation_id: str,
+        *,
+        preview_id: str,
+        item_ids,
+        expected_intent_version: int,
+        actor: str,
+        permission: str = MANUAL_EXECUTION_PERMISSION,
+        confirmation: bool = False,
+        allow_overwrite: bool = False,
+        allow_source_cleanup: bool = False,
+    ) -> ManualExecution:
+        """Confirm one reviewed summary through the current Execute boundary.
+
+        The official operations organizing Execute route carries the exact
+        preparation identity as its summary association.  Native Task summaries
+        keep their discovery+Preview binding; persisted automatic summaries keep
+        their actor, checkpoint and atomic preparation-to-execution link.
+        """
+
+        if native_preparation_ref(preparation_id) is not None:
+            return self.confirm_native_preparation(
+                preparation_id,
+                item_ids=item_ids,
+                actor=actor,
+                permission=permission,
+                confirmation=confirmation,
+                preview_id=preview_id,
+                expected_intent_version=expected_intent_version,
+                allow_overwrite=allow_overwrite,
+                allow_source_cleanup=allow_source_cleanup,
+            )
+        return self.confirm_prepared(
+            preparation_id,
+            item_ids=item_ids,
+            actor=actor,
+            permission=permission,
+            confirmation=confirmation,
+            preview_id=preview_id,
+            expected_intent_version=expected_intent_version,
+            allow_overwrite=allow_overwrite,
+            allow_source_cleanup=allow_source_cleanup,
+        )
+
     def confirm_native_preparation(
         self,
         preparation_id: str,
@@ -552,6 +616,8 @@ class ManualRecoveryContinuationService:
         actor: str,
         permission: str = MANUAL_EXECUTION_PERMISSION,
         confirmation: bool = False,
+        preview_id: str | None = None,
+        expected_intent_version: int | None = None,
         allow_overwrite: bool = False,
         allow_source_cleanup: bool = False,
     ) -> ManualExecution:
@@ -597,6 +663,13 @@ class ManualRecoveryContinuationService:
                 code="preparation_stale",
                 next_action="reload the organizing work and inspect its current state",
             )
+        if preview_id is not None and reviewed_preview_id != preview_id:
+            raise ManualRecoveryContinuationError(
+                "the plan summary does not match the reviewed Preview",
+                code="preparation_stale",
+                next_action="reload the current plan summary and confirm it again",
+                details={"previewId": discovery.preview_id},
+            )
         if discovery.preview_id != reviewed_preview_id:
             # A newer analysis replaced the Preview the operator reviewed.  The
             # old page must never execute the newer plan: nothing is consumed or
@@ -623,6 +696,15 @@ class ManualRecoveryContinuationService:
         if preview is None or not preview.current:
             raise ManualRecoveryContinuationError(
                 "the reviewed plan summary is no longer current",
+                code="preparation_stale",
+                next_action="reload the current plan summary and confirm it again",
+            )
+        if (
+            expected_intent_version is not None
+            and preview.intent_version != expected_intent_version
+        ):
+            raise ManualRecoveryContinuationError(
+                "the plan summary does not match the reviewed intent version",
                 code="preparation_stale",
                 next_action="reload the current plan summary and confirm it again",
             )

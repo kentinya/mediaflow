@@ -113,9 +113,9 @@ class ManualRecoveryPreparation:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "next_action": self.next_action(),
-            "previewPath": "/api/v1/manual-previews/" + self.preview_id,
+            "previewPath": "/api/v1/operations/organize/previews/" + self.preview_id,
             "executionPath": (
-                "/api/v1/manual-executions/" + self.execution_id
+                "/api/v1/operations/organize/executions/" + self.execution_id
                 if self.execution_id is not None
                 else None
             ),

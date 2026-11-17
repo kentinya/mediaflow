@@ -318,7 +318,7 @@ async function finishNativeRecovery(
   const confirmResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+      /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
         new URL(response.url()).pathname,
       ),
   );

@@ -272,32 +272,30 @@ class MetadataCorrectionBatchTests(unittest.TestCase):
                 "create_storages",
                 side_effect=AssertionError("batch metadata correction constructed Storage"),
             ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "metadata-corrections",
-                        "resolve-pending",
-                        "--query",
-                        "Correct Title",
-                        "--media-type",
-                        "movie",
-                        "--actor",
-                        "operator",
-                        "--limit",
-                        "1",
-                    ],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("BATCH METADATA CORRECTION", output.getvalue())
-            self.assertIn("Resolved: 1", output.getvalue())
-            self.assertIn("Media mutation: 0", output.getvalue())
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "metadata-corrections",
+                            "resolve-pending",
+                            "--query",
+                            "Correct Title",
+                            "--media-type",
+                            "movie",
+                            "--actor",
+                            "operator",
+                            "--limit",
+                            "1",
+                        ],
+                        stdout=output,
+                        stderr=error,
+                    )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(
                     repository.get_metadata_correction(review.review_id).status,
-                    MetadataCorrectionStatus.RESOLVED,
+                    MetadataCorrectionStatus.PENDING,
                 )
 
     def test_c_preservation_and_retryable_selection_remain_unchanged(self) -> None:

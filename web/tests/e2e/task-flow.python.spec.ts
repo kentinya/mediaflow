@@ -298,7 +298,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   const confirmed = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /manual-recovery-preparations\/[^/]+\/confirm$/.test(
+      /operations\/organize\/previews\/[^/]+\/execute$/.test(
         new URL(response.url()).pathname,
       ),
   );

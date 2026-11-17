@@ -453,7 +453,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         self.assertIsNotNone(preparation, detail)
         self.assertEqual("prepared", preparation["status"])
         status, preview = self.request(
-            value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
         )
         self.assertEqual(200, status, preview)
         ready = [entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"]
@@ -461,8 +461,15 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         status, confirmed = self.request(
             value,
             "POST",
-            f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-            {"itemIds": ready, "confirmation": True},
+            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+            {
+                "preparationId": preparation["preparation_id"],
+                "itemIds": ready,
+                "confirmation": True,
+                "expectedIntentVersion": preview["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
             token=actor_token,
         )
         return status, confirmed, preparation, ready
@@ -544,11 +551,24 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual("cli", state.admission_principal)
             self.assertTrue(detail["manualRecoveryAvailable"])
 
+            status, preview = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+            )
+            self.assertEqual(200, status, preview)
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
-                {"itemIds": ["any"], "confirmation": True},
+                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                {
+                    "preparationId": preparation["preparation_id"],
+                    "itemIds": ["any"],
+                    "confirmation": True,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
                 token=OPERATOR_TOKEN,
             )
             self.assertEqual(403, status, refused)

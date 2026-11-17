@@ -47,6 +47,41 @@ function previewDocument(): Record<string, unknown> {
   return value;
 }
 
+function executionDocument(): Record<string, unknown> {
+  const value = JSON.parse(
+    JSON.stringify(
+      (fixture as Record<string, unknown>)["organizeExecutionDetail"],
+    ),
+  ) as Record<string, unknown>;
+  value["executionId"] = "execution-1";
+  value["previewId"] = "preview-1";
+  value["intentId"] = "intent-1";
+  value["taskId"] = "task-1";
+  value["selectedItemIds"] = ["item-1"];
+  value["selectedItemCount"] = 1;
+  value["unselectedItemIds"] = [];
+  value["unselectedItemCount"] = 0;
+  const items = value["items"] as Record<string, unknown>[];
+  items[0]!["itemId"] = "item-1";
+  items[0]!["taskId"] = "task-1";
+  return value;
+}
+
+function admissionOutcome(): Record<string, unknown> {
+  return {
+    outcome: "known",
+    reason: null,
+    executionId: "execution-1",
+    taskId: "task-1",
+    status: "admitted",
+    selectedItemIds: ["item-1"],
+    completedItemCount: 0,
+    failedItemCount: 0,
+    sideEffects: "none",
+    nextAction: "inspect the linked execution and its Task result",
+  };
+}
+
 function completedRecovery(
   preparation: Record<string, unknown> | null,
 ): Record<string, unknown> {
@@ -278,6 +313,7 @@ function runOverviewDocument(
 function preparedPreparation(): Record<string, unknown> {
   return {
     preparation_id: "preparation-1",
+    intent_version: 1,
     preview_id: "preview-1",
     intent_id: "intent-1",
     source_task_id: "task-1",
@@ -959,6 +995,7 @@ describe("TaskItemRecoveryPanel", () => {
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
+            intent_version: 1,
             preview_id: "preview-1",
             intent_id: "intent-1",
             source_task_id: "task-1",
@@ -975,6 +1012,7 @@ describe("TaskItemRecoveryPanel", () => {
           return new Response(
             JSON.stringify({
               preparation_id: "preparation-1",
+              intent_version: 1,
               preview_id: "preview-1",
               intent_id: "intent-1",
               source_task_id: "task-1",
@@ -993,18 +1031,11 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/manual-recovery-preparations/preparation-1/confirm"
+          url === "/api/v1/operations/organize/previews/preview-1/execute"
         ) {
-          return new Response(
-            JSON.stringify({
-              executionId: "execution-1",
-              taskId: "execution-task-1",
-              status: "admitted",
-              selectedItemIds: ["item-1"],
-              nextAction: "track the durable Worker execution",
-            }),
-            { status: 202 },
-          );
+          return new Response(JSON.stringify(executionDocument()), {
+            status: 202,
+          });
         }
         return new Response(JSON.stringify({ error: { code: "not_found" } }), {
           status: 404,
@@ -1043,7 +1074,7 @@ describe("TaskItemRecoveryPanel", () => {
     // Prepare is a read/prepare action: no execution is admitted before confirm.
     expect(
       calls.some(
-        (call) => call.method === "POST" && call.path.endsWith("/confirm"),
+        (call) => call.method === "POST" && call.path.endsWith("/execute"),
       ),
     ).toBe(false);
 
@@ -1056,14 +1087,18 @@ describe("TaskItemRecoveryPanel", () => {
         calls.filter((call) => call.method === "POST").map((call) => call.path),
       ).toEqual([
         "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary",
-        "/api/v1/manual-recovery-preparations/preparation-1/confirm",
+        "/api/v1/operations/organize/previews/preview-1/execute",
       ]);
     });
     expect(
-      JSON.parse(calls.find((call) => call.path.endsWith("/confirm"))!.body!),
+      JSON.parse(calls.find((call) => call.path.endsWith("/execute"))!.body!),
     ).toMatchObject({
+      preparationId: "preparation-1",
       itemIds: ["item-1"],
       confirmation: true,
+      expectedIntentVersion: 1,
+      allowOverwrite: false,
+      allowSourceCleanup: false,
     });
   });
 
@@ -1071,6 +1106,7 @@ describe("TaskItemRecoveryPanel", () => {
     authStore.setToken("task-recovery-test-token");
     const durable = completedRecovery({
       preparation_id: "preparation-1",
+      intent_version: 1,
       preview_id: "preview-1",
       intent_id: "intent-1",
       source_task_id: "task-1",
@@ -1186,6 +1222,7 @@ describe("TaskItemRecoveryPanel", () => {
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
+            intent_version: 1,
             preview_id: "preview-1",
             intent_id: "intent-1",
             source_task_id: "task-1",
@@ -1202,6 +1239,7 @@ describe("TaskItemRecoveryPanel", () => {
           return new Response(
             JSON.stringify({
               preparation_id: "preparation-1",
+              intent_version: 1,
               preview_id: "preview-1",
               intent_id: "intent-1",
               source_task_id: "task-1",
@@ -1219,13 +1257,24 @@ describe("TaskItemRecoveryPanel", () => {
           );
         }
         if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/v1/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          return new Response(JSON.stringify(admissionOutcome()), {
+            status: 200,
+          });
+        }
+        if (
           method === "POST" &&
-          url === "/api/v1/manual-recovery-preparations/preparation-1/confirm"
+          url === "/api/v1/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           // The admission really committed, but the response is lost.
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
+            intent_version: 1,
             preview_id: "preview-1",
             intent_id: "intent-1",
             source_task_id: "task-1",
@@ -1297,6 +1346,7 @@ describe("TaskItemRecoveryPanel", () => {
     authStore.setToken("task-recovery-test-token");
     let currentRecovery = completedRecovery({
       preparation_id: "preparation-1",
+      intent_version: 1,
       preview_id: "preview-1",
       intent_id: "intent-1",
       source_task_id: "task-1",
@@ -1337,13 +1387,24 @@ describe("TaskItemRecoveryPanel", () => {
           });
         }
         if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/v1/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          return new Response(JSON.stringify(admissionOutcome()), {
+            status: 200,
+          });
+        }
+        if (
           method === "POST" &&
-          url === "/api/v1/manual-recovery-preparations/preparation-1/confirm"
+          url === "/api/v1/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           await confirmGate;
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
+            intent_version: 1,
             preview_id: "preview-1",
             intent_id: "intent-1",
             source_task_id: "task-1",
@@ -1462,6 +1523,7 @@ describe("TaskItemRecoveryPanel", () => {
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
+            intent_version: 1,
             preview_id: "preview-1",
             intent_id: "intent-1",
             source_task_id: "task-1",
@@ -1478,6 +1540,7 @@ describe("TaskItemRecoveryPanel", () => {
           return new Response(
             JSON.stringify({
               preparation_id: "preparation-1",
+              intent_version: 1,
               preview_id: "preview-1",
               intent_id: "intent-1",
               source_task_id: "task-1",
@@ -1520,6 +1583,7 @@ describe("TaskItemRecoveryPanel", () => {
     // The durable record is now confirmed elsewhere.
     currentRecovery = completedRecovery({
       preparation_id: "preparation-1",
+      intent_version: 1,
       preview_id: "preview-1",
       intent_id: "intent-1",
       source_task_id: "task-1",

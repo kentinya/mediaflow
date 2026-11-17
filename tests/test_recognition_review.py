@@ -184,7 +184,7 @@ class RecognitionReviewTests(unittest.TestCase):
         self.assertEqual(result.metadata.recognition_type_id, "C")
         self.assertTrue(result.recognition_type_preserved)
 
-    def test_cli_review_commands_need_no_storage_or_provider_credentials(self) -> None:
+    def test_retired_cli_review_command_is_an_ordinary_parser_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
@@ -198,31 +198,33 @@ class RecognitionReviewTests(unittest.TestCase):
                 item = coordinator.begin_item(
                     task.task_id, "missing-storage", "unknown", "Unknown.mkv", "Unknown.mkv"
                 )
-                review = RecognitionReviewService(
+                RecognitionReviewService(
                     repository, development_strategy_configuration().recognition_types
                 ).create(item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED))
             output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                [
-                    "--config",
-                    str(config_path),
-                    "recognition-reviews",
-                    "resolve",
-                    review.review_id,
-                    "--recognition-type",
-                    "A",
-                    "--actor",
-                    "operator",
-                ],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("Selected RecognitionType: A", output.getvalue())
-            self.assertNotIn("token", output.getvalue().casefold())
+            with self.assertRaises(SystemExit) as raised:
+                final_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "recognition-reviews",
+                        "resolve",
+                        "review-id",
+                        "--recognition-type",
+                        "A",
+                        "--actor",
+                        "operator",
+                    ],
+                    stdout=output,
+                    stderr=error,
+                )
+            self.assertEqual(2, raised.exception.code)
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.PENDING)
+                self.assertIs(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_RECOGNITION,
+                )
 
 
 if __name__ == "__main__":
