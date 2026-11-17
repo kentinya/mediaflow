@@ -48,7 +48,7 @@ def webhook(**changes) -> WebhookDefinition:
         "webhook_id": "ops",
         "url": "https://example.invalid/hooks/mediaflow",
         "secret_env": "MEDIAFLOW_WEBHOOK_SECRET",
-        "events": (NotificationEventType.JOB_COMPLETED,),
+        "events": (NotificationEventType.TASK_COMPLETED,),
         "max_attempts": 3,
         "base_retry_seconds": 2,
         "max_retry_seconds": 10,
@@ -60,7 +60,7 @@ def webhook(**changes) -> WebhookDefinition:
 def publish(repository, *, definition=None, event_id="event-1", occurred_at=NOW):
     event = NotificationEvent(
         event_id,
-        NotificationEventType.JOB_COMPLETED,
+        NotificationEventType.TASK_COMPLETED,
         occurred_at,
         {"jobId": event_id, "title": "千与千寻"},
     )
@@ -109,7 +109,7 @@ class DeliveryManagementHarness:
         self.repository = SQLiteTaskRepository(self.directory / "runtime.sqlite3")
         admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
-        self.api = MediaFlowApi(self.repository, None, principals=(admin, viewer))
+        self.api = MediaFlowApi(self.repository, principals=(admin, viewer))
 
     def close(self):
         self.repository.close()
@@ -137,7 +137,6 @@ class ManagedWebhookHarness:
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=(admin, viewer),
             configuration_service=self.configuration,
             bootstrap_document=document,

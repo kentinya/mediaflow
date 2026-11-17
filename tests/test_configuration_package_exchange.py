@@ -83,7 +83,6 @@ def setup_api(root: Path):
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         api = MediaFlowApi(
             task_repository,
-            None,
             principals=(admin, viewer),
             configuration_service=service,
             configuration_snapshot_id=first.revision_id,
@@ -104,7 +103,7 @@ class PackageRedactionTests(unittest.TestCase):
             "tokenEnv": "OPENLIST_TOKEN",
             "baseUrl": "https://example.invalid",
         }
-        document["notifications"]["webhooks"][0]["secret"] = "literal-password"
+        document["webhooks"][0]["secret"] = "literal-password"
         document["api"]["fallbackToken"] = "literal-token"
         safe, evidence = redact_configuration_document(document)
 
@@ -115,11 +114,11 @@ class PackageRedactionTests(unittest.TestCase):
             {
                 "api.principals[0].tokenEnv",
                 "storages[0].options.tokenEnv",
-                "notifications.webhooks[0].secretEnv",
+                "webhooks[0].secretEnv",
             },
             {entry["field"] for entry in references},
         )
-        self.assertIn("notifications.webhooks[0].secret", {entry["field"] for entry in redacted})
+        self.assertIn("webhooks[0].secret", {entry["field"] for entry in redacted})
         self.assertIn("api.fallbackToken", {entry["field"] for entry in redacted})
         self.assertNotIn("literal-password", json.dumps(safe))
         self.assertNotIn("literal-token", json.dumps(safe))
@@ -246,7 +245,7 @@ class PackageExchangeApiTests(unittest.TestCase):
             json.dumps(payload_document),
         )
         self.assertIn(
-            "notifications.webhooks[0].secretEnv",
+            "webhooks[0].secretEnv",
             json.dumps([entry for entry in entries if entry["kind"] == "environment_reference"]),
         )
         self.assertLess(len(encoded.encode("utf-8")), 1_500_000)

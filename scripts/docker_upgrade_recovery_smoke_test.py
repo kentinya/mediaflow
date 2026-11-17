@@ -81,7 +81,6 @@ DEFINITION_ID = "upgrade-definition"
 SCHEDULE_ID = "hourly-scan"
 TASK_ID = "upgrade-task"
 JOB_SCHEDULED_ID = "upgrade-scheduled-job"
-JOB_COMPLETED_ID = "upgrade-completed-job"
 NOTIFICATION_IDS = {
     "pending": "upgrade-delivery-pending",
     "retry": "upgrade-delivery-retry",
@@ -476,7 +475,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
                     delivery_id,
                     "upgrade-webhook",
                     f"upgrade-event-{index}",
-                    NotificationEventType.JOB_COMPLETED,
+                    NotificationEventType.TASK_COMPLETED,
                     "{}",
                     status,
                     attempts,
@@ -1140,10 +1139,16 @@ def upgrade_recovery_smoke(
     with tempfile.TemporaryDirectory(prefix=f"{UPGRADE_PROJECT_PREFIX}-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_files(root, token)
+        (
+            config_file,
+            environment_file,
+            source_root,
+            target_root,
+            activation_file,
+        ) = prepare_files(root, token)
         # The schedule-audit fixture must name a real supported schedule in
         # the published runtime. Disabled keeps this history proof effect-free.
-        document = json.loads(config_file.read_text(encoding="utf-8"))
+        document = json.loads(activation_file.read_text(encoding="utf-8"))
         document.setdefault("automation", {}).setdefault("schedules", []).append(
             {
                 "id": SCHEDULE_ID,
@@ -1153,7 +1158,7 @@ def upgrade_recovery_smoke(
                 "enabled": False,
             }
         )
-        config_file.write_text(json.dumps(document), encoding="utf-8")
+        activation_file.write_text(json.dumps(document), encoding="utf-8")
         # A real ResourceLibrary-relative source for the post-upgrade discovery
         # persistence check.  The source mount stays read-only in production, so
         # the file is created on the host before the stack starts.
@@ -1194,7 +1199,7 @@ def upgrade_recovery_smoke(
             wait_for_api(base, token)
 
             print("Activating managed runtime and seeding representative state...")
-            activate_runtime(base, token, config_file)
+            activate_runtime(base, token, activation_file)
             identity = active_identity(base, token)
             seed_result = run_image_python(old_image, volume, seed_state_code())
             seed_output = require_success(seed_result, "seed state")

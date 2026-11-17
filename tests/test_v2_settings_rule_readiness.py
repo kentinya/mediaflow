@@ -88,7 +88,6 @@ class SettingsRuleReadinessTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=principals,
             configuration_service=self.configuration,
         )
@@ -189,7 +188,6 @@ class SettingsRuleReadinessTests(unittest.TestCase):
         # explicit unavailable state instead of an empty rule graph.
         api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=(ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),),
         )
         # A deployment without a managed configuration service refuses the
@@ -207,7 +205,6 @@ class SettingsRuleReadinessTests(unittest.TestCase):
         )
         api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=(ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),),
             configuration_service=service,
         )
@@ -465,7 +462,6 @@ class RulesReadinessFixtureContractTests(unittest.TestCase):
             runtime = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
             api = MediaFlowApi(
                 runtime,
-                None,
                 principals=(
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
                 ),

@@ -14,6 +14,7 @@ from threading import Barrier, Thread
 from unittest.mock import patch
 
 from mediaflow.application.automation import IntervalScheduler
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -25,6 +26,9 @@ from mediaflow.domain.notification import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_media_discovery import _DiscoveryFixture
@@ -240,17 +244,15 @@ class NotificationTests(unittest.TestCase):
 
     def test_configuration_validation_and_secret_resolution(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        document["notifications"] = {
-            "pollSeconds": 3,
-            "webhooks": [
-                {
-                    "id": "ops",
-                    "url": "https://example.invalid/hook",
-                    "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-                    "events": ["task.completed", "task.failed"],
-                }
-            ],
-        }
+        document["notifications"] = {"pollSeconds": 3}
+        document["webhooks"] = [
+            {
+                "id": "ops",
+                "url": "https://example.invalid/hook",
+                "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
+                "events": ["task.completed", "task.failed"],
+            }
+        ]
         loaded = load_runtime_configuration(copy.deepcopy(document))
         self.assertEqual(loaded.notification_poll_seconds, 3)
         self.assertEqual(loaded.notification_delivery_lease_seconds, 300)
@@ -264,11 +266,11 @@ class NotificationTests(unittest.TestCase):
             "https://example.invalid/hook#fragment",
         ):
             value = copy.deepcopy(document)
-            value["notifications"]["webhooks"][0]["url"] = invalid
+            value["webhooks"][0]["url"] = invalid
             with self.subTest(url=invalid), self.assertRaises(ValueError):
                 load_runtime_configuration(value)
         literal = copy.deepcopy(document)
-        literal["notifications"]["webhooks"][0]["secret"] = "forbidden"
+        literal["webhooks"][0]["secret"] = "forbidden"
         with self.assertRaises(ValueError):
             load_runtime_configuration(literal)
         custom = copy.deepcopy(document)
@@ -286,9 +288,35 @@ class NotificationTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(database)}
             config = Path(directory, "config.json")
             config.write_text(json.dumps(document), encoding="utf-8")
+            with SQLiteConfigurationRepository(database) as configuration_repository:
+                service = ManagedConfigurationService(
+                    configuration_repository, bootstrap_document=document
+                )
+                draft = service.import_draft(document, actor="tester")
+                validated = service.validate(draft.revision_id, actor="tester")
+                service.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="tester",
+                )
             with SQLiteTaskRepository(database) as repository:
                 publish(repository)
-                api = MediaFlowApi(repository, "api-secret")
+                api = MediaFlowApi(
+                    repository,
+                    principals=(
+                        __import__(
+                            "mediaflow.domain.security", fromlist=["ResolvedApiPrincipal"]
+                        ).ResolvedApiPrincipal(
+                            "admin",
+                            "api-secret",
+                            frozenset(
+                                __import__(
+                                    "mediaflow.domain.security", fromlist=["ApiPermission"]
+                                ).ApiPermission
+                            ),
+                        ),
+                    ),
+                )
                 statuses = []
                 environ = {
                     "REQUEST_METHOD": "GET",
@@ -418,17 +446,15 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
                 "sourceScope": "Movies",
             }
         ]
-        document["notifications"] = {
-            "webhooks": [
-                {
-                    "id": "terminal-events",
-                    "url": "https://example.invalid/mediaflow/events",
-                    "secretEnv": "MEDIAFLOW_TERMINAL_WEBHOOK_SECRET",
-                    "events": list(self.WEBHOOK_EVENTS),
-                    "enabled": True,
-                }
-            ]
-        }
+        document["webhooks"] = [
+            {
+                "id": "terminal-events",
+                "url": "https://example.invalid/mediaflow/events",
+                "secretEnv": "MEDIAFLOW_TERMINAL_WEBHOOK_SECRET",
+                "events": list(self.WEBHOOK_EVENTS),
+                "enabled": True,
+            }
+        ]
         return document
 
     def _journey(self, document):

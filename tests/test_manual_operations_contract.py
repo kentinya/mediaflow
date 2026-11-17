@@ -238,7 +238,6 @@ class ManualOperationsContractTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "contract-operator",

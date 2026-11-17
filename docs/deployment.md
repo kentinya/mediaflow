@@ -66,17 +66,24 @@ mount. Open `/ui-v2/configuration`, create the first Draft, and activate a valid
 empty baseline; Storage and libraries are configured afterwards through the
 business pages.
 
-If you already have a Local Storage layout, render the complete example instead:
+If you already have a Local Storage layout, also render the canonical example as a
+managed configuration *input*:
 
 ```bash
-python3 scripts/make_deployment_config.py --mode media --output config/mediaflow.json
+python3 scripts/make_deployment_config.py \
+  --output config/mediaflow.json \
+  --configuration-output config/mediaflow.activation.json
 ```
 
-`--mode media` rewrites the example's Local Storage roots to `/media/incoming`
-and `/media/organized`, so it is only usable together with the optional media
-mount overlay below. Either way the generated file uses
-`/data/mediaflow.sqlite3` and, for `--mode media`, `/data/history.jsonl`.
-`config/mediaflow.json` is Git-ignored.
+The second document rewrites the example's Local Storage roots to
+`/media/incoming` and `/media/organized`, so it is only usable together with the
+optional media mount overlay below. Import it through
+`/ui-v2/configuration` (or `mediaflow config import`) and complete the normal
+validate/check/activate journey. It is never passed to a service as startup
+authority: `mediaflow.json` stays the management-only bootstrap, uses
+`/data/mediaflow.sqlite3`, and the activation document adds
+`/data/history.jsonl`. `config/mediaflow.json` and the activation input are
+Git-ignored.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to

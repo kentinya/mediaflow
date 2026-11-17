@@ -70,7 +70,6 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         return MediaFlowApi(
             runtime_repository,
-            None,
             principals=(admin, viewer),
             configuration_service=service,
             bootstrap_document=bootstrap,

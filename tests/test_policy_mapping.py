@@ -1,6 +1,6 @@
 import unittest
 
-from mediaflow.application.policies import RecognitionTypePolicyRegistry
+from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.domain.organizer import OrganizeOperationType, OrganizePolicy
 from mediaflow.domain.recognition import RecognitionType, RecognitionTypePolicy
 
@@ -10,7 +10,7 @@ class PolicyMappingTest(unittest.TestCase):
         type_a = RecognitionType("A", "A")
         type_b = RecognitionType("B", "B")
         type_c = RecognitionType("C", "C")
-        registry = RecognitionTypePolicyRegistry(
+        resolver = RecognitionTypePolicyResolver(
             [
                 self._policy(type_a, "A", "A", "A"),
                 self._policy(type_b, "B", "B", "B"),
@@ -18,9 +18,9 @@ class PolicyMappingTest(unittest.TestCase):
             ]
         )
 
-        resolved_a = registry.resolve(type_a)
-        resolved_b = registry.resolve(type_b)
-        resolved = registry.resolve(type_c)
+        resolved_a = resolver.resolve(type_a)
+        resolved_b = resolver.resolve(type_b)
+        resolved = resolver.resolve(type_c)
 
         self.assertEqual(("A", "metadata-A", "naming-A", "classification-A"), self._ids(resolved_a))
         self.assertEqual(("B", "metadata-B", "naming-B", "classification-B"), self._ids(resolved_b))
@@ -31,7 +31,7 @@ class PolicyMappingTest(unittest.TestCase):
 
     def test_missing_mapping_fails_explicitly(self) -> None:
         with self.assertRaises(LookupError):
-            RecognitionTypePolicyRegistry([]).resolve(RecognitionType("C", "C"))
+            RecognitionTypePolicyResolver([]).resolve(RecognitionType("C", "C"))
 
     @staticmethod
     def _policy(

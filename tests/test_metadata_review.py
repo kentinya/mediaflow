@@ -37,6 +37,7 @@ from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepos
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.managed_config_fixture import publish_managed_document
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -252,6 +253,7 @@ class MetadataReviewTests(unittest.TestCase):
             configuration["persistence"] = {"databasePath": str(database)}
             config_path = root / "config.json"
             config_path.write_text(json.dumps(configuration), encoding="utf-8")
+            publish_managed_document(configuration)
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataReviewService(repository).create(item, identification(), "C")
@@ -285,7 +287,7 @@ class MetadataReviewTests(unittest.TestCase):
                     ResolvedApiPrincipal(role, f"{role}-token", frozenset({ApiPermission.READ}))
                     for role in ("viewer", "operator", "executor", "auditor", "admin")
                 )
-                api = MediaFlowApi(repository, None, principals=principals)
+                api = MediaFlowApi(repository, principals=principals)
                 self.assertEqual(api_request(api, "/api/v1/metadata-reviews", token=None)[0], 401)
                 for role in ("viewer", "operator", "executor", "auditor", "admin"):
                     self.assertEqual(

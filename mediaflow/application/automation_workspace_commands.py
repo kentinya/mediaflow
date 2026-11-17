@@ -47,6 +47,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.cron import CronExpression
+from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission
 from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
 
@@ -369,7 +370,7 @@ class AutomationWorkspaceCommandService:
                     }
                 ),
                 "overwrite": any(
-                    value.get("overwrite") is True
+                    parse_organize_policy(value).conflict_strategy is ConflictStrategy.OVERWRITE
                     for value in active.document.get("organizePolicies", [])
                 ),
                 "sourceCleanup": any(

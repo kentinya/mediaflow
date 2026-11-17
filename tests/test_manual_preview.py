@@ -475,7 +475,6 @@ class ManualPreviewTests(unittest.TestCase):
             intents, previews = self.services(value, repository)
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(operator, viewer),
                 manual_intent_service=intents,
                 manual_preview_service=previews,

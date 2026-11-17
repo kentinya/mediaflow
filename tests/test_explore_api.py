@@ -199,7 +199,6 @@ class ExploreApiTests(unittest.TestCase):
     def _build_api(self, factory, repository=None) -> MediaFlowApi:
         return MediaFlowApi(
             repository if repository is not None else self.repository,
-            None,
             principals=PRINCIPALS,
             metadata_provider_registry_factory=factory,
         )
@@ -512,7 +511,6 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
         provider = TMDBProvider(TMDBClient(config, transport=HttpxTransport(config, client=client)))
         return MediaFlowApi(
             self.repository,
-            None,
             principals=PRINCIPALS,
             metadata_provider_registry_factory=(
                 lambda _provider_ids: MetadataProviderRegistry((provider,))

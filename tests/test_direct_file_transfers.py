@@ -313,7 +313,6 @@ class TransferTestCase(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -990,7 +989,6 @@ class TransferApiTests(TransferTestCase):
         self.addCleanup(configuration_repository.close)
         return MediaFlowApi(
             runtime,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -1335,7 +1333,6 @@ class TransferApiTests(TransferTestCase):
             self.addCleanup(reopened.close)
             restarted_api = MediaFlowApi(
                 reopened,
-                None,
                 principals=(
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
                 ),
@@ -2233,7 +2230,6 @@ class _NonEmptySourceRootFixture(TransferTestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -5946,7 +5942,12 @@ class StaleWorkerRevisionTests(TransferTestCase):
                 _document, service, _objects, active = self._fixture(root)
                 api = MediaFlowApi(
                     runtime,
-                    "api-secret",
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
                     configuration_service=service,
                     bootstrap_document=document,
                     storage_browser_cursor_secret="s",
@@ -6094,7 +6095,6 @@ class StaleWorkerRevisionTests(TransferTestCase):
             self.addCleanup(runtime.close)
             api = MediaFlowApi(
                 runtime,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ),
@@ -6139,7 +6139,6 @@ class StaleWorkerRevisionTests(TransferTestCase):
             self.addCleanup(runtime.close)
             api = MediaFlowApi(
                 runtime,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ),
@@ -6186,7 +6185,6 @@ class StaleWorkerRevisionTests(TransferTestCase):
         self.addCleanup(runtime.close)
         api = MediaFlowApi(
             runtime,
-            None,
             principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
             configuration_service=service,
             bootstrap_document=document,

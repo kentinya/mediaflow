@@ -269,7 +269,6 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -1409,7 +1408,6 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

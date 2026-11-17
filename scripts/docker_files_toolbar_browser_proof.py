@@ -575,8 +575,7 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path]:
             [
                 sys.executable,
                 str(ROOT / "scripts" / "make_deployment_config.py"),
-                "--mode",
-                "media",
+                "--configuration",
             ],
             text=True,
         )

@@ -477,7 +477,6 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   priority: "优先级",
   operation: "整理操作",
   conflictStrategy: "冲突策略",
-  overwrite: "允许覆盖目标文件",
   confidence: "置信度",
   fastSampleBytes: "快速哈希采样字节数",
   fullMaxFileSize: "完整哈希最大文件字节数",
@@ -1177,31 +1176,6 @@ export function RulesObjectForm({
           true,
         )}
       </Section>,
-      <Section
-        key="risk"
-        title="高风险权限"
-        description="以下授权属破坏性操作;未显式选择时系统不会覆盖或删除。"
-      >
-        <label className="mf-rules-flag">
-          <input
-            id={id("overwrite")}
-            type="checkbox"
-            checked={values.overwrite === true}
-            disabled={disabled}
-            aria-invalid={issue("overwrite") ? true : undefined}
-            onChange={(event) => onChange("overwrite", event.target.checked)}
-          />
-          <span>{FIELD_LABELS.overwrite}</span>
-          <small>
-            覆盖会替换目标媒体文件,属于破坏性授权;它必须与覆盖冲突策略一致,绝不默认开启。
-          </small>
-        </label>
-        {issue("overwrite") ? (
-          <p className="mf-rules-field-error" role="alert">
-            {issue("overwrite")}
-          </p>
-        ) : null}
-      </Section>,
       <OrganizeNested
         key="nested"
         authority={authority}
@@ -1295,9 +1269,7 @@ function destinationSummary(
     : typeof result.path === "string"
       ? result.path
       : "";
-  const legacyPrefix =
-    typeof result.library === "string" ? result.library.trim() : "";
-  const target = [legacyPrefix, path].filter(Boolean).join("/");
+  const target = path;
   const root = library?.rootPath ?? "";
   return [
     library ? `${library.name} (${library.id})` : "未选择媒体库",
@@ -1308,30 +1280,14 @@ function destinationSummary(
     .join(" · ");
 }
 
-/**
- * Show the destination contract a stored rule currently resolves under.
- *
- * A legacy rule keeps its historical `library` prefix, so its published target
- * is `root/library/path/...` rather than `root/path/...`.  The operator sees the
- * old and the proposed contribution before deliberately removing the prefix;
- * nothing here converts the rule by itself, and simply opening or saving the
- * enclosing policy preserves the existing contract.
- */
-function DestinationContractNotice({
-  index,
+/** One bounded explanation of the destination the current form will submit. */
+function DestinationContractHint({
   result,
   libraries,
-  disabled,
-  onConvert,
 }: {
-  readonly index: number;
   readonly result: Readonly<Record<string, unknown>>;
   readonly libraries: readonly MediaLibraryReference[];
-  readonly disabled: boolean;
-  readonly onConvert: () => void;
 }) {
-  const legacyPrefix =
-    typeof result.library === "string" ? result.library.trim() : "";
   const pathValue = Array.isArray(result.path)
     ? result.path.join("/")
     : typeof result.path === "string"
@@ -1341,36 +1297,11 @@ function DestinationContractNotice({
     typeof result.mediaLibraryId === "string" ? result.mediaLibraryId : "";
   const selected = libraries.find((item) => item.id === libraryId);
   const root = selected?.rootPath ?? "";
-  if (legacyPrefix === "") {
-    return (
-      <p className="mf-rules-field-hint" data-testid="destination-contract">
-        目标 = 媒体库根目录{root ? ` (${root})` : ""} + 相对路径
-        {pathValue ? ` (${pathValue})` : ""} + 命名规则。
-      </p>
-    );
-  }
   return (
-    <div className="mf-rules-legacy-destination" role="status">
-      <p>
-        该规则仍使用旧版目标契约，发布目标为 媒体库根目录
-        {root ? ` (${root})` : ""} + 旧版前缀 ({legacyPrefix}) + 相对路径
-        {pathValue ? ` (${pathValue})` : ""} + 命名规则。
-      </p>
-      <p>
-        修订后的目标为 媒体库根目录{root ? ` (${root})` : ""} + 相对路径
-        {pathValue ? ` (${pathValue})` : ""} + 命名规则，不再包含「
-        {legacyPrefix}」目录。移除前缀并保存后才会生效。
-      </p>
-      <button
-        type="button"
-        className="mf-button mf-button-secondary"
-        disabled={disabled}
-        onClick={onConvert}
-        aria-label={`移除规则 ${index + 1} 的旧版目标前缀`}
-      >
-        移除旧版前缀并改用修订目标
-      </button>
-    </div>
+    <p className="mf-rules-field-hint" data-testid="destination-contract">
+      目标 = 媒体库根目录{root ? ` (${root})` : ""} + 相对路径
+      {pathValue ? ` (${pathValue})` : ""} + 命名规则。
+    </p>
   );
 }
 
@@ -1809,23 +1740,9 @@ function ClassificationRules({
               />
             </label>
           </div>
-          <DestinationContractNotice
-            index={openIndex}
+          <DestinationContractHint
             result={resultOf(openRule)}
             libraries={libraries}
-            disabled={disabled}
-            onConvert={() =>
-              patch(openIndex, (item) => ({
-                ...item,
-                result: {
-                  ...resultOf(item),
-                  // An explicit null is the deliberate conversion intent.
-                  // Omitting the key only means "no destination change", so
-                  // an unrelated cosmetic Save cannot switch the contract.
-                  library: null,
-                },
-              }))
-            }
           />
           <h4 className="mf-rules-subhead">匹配条件</h4>
           <div className="mf-rules-conditions">

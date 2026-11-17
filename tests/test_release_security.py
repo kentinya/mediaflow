@@ -29,13 +29,27 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
         self.assertNotEqual(first_nonempty_line, "", "TASK.md must declare a lifecycle state")
         self.assertIn("docs/development-workflow.md", task)
         self.assertTrue(
-            "### Developer — affected tests" in task or "**Developer — affected tests" in task,
+            any(
+                marker in task
+                for marker in (
+                    "### Developer — affected tests",
+                    "**Developer — affected tests",
+                    "### Developer — 新增／修改与直接受影响测试",
+                    "**Developer — 新增／修改与直接受影响测试",
+                )
+            ),
             "the active Task must document Developer's affected-test ownership",
         )
         self.assertTrue(
-            "### B — independent acceptance / full regression" in task
-            or "### B — acceptance and full regression" in task
-            or "**B — acceptance" in task,
+            any(
+                marker in task
+                for marker in (
+                    "### B — independent acceptance / full regression",
+                    "### B — acceptance and full regression",
+                    "**B — acceptance",
+                    "**B — 独立验收与完整回归",
+                )
+            ),
             "the active Task must document B's acceptance/full-regression ownership",
         )
 

@@ -428,7 +428,6 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                 managed = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

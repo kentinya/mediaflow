@@ -59,7 +59,6 @@ class RuntimeConfiguration:
     media_libraries: tuple[MediaLibrary, ...]
     history_path: str
     database_path: str
-    api_token_env: str | None = None
     worker_poll_seconds: float = 2.0
     scheduler_poll_seconds: float = 5.0
     webhooks: tuple[WebhookDefinition, ...] = ()
@@ -74,7 +73,7 @@ class RuntimeConfiguration:
     workflow_retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy()
     # Configuration authority is explicit so a managed Active snapshot can never
     # be mistaken for the JSON compatibility bootstrap.
-    configuration_authority: str = "JSON_BOOTSTRAP"
+    configuration_authority: str = "NONE"
     configuration_snapshot_id: str | None = None
     configuration_snapshot_digest: str | None = None
     configuration_snapshot_version: int | None = None
@@ -116,10 +115,6 @@ class RuntimeConfiguration:
 
     def resolve_api_principals(self) -> tuple[ResolvedApiPrincipal, ...]:
         definitions = self.api_principals
-        if not definitions and self.api_token_env:
-            definitions = (
-                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
-            )
         resolved = []
         for definition in definitions:
             if not definition.enabled:
@@ -139,10 +134,6 @@ class RuntimeConfiguration:
 
     def api_credential_statuses(self) -> tuple[ApiCredentialStatus, ...]:
         definitions = self.api_principals
-        if not definitions and self.api_token_env:
-            definitions = (
-                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
-            )
         return tuple(
             ApiCredentialStatus(
                 definition.principal_id,
@@ -165,15 +156,10 @@ class ManagementBootstrapConfiguration:
     """
 
     database_path: str
-    api_token_env: str | None = None
     api_principals: tuple[ApiPrincipalDefinition, ...] = ()
 
     def resolve_api_principals(self) -> tuple[ResolvedApiPrincipal, ...]:
         definitions = self.api_principals
-        if not definitions and self.api_token_env:
-            definitions = (
-                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
-            )
         resolved = []
         for definition in definitions:
             if not definition.enabled:
@@ -193,10 +179,6 @@ class ManagementBootstrapConfiguration:
 
     def api_credential_statuses(self) -> tuple[ApiCredentialStatus, ...]:
         definitions = self.api_principals
-        if not definitions and self.api_token_env:
-            definitions = (
-                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
-            )
         return tuple(
             ApiCredentialStatus(
                 definition.principal_id,
@@ -228,18 +210,16 @@ def load_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration
     api = document.get("api", {})
     if not isinstance(api, dict):
         raise ValueError("configuration bootstrap api must be an object")
-    api_token_env = api.get("tokenEnv")
-    if api_token_env is not None and (
-        not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
-    ):
-        raise ValueError("API tokenEnv must be a valid environment variable name")
+    if "tokenEnv" in api:
+        raise ValueError(
+            "api.tokenEnv is retired and cannot grant an implicit administrator; "
+            "declare api.principals with explicit roles instead"
+        )
     raw_principals = api.get("principals", [])
     if not isinstance(raw_principals, list) or not all(
         isinstance(item, dict) for item in raw_principals
     ):
         raise ValueError("API principals must be an array of objects")
-    if api_token_env is not None and raw_principals:
-        raise ValueError("API tokenEnv cannot be combined with principals")
     principals = tuple(_api_principal(item) for item in raw_principals)
     if len(principals) > 64:
         raise ValueError("API supports at most 64 principals")
@@ -251,7 +231,6 @@ def load_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration
         raise ValueError("API principal tokenEnv names must be unique")
     return ManagementBootstrapConfiguration(
         database_path,
-        api_token_env,
         principals,
     )
 
@@ -282,11 +261,7 @@ def is_minimal_management_bootstrap(document: Any) -> bool:
     ):
         return False
     api = document.get("api")
-    if (
-        not isinstance(api, dict)
-        or not ({"tokenEnv", "principals"} & set(api))
-        or set(api).difference({"tokenEnv", "principals"})
-    ):
+    if not isinstance(api, dict) or "principals" not in api or set(api).difference({"principals"}):
         return False
     return True
 
@@ -421,18 +396,16 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     api = document.get("api", {})
     if not isinstance(api, dict):
         raise ValueError("runtime configuration 'api' must be an object")
-    api_token_env = api.get("tokenEnv")
-    if api_token_env is not None and (
-        not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
-    ):
-        raise ValueError("API tokenEnv must be a valid environment variable name")
+    if "tokenEnv" in api:
+        raise ValueError(
+            "api.tokenEnv is retired and cannot grant an implicit administrator; "
+            "declare api.principals with explicit roles instead"
+        )
     raw_principals = api.get("principals", [])
     if not isinstance(raw_principals, list) or not all(
         isinstance(item, dict) for item in raw_principals
     ):
         raise ValueError("API principals must be an array of objects")
-    if api_token_env is not None and raw_principals:
-        raise ValueError("API tokenEnv cannot be combined with principals")
     api_principals = tuple(_api_principal(item) for item in raw_principals)
     if len(api_principals) > 64:
         raise ValueError("API supports at most 64 principals")
@@ -574,7 +547,6 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         media_libraries,
         history_path,
         database_path,
-        api_token_env,
         worker_poll,
         scheduler_poll,
         webhooks,

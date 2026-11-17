@@ -54,19 +54,19 @@ STORAGE_BROWSER_CURSOR_KEY_NAME = "storage_browser_cursor"
 #: configuration, never portable, and never accepted from an imported or
 #: advanced-edited document that omits them.
 DEPLOYMENT_AUTHORITY_SECTIONS: frozenset[str] = frozenset({"persistence"})
-DEPLOYMENT_AUTHORITY_API_FIELDS: frozenset[str] = frozenset({"principals", "tokenEnv"})
+DEPLOYMENT_AUTHORITY_API_FIELDS: frozenset[str] = frozenset({"principals"})
 
 _DEPLOYMENT_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DEPLOYMENT_PRINCIPAL_LIMIT = 64
 _DEPLOYMENT_FORBIDDEN_PRINCIPAL_FIELDS = frozenset({"token", "secret", "password", "authorization"})
 _DEPLOYMENT_AUTHORITY_CONFLICT = (
-    "managed configuration cannot change deployment API principal/role/token authority; "
-    "the configured API principals and tokenEnv belong to the deployment bootstrap and "
-    "environment, so edit managed settings instead of the deployment identity"
+    "managed configuration cannot change deployment API principal/role authority; "
+    "the configured api.principals belong to the deployment bootstrap and environment, "
+    "so edit managed settings instead of the deployment identity"
 )
 _DEPLOYMENT_AUTHORITY_UNREADABLE = (
     "deployment bootstrap API identity is invalid, so a managed document cannot be checked "
-    "against this deployment's own principal/role/token authority"
+    "against this deployment's own api.principals authority"
 )
 
 
@@ -149,21 +149,17 @@ def _deployment_authority_identity(
 
     if not isinstance(api, dict):
         raise ValueError(f"{label} 'api' must be an object")
-    token_env = api.get("tokenEnv")
-    has_token_env = token_env is not None
-    has_principals = "principals" in api
-    if not has_token_env and not has_principals:
+    if "tokenEnv" in api:
+        raise ValueError(
+            "API tokenEnv is retired; declare api.principals with explicit roles instead"
+        )
+    if "principals" not in api:
         return None
-    if has_token_env and (
-        not isinstance(token_env, str) or _DEPLOYMENT_ENV_NAME.fullmatch(token_env) is None
-    ):
-        raise ValueError("API tokenEnv must be a valid environment variable name")
-    if has_principals and not isinstance(api["principals"], list):
+    if not isinstance(api["principals"], list):
         raise ValueError("API principals must be an array of objects")
     principals = tuple(
         sorted(
-            _deployment_principal(item, index=index)
-            for index, item in enumerate(api["principals"] if has_principals else [])
+            _deployment_principal(item, index=index) for index, item in enumerate(api["principals"])
         )
     )
     if len(principals) > _DEPLOYMENT_PRINCIPAL_LIMIT:
@@ -172,36 +168,18 @@ def _deployment_authority_identity(
         raise ValueError("API principal IDs must be unique")
     if len({item[1] for item in principals}) != len(principals):
         raise ValueError("API principal tokenEnv names must be unique")
-    if has_token_env and principals:
-        raise ValueError("API tokenEnv cannot be combined with principals")
-    if has_token_env:
-        return ("tokenEnv", token_env)
     return ("principals", principals)
 
 
 def _deployment_authority_matches(supplied: tuple, receiving: tuple) -> bool:
     """Whether a supplied identity is exactly this deployment's own authority.
 
-    The two supported spellings must not be confused for a rewrite: a legacy
-    single ``tokenEnv`` bootstrap resolves at runtime to one enabled admin
-    principal for that environment reference, so it matches a declared
-    principal array carrying exactly that permission identity.  Otherwise the
-    supplied principal IDs, roles, environment references and enabled state
+    The supplied principal IDs, roles, environment references and enabled state
     must match the receiving authority exactly; changing any of them is an
-    authority rewrite.
+    authority rewrite.  There is no single-token spelling anymore.
     """
 
-    if supplied == receiving:
-        return True
-    legacy, declared = (supplied, receiving) if supplied[0] == "tokenEnv" else (receiving, supplied)
-    if legacy[0] != "tokenEnv" or declared[0] != "principals":
-        return False
-    principals = declared[1]
-    # A principal tuple is (id, tokenEnv, roles, enabled): the legacy
-    # single-token bootstrap is `legacy-admin` with the admin role, so the
-    # declared spelling matches when its environment reference, admin role and
-    # enabled state agree.
-    return len(principals) == 1 and principals[0][1:] == (legacy[1], ("admin",), True)
+    return supplied == receiving
 
 
 def bind_deployment_authority(
@@ -227,7 +205,7 @@ def bind_deployment_authority(
       this deployment's own identity keeps working.
     * **Malformed or conflicting** supplied authority raises ``ValueError``.
       A non-object ``api``, a malformed principal, a foreign identity, an
-      emptied principal list, or a different ``tokenEnv`` is rejected instead
+      emptied principal list, or a different principal identity is rejected instead
       of being normalized or persisted for the next runtime startup: the
       database locator and API principal/role/token identity are deployment
       startup authority, not managed configuration.
@@ -296,7 +274,6 @@ class ManagedConfigurationStatus(StrEnum):
 
 
 class ConfigurationAuthority(StrEnum):
-    JSON_BOOTSTRAP = "JSON_BOOTSTRAP"
     MANAGEMENT_BOOTSTRAP = "MANAGEMENT_BOOTSTRAP"
     MANAGED = "MANAGED"
 

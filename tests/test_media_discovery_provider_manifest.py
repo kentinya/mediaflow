@@ -122,10 +122,12 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
             "name": "Source",
             "type": "openlist",
             "rootPath": "/",
-            "baseUrl": server.base_url,
-            "tokenEnv": TOKEN_ENV,
-            "pageSize": 1,
-            "maxRetries": 0,
+            "options": {
+                "baseUrl": server.base_url,
+                "tokenEnv": TOKEN_ENV,
+                "pageSize": 1,
+                "maxRetries": 0,
+            },
             "enabled": True,
         }
         return document
@@ -156,7 +158,6 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "operator",

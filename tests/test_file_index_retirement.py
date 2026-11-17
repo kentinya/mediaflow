@@ -300,7 +300,6 @@ class FileIndexRetirementTests(unittest.TestCase):
             with SQLiteTaskRepositoryContext(database) as repository:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})

@@ -522,7 +522,7 @@ with (
                     delivery_id,
                     "fault-webhook",
                     f"fault-event-{index}",
-                    NotificationEventType.JOB_COMPLETED,
+                    NotificationEventType.TASK_COMPLETED,
                     "{}",
                     status,
                     attempts,
@@ -717,8 +717,14 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
     ) as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_files(root, token)
-        add_fault_schedule(config_file, source_root)
+        (
+            config_file,
+            environment_file,
+            source_root,
+            target_root,
+            activation_file,
+        ) = prepare_files(root, token)
+        add_fault_schedule(activation_file, source_root)
         provider_root, override_file = prepare_offline_provider(root)
         environment = compose_environment(
             root,
@@ -782,8 +788,8 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             wait_for_api(base, token)
 
             print("Activating the managed runtime with one automatic-organization definition...")
-            add_fault_schedule(config_file, source_root)
-            activate_runtime(base, token, config_file)
+            add_fault_schedule(activation_file, source_root)
+            activate_runtime(base, token, activation_file)
             identity = active_identity(base, token)
 
             print("Starting the Worker and establishing explicit definition authority...")

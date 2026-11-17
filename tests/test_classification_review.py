@@ -51,6 +51,7 @@ from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.managed_config_fixture import publish_managed_document
 from tests.test_metadata_review import create_processing_item
 
 
@@ -398,6 +399,7 @@ class ClassificationReviewTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(database)}
             config_path = root / "config.json"
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = ClassificationReviewService(repository).create(
@@ -443,7 +445,7 @@ class ClassificationReviewTests(unittest.TestCase):
                         ),
                     ),
                 )
-                api = MediaFlowApi(repository, None, principals=principals)
+                api = MediaFlowApi(repository, principals=principals)
                 status, listed = api_request(
                     api, "/api/v1/classification-reviews", query="limit=10"
                 )

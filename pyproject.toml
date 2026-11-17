@@ -17,7 +17,6 @@ dependencies = [
 ]
 
 [project.scripts]
-strategy-test = "mediaflow.cli:main"
 mediaflow = "mediaflow.cli:main"
 
 [project.optional-dependencies]

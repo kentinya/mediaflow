@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import io
 import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from mediaflow.application.strategy_test import strategy_runner_from_configuration
-from mediaflow.cli import main
+from mediaflow.application.scanner import StorageScanner
+from mediaflow.application.strategy_test import (
+    ReadOnlyStrategyStorage,
+    StrategyDirectoryRunner,
+    strategy_runner_from_configuration,
+)
+from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.recognition import RecognitionStatus
+from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.strategy_configuration import (
     development_strategy_configuration,
     smoke_strategy_configuration,
@@ -102,7 +106,9 @@ class StrategyConfigurationTests(unittest.TestCase):
         }
 
     def test_user_resource_libraries_resolve_a_b_c_and_preserve_c(self) -> None:
-        loaded = load_strategy_configuration(self.document())
+        loaded = load_strategy_configuration(
+            self.document(), base=development_strategy_configuration()
+        )
         runner = strategy_runner_from_configuration(loaded.strategy)
         cases = (("movies", "A"), ("tv", "B"), ("special", "C"))
         for library_id, expected in cases:
@@ -119,7 +125,9 @@ class StrategyConfigurationTests(unittest.TestCase):
 
     def test_documented_example_configuration_loads(self) -> None:
         with open("config/strategy.example.json", encoding="utf-8") as handle:
-            loaded = load_strategy_configuration(json.load(handle))
+            loaded = load_strategy_configuration(
+                json.load(handle), base=development_strategy_configuration()
+            )
         self.assertEqual(
             [binding.library_id for binding in loaded.resource_libraries],
             ["source"],
@@ -147,7 +155,7 @@ class StrategyConfigurationTests(unittest.TestCase):
         for library in document["resourceLibraries"]:
             library.pop("rootPath", None)
             library.pop("displayRootPath", None)
-        loaded = load_strategy_configuration(document)
+        loaded = load_strategy_configuration(document, base=development_strategy_configuration())
         self.assertTrue(all(item.root_path is None for item in loaded.resource_libraries))
 
     def test_metadata_policy_locale_and_enrichment_are_user_configurable(self) -> None:
@@ -161,7 +169,9 @@ class StrategyConfigurationTests(unittest.TestCase):
                 "maxProviderRequests": 4,
             }
         ]
-        policy_a = load_strategy_configuration(document).strategy.metadata_policies[0]
+        policy_a = load_strategy_configuration(
+            document, base=development_strategy_configuration()
+        ).strategy.metadata_policies[0]
         self.assertEqual(
             (
                 policy_a.language,
@@ -173,7 +183,9 @@ class StrategyConfigurationTests(unittest.TestCase):
         )
 
     def test_unmatched_has_no_hidden_default_to_a(self) -> None:
-        loaded = load_strategy_configuration(self.document())
+        loaded = load_strategy_configuration(
+            self.document(), base=development_strategy_configuration()
+        )
         result = strategy_runner_from_configuration(loaded.strategy).run_path(
             "/Unknown.2025.mkv", resource_library_id="unconfigured"
         )
@@ -200,131 +212,49 @@ class StrategyConfigurationTests(unittest.TestCase):
             RecognitionStatus.UNRECOGNIZED,
         )
 
-    def test_directory_cli_uses_configured_resource_library_context_read_only(self) -> None:
+    def test_directory_runner_uses_configured_library_and_zero_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             media_root = os.path.join(directory, "电影")
             os.makedirs(os.path.join(media_root, "哈姆奈特 (2025)"))
             media_file = os.path.join(media_root, "哈姆奈特 (2025)", "哈姆奈特 (2025).mkv")
             with open(media_file, "wb") as handle:
                 handle.write(b"media")
-            document = self.document(media_root)
-            config_path = os.path.join(directory, "strategy.json")
-            with open(config_path, "w", encoding="utf-8") as handle:
-                json.dump(document, handle, ensure_ascii=False)
-            output, errors = io.StringIO(), io.StringIO()
-            code = main(
-                [
-                    "--config",
-                    config_path,
-                    "--directory",
-                    media_root,
-                    "--offline",
-                    "--limit",
-                    "20",
-                ],
-                stdout=output,
-                stderr=errors,
+            loaded = load_strategy_configuration(
+                self.document(media_root), base=development_strategy_configuration()
             )
-            single_output = io.StringIO()
-            single_code = main(
-                ["--config", config_path, "--offline", media_file],
-                stdout=single_output,
-                stderr=io.StringIO(),
+            storage = LocalStorage("movies", media_root, read_only=True)
+            guard = ReadOnlyStrategyStorage(storage)
+            library = ResourceLibrary("movies", "Movies", "movies", "")
+            runner = StrategyDirectoryRunner(
+                StorageScanner({"movies": storage}),
+                library,
+                strategy_runner_from_configuration(loaded.strategy),
+                guard,
             )
-        value = output.getvalue()
-        self.assertEqual(code, 0)
-        self.assertEqual(errors.getvalue(), "")
-        self.assertIn("matched | A | 哈姆奈特/2025", value)
-        self.assertIn("Matched: 1", value)
-        for operation in (
-            "Write",
-            "CreateDirectory",
-            "Move",
-            "Copy",
-            "Delete",
-            "HardLink",
-            "SoftLink",
-        ):
-            self.assertIn(f"{operation}=0", value)
-        self.assertEqual(single_code, 0)
-        self.assertIn("Recognition status: matched", single_output.getvalue())
-        self.assertIn("RecognitionType: A", single_output.getvalue())
-        self.assertIn("Matched rules: ['movie-library']", single_output.getvalue())
-        self.assertIn("Storage mutations: 0", single_output.getvalue())
+            summary = runner.run(limit=20)
+        self.assertEqual(summary.matched, 1)
+        self.assertEqual(summary.errors, 0)
+        self.assertTrue(all(count == 0 for count in guard.mutation_calls.values()))
 
-    def test_single_file_explicit_resource_library_alias_and_unmatched_path(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            explicit = io.StringIO()
-            self.assertEqual(
-                main(
-                    [
-                        "--offline",
-                        "--resource-library",
-                        "movies",
-                        "/outside/Movie.2025.mkv",
-                    ],
-                    stdout=explicit,
-                    stderr=io.StringIO(),
-                ),
-                0,
-            )
-            unmatched = io.StringIO()
-            self.assertEqual(
-                main(
-                    ["--offline", "/outside/Movie.2025.mkv"],
-                    stdout=unmatched,
-                    stderr=io.StringIO(),
-                ),
-                0,
-            )
-            special = io.StringIO()
-            self.assertEqual(
-                main(
-                    [
-                        "--offline",
-                        "--resource-library",
-                        "special",
-                        "/outside/Special.2025.mkv",
-                    ],
-                    stdout=special,
-                    stderr=io.StringIO(),
-                ),
-                0,
-            )
-        self.assertIn("RecognitionType: A", explicit.getvalue())
-        self.assertIn("Recognition status: unrecognized", unmatched.getvalue())
-        self.assertIn("RecognitionType: -", unmatched.getvalue())
-        self.assertIn("RecognitionType: C", special.getvalue())
-        self.assertIn("MetadataPolicy: C", special.getvalue())
-        self.assertIn("NamingPolicy: A", special.getvalue())
-        self.assertIn("RecognitionType preserved: YES", special.getvalue())
+    def test_single_file_library_selection_and_unmatched_path(self) -> None:
+        loaded = load_strategy_configuration(
+            self.document(), base=development_strategy_configuration()
+        )
+        runner = strategy_runner_from_configuration(loaded.strategy)
+        explicit = runner.run_path("/outside/Movie.2025.mkv", resource_library_id="movies")
+        unmatched = runner.run_path("/outside/Movie.2025.mkv")
+        special = runner.run_path("/outside/Special.2025.mkv", resource_library_id="special")
+        self.assertEqual(explicit.recognition.recognition_type_id, "A")
+        self.assertEqual(unmatched.recognition.status, RecognitionStatus.UNRECOGNIZED)
+        self.assertIsNone(unmatched.recognition.recognition_type_id)
+        self.assertEqual(special.recognition.recognition_type_id, "C")
+        self.assertEqual(special.policy.metadata_policy_id, "C")
+        self.assertEqual(special.policy.naming_policy_id, "A")
+        self.assertTrue(special.recognition_type_preserved)
 
-    def test_environment_configuration_path_is_supported(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            config_path = os.path.join(directory, "strategy.json")
-            with open(config_path, "w", encoding="utf-8") as handle:
-                json.dump(self.document(), handle)
-            output = io.StringIO()
-            previous = os.environ.get("MEDIAFLOW_STRATEGY_CONFIG")
-            os.environ["MEDIAFLOW_STRATEGY_CONFIG"] = config_path
-            try:
-                code = main(
-                    [
-                        "--offline",
-                        "/Movie.2025.mkv",
-                        "--resource-library-id",
-                        "movies",
-                    ],
-                    stdout=output,
-                    stderr=io.StringIO(),
-                )
-            finally:
-                if previous is None:
-                    os.environ.pop("MEDIAFLOW_STRATEGY_CONFIG", None)
-                else:
-                    os.environ["MEDIAFLOW_STRATEGY_CONFIG"] = previous
-        self.assertEqual(code, 0)
-        self.assertIn("RecognitionType: A", output.getvalue())
+    def test_partial_document_requires_an_explicit_base(self) -> None:
+        with self.assertRaisesRegex(ValueError, "explicit base"):
+            load_strategy_configuration(self.document())
 
 
 if __name__ == "__main__":

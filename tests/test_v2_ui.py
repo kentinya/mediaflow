@@ -67,7 +67,7 @@ def api_status_without_token() -> int:
             principal = ResolvedApiPrincipal(
                 "viewer", "unused-token", frozenset({ApiPermission.READ})
             )
-            api = MediaFlowApi(repository, None, principals=(principal,))
+            api = MediaFlowApi(repository, principals=(principal,))
             status, _, _ = request(api, "/api/v1/auth/principal")
             return status
 
@@ -84,7 +84,7 @@ class V2UiStaticTests(unittest.TestCase):
         self.addCleanup(reset_v2_ui_cache)
         reset_v2_ui_cache()
         principal = ResolvedApiPrincipal("viewer", "unused-token", frozenset({ApiPermission.READ}))
-        self.api = MediaFlowApi(ExplodingRepository(), None, principals=(principal,))
+        self.api = MediaFlowApi(ExplodingRepository(), principals=(principal,))
 
     def test_entry_document_and_client_routes_are_served_read_only(self) -> None:
         for path in ("/ui-v2", "/ui-v2/", "/ui-v2/dashboard", "/ui-v2/unknown-client-route"):

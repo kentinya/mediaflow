@@ -1428,10 +1428,11 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
     const dialog = await screen.findByRole("dialog", { name: "添加整理策略" });
 
     expect(within(dialog).queryByRole("switch")).toBeNull();
-    // The real high-risk permission stays explicit and unchecked by default.
+    // The retired independent overwrite switch is gone; conflictStrategy is
+    // the one explicit authority control.
     expect(
-      within(dialog).getByRole("checkbox", { name: /允许覆盖目标文件/ }),
-    ).not.toBeChecked();
+      within(dialog).queryByRole("checkbox", { name: /允许覆盖目标文件/ }),
+    ).toBeNull();
     // Purpose-built sections remain available rather than dropped.
     for (const section of ["附件处理", "重复检测", "回滚与源目录清理"]) {
       expect(within(dialog).getByText(section)).toBeVisible();

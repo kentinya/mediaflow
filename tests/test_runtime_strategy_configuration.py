@@ -16,6 +16,7 @@ from mediaflow.application.configuration_snapshot import (
 from mediaflow.application.naming import NamingEngine
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.domain.classification import ClassificationContext
+from mediaflow.domain.configuration_input import reject_retired_configuration_input
 from mediaflow.domain.duplicates import HashMode
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.naming import NamingContext
@@ -38,7 +39,9 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
         bootstrap = load_management_bootstrap(
             {
                 "persistence": {"databasePath": "/tmp/mediaflow.sqlite3"},
-                "api": {"tokenEnv": "MF_TOKEN"},
+                "api": {
+                    "principals": [{"id": "admin", "tokenEnv": "MF_TOKEN", "roles": ["admin"]}]
+                },
             }
         )
         starter = build_first_setup_starter_document(bootstrap)
@@ -244,6 +247,73 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
             self.assertNotIn("secret-token", repr(storages["source-storage"]))
         finally:
             storages["source-storage"].close()
+
+
+class CurrentConfigurationInputTests(unittest.TestCase):
+    """New submissions use one current spelling; historical bytes stay readable."""
+
+    def setUp(self) -> None:
+        self.document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+
+    def _reject(self, mutate) -> None:
+        value = copy.deepcopy(self.document)
+        mutate(value)
+        with self.assertRaises(ValueError):
+            reject_retired_configuration_input(value)
+
+    def test_retired_spellings_are_rejected_without_wholesale_rewrite(self) -> None:
+        cases = {
+            "api token": lambda d: d["api"].update(tokenEnv="LEGACY_TOKEN"),
+            "rootPath": lambda d: d["resourceLibraries"][0].update(rootPath="/media"),
+            "nested definitions": lambda d: d.setdefault("automation", {}).update(
+                taskDefinitions=[]
+            ),
+            "nested webhooks": lambda d: d["notifications"].update(webhooks=[]),
+            "stale job age": lambda d: d["automation"].update(staleJobAgeSeconds=3600),
+            "empty schedules": lambda d: d["automation"].update(schedules=[]),
+            "storage options": lambda d: d["storages"][0].update(host="nas"),
+            "metadata media type": lambda d: d["metadataPolicies"][0].update(mediaType="movie"),
+            "organize overwrite": lambda d: d["organizePolicies"][0].update(overwrite=False),
+            "legacy template": lambda d: d["namingPolicies"][0].update(
+                movieDirectoryTemplate="{title}"
+            ),
+            "classification prefix": lambda d: d["classificationPolicies"][0]["rules"][0][
+                "result"
+            ].update(library="Movies"),
+            "classification category output": lambda d: d["classificationPolicies"][0]["rules"][0][
+                "result"
+            ].update(category="Movies"),
+            "job event": lambda d: d["webhooks"][0].update(events=["job.completed"]),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                self._reject(mutate)
+
+    def test_mixed_current_and_retired_fields_are_rejected(self) -> None:
+        self._reject(
+            lambda d: d["metadataPolicies"][0].update(mediaType="movie", mediaQueryType="movie")
+        )
+        self._reject(
+            lambda d: d["organizePolicies"][0].update(conflictStrategy="manual", overwrite=True)
+        )
+        self._reject(
+            lambda d: d["classificationPolicies"][0]["rules"][0]["result"].update(
+                path=["Movies", "Action"], library="Movies"
+            )
+        )
+
+    def test_unchanged_historical_object_can_be_carried_by_an_unrelated_edit(self) -> None:
+        baseline = copy.deepcopy(self.document)
+        baseline["automation"]["staleJobAgeSeconds"] = 3600
+        baseline["classificationPolicies"][0]["rules"][0]["result"]["library"] = "Movies"
+        candidate = copy.deepcopy(baseline)
+        candidate["historyPath"] = ".mediaflow/changed.jsonl"
+        reject_retired_configuration_input(candidate, baseline=baseline)
+
+        changed_rule = copy.deepcopy(baseline)
+        changed_rule["classificationPolicies"][0]["rules"][0]["name"] = "Changed"
+        with self.assertRaises(ValueError):
+            reject_retired_configuration_input(changed_rule, baseline=baseline)
 
 
 if __name__ == "__main__":

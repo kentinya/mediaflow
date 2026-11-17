@@ -41,7 +41,6 @@ def policy(policy_id: str = "managed") -> dict[str, object]:
                 "conditions": {"mediaType": ["movie"], "genres": ["Action"]},
                 "result": {
                     "mediaLibraryId": "movies",
-                    "library": "Movies",
                     "path": ["Action"],
                 },
             }
@@ -307,7 +306,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 self.assertEqual(classified.result["recognitionType"], "C")
                 self.assertEqual(classified.result["mediaLibraryId"], "movies")
                 self.assertTrue(classified.result["mediaLibraryResolved"])
-                self.assertEqual(classified.result["relativePath"], "Action")
+                self.assertEqual(classified.result["relativePath"], "Movies/Action")
                 self.assertEqual(classified.result["matchedRuleId"], "action-movie")
                 self.assertIn("genre=Action", classified.result["matchEvidence"])
                 self.assertEqual(managed.require(draft.revision_id).document, original)
@@ -382,7 +381,6 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 managed = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

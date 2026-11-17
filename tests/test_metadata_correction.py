@@ -36,6 +36,7 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
+from tests.managed_config_fixture import publish_managed_document
 from tests.test_metadata_review import create_processing_item, identification
 
 
@@ -248,6 +249,7 @@ class MetadataCorrectionTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(database)
             config_path = Path(directory, "strategy.json")
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataCorrectionService(

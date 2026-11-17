@@ -245,12 +245,15 @@ def label_env(label: str) -> str:
 def prepare_deployment_files(
     root: Path,
     canaries,
-) -> tuple[Path, Path, Path, Path]:
-    """Create the deployment JSON/env file and isolated media roots."""
+) -> tuple[Path, Path, Path, Path, Path]:
+    """Create the deployment bootstrap, activation input, env file and media roots."""
 
     admin_token = canary_by_env(canaries, "MEDIAFLOW_API_TOKEN")
-    config_file, environment_file, source_root, target_root = prepare_files(root, admin_token)
-    document = json.loads(config_file.read_text(encoding="utf-8"))
+    config_file, environment_file, source_root, target_root, activation_file = prepare_files(
+        root, admin_token
+    )
+    bootstrap = json.loads(config_file.read_text(encoding="utf-8"))
+    document = json.loads(activation_file.read_text(encoding="utf-8"))
     document["api"] = {
         "principals": [
             {
@@ -285,6 +288,12 @@ def prepare_deployment_files(
             },
         ],
     }
+    bootstrap["api"] = document["api"]
+    config_file.write_text(
+        json.dumps(bootstrap, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    config_file.chmod(0o644)
     # The source bind is intentionally read-only in this security harness.
     # Use an explicit non-destructive policy for the temporary manual flow.
     for policy in document.get("organizePolicies", []):
@@ -305,22 +314,24 @@ def prepare_deployment_files(
             "id": "release-openlist",
             "name": "Release OpenList canary reference",
             "type": "openlist",
-            "baseUrl": "https://openlist.example.invalid",
-            "tokenEnv": "OPENLIST_TOKEN",
             "rootPath": "/Media",
             "readOnly": True,
-            "connectTimeout": 10,
-            "requestTimeout": 60,
-            "maxConcurrency": 4,
-            "maxRetries": 2,
-            "pageSize": 100,
+            "options": {
+                "baseUrl": "https://openlist.example.invalid",
+                "tokenEnv": "OPENLIST_TOKEN",
+                "connectTimeout": 10,
+                "requestTimeout": 60,
+                "maxConcurrency": 4,
+                "maxRetries": 2,
+                "pageSize": 100,
+            },
         }
     )
-    config_file.write_text(
+    activation_file.write_text(
         json.dumps(document, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    config_file.chmod(0o644)
+    activation_file.chmod(0o644)
 
     lines = [f"MEDIAFLOW_API_TOKEN={admin_token}"]
     for label, value in canaries:
@@ -330,7 +341,7 @@ def prepare_deployment_files(
         lines.append(f"{name}={value}")
     environment_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     environment_file.chmod(0o644)
-    return config_file, environment_file, source_root, target_root
+    return config_file, environment_file, source_root, target_root, activation_file
 
 
 @contextlib.contextmanager
@@ -1384,8 +1395,8 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
     with tempfile.TemporaryDirectory(prefix=f"{RELEASE_PREFIX}-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_deployment_files(
-            root, canaries
+        config_file, environment_file, source_root, target_root, activation_file = (
+            prepare_deployment_files(root, canaries)
         )
         with clean_release_context() as context:
             seed_private_canaries(context, canaries)
@@ -1444,7 +1455,7 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                 assert_rbac_and_no_side_effects(base, canaries, token_values)
 
                 print("Activating the managed runtime snapshot...")
-                activate_runtime(base, token_values["admin"], config_file)
+                activate_runtime(base, token_values["admin"], activation_file)
 
                 def management_ready() -> bool:
                     status, management = json_request(
@@ -1513,8 +1524,7 @@ def unsupported_host_access_failure(image: str, canaries) -> None:
                 [
                     sys.executable,
                     str(ROOT / "scripts" / "make_deployment_config.py"),
-                    "--mode",
-                    "media",
+                    "--configuration",
                 ],
                 cwd=ROOT,
                 text=True,

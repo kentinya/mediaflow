@@ -48,7 +48,6 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         ]
         self.api = MediaFlowApi(
             self.task_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal(

@@ -128,7 +128,6 @@ class WebhookSecurityHarness:
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=(admin, viewer),
             configuration_service=self.configuration,
             bootstrap_document=document,
@@ -146,7 +145,6 @@ class WebhookSecurityHarness:
 
         document = example_document()
         document["persistence"]["databasePath"] = self.runtime_database
-        notifications = document.setdefault("notifications", {})
         webhooks = []
         for index, url in enumerate(webhook_urls):
             webhooks.append(
@@ -157,7 +155,7 @@ class WebhookSecurityHarness:
                 )
             )
         if webhooks:
-            notifications["webhooks"] = webhooks
+            document["webhooks"] = webhooks
         revision = ManagedConfigurationRevision(
             str(uuid4()),
             1,
@@ -204,7 +202,7 @@ class WebhookUrlCanonicalRuleTests(unittest.TestCase):
                         webhook_id="ops",
                         url=url,
                         secret_env="MEDIAFLOW_WEBHOOK_SECRET",
-                        events=(NotificationEventType.JOB_COMPLETED,),
+                        events=(NotificationEventType.TASK_COMPLETED,),
                     )
                 message = str(raised.exception)
                 self.assertIn("query", message)
@@ -223,7 +221,7 @@ class WebhookUrlCanonicalRuleTests(unittest.TestCase):
                         webhook_id="ops",
                         url=url,
                         secret_env="MEDIAFLOW_WEBHOOK_SECRET",
-                        events=(NotificationEventType.JOB_COMPLETED,),
+                        events=(NotificationEventType.TASK_COMPLETED,),
                     )
 
     def test_domain_validator_still_rejects_userinfo_and_fragment(self) -> None:
@@ -238,7 +236,7 @@ class WebhookUrlCanonicalRuleTests(unittest.TestCase):
                         webhook_id="ops",
                         url=url,
                         secret_env="MEDIAFLOW_WEBHOOK_SECRET",
-                        events=(NotificationEventType.JOB_COMPLETED,),
+                        events=(NotificationEventType.TASK_COMPLETED,),
                     )
                 self.assertNotIn(SENTINEL, str(raised.exception))
                 self.assertNotIn(url, str(raised.exception))
@@ -246,7 +244,7 @@ class WebhookUrlCanonicalRuleTests(unittest.TestCase):
     def test_runtime_loader_fails_closed_without_echoing_the_url(self) -> None:
         document = example_document()
         url = f"https://example.invalid/hooks?api_key={SENTINEL}"
-        document["notifications"]["webhooks"][0]["url"] = url
+        document["webhooks"][0]["url"] = url
         with self.assertRaises(ValueError) as raised:
             load_runtime_configuration(copy.deepcopy(document))
         self.assertNotIn(SENTINEL, str(raised.exception))
@@ -257,7 +255,7 @@ class WebhookUrlCanonicalRuleTests(unittest.TestCase):
             webhook_id="ops",
             url="https://example.invalid/hooks/mediaflow",
             secret_env="MEDIAFLOW_WEBHOOK_SECRET",
-            events=(NotificationEventType.JOB_COMPLETED,),
+            events=(NotificationEventType.TASK_COMPLETED,),
         )
         self.assertEqual(definition.document()["url"], "https://example.invalid/hooks/mediaflow")
         loaded = load_runtime_configuration(example_document())
@@ -285,7 +283,10 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 self.assertNotIn(unsafe, encoded)
                 revision = harness.configuration.require(revision_id)
                 self.assertEqual(revision.version, 1)
-                self.assertNotIn("webhooks", revision.document)
+                self.assertEqual(
+                    [item["id"] for item in revision.document["webhooks"]],
+                    ["operations-webhook"],
+                )
                 status, detail = request(
                     harness.api,
                     f"/api/v1/configuration/revisions/{revision_id}/objects",
@@ -306,7 +307,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
             try:
                 document = harness.configuration.require(revision_id).document
                 incoming = copy.deepcopy(document)
-                incoming["notifications"]["webhooks"][0]["url"] = (
+                incoming["webhooks"][0]["url"] = (
                     f"https://example.invalid/hooks?secret_key={SENTINEL}"
                 )
                 status, response = request(
@@ -321,7 +322,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 revision = harness.configuration.require(revision_id)
                 self.assertEqual(revision.version, 1)
                 self.assertEqual(
-                    revision.document["notifications"]["webhooks"][0]["url"],
+                    revision.document["webhooks"][0]["url"],
                     "https://example.invalid/mediaflow/events",
                 )
             finally:
@@ -373,7 +374,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 self.assertNotIn(SENTINEL, encoded)
                 self.assertNotIn(unsafe, encoded)
                 document = detail["document"]
-                stored_url = document["notifications"]["webhooks"][0]["url"]
+                stored_url = document["webhooks"][0]["url"]
                 self.assertEqual(stored_url, REDACTED)
 
                 status, objects = request(
@@ -401,7 +402,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 package_encoded = json.dumps(package)
                 self.assertNotIn(SENTINEL, package_encoded)
                 payload_document = package["payload"]["document"]
-                self.assertEqual(payload_document["notifications"]["webhooks"][0]["url"], REDACTED)
+                self.assertEqual(payload_document["webhooks"][0]["url"], REDACTED)
                 self.assertTrue(
                     any(
                         entry.get("kind") == "redacted_webhook_url"
@@ -412,7 +413,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 # The persisted legacy revision is not silently rewritten: only
                 # projections/export suppress the credential-bearing URL.
                 raw = harness.configuration.require(revision_id).document
-                self.assertEqual(raw["notifications"]["webhooks"][0]["url"], unsafe)
+                self.assertEqual(raw["webhooks"][0]["url"], unsafe)
             finally:
                 harness.close()
 
@@ -644,7 +645,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                     )
                     event = NotificationEvent(
                         "event-delivery-1",
-                        NotificationEventType.JOB_COMPLETED,
+                        NotificationEventType.TASK_COMPLETED,
                         NOW,
                         {"jobId": "job-1"},
                     )
@@ -671,7 +672,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
             try:
                 document = harness.configuration.require(revision_id).document
                 incoming = copy.deepcopy(document)
-                incoming["notifications"]["webhooks"][0]["url"] = (
+                incoming["webhooks"][0]["url"] = (
                     f"https://example.invalid/hooks?authorization={SENTINEL}"
                 )
                 package = {
@@ -724,7 +725,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                 revision = harness.configuration.require(revision_id)
                 self.assertEqual(revision.version, 1)
                 self.assertEqual(
-                    revision.document["notifications"]["webhooks"][0]["url"],
+                    revision.document["webhooks"][0]["url"],
                     "https://example.invalid/mediaflow/events",
                 )
             finally:

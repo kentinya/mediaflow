@@ -748,7 +748,6 @@ class StorageBrowserApiTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(admin, viewer),
                     configuration_service=managed,
                     bootstrap_document={

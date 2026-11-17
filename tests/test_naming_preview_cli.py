@@ -1,32 +1,33 @@
 from __future__ import annotations
 
-import io
-import json
-import os
 import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import (
     ReadOnlyStrategyStorage,
+    StrategyDirectoryRunner,
     StrategyTestConfiguration,
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
-from mediaflow.cli import main
+from mediaflow.cli import render_strategy_result
+from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.naming import MissingVariableStrategy
+from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.strategy_configuration import smoke_strategy_configuration
 from tests.test_strategy_cli import DummyStorage
 
 
-class NamingPreviewCLITests(unittest.TestCase):
+class NamingPreviewTests(unittest.TestCase):
     @staticmethod
     def runner(
         candidates,
         *,
-        media_type=MediaType.MOVIE,
         episodes=(),
         policy_a=None,
         guard=None,
@@ -65,16 +66,8 @@ class NamingPreviewCLITests(unittest.TestCase):
             policy_a=policy_a,
             guard=guard,
         )
-        output, errors = io.StringIO(), io.StringIO()
-        code = main(
-            ["--live-metadata", "/C/哈姆奈特.2025.mkv", "--show-naming"],
-            stdout=output,
-            stderr=errors,
-            runner_factory=lambda live: runner,
-        )
-        value = output.getvalue()
-        self.assertEqual(code, 0)
-        self.assertEqual(errors.getvalue(), "")
+        result = runner.run_path("/C/哈姆奈特.2025.mkv", live_metadata=True, show_naming=True)
+        value = render_strategy_result(result)
         self.assertIn("NAMING PREVIEW", value)
         self.assertIn("RecognitionType: C", value)
         self.assertIn("NamingPolicy: A", value)
@@ -92,17 +85,11 @@ class NamingPreviewCLITests(unittest.TestCase):
             ("/B/Show.2024.S01E01E03.mkv", (1, 3), "Show - S01E01E03.mkv"),
         ):
             with self.subTest(path=path):
-                runner, _ = self.runner((candidate,), media_type=MediaType.TV, episodes=episodes)
-                output = io.StringIO()
-                code = main(
-                    ["--live-metadata", path, "--show-naming"],
-                    stdout=output,
-                    stderr=io.StringIO(),
-                    runner_factory=lambda live, configured=runner: configured,
-                )
-                self.assertEqual(code, 0)
-                self.assertIn("Directory segments: ['Show (2024)', 'Season 01']", output.getvalue())
-                self.assertIn(expected, output.getvalue())
+                runner, _ = self.runner((candidate,), episodes=episodes)
+                result = runner.run_path(path, live_metadata=True, show_naming=True)
+                value = render_strategy_result(result)
+                self.assertEqual(result.naming.directory_segments, ("Show (2024)", "Season 01"))
+                self.assertIn(expected, value)
 
     def test_sanitization_and_missing_variable_warning_and_error(self) -> None:
         configuration = smoke_strategy_configuration()
@@ -114,99 +101,54 @@ class NamingPreviewCLITests(unittest.TestCase):
         )
         candidate = MediaCandidate("tmdb", "1", MediaType.MOVIE, "Mission: Impossible", year=1996)
         warning_runner, _ = self.runner((candidate,), policy_a=warning_policy)
-        output = io.StringIO()
-        self.assertEqual(
-            main(
-                [
-                    "--live-metadata",
-                    "/A/Mission.Impossible.1996.mkv",
-                    "--show-naming",
-                ],
-                stdout=output,
-                stderr=io.StringIO(),
-                runner_factory=lambda live: warning_runner,
-            ),
-            0,
+        warning = warning_runner.run_path(
+            "/A/Mission.Impossible.1996.mkv", live_metadata=True, show_naming=True
         )
-        self.assertIn("Mission - Impossible (1996)", output.getvalue())
-        self.assertIn("missing_variable:original_title", output.getvalue())
+        value = render_strategy_result(warning)
+        self.assertIn("Mission - Impossible (1996)", value)
+        self.assertIn("missing_variable:original_title", value)
 
         error_policy = replace(
             warning_policy, missing_variable_strategy=MissingVariableStrategy.ERROR
         )
         error_runner, _ = self.runner((candidate,), policy_a=error_policy)
-        error_output = io.StringIO()
-        self.assertEqual(
-            main(
-                [
-                    "--live-metadata",
-                    "/A/Mission.Impossible.1996.mkv",
-                    "--show-naming",
-                ],
-                stdout=error_output,
-                stderr=io.StringIO(),
-                runner_factory=lambda live: error_runner,
-            ),
-            1,
+        error = error_runner.run_path(
+            "/A/Mission.Impossible.1996.mkv", live_metadata=True, show_naming=True
         )
         self.assertIn(
-            "error: required naming variable 'original_title' is missing", error_output.getvalue()
+            "error: required naming variable 'original_title' is missing",
+            render_strategy_result(error),
         )
 
     def test_offline_show_naming_does_not_invent_identity(self) -> None:
-        output = io.StringIO()
-        self.assertEqual(
-            main(
-                ["--offline", "/A/The.Matrix.1999.mkv", "--show-naming"],
-                stdout=output,
-                stderr=io.StringIO(),
-            ),
-            0,
-        )
-        self.assertIn("Status: unavailable: MediaIdentity required", output.getvalue())
-        self.assertIn("MediaIdentity unavailable; naming was not executed", output.getvalue())
+        runner = strategy_runner_from_configuration(smoke_strategy_configuration())
+        result = runner.run_path("/A/The.Matrix.1999.mkv", live_metadata=False, show_naming=True)
+        value = render_strategy_result(result)
+        self.assertIn("Status: unavailable: MediaIdentity required", value)
+        self.assertIn("MediaIdentity unavailable; naming was not executed", value)
 
     def test_directory_naming_preview_limit_and_zero_mutation(self) -> None:
         candidate = MediaCandidate("tmdb", "603", MediaType.MOVIE, "The Matrix", year=1999)
         runner, _ = self.runner((candidate,))
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
             for child in ("one", "two"):
-                target = os.path.join(directory, "A", child)
-                os.makedirs(target)
-                with open(os.path.join(target, "The.Matrix.1999.mkv"), "wb") as handle:
-                    handle.write(b"media")
-            output, errors = io.StringIO(), io.StringIO()
-            code = main(
-                [
-                    "--directory",
-                    directory,
-                    "--live-metadata",
-                    "--show-naming",
-                    "--limit",
-                    "1",
-                ],
-                stdout=output,
-                stderr=errors,
-                runner_factory=lambda live: runner,
+                target = root / "A" / child
+                target.mkdir(parents=True)
+                (target / "The.Matrix.1999.mkv").write_bytes(b"media")
+            storage = LocalStorage("strategy-directory", directory, read_only=True)
+            guard = ReadOnlyStrategyStorage(storage)
+            runner = StrategyDirectoryRunner(
+                StorageScanner({"strategy-directory": storage}),
+                ResourceLibrary("strategy-directory", "Directory", "strategy-directory", ""),
+                runner,
+                guard,
             )
-        value = output.getvalue()
-        self.assertEqual(code, 0)
-        self.assertEqual(errors.getvalue(), "")
-        self.assertIn("PASS | A | The Matrix | 1999 | The Matrix (1999)", value)
-        self.assertIn("Total: 1", value)
-        self.assertIn("Naming OK: 1", value)
-        self.assertIn("Classification executions: 0", value)
-        self.assertIn("Organizer executions: 0", value)
-        for operation in (
-            "Write",
-            "CreateDirectory",
-            "Move",
-            "Copy",
-            "Delete",
-            "HardLink",
-            "SoftLink",
-        ):
-            self.assertIn(f"{operation}=0", value)
+            summary = runner.run(live_metadata=True, limit=1, show_naming=True)
+        self.assertEqual(summary.total, 1)
+        self.assertEqual(summary.errors, 0)
+        self.assertEqual(summary.naming_ok, 1)
+        self.assertTrue(all(count == 0 for count in guard.mutation_calls.values()))
 
     def test_case_file_naming_expectations_and_mismatch_output(self) -> None:
         document = {
@@ -226,27 +168,15 @@ class NamingPreviewCLITests(unittest.TestCase):
                 }
             ]
         }
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "cases.json")
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(document, handle)
-            passed = io.StringIO()
-            self.assertEqual(
-                main(["--cases", path, "--show-naming"], stdout=passed, stderr=io.StringIO()),
-                0,
-            )
-            self.assertIn("Passed: 1", passed.getvalue())
-            document["cases"][0]["expect"]["naming"]["filename"] = "Wrong.mkv"
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(document, handle)
-            failed = io.StringIO()
-            self.assertEqual(
-                main(["--cases", path, "--show-naming"], stdout=failed, stderr=io.StringIO()),
-                1,
-            )
-        self.assertIn("Expected:", failed.getvalue())
-        self.assertIn("Actual:", failed.getvalue())
-        self.assertIn("Wrong.mkv", failed.getvalue())
+        runner = strategy_runner_from_configuration(smoke_strategy_configuration())
+        passed = runner.run_cases(document, show_naming=True)
+        self.assertEqual((passed.total, passed.passed, passed.failed), (1, 1, 0))
+        document["cases"][0]["expect"]["naming"]["filename"] = "Wrong.mkv"
+        failed = runner.run_cases(document, show_naming=True)
+        self.assertEqual(failed.failed, 1)
+        case = failed.cases[0]
+        self.assertEqual(case.expected["naming"]["filename"], "Wrong.mkv")
+        self.assertEqual(case.actual["naming"]["filename"], "The Matrix (1999).mkv")
 
 
 if __name__ == "__main__":

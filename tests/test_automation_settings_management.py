@@ -13,11 +13,20 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.automation_settings import ENGINE_FIELD_PATHS
-from mediaflow.domain.configuration_management import ResourceLibrarySaveError
+from mediaflow.domain.configuration_integrity import canonical_document_digest
+from mediaflow.domain.configuration_management import (
+    ConfigurationChangeAudit,
+    ConfigurationObjectKind,
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
+    ResourceLibrarySaveError,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -72,11 +81,44 @@ class SettingsFixture:
             self.config_repository,
             bootstrap_database_path=self.database,
         )
-        draft = self.configuration.import_draft(self.document, actor="bootstrap")
-        validated = self.configuration.validate(draft.revision_id, actor="bootstrap")
-        self.active = self.configuration.activate(
-            validated.revision_id, expected_version=validated.version, actor="bootstrap"
-        )
+        if legacy_stale_key:
+            now = datetime.now(UTC)
+            revision_id = str(uuid4())
+            self.config_repository.create_revision(
+                ManagedConfigurationRevision(
+                    revision_id,
+                    1,
+                    ManagedConfigurationStatus.VALIDATED,
+                    1,
+                    canonical_document_digest(self.document),
+                    self.document,
+                    now,
+                    now,
+                )
+            )
+            self.active = self.config_repository.activate_revision(
+                revision_id,
+                1,
+                ConfigurationChangeAudit(
+                    str(uuid4()),
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    revision_id,
+                    "activate",
+                    {"revisionId": None},
+                    {
+                        "status": "active",
+                        "automationExecutionIntents": {},
+                    },
+                    now,
+                    "bootstrap",
+                ),
+            )
+        else:
+            draft = self.configuration.import_draft(self.document, actor="bootstrap")
+            validated = self.configuration.validate(draft.revision_id, actor="bootstrap")
+            self.active = self.configuration.activate(
+                validated.revision_id, expected_version=validated.version, actor="bootstrap"
+            )
         self.repository = SQLiteTaskRepository(self.database)
         self.api = self._api()
 
@@ -94,7 +136,6 @@ class SettingsFixture:
         )
         return MediaFlowApi(
             self.repository,
-            None,
             principals=principals,
             configuration_service=self.configuration,
             bootstrap_document=self.document,

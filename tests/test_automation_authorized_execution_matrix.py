@@ -638,7 +638,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 }
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})
@@ -750,7 +749,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
 
                 denied_api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "cancel-only",

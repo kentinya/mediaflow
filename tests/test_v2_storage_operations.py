@@ -114,7 +114,6 @@ def _document(root: Path) -> dict:
     value["resourceLibraries"][0]["storageId"] = "local-source"
     for library in value["mediaLibraries"]:
         library["storageId"] = "nas"
-    value["automation"]["schedules"] = []
     return value
 
 
@@ -288,7 +287,6 @@ class StorageOperationsJourney(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=principals,
             configuration_service=self.configuration,
             storage_adapters=self.adapters,
@@ -534,7 +532,6 @@ class StorageOperationsJourney(unittest.TestCase):
             task_repository = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
             api = MediaFlowApi(
                 task_repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal(ADMIN_TOKEN, ADMIN_TOKEN, frozenset(ApiPermission)),
                     ResolvedApiPrincipal(
@@ -659,7 +656,6 @@ class StorageOperationsJourney(unittest.TestCase):
             admin = ResolvedApiPrincipal(ADMIN_TOKEN, ADMIN_TOKEN, frozenset(ApiPermission))
             api = MediaFlowApi(
                 task_repository,
-                None,
                 principals=(admin,),
                 configuration_service=configuration,
                 bootstrap_document={"persistence": {"databasePath": str(root / "runtime.sqlite3")}},
@@ -723,7 +719,6 @@ class StorageOperationsJourney(unittest.TestCase):
             )
             api = MediaFlowApi(
                 task_repository,
-                None,
                 principals=(admin, viewer),
                 configuration_service=configuration,
                 bootstrap_document={"persistence": {"databasePath": str(root / "runtime.sqlite3")}},

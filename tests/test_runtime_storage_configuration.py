@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.storage import StorageCapabilities, StorageError, StorageErrorCode
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import (
@@ -15,6 +16,9 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
 )
 from mediaflow.infrastructure.s3_storage import S3Provider
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 
 
 class ReadOnlyPreflightStorage:
@@ -61,6 +65,24 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
         document = copy.deepcopy(self.document)
         document["storages"][0] = value
         return load_runtime_configuration(document)
+
+    def _activate(self, document: dict, path: Path) -> None:
+        database = Path(path.parent, "runtime.sqlite3")
+        document["persistence"] = {"databasePath": str(database)}
+        with SQLiteConfigurationRepository(database) as repository:
+            service = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=str(database),
+                bootstrap_document=document,
+            )
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
+        path.write_text(json.dumps(document), encoding="utf-8")
 
     def test_smb_runtime_uses_environment_credentials_and_redacts(self) -> None:
         runtime = self._replace_source(
@@ -164,11 +186,13 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
         document["storages"][0] = {
             "id": "source-storage",
             "type": "smb",
-            "host": "nas.example.test",
-            "share": "Media",
             "rootPath": "Incoming",
-            "usernameEnv": "ABSENT_SMB_USER",
-            "passwordEnv": "ABSENT_SMB_PASSWORD",
+            "options": {
+                "host": "nas.example.test",
+                "share": "Media",
+                "usernameEnv": "ABSENT_SMB_USER",
+                "passwordEnv": "ABSENT_SMB_PASSWORD",
+            },
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "config.json")
@@ -232,7 +256,7 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
     def test_storage_list_does_not_construct_or_connect(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "config.json")
-            path.write_text(json.dumps(self.document), encoding="utf-8")
+            self._activate(copy.deepcopy(self.document), path)
             output, errors = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
@@ -250,7 +274,7 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
     def test_storage_check_is_read_only_and_isolates_failures(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "config.json")
-            path.write_text(json.dumps(self.document), encoding="utf-8")
+            self._activate(copy.deepcopy(self.document), path)
             healthy = ReadOnlyPreflightStorage("source-storage")
             failed = ReadOnlyPreflightStorage("media-target", fail=True)
 
@@ -275,7 +299,7 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
     def test_storage_check_rejects_unknown_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "config.json")
-            path.write_text(json.dumps(self.document), encoding="utf-8")
+            self._activate(copy.deepcopy(self.document), path)
             output, errors = io.StringIO(), io.StringIO()
             code = final_main(
                 ["--config", str(path), "storage", "check", "missing"],

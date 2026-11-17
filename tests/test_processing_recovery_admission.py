@@ -554,7 +554,6 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 item, _ = self._failed_item(repository, task)
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "operator",
@@ -618,7 +617,6 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 _, other_task = self._task(repository)
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "operator",
@@ -945,7 +943,6 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 validator = RecordingValidator()
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "operator",

@@ -123,7 +123,6 @@ class WebhookManagementHarness:
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=(admin, viewer),
             configuration_service=self.configuration,
             bootstrap_document=doc,

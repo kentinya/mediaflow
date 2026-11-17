@@ -132,15 +132,13 @@ def rules_family_section(family: str) -> str:
     return spec.section
 
 
-# The typed form never offers the legacy MetadataPolicy mediaType control.  It
-# remains an accepted-but-ignored input key at the Save boundary so an older
-# client cannot write it into a new Active document.
+# The typed form never offers the legacy MetadataPolicy mediaType control, and
+# a new candidate cannot submit it.  A stored historical value is dropped when
+# the object is edited rather than becoming a second current spelling.
 _METADATA_POLICY_FORM_FIELDS = METADATA_POLICY_CONFIGURATION_FIELDS - {"mediaType"}
 
 
 def _candidate_fields(spec: _FamilySpec) -> frozenset[str]:
-    if spec.family == "metadataPolicies":
-        return frozenset({*_METADATA_POLICY_FORM_FIELDS, "mediaType"})
     return spec.form_fields
 
 
@@ -515,6 +513,7 @@ class RulesWorkspaceCommandService:
                 f"{spec.label} {action} candidate contains unsupported field "
                 f"{sorted(unknown)[0]!r}",
             )
+        self._discard_retired_stored_fields(spec, merged)
         self._validate_form_fields(spec, merged)
         # Both paths stage the same candidate shape Save accepts, so they apply the
         # same read-only-key cleanup and legacy-prefix intent semantics.  Without
@@ -1209,7 +1208,7 @@ class RulesWorkspaceCommandService:
                     "compose",
                     f"{spec.label} candidate contains unsupported field {sorted(unknown)[0]!r}",
                 )
-            merged.pop("mediaType", None)
+            self._discard_retired_stored_fields(spec, merged)
             self._validate_form_fields(spec, merged)
             self._prepare_candidate(spec, merged, stored)
             composed = self._normalize_or_reject(spec, merged)
@@ -1541,19 +1540,13 @@ class RulesWorkspaceCommandService:
 
     @staticmethod
     def _classification_rule_projection(rules: object) -> object:
-        """Project classification rules with their explicit destination contract.
+        """Project classification rules as the current MediaLibrary plus path.
 
-        A revised rule exposes only ``mediaLibraryId`` and ``path``.  A legacy rule
-        keeps its original ``library`` prefix so the form can show the old and the
-        proposed contribution side by side and the operator can deliberately remove
-        it; the raw stored value is never rewritten here, so opening or cosmetically
-        saving an unrelated object cannot convert a legacy destination.
-
-        The projection always carries the explicit ``path`` the rule really means,
-        including for a historical document that only stored ``category``/
-        ``subcategory``: the normalizer has always resolved that form to the same
-        relative path, so omitting it here would let the form submit a candidate
-        that silently lost the rule's destination.
+        A historical rule may still store the retired ``library`` prefix and
+        ``category``/``subcategory`` outputs.  The ordinary editor shows their
+        complete effective relative path and never submits those retired keys
+        again, so opening or cosmetically saving an old policy keeps the same
+        published destination without a separate migration action.
         """
 
         if not isinstance(rules, list):
@@ -1567,30 +1560,69 @@ class RulesWorkspaceCommandService:
             result = item.get("result")
             if isinstance(result, Mapping):
                 normalized = copy.deepcopy(dict(result))
-                legacy = normalized.get("library")
-                normalized["destinationContract"] = (
-                    "legacy_library_prefix"
-                    if isinstance(legacy, str) and legacy.strip()
-                    else "media_library_path"
-                )
-                # A historical document may carry only category/subcategory; the
-                # revised authoring surface shows the one explicit path they meant.
-                if not isinstance(normalized.get("path"), (list, str)):
+                path = normalized.get("path")
+                if isinstance(path, str):
+                    parts = path.split("/")
+                elif isinstance(path, list):
+                    parts = [str(part) for part in path]
+                else:
                     category = normalized.get("category")
                     subcategory = normalized.get("subcategory")
-                    if isinstance(category, str) and category.strip():
-                        normalized["path"] = (
-                            [category, subcategory]
-                            if isinstance(subcategory, str) and subcategory.strip()
-                            else [category]
-                        )
-                # The revised authoring surface never shows the legacy editable
-                # category/subcategory outputs; display is derived from path.
+                    parts = (
+                        [str(category), str(subcategory)]
+                        if isinstance(category, str)
+                        and category.strip()
+                        and isinstance(subcategory, str)
+                        and subcategory.strip()
+                        else [str(category)]
+                        if isinstance(category, str) and category.strip()
+                        else []
+                    )
+                prefix = normalized.get("library")
+                if isinstance(prefix, str) and prefix.strip():
+                    parts = [part for part in prefix.split("/") if part] + parts
+                if parts:
+                    normalized["path"] = parts
+                normalized.pop("library", None)
                 normalized.pop("category", None)
                 normalized.pop("subcategory", None)
+                normalized.pop("destinationContract", None)
                 item["result"] = normalized
             projected.append(item)
         return projected
+
+    @staticmethod
+    def _discard_retired_stored_fields(spec: _FamilySpec, merged: dict[str, object]) -> None:
+        """Drop pure historical keys before composing a current object.
+
+        A historical Active may still carry a key this build no longer accepts
+        on new input.  The typed form never exposes it, so an ordinary edit
+        removes exactly that retired key while every current field survives.
+        """
+
+        if spec.family == "metadataPolicies":
+            merged.pop("mediaType", None)
+        elif spec.family == "organizePolicies":
+            merged.pop("overwrite", None)
+        elif spec.family == "namingPolicies":
+            for field in (
+                "movieDirectoryTemplate",
+                "movieFileTemplate",
+                "tvSeriesDirectoryTemplate",
+                "tvSeasonDirectoryTemplate",
+                "tvEpisodeFileTemplate",
+            ):
+                merged.pop(field, None)
+        elif spec.family == "resourceLibraries":
+            merged.pop("rootPath", None)
+        elif spec.family == "storages":
+            options = merged.get("options")
+            options = dict(options) if isinstance(options, Mapping) else {}
+            for field in ConfigurationObjectService._STORAGE_LEGACY_OPTION_FIELDS:
+                if field in merged:
+                    options.setdefault(field, merged.pop(field))
+            if options:
+                merged["options"] = options
 
     @staticmethod
     def _prepare_candidate(
@@ -1598,62 +1630,24 @@ class RulesWorkspaceCommandService:
         merged: dict[str, object],
         stored: Mapping[str, object] | None,
     ) -> None:
-        """Make one submitted candidate ready for the strict backend normalizer.
-
-        Save and Preview both accept the candidate a projection just produced, so
-        both must apply exactly the same preparation.  Two things the form only
-        displays can never become fields the backend demands back:
-
-        * the read-only ``destinationContract`` explanation, which is dropped here
-          rather than added to the persisted runtime allowlist; and
-        * the legacy prefix intent, which is preserved unless the operator
-          deliberately changed it.  A rule that already carries the legacy
-          ``library`` prefix keeps that exact prefix when the submitted candidate
-          does not express an intent about it, so an unrelated cosmetic Save of the
-          enclosing policy cannot silently republish a legacy destination as a
-          revised one.  An explicit ``null`` is the operator's deliberate
-          conversion: the prefix is removed and the existing explicit path is
-          preserved rather than prefixed.
-        """
+        """Drop read-only projections that are not persisted configuration."""
 
         if spec.family != "classificationPolicies":
             return
         submitted_rules = merged.get("rules")
         if not isinstance(submitted_rules, list):
             return
-        stored_rules = stored.get("rules") if isinstance(stored, Mapping) else None
-        stored_by_id = {
-            str(item.get("id")): item
-            for item in (stored_rules if isinstance(stored_rules, list) else [])
-            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-        }
         for index, rule in enumerate(submitted_rules):
             if not isinstance(rule, Mapping):
                 continue
             result = rule.get("result")
-            if not isinstance(result, Mapping):
+            if not isinstance(result, Mapping) or "destinationContract" not in result:
                 continue
             result_dict = dict(result)
-            # A read-only explanation of which contract the stored rule already
-            # has; it is never part of the persisted form for any rule, including
-            # a newly created or copied one that has no stored predecessor.
             result_dict.pop("destinationContract", None)
-            previous = stored_by_id.get(str(rule.get("id")))
-            previous_result = previous.get("result") if isinstance(previous, Mapping) else None
-            legacy = (
-                previous_result.get("library") if isinstance(previous_result, Mapping) else None
-            )
-            if isinstance(legacy, str) and legacy.strip():
-                if "library" not in result_dict:
-                    # The candidate never expressed an intent about the prefix, so
-                    # the historical contract is carried forward unchanged.
-                    result_dict["library"] = legacy
-                elif result_dict["library"] is None:
-                    result_dict.pop("library")
-            if result_dict != result:
-                rule_dict = dict(rule)
-                rule_dict["result"] = result_dict
-                submitted_rules[index] = rule_dict
+            rule_dict = dict(rule)
+            rule_dict["result"] = result_dict
+            submitted_rules[index] = rule_dict
 
     def _normalize_or_reject(
         self, spec: _FamilySpec, value: Mapping[str, object]

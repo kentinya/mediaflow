@@ -134,7 +134,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     actor="local",
                     note="credential=super-secret",
                 )
-                api = MediaFlowApi(repository, None, principals=api_principals())
+                api = MediaFlowApi(repository, principals=api_principals())
 
                 self.assertEqual(request(api, "GET", "/api/v1/confirmations")[0], 401)
                 for role in ("viewer", "auditor", "operator", "executor", "admin"):
@@ -208,7 +208,7 @@ class ConfirmationApiTests(unittest.TestCase):
     def test_remote_skip_rename_permissions_atomic_transition_and_no_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=api_principals())
+                api = MediaFlowApi(repository, principals=api_principals())
                 for number, role, strategy, expected in (
                     (1, "operator", "skip", TaskItemStatus.SKIPPED),
                     (2, "executor", "rename", TaskItemStatus.PENDING),
@@ -244,7 +244,7 @@ class ConfirmationApiTests(unittest.TestCase):
     def test_remote_high_risk_and_injected_fields_are_rejected_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=api_principals())
+                api = MediaFlowApi(repository, principals=api_principals())
                 forbidden_documents = (
                     {"strategy": "manual"},
                     {"strategy": "overwrite"},
@@ -347,7 +347,7 @@ class ConfirmationApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 confirmation, _ = create_confirmation(repository, 1)
-                api = MediaFlowApi(repository, None, principals=api_principals())
+                api = MediaFlowApi(repository, principals=api_principals())
                 with patch(
                     "mediaflow.application.organizer.OrganizerExecutor.execute",
                     side_effect=AssertionError("confirmation API executed OrganizerExecutor"),

@@ -311,14 +311,7 @@ class _CurrentConfiguredPermissionAuthority:
         from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 
         runtime = load_runtime_configuration(active.document)
-        definitions = runtime.api_principals
-        if not definitions and runtime.api_token_env:
-            from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole
-
-            definitions = (
-                ApiPrincipalDefinition("legacy-admin", runtime.api_token_env, (ApiRole.ADMIN,)),
-            )
-        return definitions
+        return runtime.api_principals
 
 
 class _AutomationInventoryCursorStale(ValueError):
@@ -386,7 +379,6 @@ class MediaFlowApi:
     def __init__(
         self,
         repository,
-        bearer_token: str | None,
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
         maximum_active_jobs: int | None = None,
@@ -411,12 +403,6 @@ class MediaFlowApi:
         webhook_transport: object | None = None,
         resident_services: ResidentServiceService | None = None,
     ) -> None:
-        if bearer_token and principals:
-            raise ValueError("legacy bearer token cannot be combined with API principals")
-        if bearer_token:
-            principals = (
-                ResolvedApiPrincipal("legacy-admin", bearer_token, frozenset(ApiPermission)),
-            )
         if not principals:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository

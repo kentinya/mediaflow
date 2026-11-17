@@ -87,7 +87,6 @@ def setup_test_api(directory: str):
 
     api = MediaFlowApi(
         task_repo,
-        None,
         principals=(admin, viewer),
         configuration_service=config_service,
         bootstrap_document=doc,

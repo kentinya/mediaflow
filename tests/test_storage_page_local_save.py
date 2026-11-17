@@ -217,7 +217,6 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=(self.admin, self.viewer),
             configuration_service=self.configuration,
             storage_adapters=self.adapters,
@@ -331,7 +330,6 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         )
         return MediaFlowApi(
             task_repository,
-            None,
             principals=(self.admin,),
             configuration_service=service,
             bootstrap_document=bootstrap,
@@ -1279,7 +1277,6 @@ class StoragePageLocalSaveTests(unittest.TestCase):
             )
             limited_api = MediaFlowApi(
                 self.runtime_repository,
-                None,
                 principals=(principal, self.admin),
                 configuration_service=self.configuration,
                 storage_adapters=self.adapters,

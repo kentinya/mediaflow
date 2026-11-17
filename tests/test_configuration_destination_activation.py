@@ -92,6 +92,66 @@ class RemoteDestinationFake:
         raise AssertionError("setup evidence must not soft-link")
 
 
+_LEGACY_STORAGE_OPTIONS = {
+    "tokenEnv",
+    "baseUrl",
+    "usernameEnv",
+    "passwordEnv",
+    "host",
+    "share",
+    "domain",
+    "port",
+    "operationTimeout",
+    "accessKeyEnv",
+    "secretKeyEnv",
+    "sessionTokenEnv",
+    "bucket",
+    "endpoint",
+    "region",
+    "forcePathStyle",
+    "connectTimeout",
+    "requestTimeout",
+    "maxConcurrency",
+    "maxRetries",
+    "pageSize",
+    "multipartThreshold",
+    "multipartPartSize",
+}
+
+
+def _canonical_document(document: dict) -> dict:
+    value = copy.deepcopy(document)
+    for storage in value.get("storages", []):
+        options = storage.get("options")
+        options = dict(options) if isinstance(options, dict) else {}
+        for field in _LEGACY_STORAGE_OPTIONS:
+            if field in storage:
+                options.setdefault(field, storage.pop(field))
+        if options:
+            storage["options"] = options
+    for policy in value.get("organizePolicies", []):
+        policy.pop("overwrite", None)
+    for policy in value.get("classificationPolicies", []):
+        for rule in policy.get("rules", []):
+            result = rule.get("result")
+            if not isinstance(result, dict):
+                continue
+            path = result.get("path")
+            parts = (
+                list(path)
+                if isinstance(path, list)
+                else (path.split("/") if isinstance(path, str) else [])
+            )
+            prefix = result.pop("library", None)
+            if isinstance(prefix, str) and prefix.strip():
+                parts = [part for part in prefix.split("/") if part] + parts
+            result.pop("category", None)
+            result.pop("subcategory", None)
+            if parts:
+                result["path"] = parts
+    return value
+
+
 class DestinationPrecheckActivationTests(unittest.TestCase):
     @staticmethod
     def _document(root: Path) -> dict:
@@ -103,7 +163,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
 
     @staticmethod
     def _validated(managed: ManagedConfigurationService, document: dict):
-        draft = managed.import_draft(document, actor="operator")
+        draft = managed.import_draft(_canonical_document(document), actor="operator")
         validated = managed.validate(draft.revision_id, actor="operator")
         if validated.status.value != "validated":
             raise AssertionError("test document did not validate")
@@ -383,7 +443,6 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=managed,
                     bootstrap_document=document,
@@ -468,7 +527,6 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=managed,
                     storage_adapters=adapters,
@@ -799,7 +857,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
             with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
                 managed = ManagedConfigurationService(repository)
                 objects = ConfigurationObjectService(managed)
-                draft = managed.import_draft(document, actor="operator")
+                draft = managed.import_draft(_canonical_document(document), actor="operator")
                 validated = managed.validate(draft.revision_id, actor="operator")
                 self.assertEqual(validated.status.value, "draft")
                 self.assertTrue(
@@ -937,7 +995,6 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal, limited),
                     configuration_service=managed,
                     bootstrap_document=document,

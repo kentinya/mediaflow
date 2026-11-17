@@ -132,7 +132,7 @@ def wait_for_api(base: str, token: str) -> None:
     wait_until(authenticated, description="authenticated API Tasks endpoint")
 
 
-def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path]:
+def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path, Path]:
     source = root / "media" / "incoming"
     target = root / "media" / "organized"
     source.mkdir(parents=True)
@@ -140,16 +140,29 @@ def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path]:
     source.chmod(0o755)
     target.chmod(0o777)
 
+    config_file = root / "mediaflow.json"
+    activation_file = root / "mediaflow.activation.json"
     generator = [
         sys.executable,
         str(ROOT / "scripts" / "make_deployment_config.py"),
-        "--mode",
-        "media",
+        "--output",
+        str(config_file),
+        "--configuration-output",
+        str(activation_file),
     ]
-    config_file = root / "mediaflow.json"
-    generated = subprocess.check_output(generator, cwd=ROOT, text=True)
-    config_file.write_text(generated, encoding="utf-8")
+    subprocess.check_output(generator, cwd=ROOT, text=True)
     config_file.chmod(0o644)
+    bootstrap = json.loads(config_file.read_text(encoding="utf-8"))
+    activation = json.loads(activation_file.read_text(encoding="utf-8"))
+    # The managed document binds its deployment authority from the running
+    # bootstrap; never carry the example's unrelated principal identity.
+    activation["api"] = bootstrap["api"]
+    activation["persistence"] = bootstrap["persistence"]
+    activation_file.write_text(
+        json.dumps(activation, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    activation_file.chmod(0o644)
 
     environment_file = root / "deployment.env"
     environment_file.write_text(
@@ -157,7 +170,7 @@ def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path]:
         encoding="utf-8",
     )
     environment_file.chmod(0o644)
-    return config_file, environment_file, source, target
+    return config_file, environment_file, source, target, activation_file
 
 
 def assert_compose_configuration(
@@ -214,7 +227,13 @@ def smoke(project: str, image: str, keep: bool) -> None:
     with tempfile.TemporaryDirectory(prefix=f"{PROJECT_PREFIX}-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_files(root, token)
+        (
+            config_file,
+            environment_file,
+            source_root,
+            target_root,
+            activation_file,
+        ) = prepare_files(root, token)
         environment = compose_environment(
             root,
             image,
@@ -256,6 +275,32 @@ def smoke(project: str, image: str, keep: bool) -> None:
             assert_stack_running([*compose, *project_flag], environment)
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
+            activation = json.loads(activation_file.read_text(encoding="utf-8"))
+            status, draft = http_request(
+                f"{base}/api/v1/configuration/drafts",
+                method="POST",
+                token=token,
+                body=json.dumps({"document": activation}).encode(),
+            )
+            if status != 201:
+                raise RuntimeError(f"configuration Draft import returned HTTP {status}")
+            revision = draft["revisionId"]
+            status, validated = http_request(
+                f"{base}/api/v1/configuration/revisions/{revision}/validate",
+                method="POST",
+                token=token,
+                body=b"{}",
+            )
+            if status != 200 or validated.get("status") != "validated":
+                raise RuntimeError(f"configuration validation failed: {validated}")
+            status, active = http_request(
+                f"{base}/api/v1/configuration/revisions/{revision}/activate",
+                method="POST",
+                token=token,
+                body=json.dumps({"expectedVersion": validated["version"]}).encode(),
+            )
+            if status != 200 or active.get("status") != "active":
+                raise RuntimeError(f"configuration activation failed: {active}")
 
             status, body = http_request(f"{base}/ui-v2/")
             if status != 200 or b'<div id="root">' not in body:
@@ -327,7 +372,7 @@ def missing_mount_failure(project: str, image: str) -> None:
     with tempfile.TemporaryDirectory(prefix=f"{PROJECT_PREFIX}-missing-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_files(
+        config_file, environment_file, source_root, target_root, _activation_file = prepare_files(
             root, "missing-test"
         )
         environment = compose_environment(

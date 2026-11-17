@@ -720,10 +720,9 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         self.assertEqual(body["outcome"], "matched")
         self.assertEqual(body["result"]["mediaLibraryId"], "movies")
         self.assertTrue(body["result"]["mediaLibraryResolved"])
-        self.assertEqual(body["result"]["relativePath"], "Anime")
+        self.assertEqual(body["result"]["relativePath"], "Movies/Anime")
         # The shipped example document still carries the legacy prefix, so the
         # analysis must report that exact contract instead of a revised one.
-        self.assertEqual(body["result"]["destinationContract"], "legacy_library_prefix")
         self.assertEqual(body["providerCalls"], 0)
         self.assertEqual(body["storageReads"], 0)
         self.assert_no_activation(before)
@@ -766,7 +765,6 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
     def test_organize_high_risk_permissions_are_explicit(self) -> None:
         candidate = self.edit_candidate("organizePolicies", "A")
         candidate["values"]["conflictStrategy"] = "overwrite"
-        candidate["values"]["overwrite"] = True
         status, body = self.analyze("organizePolicies", candidate)
         self.assertEqual(status, 200)
         self.assertTrue(body["result"]["overwriteAuthorized"])

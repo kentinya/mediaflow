@@ -17,6 +17,7 @@ from mediaflow.infrastructure.runtime_configuration import load_runtime_configur
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.pagination import decode_cursor
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.managed_config_fixture import publish_managed_document
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 
@@ -55,7 +56,7 @@ class OperationalLoggingTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal(
                     "viewer", "viewer-token", frozenset({ApiPermission.READ})
                 )
-                api = MediaFlowApi(repository, None, principals=(principal,))
+                api = MediaFlowApi(repository, principals=(principal,))
                 _, first = request(api, "limit=2&level=ERROR")
                 _, middle = request(api, f"limit=2&level=ERROR&cursor={first['next_cursor']}")
                 _, last = request(api, f"limit=2&level=ERROR&cursor={middle['next_cursor']}")
@@ -207,6 +208,7 @@ class OperationalLoggingTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
             config = Path(directory, "config.json")
             config.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
             with SQLiteTaskRepository(document["persistence"]["databasePath"]) as repository:
                 repository.append_operational_log(
                     OperationalLogRecord("safe-log", NOW, LogLevel.ERROR, "worker", "scan.failed")

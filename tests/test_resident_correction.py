@@ -76,7 +76,7 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         original = webhook()
         self.publish_first_draft(self.empty_baseline())
         self.publish_successor(
-            lambda document: document["notifications"].update(webhooks=[original.document()])
+            lambda document: document.__setitem__("webhooks", [original.document()])
         )
         from mediaflow.final_cli import _resolve_resident_configuration
 
@@ -90,7 +90,7 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         with SQLiteTaskRepository(self.database) as repo:
             for index, status in enumerate(("pending", "retry")):
                 event = NotificationEvent(
-                    str(index), NotificationEventType.JOB_COMPLETED, now, {"jobId": str(index)}
+                    str(index), NotificationEventType.TASK_COMPLETED, now, {"jobId": str(index)}
                 )
                 delivery = NotificationPublisher(repo, (original,)).publish(event)[0]
                 if status == "retry":
@@ -100,9 +100,7 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                     # First pending event also stays independent of the second.
                     worker.run_next()
         self.publish_successor(
-            lambda document: document["notifications"]["webhooks"][0].update(
-                url="https://replacement.invalid/hook"
-            )
+            lambda document: document["webhooks"][0].update(url="https://replacement.invalid/hook")
         )
         with SQLiteTaskRepository(self.database) as repo:
             before = repo.list_deliveries()
@@ -117,7 +115,7 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
             self.assertEqual(repo.list_deliveries(), before)
             self.assertEqual(transport.requests, [])
             self.publish_successor(
-                lambda document: document["notifications"]["webhooks"][0].update(url=original.url)
+                lambda document: document["webhooks"][0].update(url=original.url)
             )
             restored = NotificationWorker(
                 repo,

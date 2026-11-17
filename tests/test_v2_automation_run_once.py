@@ -359,7 +359,6 @@ class RunOnceApiTests(unittest.TestCase):
             run_once = AutomationRunOnceService(discovery, previews, clock=self.clock)
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                     ResolvedApiPrincipal(

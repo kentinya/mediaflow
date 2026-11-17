@@ -1006,18 +1006,6 @@ def strategy_runner_from_configuration(
     )
 
 
-def default_strategy_runner(
-    providers: MetadataProviderRegistry | None = None,
-    storage_guard: ReadOnlyStrategyStorage | None = None,
-) -> StrategyTestRunner:
-    """Compatibility bootstrap; development policy data lives outside application logic."""
-    from mediaflow.infrastructure.strategy_configuration import smoke_strategy_configuration
-
-    return strategy_runner_from_configuration(
-        smoke_strategy_configuration(), providers, storage_guard
-    )
-
-
 def file_context_from_path(
     path: str,
     *,

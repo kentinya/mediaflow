@@ -240,8 +240,9 @@ mediaflow notification-worker run
 
 No-path Organize uses enabled ResourceLibraries. Organize without `--execute`
 is zero-mutation. Overwrite requires enabling policy and fresh explicit consent; conflict/capability
-checks remain mandatory. Link operations never silently fall back. The `strategy-test` inspector
-remains available for local development diagnostics.
+checks remain mandatory. Link operations never silently fall back. Shared rule analysis remains
+available through `mediaflow analyze` and the Rules workspace; the retired standalone inspector is
+not an installation entry point.
 
 | Operation | Safe behavior / next action |
 |---|---|

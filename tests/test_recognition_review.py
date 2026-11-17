@@ -32,6 +32,7 @@ from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepos
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
+from tests.managed_config_fixture import publish_managed_document
 
 
 class FakeUnrecognizedStrategy:
@@ -190,6 +191,7 @@ class RecognitionReviewTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(database)
             config_path = Path(directory, "strategy.json")
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create("organize", execute_authorized=False)

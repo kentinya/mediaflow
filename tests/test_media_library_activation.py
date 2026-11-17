@@ -144,7 +144,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
             principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
             api = MediaFlowApi(
                 runtime_repository,
-                None,
                 principals=(principal,),
                 configuration_service=service,
                 bootstrap_document=bootstrap,
@@ -313,7 +312,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
         )
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(principal,),
             configuration_service=service,
             bootstrap_document=document,
@@ -500,7 +498,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
             principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
             api = MediaFlowApi(
                 runtime_repository,
-                None,
                 principals=(principal,),
                 configuration_service=service,
                 bootstrap_document=document,
@@ -583,7 +580,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=self._document(root),
@@ -919,7 +915,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
             viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
             viewer_api = MediaFlowApi(
                 runtime_repository,
-                None,
                 principals=(viewer,),
                 configuration_service=service,
                 bootstrap_document=self._document(root),

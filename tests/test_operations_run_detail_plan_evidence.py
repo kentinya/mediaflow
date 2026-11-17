@@ -269,7 +269,7 @@ class UnlinkedRunItemPlanEvidenceTests(unittest.TestCase):
         self.database = Path(self.directory.name, "runtime.sqlite3")
         self.repository = SQLiteTaskRepository(self.database)
         self.addCleanup(self.repository.close)
-        self.api = MediaFlowApi(self.repository, None, principals=(OPERATOR,))
+        self.api = MediaFlowApi(self.repository, principals=(OPERATOR,))
 
     def test_standalone_task_item_without_manual_execution_is_unavailable(self) -> None:
         task_id = "task-42-2-unlinked"

@@ -630,7 +630,6 @@ class ProcessingCheckpointTests(unittest.TestCase):
                 repository.upsert_item(item)
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})

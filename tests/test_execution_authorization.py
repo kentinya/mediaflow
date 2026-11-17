@@ -8,12 +8,33 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.configuration_integrity import canonical_document_digest
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+
+
+def activate_managed(document: dict) -> None:
+    database = document["persistence"]["databasePath"]
+    with SQLiteConfigurationRepository(database) as repository:
+        service = ManagedConfigurationService(
+            repository,
+            bootstrap_database_path=database,
+            bootstrap_document=document,
+        )
+        draft = service.import_draft(document, actor="tester")
+        validated = service.validate(draft.revision_id, actor="tester")
+        service.activate(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="tester",
+        )
 
 
 def request(api, path, method="POST", document=None):
@@ -52,7 +73,6 @@ class RetiredRemoteExecutionTests(unittest.TestCase):
             try:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -188,6 +208,7 @@ class RetainedDirectCliTests(unittest.TestCase):
             ]
             config = root / "config.json"
             config.write_text(json.dumps(document), encoding="utf-8")
+            activate_managed(document)
             from mediaflow.application.metadata import MetadataProviderRegistry
             from mediaflow.application.strategy_test import SyntheticMetadataProvider
             from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -395,6 +416,7 @@ class RetainedDirectCliTests(unittest.TestCase):
             ]
             config = root / "config.json"
             config.write_text(json.dumps(document), encoding="utf-8")
+            activate_managed(document)
             from mediaflow.application.metadata import MetadataProviderRegistry
             from mediaflow.application.strategy_test import SyntheticMetadataProvider
             from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -455,7 +477,6 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
         return (
             MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ),

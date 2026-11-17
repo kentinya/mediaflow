@@ -1012,7 +1012,6 @@ class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
         ):
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", "settings-read-token", frozenset(ApiPermission)),
                 ),

@@ -765,11 +765,6 @@ export function validateRuleCandidate(
       !authority.enums.conflictStrategies.includes(conflict)
     )
       issues.push({ field: "conflictStrategy", message: "冲突策略不受支持。" });
-    if (value.overwrite === true && conflict !== "overwrite")
-      issues.push({
-        field: "overwrite",
-        message: "允许覆盖必须与 overwrite 冲突策略一致,不能隐式启用。",
-      });
     const cleanup = value.sourceDirectoryCleanup;
     if (cleanup && typeof cleanup === "object" && !Array.isArray(cleanup)) {
       const mode = (cleanup as Record<string, unknown>).mode;
@@ -1033,7 +1028,6 @@ const RULE_FORM_FIELD_ALLOWLIST: Readonly<
     "id",
     "operation",
     "conflictStrategy",
-    "overwrite",
     "duplicateDetection",
     "rollback",
     "sourceDirectoryCleanup",
@@ -1041,14 +1035,68 @@ const RULE_FORM_FIELD_ALLOWLIST: Readonly<
   ]),
 };
 
+/** Fold a historical classification destination into the current path form. */
+function currentClassificationRules(rules: RuleFormValue): RuleFormValue {
+  if (!Array.isArray(rules)) return rules;
+  return rules.map((rawRule) => {
+    if (
+      rawRule === null ||
+      typeof rawRule !== "object" ||
+      Array.isArray(rawRule)
+    )
+      return rawRule;
+    const rule = { ...(rawRule as Record<string, RuleFormValue>) };
+    const rawResult = rule.result;
+    if (
+      rawResult === null ||
+      typeof rawResult !== "object" ||
+      Array.isArray(rawResult)
+    )
+      return rule;
+    const result = { ...(rawResult as Record<string, RuleFormValue>) };
+    const rawPath = result.path;
+    let parts: string[];
+    if (Array.isArray(rawPath)) {
+      parts = rawPath.map((part) => String(part));
+    } else if (typeof rawPath === "string") {
+      parts = rawPath.split("/").filter((part) => part !== "");
+    } else {
+      const category =
+        typeof result.category === "string" ? result.category : "";
+      const subcategory =
+        typeof result.subcategory === "string" ? result.subcategory : "";
+      parts = category === "" ? [] : [category];
+      if (subcategory !== "") parts.push(subcategory);
+    }
+    const prefix = typeof result.library === "string" ? result.library : "";
+    if (prefix !== "") {
+      parts = [...prefix.split("/").filter((part) => part !== ""), ...parts];
+    }
+    delete result.library;
+    delete result.category;
+    delete result.subcategory;
+    delete result.destinationContract;
+    if (parts.length > 0) result.path = parts;
+    rule.result = result;
+    return rule;
+  });
+}
+
 /** The command fields a Save may submit for one family, in stable order. */
 export function ruleCandidateFields(
   family: RuleFormFamily,
   value: Readonly<Record<string, RuleFormValue>>,
 ): Readonly<Record<string, RuleFormValue>> {
   const allowlist = RULE_FORM_FIELD_ALLOWLIST[family];
+  const normalized =
+    family === "classificationPolicies"
+      ? {
+          ...value,
+          rules: currentClassificationRules(value.rules),
+        }
+      : value;
   const composed: Record<string, RuleFormValue> = {};
-  for (const [key, item] of Object.entries(value)) {
+  for (const [key, item] of Object.entries(normalized)) {
     if (allowlist.has(key)) composed[key] = item;
   }
   return composed;

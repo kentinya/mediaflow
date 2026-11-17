@@ -402,7 +402,6 @@ def build_api(database: Path) -> MediaFlowApi:
 
     return MediaFlowApi(
         repository,
-        None,
         principals=(PRINCIPAL,),
         metadata_provider_registry_factory=registry_factory,
         storage_adapters={"explore-spy": SPY_STORAGE},

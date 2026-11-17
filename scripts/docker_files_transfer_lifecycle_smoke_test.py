@@ -161,8 +161,7 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
             [
                 sys.executable,
                 str(ROOT / "scripts" / "make_deployment_config.py"),
-                "--mode",
-                "media",
+                "--configuration",
             ],
             text=True,
         )
@@ -183,15 +182,17 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
             "id": "openlist",
             "name": "Lifecycle OpenList",
             "type": "openlist",
-            "baseUrl": f"http://host.docker.internal:{port}",
-            "tokenEnv": "OPENLIST_TOKEN",
             "rootPath": "/Downloads",
             "readOnly": False,
-            "connectTimeout": 3,
-            "requestTimeout": 30,
-            "maxConcurrency": 2,
-            "maxRetries": 0,
-            "pageSize": 100,
+            "options": {
+                "baseUrl": f"http://host.docker.internal:{port}",
+                "tokenEnv": "OPENLIST_TOKEN",
+                "connectTimeout": 3,
+                "requestTimeout": 30,
+                "maxConcurrency": 2,
+                "maxRetries": 0,
+                "pageSize": 100,
+            },
         }
     ]
     document["resourceLibraries"] = [

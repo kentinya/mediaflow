@@ -32,7 +32,6 @@ def policy(policy_id: str = "managed") -> dict[str, object]:
         "id": policy_id,
         "operation": "MOVE",
         "conflictStrategy": "manual",
-        "overwrite": False,
         "duplicateDetection": {
             "mode": "none",
             "fastSampleBytes": 1_048_576,
@@ -77,11 +76,6 @@ def invalid_policies() -> tuple[tuple[str, dict[str, object], str], ...]:
         "create-directory",
         lambda value: value.update({"operation": "create_directory"}),
         "Move, Copy",
-    )
-    add(
-        "overwrite-conflict",
-        lambda value: value.update({"overwrite": True, "conflictStrategy": "rename"}),
-        "conflicts",
     )
     add(
         "fast-sample",
@@ -361,7 +355,6 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
 
                 changed_policy = copy.deepcopy(draft.document["organizePolicies"][0])
                 changed_policy["conflictStrategy"] = "overwrite"
-                changed_policy["overwrite"] = True
                 changed_policy["sourceDirectoryCleanup"] = {
                     "mode": "ignorable",
                     "maxParentDirectories": 2,
@@ -502,7 +495,6 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                 managed = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

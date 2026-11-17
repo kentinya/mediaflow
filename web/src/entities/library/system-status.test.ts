@@ -129,18 +129,18 @@ describe("normalizeSystemStatus", () => {
     );
   });
 
-  it("requires MANAGED authority for configurationActive; JSON_BOOTSTRAP is not Active", () => {
+  it("requires MANAGED authority for configurationActive; MANAGEMENT_BOOTSTRAP is not Active", () => {
     const payload = {
       ...systemStatusPayload,
       system: {
         ...systemStatusPayload.system,
-        configuration_authority: "JSON_BOOTSTRAP",
+        configuration_authority: "MANAGEMENT_BOOTSTRAP",
         configuration_snapshot_id: null,
       },
     };
     const model = normalizeSystemStatus(payload);
     expect(model.configurationActive).toBe(false);
-    expect(model.authority).toBe("JSON_BOOTSTRAP");
+    expect(model.authority).toBe("MANAGEMENT_BOOTSTRAP");
     expect(model.configurationSnapshotId).toBeNull();
   });
 

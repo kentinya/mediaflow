@@ -261,7 +261,7 @@ describe("normalizeStorageFiles", () => {
         ...storageFilesPayload,
         configuration: {
           ...storageFilesPayload.configuration,
-          authority: "JSON_BOOTSTRAP",
+          authority: "MANAGEMENT_BOOTSTRAP",
         },
       },
     ],

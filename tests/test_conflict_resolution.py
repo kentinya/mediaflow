@@ -31,6 +31,7 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_user_configuration import load_strategy_configuration
+from tests.managed_config_fixture import publish_managed_document
 
 
 class ReadOnlyExistsStorage:
@@ -220,6 +221,7 @@ class ConflictResolutionTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
             config = root / "config.json"
             config.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create("organize", execute_authorized=False)

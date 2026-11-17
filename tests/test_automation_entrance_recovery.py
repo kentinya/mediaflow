@@ -240,7 +240,6 @@ def entrance_journey(
             )
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                     ResolvedApiPrincipal(

@@ -55,7 +55,13 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
         self.service = ProcessingWorkerService(self.repository)
-        self.api = MediaFlowApi(self.repository, "api-secret")
+        self.api = MediaFlowApi(
+            self.repository,
+            principals=(
+                ResolvedApiPrincipal("admin", "api-secret", frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+        )
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -192,7 +198,6 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(admin,),
                     configuration_service=service,
                     configuration_snapshot_id=first.revision_id,

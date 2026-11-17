@@ -72,11 +72,9 @@ def _document(root: Path) -> dict:
     value = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
     value["historyPath"] = str(root / "history.jsonl")
-    # The example document uses the legacy nested webhook spelling with its own
-    # names; the journey constants are normalized here so the Active
-    # configuration matches the tested deployment references. One managed edit
-    # later migrates the spelling to the canonical root section.
-    for item in value.get("notifications", {}).get("webhooks", []):
+    # The canonical example stores Webhooks at the root; use the journey's
+    # exact identity and deployment-owned secret reference.
+    for item in value.get("webhooks", []):
         item["id"] = WEBHOOK_ID
         item["secretEnv"] = SECRET_ENV
     return value
@@ -199,7 +197,6 @@ class NotificationHarness:
         self.bootstrap_document = document
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=principals,
             configuration_service=self.configuration,
             bootstrap_document=document,
@@ -269,7 +266,7 @@ class NotificationHarness:
         definition = self.active_webhook_definition()
         event = NotificationEvent(
             event_id,
-            NotificationEventType.JOB_COMPLETED,
+            NotificationEventType.TASK_COMPLETED,
             occurred_at or datetime.now(UTC),
             {"jobId": event_id},
         )
@@ -1434,7 +1431,7 @@ class RestartPersistenceTests(unittest.TestCase):
                     ).publish(
                         NotificationEvent(
                             "event-restart",
-                            NotificationEventType.JOB_COMPLETED,
+                            NotificationEventType.TASK_COMPLETED,
                             datetime.now(UTC),
                             {"jobId": "event-restart"},
                         )

@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """Render the deployment bootstrap for a MediaFlow container.
 
-Two shapes are supported, and which one an installation wants is a deployment
-decision, not a default this script should silently pick.
+The rendered document is always the **management-only** bootstrap: the durable
+database locator and environment-owned ``api.principals``, and nothing else.
+That is the shape every resident service starts from, and it needs no media
+mount and no pre-authored business configuration.
 
-``--mode bootstrap`` (the default) renders the **management-only** document: the
-durable database locator and environment-owned API credential references, and
-nothing else.  That is the shape a fresh installation needs — the four Compose
-services start and stay running against it, and V2 Settings can create the first
-Draft and activate a valid empty baseline — and it needs no media mount at all.
-
-``--mode media`` renders the legacy **complete example**: the full example
-strategy with its Local Storage paths rewritten to the two container media
-mounts.  It is only usable together with the optional
-``compose.media-mounts.yaml`` overlay, because it declares Local Storage roots
-that must actually be mounted.
+``--configuration-output`` additionally writes the canonical example as a
+configuration *input* document.  It is imported, checked and activated through
+the normal managed Configuration lifecycle; it is never passed to a service as
+its startup authority.
 
 The helper reads only committed example configuration and never reads private
 config, credentials, media, databases, logs, or caches.
@@ -59,11 +54,12 @@ def make_management_bootstrap(
 
 
 def make_deployment_configuration() -> dict:
-    """Render the complete media example with Docker container paths.
+    """Render the canonical media configuration input with container paths.
 
-    Kept for the isolated Docker media-work acceptance stacks.  Unlike the
-    management bootstrap, this document declares Local Storage roots, so it
-    requires the optional media-mount overlay.
+    This document is imported through ``/api/v1/configuration/drafts`` and
+    activated by the current lifecycle.  It is not a service runtime bootstrap;
+    it declares Local Storage roots and therefore needs the optional media-mount
+    overlay when the activated configuration is actually consumed.
     """
 
     project = Path(__file__).resolve().parents[1]
@@ -94,17 +90,23 @@ def make_deployment_configuration() -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render the MediaFlow deployment bootstrap")
+    parser.add_argument("--output", "-o", type=Path, help="write to this file instead of stdout")
     parser.add_argument(
-        "--mode",
-        choices=("bootstrap", "media"),
-        default="bootstrap",
+        "--configuration",
+        action="store_true",
         help=(
-            "bootstrap (default) renders the management-only document that needs no "
-            "media mount; media renders the complete example and requires the optional "
-            "compose.media-mounts.yaml overlay"
+            "print the canonical configuration input instead of the management bootstrap; "
+            "import/validate/activate it through the normal Configuration lifecycle"
         ),
     )
-    parser.add_argument("--output", "-o", type=Path, help="write to this file instead of stdout")
+    parser.add_argument(
+        "--configuration-output",
+        type=Path,
+        help=(
+            "also write the canonical example as a managed configuration input; "
+            "import, validate and activate it through the normal Configuration lifecycle"
+        ),
+    )
     parser.add_argument(
         "--token-env",
         default=DEFAULT_ADMIN_TOKEN_ENV,
@@ -112,15 +114,21 @@ def main() -> int:
     )
     arguments = parser.parse_args()
     document = (
-        make_management_bootstrap(token_env=arguments.token_env)
-        if arguments.mode == "bootstrap"
-        else make_deployment_configuration()
+        make_deployment_configuration()
+        if arguments.configuration
+        else make_management_bootstrap(token_env=arguments.token_env)
     )
     rendered = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     if arguments.output is None:
         sys.stdout.write(rendered)
     else:
         arguments.output.write_text(rendered, encoding="utf-8")
+    if arguments.configuration_output is not None:
+        configuration = make_deployment_configuration()
+        arguments.configuration_output.write_text(
+            json.dumps(configuration, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 

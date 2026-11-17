@@ -13,7 +13,7 @@ from mediaflow.application.naming import (
 from mediaflow.application.strategy_test import (
     ReadOnlyStrategyStorage,
     SyntheticMetadataProvider,
-    default_strategy_runner,
+    strategy_runner_from_configuration,
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaIdentity, MediaType
 from mediaflow.domain.naming import (
@@ -26,7 +26,10 @@ from mediaflow.domain.naming import (
     NamingTemplate,
 )
 from mediaflow.domain.parser import ParseResult
-from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
+from mediaflow.infrastructure.strategy_configuration import (
+    development_strategy_configuration,
+    smoke_strategy_configuration,
+)
 from tests.test_strategy_cli import DummyStorage
 
 TITLE_CASES = (
@@ -340,7 +343,9 @@ class NamingTests(unittest.TestCase):
 
     def test_c_uses_naming_a_and_remains_c(self) -> None:
         configuration = development_strategy_configuration()
-        strategy = default_strategy_runner().run_path("/C/The.Matrix.1999.mkv")
+        strategy = strategy_runner_from_configuration(smoke_strategy_configuration()).run_path(
+            "/C/The.Matrix.1999.mkv"
+        )
         registry = NamingPolicyRegistry(configuration.naming_policies)
         result = NamingPreviewService(registry).preview(
             self.context(recognition_type="C"), strategy.policy.naming_policy_id
@@ -355,8 +360,10 @@ class NamingTests(unittest.TestCase):
             (MediaCandidate("tmdb", "603", MediaType.MOVIE, "The Matrix", year=1999),)
         )
         guard = ReadOnlyStrategyStorage(DummyStorage())
-        strategy = default_strategy_runner(
-            MetadataProviderRegistry((provider,)), storage_guard=guard
+        strategy = strategy_runner_from_configuration(
+            smoke_strategy_configuration(),
+            MetadataProviderRegistry((provider,)),
+            guard,
         ).run_path("/C/The.Matrix.1999.2160p.WEB-DL.mkv", live_metadata=True)
         calls_before_naming = provider.calls
         result = NamingPreviewService(

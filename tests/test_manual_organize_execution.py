@@ -937,7 +937,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(operator,),
                     manual_intent_service=intents,
                     manual_preview_service=previews,
@@ -995,7 +994,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(operator,),
                     manual_intent_service=intents,
                     manual_preview_service=previews,
@@ -1068,7 +1066,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(operator,),
                     manual_intent_service=intents,
                     manual_preview_service=previews,
@@ -1458,7 +1455,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(operator,),
                     manual_intent_service=intents,
                     manual_preview_service=previews,
@@ -1588,7 +1584,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(operator,),
                     manual_intent_service=intents,
                     manual_preview_service=previews,

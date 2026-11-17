@@ -267,7 +267,6 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                     target = _RecordingStorage("media-target", target_root)
                     api = MediaFlowApi(
                         runtime,
-                        None,
                         principals=(
                             ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                             ResolvedApiPrincipal(
@@ -1826,7 +1825,6 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             failing_api = MediaFlowApi(
                 value.runtime,
-                None,
                 principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
                 configuration_service=failing_managed,
                 bootstrap_document=document,

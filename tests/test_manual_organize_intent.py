@@ -547,7 +547,6 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(viewer, operator),
                     manual_intent_service=manual,
                 )

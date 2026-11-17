@@ -57,7 +57,6 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=principals,
             configuration_service=self.configuration,
         )
@@ -127,7 +126,6 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         try:
             api = MediaFlowApi(
                 runtime,
-                None,
                 principals=(
                     ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),
                 ),

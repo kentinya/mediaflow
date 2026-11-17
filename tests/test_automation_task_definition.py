@@ -63,7 +63,6 @@ def _api(runtime, managed, document, *, include_viewer: bool = True):
         )
     return MediaFlowApi(
         runtime,
-        None,
         principals=tuple(principals),
         configuration_service=managed,
         bootstrap_document=document,
@@ -538,7 +537,6 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 managed = ManagedConfigurationService(configuration)
                 api = MediaFlowApi(
                     runtime,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ResolvedApiPrincipal(

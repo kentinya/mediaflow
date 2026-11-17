@@ -303,6 +303,9 @@ class ConfigurationObjectService:
         "enabled",
         "options",
     }
+    #: Historical provider fields kept at the Storage object level.  They are
+    #: read back for an old projection and merged into ``options`` when that
+    #: object is edited, but they are never accepted on a new Save.
     _STORAGE_LEGACY_OPTION_FIELDS = {
         "tokenEnv",
         "baseUrl",
@@ -458,10 +461,7 @@ class ConfigurationObjectService:
     }
     _CLASSIFICATION_RESULT_FIELDS = {
         "mediaLibraryId",
-        "library",
         "path",
-        "category",
-        "subcategory",
     }
     _CLASSIFICATION_SAMPLE_FIELDS = {
         "path",
@@ -480,7 +480,6 @@ class ConfigurationObjectService:
         "id",
         "operation",
         "conflictStrategy",
-        "overwrite",
         "duplicateDetection",
         "rollback",
         "sourceDirectoryCleanup",
@@ -8702,15 +8701,13 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.RECOGNITION_TYPE: cls._RECOGNITION_TYPE_FIELDS,
             ConfigurationObjectKind.RECOGNITION_RULE: cls._RECOGNITION_RULE_FIELDS,
             ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: cls._RECOGNITION_TYPE_POLICY_FIELDS,
-            ConfigurationObjectKind.METADATA_POLICY: cls._METADATA_POLICY_FIELDS,
+            ConfigurationObjectKind.METADATA_POLICY: (cls._METADATA_POLICY_FIELDS - {"mediaType"}),
             ConfigurationObjectKind.NAMING_POLICY: cls._NAMING_POLICY_FIELDS,
             ConfigurationObjectKind.CLASSIFICATION_POLICY: cls._CLASSIFICATION_POLICY_FIELDS,
             ConfigurationObjectKind.ORGANIZE_POLICY: cls._ORGANIZE_POLICY_FIELDS,
             ConfigurationObjectKind.SCHEDULE: cls._AUTOMATION_TASK_DEFINITION_FIELDS,
             ConfigurationObjectKind.WEBHOOK_DEFINITION: cls._WEBHOOK_FIELDS,
         }[kind]
-        if kind is ConfigurationObjectKind.STORAGE:
-            allowed = allowed | cls._STORAGE_LEGACY_OPTION_FIELDS
         unknown = set(value).difference(allowed)
         if unknown:
             raise ValueError(f"{section} contains unsupported field {sorted(unknown)[0]!r}")
@@ -8760,7 +8757,6 @@ class ConfigurationObjectService:
                 "id": policy.policy_id,
                 "operation": policy.operation.value,
                 "conflictStrategy": policy.conflict_strategy.value,
-                "overwrite": policy.conflict_strategy is ConflictStrategy.OVERWRITE,
                 "duplicateDetection": cls._hash_document(policy),
                 "rollback": cls._rollback_document(policy),
                 "sourceDirectoryCleanup": cls._cleanup_document(policy),
@@ -8893,8 +8889,6 @@ class ConfigurationObjectService:
             return result
         if kind is ConfigurationObjectKind.METADATA_POLICY:
             provider_id = cls._metadata_identifier(value, "providerId", "MetadataPolicy")
-            # ``mediaType`` is a legacy input key: it is accepted and ignored.
-            # Only ``mediaQueryType`` controls lookup/identity types.
             raw_query_type = value.get("mediaQueryType")
             try:
                 query_type = MediaQueryType(raw_query_type) if raw_query_type is not None else None
@@ -9028,16 +9022,9 @@ class ConfigurationObjectService:
                 root = root_input
             raw_options = value.get("options")
             if raw_options is None:
-                storage_options = {
-                    key: copy.deepcopy(value[key])
-                    for key in cls._STORAGE_LEGACY_OPTION_FIELDS
-                    if key in value
-                }
+                storage_options = {}
             elif isinstance(raw_options, Mapping):
                 storage_options = copy.deepcopy(dict(raw_options))
-                for key in cls._STORAGE_LEGACY_OPTION_FIELDS:
-                    if key in value:
-                        storage_options.setdefault(key, copy.deepcopy(value[key]))
             else:
                 storage_options = raw_options
             try:
@@ -9259,23 +9246,7 @@ class ConfigurationObjectService:
             return raw
 
         media_library_id = bounded_string("mediaLibraryId", required=True, maximum=64)
-        # The legacy prefix is optional in the revised contract.  It is accepted
-        # and preserved when present so a historical document keeps its exact
-        # original destination meaning, and it is never required for a newly
-        # authored rule and never inferred from the MediaLibrary display name.
-        library = bounded_string("library", maximum=200)
         path_value = result.get("path")
-        if path_value is None and isinstance(result.get("category"), str):
-            # Legacy documents that only carried category/subcategory still
-            # resolve to the same explicit relative path they always meant.
-            legacy_category = bounded_string("category")
-            legacy_subcategory = bounded_string("subcategory")
-            if legacy_category:
-                path_value = (
-                    [legacy_category, legacy_subcategory]
-                    if legacy_subcategory
-                    else [legacy_category]
-                )
         if isinstance(path_value, list):
             if not path_value or len(path_value) > 32:
                 raise ClassificationError(
@@ -9299,10 +9270,6 @@ class ConfigurationObjectService:
                 ClassificationErrorCode.UNSAFE_PATH,
                 f"ClassificationPolicy rules[{index}].result.path is required",
             )
-        category = bounded_string("category") or (
-            path_parts[0] if path_parts and path_parts[0] else "path"
-        )
-        subcategory = bounded_string("subcategory")
 
         def condition_strings(field: str) -> tuple[str, ...]:
             raw = conditions.get(field, [])
@@ -9386,7 +9353,6 @@ class ConfigurationObjectService:
                 relative_path,
                 priority=priority,
                 enabled=enabled,
-                library=library,
                 media_types=media_types,
                 genres=condition_strings("genres"),
                 countries=condition_strings("countries"),
@@ -9426,15 +9392,6 @@ class ConfigurationObjectService:
             "mediaLibraryId": media_library_id or "",
             "path": list(path_parts),
         }
-        # A legacy prefix is preserved byte-for-byte in meaning so the stored
-        # historical contract keeps composing its original target.  A revised
-        # save never submits it, which is exactly what publishes the successor.
-        if library is not None:
-            normalized_result["library"] = library
-        if result.get("category") is not None:
-            normalized_result["category"] = category or ""
-        if subcategory is not None:
-            normalized_result["subcategory"] = subcategory
         normalized = {
             "id": rule_id,
             "name": name,

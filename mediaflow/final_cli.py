@@ -67,13 +67,14 @@ from mediaflow.application.task_runtime import KernelTaskCoordinator, Persistent
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import SchedulerConfigurationSnapshot
 from mediaflow.domain.automation_settings import engine_values_from_document
+from mediaflow.domain.configuration_input import reject_retired_configuration_input
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.resident_services import ResidentServiceWaiting
-from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
+from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
@@ -100,7 +101,6 @@ from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_managed_runtime_configuration,
     load_management_bootstrap,
-    load_minimal_management_bootstrap,
     load_runtime_configuration,
     with_managed_snapshot,
 )
@@ -2063,9 +2063,6 @@ class _ConfiguredPermissionAuthority:
     def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
         configuration = self._configuration_provider()
         definitions = tuple(getattr(configuration, "api_principals", ()))
-        token_env = getattr(configuration, "api_token_env", None)
-        if not definitions and token_env:
-            definitions = (ApiPrincipalDefinition("legacy-admin", token_env, (ApiRole.ADMIN,)),)
         expected = permission.value if isinstance(permission, ApiPermission) else str(permission)
         for definition in definitions:
             if definition.principal_id != principal_id:
@@ -3436,7 +3433,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         )
         app = MediaFlowApi(
             repository,
-            None,
             principals=principals,
             maximum_active_jobs=getattr(configuration, "automation_maximum_active_jobs", 100),
             system_status=(
@@ -3749,6 +3745,7 @@ def _configuration(
 ) -> RuntimeConfiguration:
     raw_document = _configuration_document(path)
     if not use_managed:
+        reject_retired_configuration_input(raw_document)
         return load_runtime_configuration(raw_document)
     bootstrap_database_path = _bootstrap_database_path(raw_document)
     try:
@@ -3788,9 +3785,10 @@ def _configuration(
                     digest=marker.get("digest") if marker else None,
                     reason="active_missing",
                 )
-        if is_minimal_management_bootstrap(raw_document):
-            return load_minimal_management_bootstrap(raw_document)
-        return load_runtime_configuration(raw_document)
+        raise RuntimeSnapshotUnavailable(
+            "no managed Active configuration exists; create and activate the first setup Draft",
+            reason="active_missing",
+        )
     if active.schema_version != MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION:
         raise RuntimeSnapshotUnavailable(
             f"managed configuration snapshot {active.revision_id!r} schema is unsupported",

@@ -38,6 +38,67 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_destination_activation import RemoteDestinationFake
 from tests.test_configuration_objects import example_document, request
 
+_LEGACY_STORAGE_OPTIONS = {
+    "tokenEnv",
+    "baseUrl",
+    "usernameEnv",
+    "passwordEnv",
+    "host",
+    "share",
+    "domain",
+    "port",
+    "operationTimeout",
+    "accessKeyEnv",
+    "secretKeyEnv",
+    "sessionTokenEnv",
+    "bucket",
+    "endpoint",
+    "region",
+    "forcePathStyle",
+    "connectTimeout",
+    "requestTimeout",
+    "maxConcurrency",
+    "maxRetries",
+    "pageSize",
+    "multipartThreshold",
+    "multipartPartSize",
+}
+
+
+def _canonical_document(document: dict) -> dict:
+    """Build the current input shape for this precheck journey."""
+
+    value = copy.deepcopy(document)
+    for storage in value.get("storages", []):
+        options = storage.get("options")
+        options = dict(options) if isinstance(options, dict) else {}
+        for field in _LEGACY_STORAGE_OPTIONS:
+            if field in storage:
+                options.setdefault(field, storage.pop(field))
+        if options:
+            storage["options"] = options
+    for policy in value.get("organizePolicies", []):
+        policy.pop("overwrite", None)
+    for policy in value.get("classificationPolicies", []):
+        for rule in policy.get("rules", []):
+            result = rule.get("result")
+            if not isinstance(result, dict):
+                continue
+            path = result.get("path")
+            parts = (
+                list(path)
+                if isinstance(path, list)
+                else (path.split("/") if isinstance(path, str) else [])
+            )
+            prefix = result.pop("library", None)
+            if isinstance(prefix, str) and prefix.strip():
+                parts = [part for part in prefix.split("/") if part] + parts
+            result.pop("category", None)
+            result.pop("subcategory", None)
+            if parts:
+                result["path"] = parts
+    return value
+
 
 class ManagedDestinationPrecheckTests(unittest.TestCase):
     @staticmethod
@@ -76,7 +137,9 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
         repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
         managed = ManagedConfigurationService(repository)
         objects = ConfigurationObjectService(managed)
-        draft = managed.import_draft(document or self._document(root), actor="operator")
+        draft = managed.import_draft(
+            _canonical_document(document or self._document(root)), actor="operator"
+        )
         return repository, managed, objects, draft
 
     def _run(self, objects, draft, sample=None):
@@ -1328,7 +1391,6 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1874,7 +1936,6 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1948,7 +2009,6 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertEqual((status, response["error"]["code"]), (400, "invalid_request"))
                 unavailable = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

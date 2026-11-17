@@ -254,7 +254,6 @@ def history_journey(
             run_once = AutomationRunOnceService(discovery, previews, clock=case.clock)
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                     ResolvedApiPrincipal(

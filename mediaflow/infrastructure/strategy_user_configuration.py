@@ -40,7 +40,6 @@ from mediaflow.domain.recognition import (
     RecognitionType,
     RecognitionTypePolicy,
 )
-from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
 
 @dataclass(frozen=True)
@@ -73,7 +72,7 @@ def load_strategy_configuration(
     if document.get("version", 1) != 1:
         raise ValueError("unsupported strategy configuration version")
     if base is None and not require_complete:
-        base = development_strategy_configuration()
+        raise ValueError("strategy configuration requires an explicit base or a complete document")
     types = tuple(_recognition_type(item) for item in _list(document, "recognitionTypes"))
     type_by_id = {item.type_id: item for item in types}
     if len(type_by_id) != len(types):

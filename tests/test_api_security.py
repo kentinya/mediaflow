@@ -10,9 +10,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -77,9 +81,11 @@ class ApiSecurityTests(unittest.TestCase):
 
         legacy = copy.deepcopy(document)
         legacy["api"] = {"tokenEnv": "LEGACY_API_TOKEN"}
-        loaded_legacy = load_runtime_configuration(legacy)
-        with patch.dict(os.environ, {"LEGACY_API_TOKEN": "legacy-secret"}, clear=True):
-            self.assertEqual(loaded_legacy.resolve_api_principals()[0].principal_id, "legacy-admin")
+        with (
+            patch.dict(os.environ, {"LEGACY_API_TOKEN": "legacy-secret"}, clear=True),
+            self.assertRaisesRegex(ValueError, "api.tokenEnv is retired"),
+        ):
+            load_runtime_configuration(legacy)
 
         invalid_values = []
         mixed = copy.deepcopy(document)
@@ -125,7 +131,6 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=principals(),
                 )
                 self.assertEqual(request(api, "GET", "/api/v1/tasks")[0], 401)
@@ -181,7 +186,7 @@ class ApiSecurityTests(unittest.TestCase):
     def test_authenticated_principal_read_returns_only_current_principal_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
+                api = MediaFlowApi(repository, principals=principals())
                 status, document = request(
                     api,
                     "GET",
@@ -199,7 +204,7 @@ class ApiSecurityTests(unittest.TestCase):
     def test_authentication_compares_against_every_configured_principal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
+                api = MediaFlowApi(repository, principals=principals())
                 import hmac
 
                 with patch(
@@ -214,7 +219,7 @@ class ApiSecurityTests(unittest.TestCase):
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
+                api = MediaFlowApi(repository, principals=principals())
                 request(api, "GET", "/api/v1/tasks", token="wrong-secret")
                 request(api, "GET", "/api/v1/auth/principal", token="viewer-token")
                 request(api, "GET", "/api/v1/path-token-secret", token="viewer-token")
@@ -237,10 +242,36 @@ class ApiSecurityTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(database)}
             document["storages"][0]["rootPath"] = str(Path(directory, "missing-source"))
             document["storages"][1]["rootPath"] = str(Path(directory, "missing-target"))
+            document.pop("api", None)
             config = Path(directory, "config.json")
             config.write_text(json.dumps(document), encoding="utf-8")
+            bootstrap = {
+                "persistence": {"databasePath": str(database)},
+                "api": {
+                    "principals": [
+                        {
+                            "id": "admin",
+                            "tokenEnv": "MEDIAFLOW_API_TOKEN",
+                            "roles": ["admin"],
+                        }
+                    ]
+                },
+            }
+            with SQLiteConfigurationRepository(database) as configuration_repository:
+                service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(database),
+                    bootstrap_document=bootstrap,
+                )
+                draft = service.import_draft(document, actor="tester")
+                validated = service.validate(draft.revision_id, actor="tester")
+                service.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="tester",
+                )
             with SQLiteTaskRepository(database) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
+                api = MediaFlowApi(repository, principals=principals())
                 request(api, "GET", "/api/v1/tasks", token="viewer-token")
             output, error = io.StringIO(), io.StringIO()
             self.assertEqual(
@@ -263,7 +294,6 @@ class WorkerRouteSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=principals(),
                 )
                 for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
@@ -277,7 +307,6 @@ class WorkerRouteSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=principals(),
                 )
                 for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
@@ -302,7 +331,6 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=principals(),
                 )
                 status, doc = request(api, "GET", "/api/v1/workers", token="viewer-token")
@@ -353,7 +381,7 @@ class RetiredAutomationPreviewSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "runtime.sqlite3"
             with SQLiteTaskRepository(database) as repository:
-                api = MediaFlowApi(repository, None, principals=principals())
+                api = MediaFlowApi(repository, principals=principals())
                 for method, path, token in (
                     ("GET", "/api/v1/automation/task-definitions/task/previews", "viewer-token"),
                     ("POST", "/api/v1/automation/task-definitions/task/preview", "viewer-token"),

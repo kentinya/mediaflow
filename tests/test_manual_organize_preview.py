@@ -1162,7 +1162,6 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(viewer, operator),
                     manual_intent_service=intents,
                     manual_preview_service=previews,

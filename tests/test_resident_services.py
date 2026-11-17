@@ -680,7 +680,6 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
 
         return MediaFlowApi(
             task_repository,
-            None,
             principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
             configuration_service=service,
             bootstrap_document=self.document,

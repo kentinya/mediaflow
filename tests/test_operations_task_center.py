@@ -120,7 +120,7 @@ class _TaskCenterTestCase(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
         self.coordinator = PersistentTaskCoordinator(self.repository, self.repository)
-        self.api = MediaFlowApi(self.repository, None, principals=(VIEWER, OTHER))
+        self.api = MediaFlowApi(self.repository, principals=(VIEWER, OTHER))
 
     def tearDown(self) -> None:
         self.repository.close()

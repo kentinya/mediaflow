@@ -119,7 +119,6 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -624,7 +623,6 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             # still answers truthfully and mutates nothing.
             restarted = MediaFlowApi(
                 reopened,
-                None,
                 principals=(
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
                     ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
@@ -765,7 +763,6 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             self.addCleanup(reopened.close)
             restarted = MediaFlowApi(
                 reopened,
-                None,
                 principals=(
                     ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ),
@@ -1083,7 +1080,6 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
                 self.addCleanup(reopened.close)
                 restarted = MediaFlowApi(
                     reopened,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

@@ -1153,6 +1153,22 @@ def _valid_admission_request_id(value: object) -> bool:
     return str(parsed) == value
 
 
+def _historical_notification_event_type(value: str) -> NotificationEventType:
+    """Read a persisted delivery row whose durable name predates Task event names.
+
+    New configuration and new deliveries only use the current event literals.
+    An already persisted delivery keeps its original row and payload; this
+    narrow read-time mapping is not accepted as new configuration input.
+    """
+
+    historical = {
+        "job.completed": NotificationEventType.TASK_COMPLETED,
+        "job.failed": NotificationEventType.TASK_FAILED,
+        "job.cancelled": NotificationEventType.TASK_CANCELLED,
+    }
+    return historical.get(value) or NotificationEventType(value)
+
+
 class SQLiteTaskRepository:
     """Durable task/result/lock adapter sharing the configured runtime SQLite database."""
 
@@ -21592,7 +21608,7 @@ class SQLiteTaskRepository:
             row["delivery_id"],
             row["webhook_id"],
             row["event_id"],
-            NotificationEventType(row["event_type"]),
+            _historical_notification_event_type(row["event_type"]),
             row["body"],
             NotificationDeliveryStatus(row["status"]),
             row["attempts"],

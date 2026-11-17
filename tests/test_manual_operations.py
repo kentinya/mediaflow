@@ -148,7 +148,6 @@ def _api(
     )
     return MediaFlowApi(
         repository,
-        None,
         principals=(principal,),
         system_status=snapshot,
         configuration_snapshot_id="active-snap",

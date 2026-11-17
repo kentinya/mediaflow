@@ -529,7 +529,6 @@ class _DiscoveryFixture(unittest.TestCase):
                 )
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     *principals,
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),

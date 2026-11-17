@@ -173,7 +173,7 @@ describe("classification destination authoring", () => {
     expect(result.library).toBeUndefined();
   });
 
-  it("shows a stored legacy prefix and converts only on explicit intent", async () => {
+  it("keeps the complete historical destination path without a migration action", async () => {
     const saves: Record<string, unknown>[] = [];
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
@@ -182,31 +182,26 @@ describe("classification destination authoring", () => {
       name: "编辑分类规则 · Movie classification",
     });
 
-    // The legacy contract is stated inside the explicit rule editor, together
-    // with the proposed revised routing, before any deliberate conversion.
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "编辑规则 1" }));
-    const notice = await screen.findByRole("status");
-    expect(notice).toHaveTextContent("旧版前缀");
-    expect(notice).toHaveTextContent("Movies");
-    expect(notice).toHaveTextContent("/Media");
-    expect(notice).toHaveTextContent("电影/华语");
-
-    await user.click(
-      screen.getByRole("button", { name: "移除规则 1 的旧版目标前缀" }),
-    );
+    // The retired prefix notice and its dedicated conversion button no longer
+    // exist; the ordinary destination editor is the only path.
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /移除.*旧版目标前缀/ }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saves.length).toBe(1));
     const submitted = saves[0]?.object as Record<string, unknown>;
     const rules = submitted.rules as Record<string, unknown>[];
     const result = rules[0]?.result as Record<string, unknown>;
-    // Removal is an explicit null intent, never a silently omitted key.
-    expect(result.library).toBeNull();
-    // The existing explicit path is preserved rather than prefixed.
-    expect(result.path).toEqual(["电影", "华语"]);
+    // The historical prefix is folded into the complete current path, so the
+    // published target is unchanged and the retired key is gone.
+    expect(result.library).toBeUndefined();
+    expect(result.path).toEqual(["Movies", "电影", "华语"]);
   });
 
-  it("preserves a legacy prefix when the operator makes an unrelated edit", async () => {
+  it("preserves the historical destination on an unrelated edit", async () => {
     const saves: Record<string, unknown>[] = [];
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
@@ -216,8 +211,6 @@ describe("classification destination authoring", () => {
     });
 
     const user = userEvent.setup();
-    // A cosmetic edit to the policy itself must not require opening (or
-    // converting) any internal rule.
     const description = screen.getByLabelText("描述");
     await user.clear(description);
     await user.type(description, "cosmetic only");
@@ -226,8 +219,7 @@ describe("classification destination authoring", () => {
     const submitted = saves[0]?.object as Record<string, unknown>;
     const rules = submitted.rules as Record<string, unknown>[];
     const result = rules[0]?.result as Record<string, unknown>;
-    // The unchanged legacy contract travels with the object, so an unrelated
-    // Save cannot switch the destination contract.
-    expect(result.library).toBe("Movies");
+    expect(result.library).toBeUndefined();
+    expect(result.path).toEqual(["Movies", "电影", "华语"]);
   });
 });

@@ -21,6 +21,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.managed_config_fixture import publish_managed_document
 
 
 def example_document():
@@ -132,7 +133,7 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         snapshot = build_configuration_snapshot(load_runtime_configuration(example_document()))
         repository = AuditOnlyRepository()
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
-        api = MediaFlowApi(repository, None, principals=(viewer,), system_status=snapshot)
+        api = MediaFlowApi(repository, principals=(viewer,), system_status=snapshot)
         self.assertEqual(request(api, token=None)[0], 401)
         self.assertEqual(request(api, method="POST")[0], 405)
         self.assertEqual(request(api, query="paths=true")[0], 400)
@@ -177,6 +178,7 @@ class ConfigurationSnapshotTests(unittest.TestCase):
             source["historyPath"] = str(Path(directory, "history.jsonl"))
             config = Path(directory, "strategy.json")
             config.write_text(json.dumps(source), encoding="utf-8")
+            publish_managed_document(source)
             server = Server()
 
             def make_server(host, port, app):

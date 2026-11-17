@@ -75,7 +75,6 @@ class ManagementSetupTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.task_repository,
-            None,
             principals=(self.admin, self.viewer),
             configuration_service=self.service,
             bootstrap_document=self.bootstrap,
@@ -373,7 +372,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(document["mediaLibraries"], [])
         self.assertNotIn("schedules", document["automation"])
         self.assertEqual(document["automationTaskDefinitions"], [])
-        self.assertEqual(document["notifications"]["webhooks"], [])
+        self.assertEqual(document["webhooks"], [])
         self.assertNotIn("remoteExecution", document["api"])
         self.assertNotIn("rootPath", json.dumps(document))
         self.assertNotIn("historyPath", json.dumps(document))

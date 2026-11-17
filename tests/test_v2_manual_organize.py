@@ -332,7 +332,6 @@ class _JourneyFixtureMixin:
                 )
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal(
                         "operator",
@@ -2782,7 +2781,6 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             )
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(
                     ResolvedApiPrincipal(
                         "operator",
@@ -3227,7 +3225,6 @@ class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
             repository = SQLiteTaskRepository(runtime_path)
             api = MediaFlowApi(
                 repository,
-                None,
                 principals=(self.OPERATOR,),
                 configuration_service=service,
             )

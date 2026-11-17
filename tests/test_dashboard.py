@@ -30,6 +30,7 @@ from unittest.mock import patch
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from tests.managed_config_fixture import publish_managed_document
 
 READER_TOKEN = "retirement-probe-reader-token"
 HEALTH_TIMEOUT_SECONDS = 30.0
@@ -59,6 +60,7 @@ def _write_configuration(root: Path, storages: tuple[Path, ...]) -> Path:
     }
     path = root / "config.json"
     path.write_text(json.dumps(document), encoding="utf-8")
+    publish_managed_document(document)
     return path
 
 

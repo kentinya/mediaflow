@@ -352,7 +352,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
         self.assertEqual(self.repository.list_operational_logs_for_plan(plan_a), ())
 
         # Real API: standalone Tasks are their own runs (run_id == task_id).
-        api = MediaFlowApi(self.repository, None, principals=(OPERATOR,))
+        api = MediaFlowApi(self.repository, principals=(OPERATOR,))
         documents = {}
         for label, pass_ in (("a", first), ("b", second)):
             code, evidence, _ = request(
@@ -425,7 +425,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
         claimed = {record.log_id for record in logs_a} | {record.log_id for record in logs_b}
         self.assertFalse(claimed & unlinked_ids)
 
-        api = MediaFlowApi(self.repository, None, principals=(OPERATOR,))
+        api = MediaFlowApi(self.repository, principals=(OPERATOR,))
         for pass_, other_task in ((first, task_b), (second, task_a)):
             code, evidence, _ = request(
                 api,
@@ -554,7 +554,7 @@ class SeededSharedPlanAttributionTests(unittest.TestCase):
         self.database = Path(self.directory.name, "runtime.sqlite3")
         self.repository = SQLiteTaskRepository(self.database)
         self.addCleanup(self.repository.close)
-        self.api = MediaFlowApi(self.repository, None, principals=(VIEWER, OPERATOR))
+        self.api = MediaFlowApi(self.repository, principals=(VIEWER, OPERATOR))
         self.coordinator = PersistentTaskCoordinator(self.repository, self.repository)
 
     def _run_with_item(self, item_id: str) -> str:

@@ -540,7 +540,6 @@ class StorageSetupCheckTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(admin, viewer),
                     configuration_service=managed,
                     storage_adapters={"smb-check": FakeStorage("smb-check")},

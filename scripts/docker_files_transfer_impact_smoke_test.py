@@ -111,7 +111,11 @@ def prepare_transfer_config(root: Path, admin_token: str) -> tuple[Path, Path, P
     target_root.chmod(0o777)
 
     generated = subprocess.check_output(
-        [sys.executable, str(ROOT / "scripts" / "make_deployment_config.py")],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "make_deployment_config.py"),
+            "--configuration",
+        ],
         cwd=ROOT,
         text=True,
     )

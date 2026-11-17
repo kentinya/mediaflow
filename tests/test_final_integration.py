@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import tempfile
 import unittest
@@ -15,7 +14,7 @@ from mediaflow.application.strategy_test import (
     strategy_runner_from_configuration,
 )
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.cli import main
+from mediaflow.cli import render_strategy_result
 from mediaflow.domain.duplicates import DuplicateStatus, HashMode, HashPolicy
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -142,17 +141,16 @@ class FinalIntegrationTests(unittest.TestCase):
             )
             self.assertTrue(runtime.strategy.naming_policies)
             self.assertTrue(runtime.strategy.classification_policies)
-            config_path = Path(source_root, "runtime.json")
-            config_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-            output, errors = io.StringIO(), io.StringIO()
-            code = main(
-                ["--config", str(config_path), "analyze", str(source), "--offline"],
-                stdout=output,
-                stderr=errors,
+            result = strategy_runner_from_configuration(runtime.strategy).run_path(
+                str(source.resolve()),
+                live_metadata=False,
+                resource_library_id="movies",
+                storage_id="source",
+                storage_path=source.name,
             )
-            self.assertEqual(0, code)
-            self.assertEqual("", errors.getvalue())
-            self.assertIn("PARSER", output.getvalue())
+            output = render_strategy_result(result)
+            self.assertIn("PARSER", output)
+            self.assertIn("Storage mutations: 0", output)
             self.assertTrue(source.exists())
 
     def test_complete_batch_dryrun_execute_history_and_failure_isolation(self) -> None:

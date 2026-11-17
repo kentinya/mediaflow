@@ -173,7 +173,6 @@ def _media_library_api(
 ) -> MediaFlowApi:
     return MediaFlowApi(
         task_repository,
-        None,
         principals=(
             ResolvedApiPrincipal(
                 "viewer",

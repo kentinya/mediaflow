@@ -85,11 +85,3 @@ class RecognitionTypePolicyResolver:
             organize_policy_id=policy.organize_policy_id,
             type_policy_id=policy.policy_id,
         )
-
-
-class RecognitionTypePolicyRegistry(RecognitionTypePolicyResolver):
-    """Backward-compatible bootstrap name for the Phase 7 resolver."""
-
-    def resolve(self, recognition_type: RecognitionType) -> RecognitionTypePolicy:
-        super().resolve(recognition_type)
-        return self._policies[recognition_type.type_id]

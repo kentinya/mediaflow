@@ -417,7 +417,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 first = activate_document(service, first_document)
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -480,7 +479,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 first = activate_document(service, document)
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -757,7 +755,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -814,14 +811,13 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(admin, viewer),
                     configuration_service=service,
                     bootstrap_document=document,
                 )
                 status, body = request(api, "/api/v1/configuration", token="viewer-token")
                 self.assertEqual(status, 200)
-                self.assertEqual(body["authority"], "JSON_BOOTSTRAP")
+                self.assertEqual(body["authority"], "MANAGEMENT_BOOTSTRAP")
                 payload = json.dumps({"source": "current"}).encode()
                 status, draft_body = request(
                     api, "/api/v1/configuration/drafts", method="POST", body=payload
@@ -874,7 +870,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(admin,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -1151,7 +1146,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1230,7 +1224,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             ):
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1288,7 +1281,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             ):
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1336,7 +1328,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             ):
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1394,7 +1385,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             ):
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1420,7 +1410,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             ):
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1550,7 +1539,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 first = activate_document(service, document)
                 api = MediaFlowApi(
                     task_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1562,7 +1550,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 changed = json.loads(json.dumps(document))
                 changed["historyPath"] = str(root / "changed.jsonl")
                 changed["automation"]["maximumActiveJobs"] = 7
-                changed["automation"]["staleJobAgeSeconds"] = 7200
                 changed["metadataPolicies"][0]["language"] = "ja-JP"
                 active = activate_document(service, changed)
 
@@ -1668,7 +1655,15 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 json.dumps(
                     {
                         "persistence": {"databasePath": str(runtime)},
-                        "api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"},
+                        "api": {
+                            "principals": [
+                                {
+                                    "id": "admin",
+                                    "tokenEnv": "MEDIAFLOW_API_TOKEN",
+                                    "roles": ["admin"],
+                                }
+                            ]
+                        },
                         "staleWorkflowContent": {"invalid": True},
                     }
                 ),
@@ -1676,6 +1671,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             )
             server = Server()
             replacement_document = json.loads(json.dumps(document))
+            replacement_document.pop("api", None)
             replacement_document["automation"]["maximumActiveJobs"] = 2
             server.replacement_document = json.dumps(replacement_document)
             server.assertions = []
@@ -2007,6 +2003,11 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 managed = ManagedConfigurationService(
                     configuration_repository, bootstrap_database_path=str(runtime)
                 )
+                # First setup activates the empty baseline; enabled automation is
+                # introduced by a later successor under the current principal.
+                baseline_document = json.loads(json.dumps(document))
+                baseline_document["automationTaskDefinitions"] = []
+                activate_document(managed, baseline_document, actor="local-admin")
                 # Publish as the real configured remote principal so the
                 # Worker proves the publisher's current permission instead of
                 # mistaking a trusted local publication for that proof.
@@ -2381,7 +2382,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(server.first_job["configuration_snapshot_digest"], first_digest)
                 self.assertEqual(
                     first_document["classificationPolicies"][0]["rules"][0]["result"]["path"],
-                    ["Anime"],
+                    ["Movies", "Anime"],
                 )
                 self.assertEqual(
                     second_document["classificationPolicies"][0]["rules"][0]["result"]["path"],
@@ -2607,7 +2608,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     self.assertEqual(task_repository.list_results(queued.task_id), ())
                     api = MediaFlowApi(
                         task_repository,
-                        None,
                         principals=(
                             ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ),

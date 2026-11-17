@@ -738,7 +738,6 @@ class FileMediaDetailTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 api = MediaFlowApi(
                     repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal(
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})

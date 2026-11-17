@@ -388,9 +388,7 @@ function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
         ? "空配置已生效"
         : activeHealthy
           ? "配置已生效"
-          : data?.authority === "JSON_BOOTSTRAP"
-            ? "尚未激活托管配置"
-            : "等待配置";
+          : "等待配置";
   const statusTone = activeUnavailable
     ? "error"
     : setupRequired
@@ -2595,18 +2593,6 @@ export function ConfigurationPage() {
                 </p>
               </StatusBanner>
             )}
-            {!model.setupRequired &&
-              !model.activeHealthy &&
-              !model.activeUnavailable &&
-              model.authority === "JSON_BOOTSTRAP" && (
-                <StatusBanner variant="info" title="尚未激活托管配置">
-                  <p>
-                    当前使用部署提供的 JSON
-                    配置；它不是托管生效配置，也不会被这里当作
-                    Active。需要托管配置时，请从可用的草稿开始验证并激活。
-                  </p>
-                </StatusBanner>
-              )}
             <AutomationSettingsPanel />
             <section
               className="mf-settings-advanced"

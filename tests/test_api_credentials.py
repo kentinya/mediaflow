@@ -142,7 +142,7 @@ class ApiCredentialTests(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertIn("MEDIAFLOW_API_TOKEN | ENABLED | UNSET", missing.getvalue())
 
-    def test_legacy_credential_status_is_supported_without_secret_output(self) -> None:
+    def test_legacy_single_token_credentials_are_rejected_without_secret_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             document = json.loads(Path("config/strategy.example.json").read_text())
             document["api"] = {"tokenEnv": "LEGACY_API_TOKEN"}
@@ -150,16 +150,16 @@ class ApiCredentialTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with patch.dict(os.environ, {"LEGACY_API_TOKEN": "legacy-secret"}, clear=True):
                 output = io.StringIO()
+                error = io.StringIO()
                 status = final_main(
                     ["--config", str(path), "api", "credentials", "check"],
                     stdout=output,
-                    stderr=io.StringIO(),
+                    stderr=error,
                 )
-            self.assertEqual(status, 0)
-            self.assertIn(
-                "legacy-admin | admin | LEGACY_API_TOKEN | ENABLED | SET", output.getvalue()
-            )
-            self.assertNotIn("legacy-secret", output.getvalue())
+            self.assertEqual(status, 2)
+            self.assertIn("api.tokenEnv is retired", error.getvalue())
+            self.assertEqual(output.getvalue(), "")
+            self.assertNotIn("legacy-secret", error.getvalue())
 
     def test_non_loopback_requires_explicit_insecure_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -235,7 +235,7 @@ class ApiCredentialTests(unittest.TestCase):
                     ResolvedApiPrincipal("one", "first-token", frozenset({ApiPermission.READ})),
                     ResolvedApiPrincipal("two", "second-token", frozenset({ApiPermission.READ})),
                 )
-                api = MediaFlowApi(repository, None, principals=principals)
+                api = MediaFlowApi(repository, principals=principals)
                 for authorization in (
                     None,
                     "Basic value",

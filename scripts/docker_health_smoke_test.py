@@ -177,7 +177,13 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
     with tempfile.TemporaryDirectory(prefix=f"{HEALTH_PROJECT_PREFIX}-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_files(root, token)
+        (
+            config_file,
+            environment_file,
+            source_root,
+            target_root,
+            activation_file,
+        ) = prepare_files(root, token)
         environment = compose_environment(
             root,
             image,
@@ -232,7 +238,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             worker_identity = service_records(command, environment)["worker"].get("ID")
 
             print("Activating the managed runtime through the API...")
-            active = activate_runtime(base, token, config_file)
+            active = activate_runtime(base, token, activation_file)
             status, management = json_request(base, "/api/v1/management/readiness", token)
             if (
                 status != 200
@@ -250,7 +256,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
                 )
 
             wait_until(worker_ready, timeout=90.0, description="processing Worker ready")
-            readiness_assertions(base, token, config_file)
+            readiness_assertions(base, token, activation_file)
             if service_records(command, environment)["worker"].get("ID") != worker_identity:
                 raise RuntimeError("Worker container was replaced or restarted after activation")
 

@@ -639,7 +639,6 @@ class DirectFileOperationsTests(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -2628,7 +2627,6 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.addCleanup(reopened.close)
             restarted_api = MediaFlowApi(
                 reopened,
-                None,
                 principals=(
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
                 ),

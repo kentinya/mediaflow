@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.domain.configuration_input import reject_retired_configuration_input
 from mediaflow.domain.configuration_integrity import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     canonical_document_digest,
@@ -258,8 +259,8 @@ class ManagedConfigurationService:
         except Exception:
             revisions = ()
         setup_draft = self._first_setup_draft(revisions)
-        setup_required = self._management_only and not managed_activation
-        if self._management_only and not managed_activation:
+        setup_required = not managed_activation
+        if setup_required:
             authority = ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
             status_health = "SETUP_REQUIRED"
             runtime_configured = False
@@ -267,13 +268,10 @@ class ManagedConfigurationService:
             authority = ConfigurationAuthority.MANAGED.value
             status_health = health
             runtime_configured = active is not None and health == "HEALTHY"
-        else:
-            authority = ConfigurationAuthority.JSON_BOOTSTRAP.value
-            status_health = "BOOTSTRAP"
-            # Complete JSON bootstrap remains a supported pre-activation
-            # compatibility runtime.  It is distinct from management-only
-            # setup, which explicitly has no business runtime.
-            runtime_configured = True
+        else:  # pragma: no cover - setup_required covers every no-Active state
+            authority = ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
+            status_health = "SETUP_REQUIRED"
+            runtime_configured = False
         runtime_ready = managed_activation and runtime_configured
         capabilities = _business_capability_status(active.document if active is not None else None)
         empty_active = (
@@ -314,7 +312,7 @@ class ManagedConfigurationService:
             "setupDraft": setup_draft.summary() if setup_draft is not None else None,
             "setupBlockers": _first_setup_blockers() if setup_required else [],
             "nextAction": next_action,
-            "bootstrapMode": "MANAGEMENT_ONLY" if self._management_only else "COMPATIBILITY",
+            "bootstrapMode": "MANAGEMENT_ONLY",
         }
 
     def detail(self, revision_id: str) -> dict[str, object]:
@@ -374,6 +372,17 @@ class ManagedConfigurationService:
             return document
         return self._loader(copy.deepcopy(document))
 
+    def _base_document(self, revision: ManagedConfigurationRevision) -> object:
+        """The immutable document a new publication is derived from, if any."""
+
+        if not revision.base_active_revision_id:
+            return None
+        try:
+            base = self._repository.get_revision(revision.base_active_revision_id)
+        except Exception:
+            return None
+        return base.document if base is not None else None
+
     def _bind_deployment_authority(self, document: dict[str, object]) -> dict[str, object]:
         """One fail-closed deployment-authority boundary for a submitted document.
 
@@ -397,6 +406,7 @@ class ManagedConfigurationService:
         source: str = "manual",
     ) -> ManagedConfigurationRevision:
         normalized = _canonical_document(document)
+        reject_retired_configuration_input(normalized)
         # Portable exports and displayed JSON omit deployment startup
         # authority; bind whatever was omitted back to this deployment before
         # the Draft is persisted so an imported/recovered document can never
@@ -438,7 +448,11 @@ class ManagedConfigurationService:
             "draft_import",
             actor,
             {**_document_evidence(revision), "source": _safe_source(source)},
-            before={"authority": "MANAGED" if active else "JSON_BOOTSTRAP"},
+            before={
+                "authority": (
+                    "MANAGED" if active else ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
+                )
+            },
         )
         create = getattr(self._repository, "create_revision_with_audit", None)
         if callable(create):
@@ -727,6 +741,9 @@ class ManagedConfigurationService:
                 if _digest(revision.document) != revision.digest:
                     raise ValueError("configuration Draft digest does not match its payload")
                 reject_retired_remote_execution_input(revision.document)
+                reject_retired_configuration_input(
+                    revision.document, baseline=self._base_document(revision)
+                )
                 self._loader(copy.deepcopy(revision.document))
             except Exception as error:
                 errors = (_bounded_error(error),)
@@ -795,6 +812,7 @@ class ManagedConfigurationService:
                 current_digest=revision.digest,
             )
         normalized = _canonical_document(document)
+        reject_retired_configuration_input(normalized, baseline=revision.document)
         # The advanced whole-document editor round-trips the bounded portable
         # projection (deployment authority excluded); rebind whatever authority
         # the submitted document omits so validation and runtime loading keep
@@ -885,6 +903,9 @@ class ManagedConfigurationService:
         # evidence to the digest and prevents stale validation from being activated.
         try:
             reject_retired_remote_execution_input(revision.document)
+            reject_retired_configuration_input(
+                revision.document, baseline=self._base_document(revision)
+            )
             self._loader(copy.deepcopy(revision.document))
         except Exception as error:
             raise ConfigurationActivationConflict(
@@ -922,7 +943,10 @@ class ManagedConfigurationService:
                 "automationTaskDefinitions": _automation_definition_evidence(active.document),
             }
             if active is not None
-            else {"authority": "JSON_BOOTSTRAP", "revisionId": None}
+            else {
+                "authority": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
+                "revisionId": None,
+            }
         )
         audit = self._audit(
             revision,
@@ -1084,7 +1108,10 @@ class ManagedConfigurationService:
         candidate: dict[str, object],
     ) -> dict[str, object]:
         if active is None:
-            return {"changedSections": sorted(candidate), "baseline": "JSON_BOOTSTRAP"}
+            return {
+                "changedSections": sorted(candidate),
+                "baseline": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
+            }
         changed = sorted(
             key for key in set(active).union(candidate) if active.get(key) != candidate.get(key)
         )
@@ -1095,8 +1122,6 @@ def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
     """Build the bounded, inactive document used by a fresh setup Draft."""
 
     api: dict[str, object] = {}
-    if bootstrap.api_token_env:
-        api["tokenEnv"] = bootstrap.api_token_env
     if bootstrap.api_principals:
         api["principals"] = [
             {
@@ -1136,6 +1161,7 @@ def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
         "recognitionRules": [],
         "recognitionTypePolicies": [],
         "automationTaskDefinitions": [],
+        "webhooks": [],
         "automation": {
             "workerPollSeconds": 2,
             "schedulerPollSeconds": 5,
@@ -1144,7 +1170,6 @@ def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
         "notifications": {
             "pollSeconds": 5,
             "deliveryLeaseSeconds": 300,
-            "webhooks": [],
         },
         "operationalLogging": {
             "enabled": False,

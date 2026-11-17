@@ -36,7 +36,7 @@ class ReleaseValidationTests(unittest.TestCase):
         project = document["project"]
         self.assertEqual(project["requires-python"], ">=3.11,<3.14")
         self.assertEqual(project["scripts"]["mediaflow"], "mediaflow.cli:main")
-        self.assertEqual(project["scripts"]["strategy-test"], "mediaflow.cli:main")
+        self.assertNotIn("strategy-test", project["scripts"])
         self.assertEqual(
             document["tool"]["setuptools"]["packages"]["find"]["include"], ["mediaflow*"]
         )

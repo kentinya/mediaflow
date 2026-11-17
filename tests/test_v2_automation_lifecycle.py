@@ -119,7 +119,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
@@ -340,7 +339,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             document["organizePolicies"].append(policy)
         document["organizePolicies"][-1].update(
             conflictStrategy="overwrite",
-            overwrite=True,
             sourceDirectoryCleanup={"mode": "empty"},
         )
         draft = self.managed.import_draft(document, actor="tester")
@@ -643,7 +641,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         # A runtime/API reopen must not change the durable answer.
         reopened = MediaFlowApi(
             self.runtime,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
@@ -1040,7 +1037,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         # A runtime/API reopen must not change the durable answer.
         reopened = MediaFlowApi(
             self.runtime,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
@@ -1432,7 +1428,6 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             )
             api = MediaFlowApi(
                 runtime,
-                None,
                 principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
                 configuration_service=managed,
                 bootstrap_document=_document(root),
@@ -1501,7 +1496,6 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime,
-            None,
             principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
             configuration_service=self.managed,
             bootstrap_document=self.document,

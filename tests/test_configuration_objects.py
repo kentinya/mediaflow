@@ -8,10 +8,12 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier, Event, current_thread
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -20,6 +22,7 @@ from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.domain.configuration_integrity import canonical_document_digest
 from mediaflow.domain.configuration_management import (
     CONFIGURATION_SETUP_CHECK_PATH_LIMIT,
     CONFIGURATION_STRATEGY_RESULT_LIMIT,
@@ -28,6 +31,8 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectReferenced,
     ConfigurationSetupCheckStatus,
     ConfigurationVersionConflict,
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
     portable_managed_configuration_document,
 )
 from mediaflow.domain.metadata import (
@@ -400,7 +405,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -466,7 +470,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -1135,7 +1138,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1195,7 +1197,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1257,7 +1258,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1344,7 +1344,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1412,7 +1411,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1479,7 +1477,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1557,7 +1554,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1647,7 +1643,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         service = ManagedConfigurationService(repository)
                         api = MediaFlowApi(
                             runtime_repository,
-                            None,
                             principals=(
                                 ResolvedApiPrincipal(
                                     "admin", "admin-token", frozenset(ApiPermission)
@@ -1772,7 +1767,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 def make_api(managed):
                     return MediaFlowApi(
                         runtime_repository,
-                        None,
                         principals=(
                             ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ),
@@ -1860,7 +1854,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 provider = FakeLiveMetadataProvider()
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -1953,7 +1946,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ResolvedApiPrincipal(
@@ -2061,7 +2053,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -2168,7 +2159,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         registry = MetadataProviderRegistry((provider,))
                         api_one = MediaFlowApi(
                             runtime_one,
-                            None,
                             principals=(
                                 ResolvedApiPrincipal(
                                     "operator-one", "token-one", frozenset(ApiPermission)
@@ -2180,7 +2170,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         )
                         api_two = MediaFlowApi(
                             runtime_two,
-                            None,
                             principals=(
                                 ResolvedApiPrincipal(
                                     "operator-two", "token-two", frozenset(ApiPermission)
@@ -2318,7 +2307,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         managed_two = ManagedConfigurationService(repository_two)
                         api = MediaFlowApi(
                             runtime_repository,
-                            None,
                             principals=(
                                 ResolvedApiPrincipal(
                                     "operator", "operator-token", frozenset(ApiPermission)
@@ -2445,7 +2433,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -2508,7 +2495,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -2664,7 +2650,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service = ManagedConfigurationService(repository)
                     api = MediaFlowApi(
                         runtime_repository,
-                        None,
                         principals=(
                             ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ),
@@ -2899,36 +2884,29 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(rerun.result["effectiveMetadataPolicy"]["maxProviderRequests"], 9)
 
     def test_metadata_policy_query_type_is_the_only_saved_control(self) -> None:
-        legacy = ConfigurationObjectService._normalize(
-            ConfigurationObjectKind.METADATA_POLICY,
+        for value in (
             {"id": "legacy", "providerId": "tmdb", "mediaType": "movie"},
-        )
-        self.assertNotIn("mediaType", legacy)
-        self.assertNotIn("mediaQueryType", legacy)
-        legacy_policy = ConfigurationObjectService._metadata_policy_from_value(legacy)
-        self.assertIsNone(legacy_policy.media_type)
-        self.assertEqual(legacy_policy.query_type.value, "auto")
-
-        controlled = ConfigurationObjectService._normalize(
-            ConfigurationObjectKind.METADATA_POLICY,
             {
                 "id": "controlled",
                 "providerId": "tmdb",
                 "mediaType": "tv",
                 "mediaQueryType": "movie",
             },
+            {"id": "legacy-invalid", "providerId": "tmdb", "mediaType": "album"},
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "unsupported field"):
+                ConfigurationObjectService._normalize(
+                    ConfigurationObjectKind.METADATA_POLICY, value
+                )
+
+        controlled = ConfigurationObjectService._normalize(
+            ConfigurationObjectKind.METADATA_POLICY,
+            {"id": "controlled", "providerId": "tmdb", "mediaQueryType": "movie"},
         )
-        self.assertNotIn("mediaType", controlled)
         self.assertEqual(controlled["mediaQueryType"], "movie")
         controlled_policy = ConfigurationObjectService._metadata_policy_from_value(controlled)
         self.assertIsNone(controlled_policy.media_type)
         self.assertEqual(controlled_policy.query_type.value, "movie")
-
-        ignored_invalid_legacy = ConfigurationObjectService._normalize(
-            ConfigurationObjectKind.METADATA_POLICY,
-            {"id": "legacy-invalid", "providerId": "tmdb", "mediaType": "album"},
-        )
-        self.assertEqual(ignored_invalid_legacy["id"], "legacy-invalid")
 
         with self.assertRaisesRegex(ValueError, "query type"):
             ConfigurationObjectService._normalize(
@@ -2988,7 +2966,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -3490,7 +3467,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -3732,7 +3708,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(config_repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -3823,7 +3798,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 service = ManagedConfigurationService(repository)
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -4270,7 +4244,16 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         {
                             "id": f"classification-{index:03d}",
                             "rules": (
-                                [{"id": "target-rule", "result": {"mediaLibraryId": target_id}}]
+                                [
+                                    {
+                                        "id": "target-rule",
+                                        "conditions": {},
+                                        "result": {
+                                            "mediaLibraryId": target_id,
+                                            "path": ["Target"],
+                                        },
+                                    }
+                                ]
                                 if index == 256
                                 else []
                             ),
@@ -4587,23 +4570,10 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 document["classificationPolicies"] = [{"id": "broken", **malformed}]
                 with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
                     service = ManagedConfigurationService(repository)
-                    objects = ConfigurationObjectService(service)
-                    draft = service.import_draft(document, actor="tester")
                     with self.assertRaises(ValueError) as context:
-                        objects.mutate(
-                            draft.revision_id,
-                            ConfigurationObjectKind.MEDIA_LIBRARY,
-                            object_id="target-media",
-                            value=None,
-                            expected_version=draft.version,
-                            actor="tester",
-                            delete=True,
-                        )
-                    self.assertIn("classificationPolicies[0]", str(context.exception))
-                    current = service.require(draft.revision_id)
-                    self.assertEqual(current.version, draft.version)
-                    self.assertEqual(current.digest, draft.digest)
-                    self.assertEqual(current.document, draft.document)
+                        service.import_draft(document, actor="tester")
+                    self.assertIn("classification", str(context.exception))
+                    self.assertEqual(repository.list_revisions(), ())
 
     def test_malformed_guided_references_leave_raw_draft_recovery_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -4633,12 +4603,23 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                draft = service.import_draft(document, actor="tester")
+                now = datetime.now(UTC)
+                draft = config_repository.create_revision(
+                    ManagedConfigurationRevision(
+                        str(uuid4()),
+                        1,
+                        ManagedConfigurationStatus.DRAFT,
+                        1,
+                        canonical_document_digest(document),
+                        document,
+                        now,
+                        now,
+                    )
+                )
                 target_path = (
                     f"/api/v1/configuration/revisions/{draft.revision_id}"
                     f"/objects/mediaLibraries/{target_id}"
@@ -4754,7 +4735,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -4813,7 +4793,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -4882,7 +4861,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -5000,7 +4978,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -5038,7 +5015,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,
@@ -5089,7 +5065,6 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=document,

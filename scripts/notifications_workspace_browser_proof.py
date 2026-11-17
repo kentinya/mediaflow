@@ -180,7 +180,6 @@ def start_api(root: Path):
     transport = RecordingTransport(204)
     api = MediaFlowApi(
         repository,
-        None,
         principals=(admin, viewer),
         configuration_service=configuration,
         bootstrap_document=document,
@@ -192,7 +191,7 @@ def start_api(root: Path):
     definition = next(item for item in runtime.webhooks if item.webhook_id == WEBHOOK_ID)
     event = NotificationEvent(
         DELIVERY_EVENT_ID,
-        NotificationEventType.JOB_COMPLETED,
+        NotificationEventType.TASK_COMPLETED,
         datetime.now(UTC),
         {"jobId": DELIVERY_EVENT_ID},
     )

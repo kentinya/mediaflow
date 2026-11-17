@@ -176,7 +176,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                 self.assertEqual(result["classificationPolicyId"], "A")
                 self.assertEqual(result["mediaLibraryId"], "movies")
                 self.assertEqual(result["mediaLibraryRootPath"], "Movies")
-                self.assertEqual(result["classificationRelativePath"], "Action")
+                self.assertEqual(result["classificationRelativePath"], "Movies/Action")
                 self.assertEqual(result["classificationRuleId"], "action-movie")
                 self.assertEqual(
                     result["rootRelativeDestination"],
@@ -560,7 +560,6 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
 
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
@@ -625,7 +624,6 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
 
                 unavailable = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),

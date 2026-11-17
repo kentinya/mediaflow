@@ -188,7 +188,6 @@ class ResourceLibraryActivationTests(unittest.TestCase):
         )
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(principal,),
             configuration_service=service,
             bootstrap_document=document,
@@ -521,7 +520,6 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             )
             api = MediaFlowApi(
                 runtime_repository,
-                None,
                 principals=(principal,),
                 configuration_service=service,
                 bootstrap_document=document,
@@ -800,7 +798,6 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(
                     runtime_repository,
-                    None,
                     principals=(principal,),
                     configuration_service=service,
                     bootstrap_document=self._document(root),

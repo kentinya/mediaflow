@@ -299,7 +299,6 @@ def build_api(
         }
     api = MediaFlowApi(
         repository,
-        None,
         principals=(PRINCIPAL, ADMIN_PRINCIPAL),
         **managed_options,
     )

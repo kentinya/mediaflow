@@ -25,6 +25,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import (
     ManualOrganizeIntentService,
     ManualSourceIdentity,
@@ -47,6 +48,9 @@ from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
     with_managed_snapshot,
+)
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -131,7 +135,6 @@ class RetiredPreviewApiTests(unittest.TestCase):
         self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
         self.api = MediaFlowApi(
             self.repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -474,6 +477,21 @@ class _AnalysisEnvironment:
         self.document = document
         self.config = root / "config.json"
         self.config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        with SQLiteConfigurationRepository(self.database) as repository:
+            service = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=str(self.database),
+                bootstrap_document=document,
+            )
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            if validated.status.value != "validated":
+                raise AssertionError(validated.validation_errors)
+            service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
 
     def tree(self, root: Path) -> tuple[tuple[str, bytes | None], ...]:
         values = []
@@ -615,7 +633,7 @@ class SharedAnalysisCliTests(unittest.TestCase):
                     "id": "tv-only",
                     "priority": 100,
                     "conditions": {"mediaType": ["tv"]},
-                    "result": {"mediaLibraryId": "tv", "library": "TV", "path": ["TV"]},
+                    "result": {"mediaLibraryId": "tv", "path": ["TV"]},
                 }
             ]
 

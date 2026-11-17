@@ -226,7 +226,6 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime_repository,
-            None,
             principals=(self.admin, self.viewer, self.manager_only),
             configuration_service=self.configuration,
             storage_adapters=self.adapters,
@@ -307,7 +306,7 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
             "id": "any",
             "name": "Any media",
             "conditions": {"mediaType": ["movie"]},
-            "result": {"mediaLibraryId": library, "library": "Movies", "path": list(path)},
+            "result": {"mediaLibraryId": library, "path": list(path)},
         }
 
     # -- five-family empty-Active onboarding ----------------------------
@@ -333,7 +332,7 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                 "id": "tmdb-movie",
                 "name": "TMDB movie",
                 "providerId": "tmdb",
-                "mediaType": "movie",
+                "mediaQueryType": "movie",
             },
         )
         third = self.save(
@@ -643,41 +642,23 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
 
     # -- copy -------------------------------------------------------------
 
-    def test_metadata_policy_save_ignores_legacy_media_type_and_reads_query_type(self) -> None:
-        published = self.save(
-            "metadataPolicies",
-            {
-                "id": "legacy-control",
-                "name": "Legacy control",
-                "providerId": "tmdb",
-                "mediaType": "tv",
-                "mediaQueryType": "movie",
-                "enabled": False,
-            },
-        )
-        stored = next(
-            item
-            for item in published.document["metadataPolicies"]
-            if item["id"] == "legacy-control"
-        )
-        self.assertNotIn("mediaType", stored)
-        self.assertEqual(stored["mediaQueryType"], "movie")
-
-        legacy_only = self.save(
-            "metadataPolicies",
-            {
-                "id": "legacy-only",
-                "name": "Legacy only",
-                "providerId": "tmdb",
-                "mediaType": "tv",
-                "enabled": False,
-            },
-        )
-        stored = next(
-            item for item in legacy_only.document["metadataPolicies"] if item["id"] == "legacy-only"
-        )
-        self.assertNotIn("mediaType", stored)
-        self.assertNotIn("mediaQueryType", stored)
+    def test_metadata_policy_rejects_legacy_media_type_and_uses_query_type(self) -> None:
+        before = self.configuration.active()
+        with self.assertRaises(RulesWorkspaceSaveError) as caught:
+            self.save(
+                "metadataPolicies",
+                {
+                    "id": "legacy-control",
+                    "name": "Legacy control",
+                    "providerId": "tmdb",
+                    "mediaType": "tv",
+                    "mediaQueryType": "movie",
+                    "enabled": False,
+                },
+            )
+        self.assertEqual(caught.exception.code, "rules_invalid_request")
+        self.assertIn("mediaType", str(caught.exception))
+        self.assert_active_unchanged(before)
 
     def test_copy_uses_a_new_stable_id_and_defaults_disabled_where_supported(self) -> None:
         status, candidate = self.request("GET", f"{BASE}/objects/metadataPolicies/A/copy")
@@ -822,10 +803,10 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                 },
                 "rules_invalid_field",
             ),
-            "overwrite conflict": (
+            "retired overwrite field": (
                 "organizePolicies",
                 {"id": "x", "operation": "MOVE", "conflictStrategy": "skip", "overwrite": True},
-                "rules_invalid_field",
+                "rules_invalid_request",
             ),
             "unsupported operation": (
                 "organizePolicies",
@@ -864,7 +845,6 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                             "conditions": {"mediaType": ["movie"]},
                             "result": {
                                 "mediaLibraryId": "nope",
-                                "library": "Nope",
                                 "path": ["x"],
                             },
                         }
@@ -908,7 +888,6 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                             "conditions": {"mediaType": ["tv"]},
                             "result": {
                                 "mediaLibraryId": "tv",
-                                "library": "TV Shows",
                                 "path": ["Series"],
                             },
                         }
@@ -1362,7 +1341,6 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                     "id": object_id,
                     "name": "N",
                     "providerId": "tmdb",
-                    "mediaType": "movie",
                     "enabled": True,
                 }
             if family == "classificationPolicies":
@@ -1376,7 +1354,6 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                             "conditions": {"mediaType": ["movie"]},
                             "result": {
                                 "mediaLibraryId": "movies",
-                                "library": "Movies",
                                 "path": ["Feature"],
                             },
                         }

@@ -293,7 +293,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -1155,7 +1154,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
         self.addCleanup(configuration_repository.close)
         return MediaFlowApi(
             runtime,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
@@ -2036,7 +2034,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
         self.addCleanup(runtime_repository.close)
         api = MediaFlowApi(
             runtime_repository,
-            None,
             principals=(
                 ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                 ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import unittest
 
 from mediaflow.application.classification import (
@@ -13,7 +12,7 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
-from mediaflow.cli import main
+from mediaflow.cli import render_strategy_result
 from mediaflow.domain.classification import (
     ClassificationContext,
     ClassificationError,
@@ -231,21 +230,13 @@ class ClassificationEngineTests(unittest.TestCase):
         runner = strategy_runner_from_configuration(
             smoke_strategy_configuration(), MetadataProviderRegistry((provider,)), guard
         )
-        output, errors = io.StringIO(), io.StringIO()
-        code = main(
-            [
-                "--live-metadata",
-                "--show-naming",
-                "--show-classification",
-                "/C/千与千寻.2001.mkv",
-            ],
-            stdout=output,
-            stderr=errors,
-            runner_factory=lambda live: runner,
+        result = runner.run_path(
+            "/C/千与千寻.2001.mkv",
+            live_metadata=True,
+            show_naming=True,
+            show_classification=True,
         )
-        value = output.getvalue()
-        self.assertEqual(code, 0)
-        self.assertEqual(errors.getvalue(), "")
+        value = render_strategy_result(result)
         self.assertIn("CLASSIFICATION PREVIEW", value)
         self.assertIn("RecognitionType: C", value)
         self.assertIn("ClassificationPolicy: A", value)
