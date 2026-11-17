@@ -8,13 +8,13 @@
 Task ID: 55.5
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.5 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER STARTS TASK55.5 IMPLEMENTATION
+Next Action: B REVIEWS TASK55.5 CANDIDATE 3bff923de4127506c02a55b76cc7263b868554a6
 ```
 
 规划时 main／上述 HEAD，tracked／untracked 干净，工作区和 Git 可写，治理 PASS。
@@ -195,10 +195,60 @@ B 另用现有 Base 夹具建立／候选打开方式验证 AC-5，核对同版�
 
 ### Developer Completion Report / B Review Result
 
-尚未实施。Developer 按本 Task 开始实施，完成后提交不可变检查点、实际 affected 命令／结果与剩余风险，
-状态 READY FOR B REVIEW；B 审查完整 Base..Head 并作 PASS 或 FIX REQUIRED。
-当前结论：**Task55.5 已获实施授权，状态 PLANNED；下一步 Developer 开始实施。**
-Slice55 仍 ACTIVE，尚未进入 A 终审。
+```text
+Task: 55.5
+Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Candidate: 3bff923de4127506c02a55b76cc7263b868554a6
+Status: READY FOR B REVIEW
+```
+
+**实际改动**
+
+- 恢复摘要确认改走现有 `POST /api/v1/operations/organize/previews/{id}/execute`：新增
+  `preparationId` 关联；`confirm_prepared` 与 `confirm_native_preparation` 继续校验
+  actor、checkpoint、当前摘要、原 Preview 和 intent version，并保留原子
+  preparation→execution 关系。native 摘要仍绑定原 discovery＋Preview；persisted 自动摘要
+  不被当成手工 discovery。
+- 删除上表旧传输：五个全局审核 API／同名 CLI、`manual-intents`／`manual-previews`／
+  `manual-executions`、`files/{id}/manual-intent`、旧 Preview 列表和
+  `manual-recovery-preparations/{id}/confirm` 均不再注册，也无别名或退休分支。清理对应
+  dispatch、route templates、workflow 分类、审计抑制、CLI parser／dispatch／renderer／import。
+- Task Center 的摘要／执行／blocker 链接改指当前 operations organizing 与 Task recovery
+  路径。checkpoint 的展示路径使用当前 Task recovery；其 hash 输入保留旧路径字面量，仅用于
+  让未变化状态的既有 checkpoint digest／pin 保持可确认，绝不作为传输返回或调用。
+- Web 同步：`TaskItemRecoveryPanel` 的确认走当前 Execute；session 固定保存完整提交身份
+  （preparation、preview、itemIds、intent version、effects）；未知响应按该身份读取
+  operations admission 证据再读原 Task；新增 preparation `intentVersion` 契约，删除旧确认
+  client 与模型。E2E 中 task-flow／automation-run-once／operations-inventory 的确认拦截改指
+  当前 Execute。
+- 旧全局 API／CLI 正向测试改为 404／parser 反证；业务决定、权限、审计、并发、逐项结果
+  断言保留在当前 Task recovery 入口或共享服务。更新当前说明中的旧审核／批量 CLI 描述。
+
+**实际验证**
+
+- 激活时治理 PASS；候选 `python3 scripts/check_governance.py` PASS，`git diff --check` PASS，
+  `.venv/bin/ruff format --check .` 与 `.venv/bin/ruff check .` PASS。
+- Required Developer Python 组：第一组 **31 tests OK（1.155秒）**；第二组
+  **172 tests OK（11.911秒）**。另跑全量 `unittest discover -s tests`：
+  **2385 tests OK, skipped=7（261.200秒）**。中间一次全量失败定位到一个被删除 helper 遗留的
+  `@staticmethod` 挂到 `_safe_audit`，导致安全审计漏写；移除后上述相关测试与全量通过。
+- Web（cwd `web/`）：typecheck、lint、format:check PASS；变更三组 Vitest
+  **29 tests passed（2.73秒）**；`npm run build` PASS。真实 Python harness E2E
+  `manual-organize-dialog.python.spec.ts` **8 passed（52.6秒）**。
+- 未运行：B 的 T4 全量门禁、task-flow／automation-run-once／operations-inventory 两个风险
+  E2E 组、wheel／镜像／Docker smoke；这些留给 B 在候选上执行。
+- 时间：本轮自激活检查点 `5ac80672`（2026-11-17 23:58 +0800）至候选 `3bff923d`
+  （2026-11-18 01:37 +0800）约 99 分钟；实际测试／构建命令合计约 11 分钟，低于本轮 30%。
+
+**剩余风险／待 B 核对**
+
+- 旧全局批处理 service 方法（如 `resolve_pending`）仍在共享审核服务内，但已无 CLI／API／
+  Web 入口或调用者；本单元只退出其传输与专属渲染，未删除共享领域方法。
+- checkpoint hash 保留旧路径字面量属于 pin 兼容输入，不是当前消费者；B 需确认既有
+  preparation／Pinned request 在候选上仍可确认。
+- 更新后的三份风险 E2E spec 只做了静态格式／lint 检查，尚未由 Developer 运行；B 需按
+  Task 验收计划在候选上执行。
+- 未运行 wheel／镜像及源码外消费者验证；B 的 T4 验收需覆盖。
 
 ### 规划阶段检查记录（激活前）
 
