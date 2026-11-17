@@ -1,4 +1,4 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.4 — 唯一当前配置：管理启动、发布与运行消费
 
 Task55.3 已由 B 独立验收 **PASS**；完整接受范围
 `b73c36353e5427cbe60fbb7c1b8cc85b139edca4..78d3e252090ca13149bf953b803eeb37918d9b30`。
@@ -6,11 +6,10 @@ Task55.3 已由 B 独立验收 **PASS**；完整接受范围
 [64006c8d:TASK.md](https://github.com/kentinya/mediaflow/blob/64006c8d3b0a2791e5228417420250a064c75cea/TASK.md)。
 Task55.1／55.2 的接受事实保持。Slice55 仍 ACTIVE，尚未满足全部结果。
 
-下文为本轮用户要求 B 规划的 **Task55.4 草案**，不授权实施。
-Next Action: **用户授权实施 Task55.4 后，激活此草案并交 Developer。**
-本轮仅维护 TASK；SLICE／Roadmap／Progress 保持原合同和接受身份。
-
-## Task55.4（DRAFT）— 唯一当前配置：管理启动、发布与运行消费
+用户现明确要求“激活Task吧”，据此将已规划的 Task55.4 激活为正式实施 Task。
+Goal／Scope／Task Base／High／T4／验收与测试分工保持原计划。
+Next Action: **DEVELOPER STARTS TASK55.4 IMPLEMENTATION**。
+本轮仅激活 TASK；SLICE／Roadmap／Progress 保持原合同和接受身份。
 
 Authority: committed [Slice55](SLICE.md) RO-3，以及本单元相关 RO-5／6、AC-03／05／07／08／11／12。
 生命周期和测试分工以 [Development Workflow](docs/development-workflow.md) 为准；
@@ -25,12 +24,14 @@ Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Development Authorization: DRAFT ONLY — NOT AUTHORIZED
+Development Authorization: TASK55.4 IMPLEMENTATION AUTHORIZED
 ```
 
 规划基线 main，上述 HEAD；初始 tracked／untracked 工作区干净，TASK 与 Git 可写，
 `python3 scripts/check_governance.py` PASS。该 Base 固定，不以草案／激活提交重设；如有
 介入产品改动，B 先核对集成与本计划适用性。
+本轮激活前 main／HEAD `6463cee9d1278d46a12b6410bc2b27f2f0c9fdbb`，工作区干净、
+治理 PASS；Task Base 至该 HEAD 只有本 Task 草案文档提交，无介入产品改动。
 
 ### Goal 与完整用户旅程
 
@@ -218,15 +219,15 @@ Task PASS 后 B 重评全部 RO，仍有必需缺口才规划下一单元；满�
 
 ### Developer Completion Report
 
-待实施授权后由 Developer 填：精确候选 SHA、READY FOR B REVIEW、实际改动／删除与保留
+由 Developer 实施后填：精确候选 SHA、READY FOR B REVIEW、实际改动／删除与保留
 理由、affected commands／结果、已知失败和剩余风险。B 全量验收仍由 B 执行。
 
 ### B Review Result
 
-尚无 Task55.4 产品候选；本轮是规划，未给本 Task 产品 PASS／FIX REQUIRED。
+尚无 Task55.4 产品候选；本轮仅激活正式 Task，未给本 Task 产品 PASS／FIX REQUIRED。
 后续独立审查完整 Base..Head，按上述 AC 给出结论；产品返工留在同一 Task。
-Task55.3 PASS 保持。Slice55 Required Outcomes 尚未全部满足，下一步为实施授权／激活。
+Task55.3 PASS 保持。Slice55 Required Outcomes 尚未全部满足，下一步为 Developer 实施。
 
-本轮规划核验：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK 本地链接及
+草案规划核验（6463cee9）：治理 PASS；`tests.test_governance` 20 tests OK，6.531秒；TASK 本地链接及
 `git diff --check` 通过；仅 TASK 改动。已有入口验证0.784秒，合计测试不足10秒，
 小于本轮规划耗时50%。这些是规划检查，不是 Task55.4 的产品 T4 验收。
