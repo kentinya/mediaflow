@@ -477,3 +477,82 @@ Status: READY FOR B REVIEW
 
 下一步：B 独立审查 `64006c8d..本报告候选`，重跑三条失败旅程并按其 T4 验收计划给出
 PASS 或 SAME TASK FIX REQUIRED；不规划下一 Task。
+
+### Developer Fix Report — 2026-11-17（B55.4-04／05）
+
+```text
+Task: 55.4
+Fix Candidate: 60aced5eedd4ddccf2b60d830bdd1a43843ca79e
+Range: 323f5918..60aced5e (B55.4-04／05 implementation); this report commit follows
+Task Base: 64006c8d3b0a2791e5228417420250a064c75cea
+Status: READY FOR B REVIEW
+```
+
+**根因与实际修正**
+
+- **B55.4-04 — 已接受规则无法参与共享检查：** 根因未放宽新输入。共享 checked
+  Save 的整图读取 `_policy_resolution_catalog → _organize_policy` 与
+  `_resolve_destination → _classification_policy` 之前调用只适用于新输入的
+  `_normalize`，因此把原已接受规则的 `overwrite`／`library` 当作新提交字段拒绝。
+  现两处读取改用与 runtime loader 相同的领域读取职责：
+  `parse_organize_policy` 和新增的 `parse_classification_policy`。后者由现有
+  `load_strategy_configuration` 的同一 `_classification_rule` 实现，并复用于 runtime
+  loader，避免出现第二套分类读取。新输入边界未改：typed Save／对象分析仍经
+  `_normalize`，import／edit／validate／activate 仍经
+  `reject_retired_configuration_input`，单独及与当前字段混用的 `overwrite`／`library`
+  继续拒绝。原 revision 字节、ID、digest 和原分类目标均未重写。
+- **B55.4-05 — 当前夹具未同步：** `scripts/operations_inventory_harness.py` 改为从根级
+  `webhooks` 启用示例定义；覆盖 fixture 只用 `conflictStrategy=overwrite`，不再写入
+  已退出的 `overwrite`。同一根因下另同步两个现有当前消费者：
+  `scripts/docker_empty_baseline_smoke_test.py` 的 successor 配置改为根级 Webhook；
+  `scripts/notifications_workspace_browser_proof.py` 从根级示例生成其 proof Webhook。
+  未新增探测框架或旧格式转换。
+- **直接受影响用例：** 在 `tests.test_v2_rules_workspace_commands` 增加两个 Base 形态
+  accepted Active 样本：无 `overwrite` 样本和保留分类 B `library` 的样本。均只编辑
+  分类 A 的普通名称／描述并复制 A，断言 checked 发布成功、A 完整目标不变、B 原文档
+  逐字节不变、原 Active revision/digest/document 保留。另在
+  `tests.test_classification_destination_contract`、`tests.test_configuration_organize`、
+  `tests.test_configuration_destination_precheck` 增加 accepted 读取成功／新输入继续
+  拒绝的直接断言。
+
+**实际验证（最终候选；仓库根目录）**
+
+- `.venv/bin/python -m unittest` Task 指定四组 affected 模块及其现有相邻模块：
+  **438 tests OK，0 skipped，测试报告 19.542 秒／命令墙钟 19.81 秒**；日志
+  `.git/validation-evidence/task55-4-fixes2/final-affected-groups.log`，四组分别的
+  原始日志为同目录 `group1.log`–`group4.log`。
+- **真实 Base 样本：** 用 `64006c8d` 源码创建真实 Active，保留原
+  `organizePolicies[*].overwrite=false`、分类 B `library="TV Shows"`／`path=["Series"]`
+  和 `job.*` Webhook 事件。候选在同一库上经现有 typed 编辑打开并保存分类 A 的普通
+  描述，再复制 A；两次 checked 发布均成功。前后目标均为
+  `Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv`；B 文档
+  未转换；原 revision 字节／digest 保留；用该原 revision 单独经
+  `load_managed_runtime_configuration` 读取仍得到原 Storage、合法 legacy 分类 B 和
+  对应 task.* 事件。证据 `.git/validation-evidence/task55-4-fixes2/base-sample/`
+  （`base-create.json`、`candidate-continue.json` 及两个实际脚本）。
+- **B55.4-05 真实入口：** 直接启动 `scripts/operations_inventory_harness.py` 于
+  4199 端口，轮询 `/ui-v2/` 返回 200，日志确认 seed 完成且无启动异常；未运行完整
+  Playwright 业务旅程。`notifications_workspace_browser_proof.build_configuration`
+  的实际生成文档通过新输入边界并包含 `proof-webhook`。Docker 脚本只做上述消费者
+  接线修正，未执行 Docker。
+- 两份规范样例 `mediaflow --config … config validate` 均成功。
+- 改动 Python 文件 `.venv/bin/ruff check`／`ruff format --check`／`py_compile`
+  全部 PASS；`python3 scripts/check_governance.py` PASS；`git diff --check` PASS。
+
+**已知失败／跳过与剩余风险**
+
+- Developer 未运行 Docker、wheel、浏览器 E2E 或全量 Python/Web 套件；按工作流由 B
+  在 `60aced5e` 上执行 T4。Docker 与 notifications proof 的消费者接线已同步，但
+  尚无本候选上的 Docker／浏览器实际通过证据。
+- 真实 Base 样本验证了原 revision 可独立重载，未在样本中创建新的在途 Task pin；
+  B 仍需按 T4 在 Base 样本上核对原工作 pin 和一次实际 Worker 效果。
+- 新输入中的 `overwrite`／`library` 及混合写法继续由现有边界拒绝；accepted 读取
+  只对未改动对象生效，不提供静默转换。
+- 未推送、未发布、未改动用户数据库／媒体／私密配置。
+
+**计时：** 本轮约 21:17–21:38（Asia/Shanghai，约 21 分钟）；产品测试、真实入口
+探测与静态检查墙钟合计约 50 秒（约 4%），小于本轮 30%。
+
+下一步：B 独立审查 `64006c8d..本报告候选`，重跑 B55.4-04 的两个真实样本及
+B55.4-05 两组原生业务旅程，并按 T4 验收计划给出 PASS 或 SAME TASK FIX REQUIRED；
+不规划下一 Task。
