@@ -13,13 +13,13 @@ Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9ac
 Task ID: 55.7
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
-Next Action: B REVIEWS CANDIDATE cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc ON 27789283
+Next Action: DEVELOPER FIXES TASK55.7 AND RESUBMITS FOR B REVIEW
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
@@ -232,3 +232,81 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 - 执行历史生产者仍同时输出 `counts`、`occurrence`、`boundReached` 等重复字段；Web 已不再读取，
   生产者的重复字段清理未在本候选执行。
 - 完整 T4 回归、E2E 与打包门禁保持 B 所有；本报告不构成 PASS。
+
+### B 独立复核 — FIX REQUIRED（2026-11-19，北京时间）
+
+```text
+Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
+Reviewed Candidate: cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc
+Reviewed Handoff Head: bd0acfd31688e48255a792457b18333cafa9aafb
+Decision: FIX REQUIRED / SAME TASK FIX LOOP
+```
+
+从干净的 `main` 审查了完整 Task Base..Reviewed Candidate。候选之后的两次提交仅更新
+本文件的交接内容。Run once、Copy 和设置分别用现有真实 Python 浏览器入口核对。
+
+| 阻塞 | 实际结果 |
+|---|---|
+| B55.7-01 · P1 · AC-3/4 | 管理员从运营首页进入自动化任务列表，Task Base 显示统计和任务行，候选在默认浏览器门禁显示「自动化不可用」。候选要求 `occurrenceState`，仓库浏览器测试服务的已发布、仅草稿定义仍只返回 `occurrence`。同一旅程中，真正的 Python 定义与到期执行历史仍同时发布新旧字段。实际响应包含 `occurrence`／`occurrenceState` 和 `counts`／`statusCounts`，两份计数完全相同。 |
+| B55.7-02 · P1 · AC-3 | 管理员在 Slice Base 经正式配置 API 导入、验证并激活当时样例中的 Webhook。候选重开同一隔离库，Active ID、摘要和运行时订阅保持，通知列表和定义详情却仍把 `job.*` 交给浏览器翻译。当前 Web 读模型及正向断言继续支持旧拼写。这个前端协议仍有两套事件名，既有正式通知定义又必须继续使用。 |
+| B55.7-03 · P1 · AC-4 | 授权用户在有效库上调用曾用于 Files 的 `GET /api/v1/operations/manual-actions`，候选仍返回 HTTP 200 并提供整理动作矩阵。当前用户直接从文件页选择文件、发起整理、修正选择、核对摘要后确认，真实浏览器已走通。旧矩阵只剩注册、专用实现及测试。 |
+
+#### 本轮开发指导
+
+1. 从实际 Python 定义和到期执行历史投影收敛 `occurrenceState`、`outcomeSummary.statusCounts`
+   及 `bound`。删除已核对无正式用途的重复字段 `occurrence`、`counts`、`itemOutcomeSummary`
+   和与 `bound.reached` 重叠的字段。保留现有 API 入口、实际统计、文件结果、注意项和 Task 链接。
+   把真实 API 集成测试的失败计数断言从 `counts` 接到 `statusCounts`。同步更新默认浏览器测试
+   服务的已发布和仅草稿定义，使用 `occurrenceState`，保留原浏览器操作及断言。验收为管理员从
+   运营首页进自动化，看到统计、任务行和既有动作，查看到期记录时打开原 Task。
+2. 通知列表、详情和草稿编辑响应统一使用当前事件名。复用既有已接受通知定义解析结果生成读投影，
+   让 Slice Base 发布的同一 Active／Webhook 在候选显示 `task.*` 和 `schedule.emitted`。
+   以原 ID、原文档和原摘要校验持久化完整性；既有订阅、投递历史及投递恢复继续按现行入口工作。
+   当前提交继续拒绝 `job.*`，Web 读模型和测试只接受当前投影。把原来检查投影等于存储字节的
+   断言调整为同时验证规范响应、原存储字节和读取前后的 Active 身份。保留配置、通知权限和脱敏断言。
+3. 退出无产品消费者的旧矩阵注册、专用服务端投影和对应假服务分支。沿已注册的旧入口和既有
+   正常授权测试断言通用 `404/not_found`。把依赖旧矩阵的现行安全断言接到 Files 的文件选择、
+   整理分析、原摘要、确认及原 Task 结果，保留有界选择、权限、源身份、最终效果和零重放检查。
+
+Developer 运行以下失败用例和直接受影响的验证。各浏览器命令使用既有入口及自带测试服务。
+
+```sh
+# 仓库根
+.venv/bin/python -m unittest discover -s tests -p test_automation_authorized_execution_matrix.py -k test_api_definition_detail_and_occurrence_routes_share_summary
+.venv/bin/python -m unittest discover -s tests -p test_v2_automation_operations.py
+.venv/bin/python -m unittest discover -s tests -p test_webhook_management.py
+.venv/bin/python -m unittest discover -s tests -p test_v2_notification_operations.py
+.venv/bin/python -m unittest discover -s tests -p 'test_manual_operations*.py'
+.venv/bin/python -m unittest discover -s tests -p test_v2_manual_organize.py
+git diff --check
+# web/
+npm run test -- run src/entities/operations/automation.test.ts src/entities/operations/notification.test.ts src/features/operations/NotificationRouter.test.tsx
+npm run build
+npm run test:e2e -- tests/e2e/automation.spec.ts -g 'definition table|occurrence history'
+npm run test:e2e -- tests/e2e/notifications.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'brand-new ambiguous source|Notifications page reads the real Task event contract'
+```
+
+#### B 实际验证与余项
+
+- 隔离构建了 Task Base 和候选。默认浏览器 `automation.spec.ts -g 'definition table'` 在 Base
+  通过，候选失败。页面快照和 trace 记录「自动化不可用」及响应与当前协议不符。
+- 候选真实 Python 浏览器用例共 5 项通过，覆盖 Run once 丢响应后的原 Task 核对、Copy 丢响应
+  后重载并核对唯一副本、设置拒绝响应丢失后继续修正、Files 原页修正后整理，以及当前通知生命周期事件。
+- 用既有 Python 测试环境验证授权的旧矩阵返回 200，实际到期工作产生的定义与历史响应仍含重复字段。
+  另用 Slice Base 的正式导入、验证、激活 API 建立无旧调度的 V2 配置。候选重开同库，确认通知列表
+  和详情均返回 200、相同 Active ID 和摘要，应用内部订阅为 `task.*`，页面接口仍输出 `job.*`。
+- 本地证据在 `.git/validation-evidence/cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc/task55-7-b/`。
+  测试和构建按串行相加保守小于 45 秒，审查已超过 5 分钟。依据已复现的阻塞，B 将完整 T4、
+  Base 到候选同一浏览器来源的原请求核对、双管理员操作及包／镜像验收留到修正候选。
+
+#### Slice55 全部结果重评
+
+| 结果 | 当前状态与剩余范围 |
+|---|---|
+| RO-1 | 已接受的旧 Web 入口退出证据仍适用。候选入页回归列在 B55.7-01，真实 Python 当前自动化、Files 和通知入口的相关原生用例通过。 |
+| RO-2 | 旧调度、票据、grant 和 Pause/resume 的既有验收仍适用。当前 Files 到整理结果走 Task；旧动作矩阵退出见 B55.7-03。 |
+| RO-3 | 正式规则、容量键和取消权限沿用已接受结果。已接受通知定义的现行协议收敛见 B55.7-02。 |
+| RO-4 | 五态、新库结构及合法 V2 库的较早验收仍适用，候选差异涉及 Web 消费端。此次独立跨版本通知读回保留 Active ID 与摘要。 |
+| RO-5 | 候选已清退列表单条旧会话和规则旧 key 清理。当前会话的真实丢响应核对已有上述结果。协议收敛及 Base 浏览器原请求连续性仍待完成。 |
+| RO-6 | 本候选的浏览器测试服务与真实协议差异已定位。全局批量审核应用／持久化残留、空实例脚本和发布说明的全链路收敛、Slice 最终制品与安全验收仍待交付。 |
