@@ -60,25 +60,12 @@ const KNOWN_TASK_STATUSES = new Set([
   "pending",
   "running",
   "completed",
-  "partial_success",
-  "failed",
-  "cancelled",
-  "paused",
-]);
-const TERMINAL_TASK_STATUSES = new Set([
-  "completed",
-  "partial_success",
   "failed",
   "cancelled",
 ]);
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const CANCELLABLE_TASK_STATUSES = new Set(["pending", "running"]);
-const ATTENTION_RUN_STATUSES = [
-  "pending",
-  "paused",
-  "partial_success",
-  "failed",
-  "waiting",
-];
+const ATTENTION_RUN_STATUSES = ["pending", "failed", "waiting"];
 // The eight organizing task-center views and the four business recovery
 // problem types the fake mirrors from the authoritative Python contract
 // (Slice46 RO-4). A technical failure is not a problem type: it is read-only
@@ -509,7 +496,6 @@ const RUN_ITEM_DISPOSITION = {
   failed: "failed_partial",
   cancelled: "cancelled",
   ignored: "ignored",
-  paused: "waiting",
   waiting_confirm: "waiting",
   waiting_recognition: "waiting",
   waiting_metadata: "waiting",
@@ -615,7 +601,6 @@ const FAKE_TASKS = [
     completed_items: 1,
     failed_items: 1,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
@@ -632,7 +617,6 @@ const FAKE_TASKS = [
     completed_items: 2,
     failed_items: 0,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
@@ -649,7 +633,6 @@ const FAKE_TASKS = [
     completed_items: 0,
     failed_items: 0,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
@@ -666,7 +649,6 @@ const FAKE_TASKS = [
     completed_items: 1,
     failed_items: 0,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     scope_path: "Movies",
     item_limit: null,
@@ -691,7 +673,6 @@ const FAKE_TASKS = [
       retrySafe: true,
       nextAction: "restore the source Storage, then re-run the Scan",
     },
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
@@ -708,14 +689,13 @@ const FAKE_TASKS = [
     completed_items: 0,
     failed_items: 0,
     failure: null,
-    pause_requested: true,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
   {
     task_id: "task-006",
     command: "organize",
-    status: "paused",
+    status: "running",
     execute_authorized: true,
     created_at: "2026-08-22T12:25:00+00:00",
     updated_at: "2026-08-22T12:30:00+00:00",
@@ -725,27 +705,24 @@ const FAKE_TASKS = [
     completed_items: 2,
     failed_items: 0,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
   {
-    // A durably paused Files transfer: the one Task kind whose paused scope
-    // has a real queued continuation boundary, so its run overview advertises
-    // an available Resume (Slice 38 RO-6 / Slice 42 RO-5).
+    // A cancelled Files transfer whose completed child stays an independent
+    // file outcome; the Task flow itself has no partial aggregate state.
     task_id: "task-007",
     command: "files_transfer",
-    status: "paused",
+    status: "cancelled",
     execute_authorized: true,
     created_at: "2026-08-22T12:35:00+00:00",
     updated_at: "2026-08-22T12:40:00+00:00",
     started_at: "2026-08-22T12:35:01+00:00",
-    completed_at: null,
+    completed_at: "2026-08-22T12:40:00+00:00",
     total_items: 3,
     completed_items: 1,
     failed_items: 0,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
@@ -1820,7 +1797,7 @@ function directDeleteTerminalDocument(admission, entries, failurePaths = []) {
   return {
     ...admission,
     status: failedItems === 0 ? "SUCCESS" : "PARTIAL",
-    taskStatus: failedItems === 0 ? "completed" : "partial_success",
+    taskStatus: "completed",
     terminal: true,
     knownEffects,
     succeededItems,
@@ -3580,7 +3557,6 @@ function organizeDiscoveryDocument(discovery) {
           ? "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset"
           : "the resident Processing Worker continues this bounded discovery",
     nextObservationAt: null,
-    pauseRequested: discovery.status === "paused",
     primarySourceCount: discovery.paths.length,
     progress: {
       activeSeconds: 0.5,
@@ -10206,9 +10182,7 @@ const server = createServer(async (req, res) => {
       conflictMode: transfer.conflictMode,
       taskId: transfer.taskId,
       taskStatus: terminal
-        ? allDone
-          ? "completed"
-          : "partial_success"
+        ? "completed"
         : transfer.status === "QUEUED"
           ? "pending"
           : "running",
@@ -11723,11 +11697,9 @@ const server = createServer(async (req, res) => {
       conflictMode: transfer.conflictMode,
       taskId: transfer.taskId,
       taskStatus: terminal
-        ? partial
-          ? "partial_success"
-          : transfer.status === "CANCELLED"
-            ? "cancelled"
-            : "completed"
+        ? transfer.status === "CANCELLED"
+          ? "cancelled"
+          : "completed"
         : transfer.status === "QUEUED"
           ? "pending"
           : "running",
@@ -12454,7 +12426,7 @@ const server = createServer(async (req, res) => {
    * The deduplicated run population over the same FAKE_TASKS/FAKE_JOBS the
    * Task/Job lists read. A Task with any linked Job appears once through its
    * admission with the Job's identity preserved; a linked Task's own state
-   * outranks the Job admission outcome; a paused Task stays paused.
+   * outranks the Job admission outcome.
    */
   function buildRunInventory() {
     const linkedTaskIds = new Set(
@@ -12467,9 +12439,7 @@ const server = createServer(async (req, res) => {
         ? FAKE_TASKS.find((task) => task.task_id === job.task_id)
         : undefined;
       let status;
-      if (linked && linked.status === "paused") {
-        status = "paused";
-      } else if (linked && !TERMINAL_TASK_STATUSES.has(linked.status)) {
+      if (linked && !TERMINAL_TASK_STATUSES.has(linked.status)) {
         status = linked.status;
       } else if (job.status === "pending" || job.status === "running") {
         status = job.status;
@@ -12498,7 +12468,6 @@ const server = createServer(async (req, res) => {
         total_items: linked?.total_items ?? null,
         completed_items: linked?.completed_items ?? null,
         failed_items: linked?.failed_items ?? null,
-        pause_requested: linked?.pause_requested ?? false,
         ...(linked === undefined ? {} : runFileFacets(linked)),
         configuration_snapshot_id: job.configuration_snapshot_id ?? null,
         worker_id: job.worker_id ?? null,
@@ -12533,7 +12502,6 @@ const server = createServer(async (req, res) => {
         total_items: task.total_items,
         completed_items: task.completed_items,
         failed_items: task.failed_items,
-        pause_requested: task.pause_requested,
         ...runFileFacets(task),
         configuration_snapshot_id: task.configuration_snapshot_id ?? null,
         worker_id: null,
@@ -13407,7 +13375,6 @@ const server = createServer(async (req, res) => {
       terminal,
       permitted,
       permission: "cancel_job",
-      pauseRequested: task.pause_requested,
       effectCertainty: uncertain
         ? "uncertain"
         : verified
@@ -13558,15 +13525,13 @@ const server = createServer(async (req, res) => {
   function transferTaskRecord(transfer, kind) {
     const terminal = transfer.terminal === true;
     const status =
-      transfer.status === "SUCCESS"
+      transfer.status === "SUCCESS" || transfer.status === "PARTIAL"
         ? "completed"
-        : transfer.status === "PARTIAL"
-          ? "partial_success"
-          : transfer.status === "CANCELLED"
-            ? "cancelled"
-            : transfer.status === "RUNNING"
-              ? "running"
-              : "pending";
+        : transfer.status === "CANCELLED"
+          ? "cancelled"
+          : transfer.status === "RUNNING"
+            ? "running"
+            : "pending";
     return {
       task_id: transfer.taskId,
       command: kind === "media" ? "media_files_transfer" : "files_transfer",
@@ -13576,16 +13541,13 @@ const server = createServer(async (req, res) => {
       updated_at: transfer.version,
       started_at: transfer.createdAt,
       completed_at:
-        status === "completed" ||
-        status === "partial_success" ||
-        status === "cancelled"
+        status === "completed" || status === "cancelled"
           ? transfer.version
           : null,
       total_items: transfer.paths.length,
       completed_items: terminal ? transfer.paths.length : 0,
       failed_items: 0,
       failure: null,
-      pause_requested: false,
       configuration_snapshot_id: "snap-e2e-transfer",
       item_limit: transfer.paths.length,
     };
@@ -14135,16 +14097,11 @@ const server = createServer(async (req, res) => {
     }
     if (view === "running") {
       filtered = filtered.filter(
-        (run) =>
-          !["completed", "partial_success", "failed", "cancelled"].includes(
-            run.status,
-          ),
+        (run) => !["completed", "failed", "cancelled"].includes(run.status),
       );
     } else if (view === "ended") {
       filtered = filtered.filter((run) =>
-        ["completed", "partial_success", "failed", "cancelled"].includes(
-          run.status,
-        ),
+        ["completed", "failed", "cancelled"].includes(run.status),
       );
     } else if (view === "attention") {
       filtered = filtered.filter((run) => run.attention);
@@ -14199,16 +14156,11 @@ const server = createServer(async (req, res) => {
         available: true,
         total: complete.length,
         running: complete.filter(
-          (run) =>
-            !["completed", "partial_success", "failed", "cancelled"].includes(
-              run.status,
-            ),
+          (run) => !["completed", "failed", "cancelled"].includes(run.status),
         ).length,
         attention: complete.filter((run) => run.attention).length,
         ended: complete.filter((run) =>
-          ["completed", "partial_success", "failed", "cancelled"].includes(
-            run.status,
-          ),
+          ["completed", "failed", "cancelled"].includes(run.status),
         ).length,
         problem_tasks: problemTasks,
         problem_files: problemFiles,
@@ -14886,7 +14838,6 @@ const server = createServer(async (req, res) => {
       frozen: true,
       prepared: true,
       previewId: variantPreviewId,
-      pauseRequested: false,
       cancelRequested: false,
       message: "the exact zero-mutation plan summary is ready",
       actions: {},

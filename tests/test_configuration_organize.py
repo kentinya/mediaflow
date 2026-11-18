@@ -559,7 +559,9 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                     repository.get_organize_authority(draft.revision_id).document(), stored
                 )
 
-    def test_optional_section_marker_seven_upgrade_and_active_refusal(self) -> None:
+    def test_current_schema_reopen_preserves_optional_section_and_active_refusal(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "configuration.sqlite3"
@@ -584,10 +586,6 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                     policy_id="A",
                     sample={"title": "Example", "mediaType": "movie"},
                 )
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "UPDATE schema_version SET version=7 WHERE component='configuration_management'"
-                )
             with SQLiteConfigurationRepository(database) as repository:
                 self.assertEqual(
                     repository.get_naming_preview(draft.revision_id).document(), naming.document()
@@ -602,9 +600,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                # Runtime schema 43 adds durable scope continuations; schema
-                # 44 links exact-Preview recovery to the paused source Task and
-                # schema 54 adds the Task-owned scheduling facts.
+                # A same-version reopen keeps the current structure and marker.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
                 optional = copy.deepcopy(document)

@@ -747,7 +747,6 @@
       "discoveryId": "<uuid>",
       "frozen": true,
       "message": "the exact zero-mutation plan summary is ready; review it and explicitly confirm the ready subset to organize",
-      "pauseRequested": false,
       "phase": "prepared",
       "prepared": true,
       "previewId": "<uuid>",

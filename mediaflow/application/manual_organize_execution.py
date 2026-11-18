@@ -1039,7 +1039,6 @@ class ManualOrganizeExecutionService:
                         return None
                     if task.status in {
                         PersistentTaskStatus.COMPLETED,
-                        PersistentTaskStatus.COMPLETED,
                         PersistentTaskStatus.FAILED,
                         PersistentTaskStatus.CANCELLED,
                     }:
@@ -1136,23 +1135,22 @@ class ManualOrganizeExecutionService:
             for value in preview.items
         )
         task = PersistentTask(
-            new_task_id,
-            "manual_organize",
-            PersistentTaskStatus.RUNNING,
-            True,
-            now,
-            now,
-            now,
-            None,
-            len(task_items),
-            0,
-            0,
-            None,
-            False,
-            None,
-            len(task_items),
-            authority.configuration_snapshot_id,
-            authority.configuration_snapshot_digest,
+            task_id=new_task_id,
+            command="manual_organize",
+            status=PersistentTaskStatus.RUNNING,
+            execute_authorized=True,
+            created_at=now,
+            updated_at=now,
+            started_at=now,
+            completed_at=None,
+            total_items=len(task_items),
+            completed_items=0,
+            failed_items=0,
+            error=None,
+            scope_path=None,
+            item_limit=len(task_items),
+            configuration_snapshot_id=authority.configuration_snapshot_id,
+            configuration_snapshot_digest=authority.configuration_snapshot_digest,
         )
         scheduling = TaskSchedulingState(
             task_id=new_task_id,

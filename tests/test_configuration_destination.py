@@ -488,7 +488,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                             objects.revision_detail(draft.revision_id)["objects"][section], []
                         )
 
-    def test_stale_active_api_and_marker_eight_upgrade(self) -> None:
+    def test_stale_active_api_and_current_schema_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "configuration.sqlite3"
@@ -657,14 +657,14 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         recognition_type="C",
                         sample=self._sample(),
                     )
-            with sqlite3.connect(database) as connection:
-                connection.execute("DROP INDEX managed_destination_previews_status")
-                connection.execute("DROP TABLE managed_destination_previews")
-                connection.execute(
-                    "UPDATE schema_version SET version=8 WHERE component='configuration_management'"
-                )
+                stored_destination = repository.get_destination_preview(
+                    draft.revision_id
+                ).document()
             with SQLiteConfigurationRepository(database) as repository:
-                self.assertIsNone(repository.get_destination_preview(draft.revision_id))
+                self.assertEqual(
+                    repository.get_destination_preview(draft.revision_id).document(),
+                    stored_destination,
+                )
                 self.assertEqual(
                     repository.get_revision(draft.revision_id).document, active.document
                 )
@@ -684,9 +684,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                # Runtime schema 43 adds durable scope continuations; schema
-                # 44 links exact-Preview recovery to the paused source Task and
-                # schema 54 adds the Task-owned scheduling facts.
+                # A same-version reopen keeps the current structure and marker.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
 

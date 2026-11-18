@@ -678,9 +678,9 @@ _TERMINAL_MANUAL_EXECUTION_STATUSES = frozenset(
     }
 )
 
-#: The explicit-column ``tasks`` INSERT used by the scheduling kernel.  The
-#: legacy positional INSERTs stay exactly as they are: a Task admitted here
-#: carries the same 17 columns plus its own scheduling row.
+#: The explicit-column ``tasks`` INSERT used by the scheduling kernel and the
+#: exact manual-execution admission.  Every Task admitted here carries the
+#: current 16 columns plus its own scheduling row.
 _TASK_INSERT = (
     "INSERT INTO tasks (task_id, command, status, execute_authorized, created_at, "
     "updated_at, started_at, completed_at, total_items, completed_items, failed_items, "
@@ -10592,11 +10592,7 @@ class SQLiteTaskRepository:
                             adopt_task_id, display, execution.created_at
                         )
                 else:
-                    self._connection.execute(
-                        "INSERT INTO tasks VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        self._task_values(task),
-                    )
+                    self._connection.execute(_TASK_INSERT, self._task_values(task))
                     if display is not None:
                         self._insert_run_display_locked(task.task_id, display, execution.created_at)
                 self._connection.execute(

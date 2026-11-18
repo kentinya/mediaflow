@@ -1865,7 +1865,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             finally:
                 repository.close()
 
-    def test_invalid_exact_revision_api_and_marker_nine_eight_upgrade(self) -> None:
+    def test_invalid_exact_revision_api_and_current_schema_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "target-private" / "Movies").mkdir(parents=True)
@@ -2086,41 +2086,25 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                         sample=self._sample(),
                     )
                 self.assertIsNone(repository.get_destination_precheck(active.revision_id))
+                stored_precheck = repository.get_destination_precheck(draft.revision_id).document()
 
-            with sqlite3.connect(database) as connection:
-                connection.execute("DROP INDEX managed_destination_prechecks_status")
-                connection.execute("DROP TABLE managed_destination_prechecks")
-                connection.execute(
-                    "UPDATE schema_version SET version=9 WHERE component='configuration_management'"
-                )
             with SQLiteConfigurationRepository(database) as repository:
-                self.assertIsNone(repository.get_destination_precheck(draft.revision_id))
-                self.assertIsNotNone(repository.get_revision(draft.revision_id))
-                self.assertIsNotNone(repository.get_naming_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_classification_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_organize_authority(draft.revision_id))
-                self.assertIsNotNone(repository.get_destination_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
+                self.assertEqual(
+                    repository.get_destination_precheck(draft.revision_id).document(),
+                    stored_precheck,
+                )
+                self.assertEqual(
+                    (
+                        repository.get_naming_preview(draft.revision_id).document(),
+                        repository.get_classification_preview(draft.revision_id).document(),
+                        repository.get_organize_authority(draft.revision_id).document(),
+                        repository.get_destination_preview(draft.revision_id).document(),
+                        repository.get_local_setup_check(draft.revision_id).document(),
+                    ),
+                    other_evidence,
+                )
                 self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 11)
-            with sqlite3.connect(database) as connection:
-                connection.execute("DROP INDEX managed_destination_prechecks_status")
-                connection.execute("DROP TABLE managed_destination_prechecks")
-                connection.execute("DROP INDEX managed_destination_previews_status")
-                connection.execute("DROP TABLE managed_destination_previews")
-                connection.execute(
-                    "UPDATE schema_version SET version=8 WHERE component='configuration_management'"
-                )
-            with SQLiteConfigurationRepository(database) as repository:
-                self.assertIsNone(repository.get_destination_precheck(draft.revision_id))
-                self.assertIsNone(repository.get_destination_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_revision(draft.revision_id))
-                self.assertIsNotNone(repository.get_naming_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_classification_preview(draft.revision_id))
-                self.assertIsNotNone(repository.get_organize_authority(draft.revision_id))
-                self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
-                # Runtime schema 43 adds durable scope continuations; schema
-                # 44 links exact-Preview recovery to the paused source Task and
-                # schema 54 adds the Task-owned scheduling facts.
+                # A same-version reopen keeps the current structure and marker.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
 
