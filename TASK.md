@@ -1,29 +1,32 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.7 — 当前会话与协议，保留原请求核对
+
+用户要求“激活Task”，据此将已提交的 Task55.7 草案激活为正式实施 Task。
 
 Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9acf76bb120bf2ece902911bb9f9fe75b83a91`。
 用 `git show 27789283a0e1b04bc1e9204002ecdb8cfc44e946:TASK.md` 查看本地复核记录及 Slice55 全部结果重评。
-Slice55 仍为 **ACTIVE**。下文为规划草案，等待实施授权。
-
-## 草案 — Task55.7 当前会话与协议，保留原请求核对
 
 依据已提交 [Slice55](SLICE.md) RO-5 及与本单元直接相关的 RO-6，
 覆盖 [V2-RETIRE-008–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-active)
 中客户端协议、会话和验收要求。生命周期及测试分工遵循 [开发流程](docs/development-workflow.md)。
 
 ```text
-Proposed Task ID: 55.7
-Proposed Task Type: SLICE
-Proposed Parent Slice: 55
-Draft Status: PLANNED — NOT AUTHORIZED FOR IMPLEMENTATION
-Proposed Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
+Task ID: 55.7
+Task Type: SLICE
+Parent Slice: 55
+Status: PLANNED
+Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
+Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
+Next Action: DEVELOPER STARTS TASK55.7 IMPLEMENTATION
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
 工作区与 Git 可写，治理检查通过。Slice Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`
 仍用来验证原有 V2 用户数据和未确认请求继续可用。Task Base 用来审查本单元的完整差异。
+激活前 `main` 的 HEAD 为 `89882891f346d74e37b1f49e7fd827d6aa586b01`，工作区及暂存干净，
+治理检查通过。Task Base 至该草案提交仅变更本文件。
 
 ### 目标与用户旅程
 
@@ -151,6 +154,10 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 ### 范围边界
 
 本单元限当前会话、协议消费者及其生产者和对应测试。保留正式路由、配置键、权限、Task 内核、
-既有有效数据、独立结果与原 pins。本草案不纳入独立的旧全局批量审核应用／持久化实现，及空实例
-部署脚本与发布说明的全链路收敛。这两项仍为 RO-6 的已知待交付项，按实际后续重评处理。
-任务完成报告和 B 复核待授权实施并提交候选后填写。
+既有有效数据、独立结果与原 pins。旧全局批量审核应用／持久化实现，以及空实例部署脚本和发布说明
+的全链路收敛，仍为 RO-6 待交付项，按实际后续重评处理。
+
+### 交接状态
+
+已获实施授权，状态为 PLANNED。Developer 按本 Task 实施并运行直接受影响的测试，提交固定候选及
+实际结果后标记 READY FOR B REVIEW。B 随后独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED。
