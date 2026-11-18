@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER STARTS TASK55.6 IMPLEMENTATION
+Next Action: DEVELOPER FIXES B55.6-01–03 IN THE SAME TASK
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -137,15 +137,15 @@ Settings 等纯迁移 session、无生产调用的旧全局批量审核及其他
 
 ### 交接状态
 
-状态：READY FOR B REVIEW。Developer 已在本地提交两个真实候选检查点：
+Developer 以 READY FOR B REVIEW 提交了两个本地候选检查点：
 
 - `e53bf3f9cd13b281475181ff747ad85d495d9839` —
   `feat(retirement): make five Task flow states the only lifecycle`
 - `8adfe426` — `test(web): keep removed pause phases out of the current journeys`
   （最终产品候选）
 
-审查范围：`2e460b71735ac0284e58928c884baac9d3f46009..HEAD`；`8adfe426..HEAD` 仅为本交接
-文档，产品代码/测试/前端与 `8adfe426` 完全一致。
+Developer 交接截止 `12617ae9b1bdfaf90d53a1fe521e157c18e29233`；从
+`8adfe426` 到交接提交只改本文件，产品代码和测试未变。
 工作区在提交前除本 Task 文件外无其他改动；`config/alist.json` 未读取、未改动。
 Slice55 仍为 ACTIVE，Slice、Roadmap、Progress 未改。
 
@@ -210,3 +210,57 @@ Slice55 仍为 ACTIVE，Slice、Roadmap、Progress 未改。
   新库与 Base 库，但与本 Task 要求的「移除纯历史补列」尚有差距。
 - B 的 T4 门禁（完整 Python／Web E2E、Docker 空库／重启、wheel 外安装与镜像身份、
   备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+
+### B 独立复核：FIX REQUIRED
+
+固定比较范围：`2e460b71735ac0284e58928c884baac9d3f46009..8adfe42617b1a9bfd4776758dd3ab45c94f4e6bf`。
+另核对了后续两个交接提交，止于 `12617ae9b1bdfaf90d53a1fe521e157c18e29233`，差异仅为
+本 Task 文档。复核前 `main`、暂存和工作区干净。结论只针对 Task55.6，Base、范围和 T4 不变。
+
+| 阻塞 | 复核事实及用户影响 |
+|---|---|
+| **B55.6-01（P1，AC-3/4）启动拒绝前改写旧库** | 用 `release/v1` 实际 CLI `logs list` 建隔离库，然后用现行最小 bootstrap 和有效本机端口启动 `mediaflow api serve`。API 报旧 Job schema 拒绝启动（退出 2），但原库 SHA-256 已变，配置版本从 10 改为 11，runtime 仍为 33。管理员回头拿到的已不是启动前原库。原因是 API 查 Active 时先打开了会建表、写标记的配置仓库，runtime 拒绝发生在后面。 |
+| **B55.6-02（P1，AC-2/3）退役链和历史补写尚未移除** | SQLite 新库仍建立旧 remaining-scope discovery/preview 的专属列，Worker 和执行服务仍读取；候选把父 Task 的判定从「暂停」改成「没结束」，不是删除旧链。Task Center 当前四类问题走同 Task 的摘要及确认，复核没有把旧链冒充当前 Web 入口，也没有观察到新建旧子 Task。现行正常启动仍执行既有库旧补列／条件回填；新库仍调用来源列补列 helper，配置仓库仍创建发布权威后从旧 revision／audit 回填。当前有效来源证据、配置发布权威和同 Task 摘要本身不属于退役对象。 |
+| **B55.6-03（P1，AC-2/5）验收入口未跟上五态** | 按已有 Playwright 入口实际执行「21 文件恢复分页」用例，初始化时访问已删除的 `PersistentTaskStatus.PARTIAL_SUCCESS`，测试收到 500，没有走到管理员查看分页的断言。Docker release security/restart 的现用夹具也仍引用已删除的枚举（源码核对，未运行镜像门禁）。旧 schema 通用 rehearsal、旧镜像升级 smoke 和历史 Task45.3 的迁移专用 proof 仍留在现行 `scripts/`。这不是已证实的生产分页故障。 |
+
+### Developer 返工指导
+
+1. **先修正式启动。** 沿最小 bootstrap 到 API、Worker、Scheduler、Notification 的现行入口，
+   将共享 SQLite 文件的适用性判定放到首次建表、设置发布权威或登记服务之前。按已支持的
+   V2 布局核对，不从“没有版本行”推断现有文件是空库。用 V1 自己的现有命令生成隔离库，
+   经现行入口重现修复，比较启动前后文件摘要、版本和结构；启动错误说明数据库未改动，
+   并指向核对路径或已验证的支持备份。备份核验／明确非覆盖恢复仍走原入口。
+2. **按当前用例收敛数据库和续作。** 把空库所需结构（包括来源证据、调度、首轮执行证据、
+   配置发布权威）放到直接建表路径。既有库只保留从真实 Slice Base 验证确实必需、能在
+   同一事务完成的结构调整，删掉已废弃的逐列布局补写和历史权威推断。移除旧
+   remaining-scope discovery/preview 的专属写入、读取、字段、索引、执行授权分支和对应旧
+   Web 控件；删除 SQL／投影里把退役的 Task 流程状态转为当前状态的分支。发布时保留现有
+   有效 V2 记录及原 pins，不清历史闲置列；保留当前 Task 四类恢复、文件级部分结果和来源
+   归属。在现有测试中检查正常建库、真实 Base 库续作及必要结构调整失败后的原库。
+3. **修掉断在旅程之前的夹具。** 更新现有 `operations_inventory_harness.py` 和当前 Docker
+   security/restart 夹具：仍欠决定的 Task 是 running；已结束的流程按实际结果使用当前五态，
+   文件失败、成功及不确定的证据保持独立。去掉只为 Pause 或已废弃升级存在的夹具／脚本，
+   保留当前备份和重启验证。用上面的 21 文件用例走完原断言；不删除分页、RBAC、原 pin 或
+   不重放断言。仅跑改动和直接受影响测试，交新候选及实际结果；整套 T4 仍由 B 执行。
+
+```sh
+# web/；先用 npm run build 构建当前候选
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'dated views and 21-file recovery pages'
+```
+
+**本轮实测。** `tests.test_manual_task_engine` 的三条认证 HTTP 停用与同 Task 续作，以及
+`tests.test_sqlite_backup`、`tests.test_sqlite_restore` 合计 12 项通过。正式 CLI help 无
+`upgrade`，旧命令走参数错误（退出 2）。从 Slice Base 的现有隔离 API/Worker 夹具重新生成
+四个库：等识别决定、已有摘要、已受理未执行、已有成功结果均通过；原 Task、pin、请求核对
+和结果保留，未选兄弟文件未动，C 仍为 C。首跑因未传 Base 源码到 `PYTHONPATH` 未加载夹具，
+更正后上述四例通过。Web build 通过；现有真实 Python E2E 指定用例 1 失败，真实 V1 库
+启动检查发现写入。日志及失败 trace：
+`.git/validation-evidence/8adfe426/task55-6-b/`。本轮测试／构建累计远少于总用时一半；
+确认以上阻塞后未启动完整 T4、wheel 或 Docker，不计为通过。未触碰用户运行库或媒体。
+
+**Slice55 结果重评。** RO-1 维持此前接受，正式浏览器回归待新候选；RO-2 旧 Pause／resume
+入口退出已抽查通过，但旧 remaining-scope 执行链未退役；RO-3 旧 Task／ScanTask 模型已删，
+此前接受的配置键与权限名不变；RO-4 四种 Base 整理状态抽测通过，启动零改写、纯旧补写与
+新库完整结构仍未通过；RO-5 同 Task 恢复抽测通过，旧链消费者待删，既定 session 清理不并入
+本轮返工；RO-6 旧 CLI 退出，当前原生及制品门禁仍未完成。Slice 继续 ACTIVE，不新开 Task，
+不改 Slice／Roadmap／Progress，不交 A 终审。
