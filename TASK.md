@@ -1,4 +1,10 @@
-# Task55.5 — 审核与整理确认只使用当前 Task 旅程
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task55.5：**B PASS**。审查范围 `8a9d2460d0fb4df1afee0e157af3736f136a64c8..63d87814bc61f5da8b6300c70e4f5d3b62110d15`。
+Slice55 继续 ACTIVE；下一步由 B 按请求规划剩余范围。完整结论与全部 Slice 结果重评见文末。
+下文保留本 Task 的计划、修复交接与历次复核记录。
+
+## 已验收 Task55.5 — 审核与整理确认只使用当前 Task 旅程
 
 用户于 2026-11-17 明确要求“激活Task”，据此将已提交草案激活为正式实施 Task。
 依据已提交 [Slice55](SLICE.md) 的 RO-2、RO-5、RO-6，保留 RO-4 的有效 V2 数据；
@@ -8,13 +14,13 @@
 Task ID: 55.5
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: PASS
 Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.5 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER COMPLETES AC-4 CONFIRMATION RECOVERY ACROSS REFRESH IN TASK55.5
+Next Action: NEXT TASK — B PLANS THE REMAINING SLICE55 SCOPE WHEN REQUESTED
 ```
 
 规划时 main／上述 HEAD，tracked／untracked 干净，工作区和 Git 可写，治理 PASS。
@@ -106,25 +112,25 @@ manual-* 传输不再注册、展示或被当前客户端调用。保留审核�
 
 ### Acceptance Criteria
 
-- [ ] AC-1：上表旧 API 的全部已注册方法／子路由与 CLI 命令退出。在正常 Active 和合法
+- [x] AC-1：上表旧 API 的全部已注册方法／子路由与 CLI 命令退出。在正常 Active 和合法
   身份下 API 为通用 404；CLI 不在 help／parser。没有新 Task、授权、Provider 查询或
   Storage 效果；普通认证与脱敏安全审计保持。以代码中的真实注册清单验收，不构造假入口。
-- [ ] AC-2：Files 单项／批量／有界文件夹和 Task Center 的四类处理均完成决定→一次允许的
+- [x] AC-2：Files 单项／批量／有界文件夹和 Task Center 的四类处理均完成决定→一次允许的
   分析→准确摘要→显式选中确认→同 Task 结果。due／禁用定义 Run once 的初始意图和
   其后四类恢复保持；保存／分析零媒体变更，未选择／未就绪兄弟不被执行。
-- [ ] AC-3：同一任务的手工 native 摘要与自动化 persisted 摘要都能确认，保留 actor、
+- [x] AC-3：同一任务的手工 native 摘要与自动化 persisted 摘要都能确认，保留 actor、
   checkpoint、Preview／intent version、原 pin、选中子集和覆盖／清理权限。过期摘要、
   权限变化、满额及并发确认保留原状态与明确下一步；仅精确等价提交指向原 execution。
-- [ ] AC-4：丢确认响应后关闭／刷新／重新认证、兄弟重新分析产生新摘要、双管理员操作，
+- [x] AC-4：丢确认响应后关闭／刷新／重新认证、兄弟重新分析产生新摘要、双管理员操作，
   都核对原请求和原 execution／Task；不以最新摘要或最近任务替代。原请求无法读回时仍
   为未知，读取不重发。已完成／未知效果与附件独立结果保留，Worker 再次运行不重放。
-- [ ] AC-5：用 Slice Base 真实入口建立正常 V2 的待决定、待确认和已受理请求／结果，再由
+- [x] AC-5：用 Slice Base 真实入口建立正常 V2 的待决定、待确认和已受理请求／结果，再由
   候选打开继续；ID、digest／pin、原历史和有效 preparation 关系保持。候选同版本
   reopen／restart 后原请求仍可核对，不要求重新创建任务或配置。本单元不重写 schema。
-- [ ] AC-6：当前九页、Files hosted organizer、Task Center 原详情／四类恢复、两种库普通
+- [x] AC-6：当前九页、Files hosted organizer、Task Center 原详情／四类恢复、两种库普通
   Copy/Move/Delete 和通知继续使用。受影响处理界面在桌面、390px 和矮窗口可读，键盘、
   关闭／返回、未保存输入和未知确认状态保持；不增加常规确认步骤。
-- [ ] AC-7：源码／测试／fake／harness／wheel／镜像／当前说明没有本单元旧传输消费者；
+- [x] AC-7：源码／测试／fake／harness／wheel／镜像／当前说明没有本单元旧传输消费者；
   所有被删除的正向测试说明其退出义务或保留断言的新位置。C 复用 A Naming／Classification
   仍为 C。T4 必需验收有实际结果后，B 才作 PASS／FIX REQUIRED。
 
@@ -588,3 +594,115 @@ Prior Candidate: 2f574e5d70a8a82c7a02de70b0fb3d88a255dc64
 - 完整 Python 回归、其余 Web Vitest／E2E、Base 真实数据继续使用、wheel／镜像／Docker
   及整份 `operations-inventory.python.spec.ts` 门禁仍由 B 执行；上轮已报告的既有 13 个
   Base 失败的环境归因仍待 B 复核。
+
+
+### B 最终独立复核 — 2026-11-18 / PASS
+
+```text
+Reviewed Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Product Fix Candidate: 4fa010b4a5e619949ca92f3d7dd8b66f7595f084
+Developer Handoff Head: cbce370771bebd021b12a7da0389b8be9079d9d1
+Reviewed Acceptance Head: 63d87814bc61f5da8b6300c70e4f5d3b62110d15
+Decision: PASS
+Task blockers: NONE
+Next Action: NEXT TASK — remaining Slice55 scope, not Slice closure
+```
+
+从干净 main／交接 Head 开始，治理 PASS，工作区与 Git 可写。独立复核完整固定
+Base..Acceptance Head 的46文件；前两轮已审部分与本轮增量、调用关系和验收结果一并
+核对。原 Base／Goal／Scope／High／T4 保持。此前 FIX REQUIRED 与失败日志保留为历史。
+
+**用户操作结果。** 在 Files 受理两个文件，在原 Task 分别保存决定并重新分析；打开
+One 的摘要只确认 Two，真实202响应丢失。在首次核对前刷新、重新认证，页面仍保留这次
+提交，提供“重新读取条目后再继续”，确认保持锁定。该动作只 GET 原 Preview 的精确
+选择／版本／效果许可，显示原 execution 与同一 Task；Worker 只完成 Two，One 可继续
+修正和分析。关闭重开、兄弟产生新摘要、再次刷新后原受理身份保持，Execute 始终只有1次。
+识别、Metadata 候选／修正、分类、冲突 Rename／明确 Overwrite 的原生旅程均完成同 Task
+结果，保存和分析不修改媒体。前两轮阻塞 B55.5-01／02 及 AC-4 均已解决。
+
+**范围与验收对应。**
+
+| 验收 | 独立核对的实际结果 |
+|---|---|
+| AC-1 | 从 Base 的真实 dispatch 条件反向列出旧注册，逐项核对 supported roots、dispatch、审计模板和 workflow 分类已退出；正常 Active／合法身份的现有注销用例与源码外安装消费者得到通用404，五组 CLI 不在 help 且普通 parser 拒绝，无新工作或媒体效果。没有把 Base 不存在的接口算作退休成果。 |
+| AC-2／3 | 全部四类处理、手工 native 与自动化 persisted 摘要、Files 单项／批量／文件夹、due／禁用定义 Run once 接回正式 Execute；既有 actor、精确 Preview／intent version、checkpoint、权限、容量、原 pin、并发与独立兄弟断言保留并通过。 |
+| AC-4 | 上述丢响应→先刷新／重新认证→界面核对原子集→同 Task Worker→兄弟新摘要的完整原生用例通过；单元包含 provider 重建、迟到响应、主体隔离和精确匹配清除。桌面／390px／矮窗口实查可读，核对按钮可键盘 Enter 操作，GET 未新增 Execute。 |
+| AC-5 | Slice Base 真实 Files 生成待决定、待确认、已受理、已有 SUCCESS 四种记录，候选打开同一数据库并继续；另用 Base 真实 direct CLI 生成 persisted preparation 的 prepared／confirmed 两种状态再由候选接续。六种均保留 Task／item／摘要／execution 关系、Active／digest／pin、checkpoint 和原结果身份；未选兄弟保留，C 用 A 命名分类仍为 C，同版本 reopen 通过。Docker restart 另证明持久执行及故障边界。 |
+| AC-6 | 默认浏览器全量285项、真实两种库／通知／任务详情／手工整理及自动化旅程覆盖继续使用；本次恢复面板三个视口和键盘实查通过。 |
+| AC-7 | 当前生产传输与客户端无旧消费者；剩余旧 URL 字符串仅作为既有 checkpoint hash 的固定输入，不注册、不返回、不请求，保持 Base 的合法摘要可确认。当前 wheel、源码外 API／CLI 和两个候选 Docker 镜像实证一致。 |
+
+退出的正向传输断言按实际职责核对：五组 CLI 及全局 list/show/resolve 的响应／格式断言
+对应 parser／unknown-route 反证；决策权限、字段拒绝、审计和原子性保留在
+`test_confirmation_api.py` 的当前 Task decision 及共享业务单元中。旧 manual intent／Preview
+传输断言由当前 `test_v2_manual_organize.py`、`test_manual_task_engine.py` 和原生 Files
+旅程承担；旧执行发现改从 Task／item 读取，原 Result／未选项／重开断言保持。
+原 preparation confirm 的同 Task／actor／容量／pins／独立效果断言在手工与自动化测试中
+只改接正式 Execute；`RunDetailTabs` 迟到响应断言完整保留并使用当前真实响应形状。
+共享服务中尚未退出的无生产调用批量方法／测试，明确列入下方 RO-6 的 Slice 剩余结果。
+
+Base 证明使用隔离临时 Local／SQLite 和 synthetic Provider。Base 自动化夹具在**原始发布前**
+选用正常 V2 输入（无旧 schedules／remoteExecution／通知事件别名）；候选没有修改原
+配置或 digest。构造过程中曾把 macOS 的 `/var` 数据库定位换成 SQLite 返回的 `/private/var`
+路径，导致合法的 immutable locator 检查拒绝；保留原始 locator 后全部通过。没有把此
+夹具定位错误记为产品问题，也没有放宽校验。
+
+**本轮 B 的两项最小测试接线修正。** 产品代码仍是 `4fa010b4`。
+
+- `807520d3`：现有 `ManualOrganizeExecutionWorker` 夹具已经选定一个 execution，却通过
+  全局 claim 取到共享队列中的另一 Task，原 execution 留在 admitted。诊断记录证明此因果；
+  仅让该夹具经现有 scheduling.claim 领取指定 Task，原 Worker／执行／结果断言不变。
+  修改后当前48项 operations inventory 全通过，完整 Python 重新运行通过。
+- `63d87814`：Docker 的旧接口注销／RBAC 检查原在 Active 建立前运行，旧 tasks POST 先被
+  runtime readiness 拒绝为503；Task 的注销前提是正常 Active。仅将原整组检查移到 Active
+  激活和 readiness 通过后，404、认证／RBAC／脱敏／零副作用断言全部保留并实际通过。
+  首次 Docker 运行另因 Colima 不共享系统临时目录失败；临时根改到其已共享的 HOME 下
+  本地忽略目录后执行，没有更改产品配置或 Compose 权限。
+
+**实际完整门禁。** 命令／cwd／时间／退出码见
+`.git/validation-evidence/4fa010b4/task55-5-b/runs.jsonl`；原始日志、trace、截图、Base 脚本
+和 `artifact-provenance.json` 保存在同一稳定本地忽略目录，不声称远程 CI 可访问。
+
+- Python 最终全量：**2385 tests OK，7项既有可选外部／endurance测试跳过**；Ruff format／
+  check、compileall、pip check、两个正式样例 config validate、禁止依赖扫描均通过。
+  ResourceWarning／故障注入输出保留。收尾治理与 release/security 文档测试合计28项通过。
+- Web：**104 files／1648 tests passed**；typecheck／lint／format:check／build 通过；
+  默认 E2E **285 passed**。这些输入在4fa之后无改动，按源码差异复用本轮相同结果。
+- 第一组真实风险浏览器原组合命令为 **60 passed／1 failed**：唯一失败是 task-flow
+  通过“电影”文字查行，前面 spec 已留下另一合法同名范围，期望1行实际2行。原失败及
+  trace 保留；在新 harness 原样运行完整 task-flow，**3 passed**，未删改任何断言。
+  因此 operations inventory48＋手工整理8＋元数据搜索2＋独立新实例 task-flow3，
+  **61个既定用例均已覆盖通过**，不把原组合命令写作全绿。
+- 第二组真实 automation lifecycle／Run once：**29 passed**。首轮报告的13个未知原生失败
+  没有作为 Base 豁免；B 在本轮定位上述领取接线后完成全组实际覆盖。
+- wheel 构建与完整 smoke 通过；源码外独立 venv 的安装包 API／CLI 消费者通过，实际 import
+  位于 site-packages。逐一比对 wheel 中164个 Python 模块与最终 Head 源码完全相同。
+- `docker_release_security_smoke_test.py` 与 `docker_restart_fault_smoke_test.py` 均通过：
+  当前 V2 资产／安全头、空 Active 等待、非 root、RBAC／脱敏／拒绝零效果、真实 Worker／
+  Scheduler／Notification、原 Task／pins／fence／未知非重放及重启证明均实际执行。
+  镜像分别为 `mediaflow:task55-5-b-63d87814-security` 与
+  `mediaflow:task55-5-b-63d87814-restart`，完整 image IDs／digests 记录在 provenance。
+
+wheel SHA256：`aff7597a3da5d6060f286304e313d5fa31b3cfead6ca89d2288c172f8e003e6d`。
+本轮首次 visual 脚本仍按旧按钮文案查找“确认继续整理”，当前锁定文案是“正在受理…”，
+在读取按钮文字阶段超时；调整观察器匹配实际状态后，三个视口／键盘／精确 GET 通过。
+生产代码未因此修改，失败运行计入时间并保留。临时服务／媒体夹具和本轮启动的 Docker
+栈已清理；Colima 与 Docker context 恢复初始状态，没有推送或操作用户媒体。
+
+**全部 Slice 结果重评。**
+
+| 结果 | Task55.5 PASS 后的实际状态 |
+|---|---|
+| RO-1 | 55.1／55.4 已接受的 Web 退休结果保持；当前九页与真实深链回归通过。 |
+| RO-2 | 55.2／55.3 加本单元已完成旧调度／票据／grant／非内核领取及本次全局审核／manual-* 传输退出；`service_api.py` 的 Pause 专门退休处理仍在，随 RO-4 收敛。 |
+| RO-3 | 55.4 的配置与身份结果保持；`domain/tasks.py` 的旧 Task／ScanTask／阶段 TaskStatus 仍在，`domain/scanner.py` 仍消费旧 TaskStatus，未完成合同要求。 |
+| RO-4 | 本单元有效 V2 数据继续使用通过；`sqlite_runtime.py` 仍有新库建表后补列／历史回填，Task／队列／transfer 的 paused／pause_requested 等仍在。后续须保留当前有效摘要和一 Task 多子集所需结构，不能把必要当前调整按 migrate 名称一起删除。 |
+| RO-5 | 本次审核与确认消费者已收敛，原请求跨刷新恢复通过；`automation-run-once-session.ts`／`automation-copy-session.ts` 仍读取并合并旧单条 session 格式，其他既定协议／Settings session 清理尚未验收。 |
+| RO-6 | 本 Task 的传输／消费者／制品闭环完成；共享审核服务的三个 resolve_pending 批量方法目前只有单元测试调用，Task 恢复使用其单项 resolve。无生产调用的批量实现／模型及其正向单元测试仍需在 Slice 源码清理中收敛，不能把 CLI 退出视作全部领域代码已退出。其余领域／schema／session、全 Slice 最终验收与 CURRENT 协调也待交付。 |
+
+Slice55 继续 **ACTIVE**。下一步是剩余范围的连贯 Task；本次未请求下一 Task 规划，不新增
+或激活 Task，不改变 SLICE／Roadmap／Progress，不作 A 的 Slice 关闭判断。
+
+**本轮时间：** 2026-11-18 10:06:38 +0800 至 2026-11-18 10:55:46 +0800，复核 49.15 分钟；
+测试／构建命令逐次累计 1471.3 秒（并行运行也分别计入，包含所有失败），另按2秒
+计入治理等短检查上界，共 24.56 分钟，占本轮 49.96%，小于50%。
+计时见同证据目录 `timing.json`；收尾文档检查28项、治理与 whitespace 均通过。
