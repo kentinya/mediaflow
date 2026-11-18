@@ -141,10 +141,11 @@ Settings 等纯迁移 session、无生产调用的旧全局批量审核及其他
 
 - `e53bf3f9cd13b281475181ff747ad85d495d9839` —
   `feat(retirement): make five Task flow states the only lifecycle`
-- `8adfe426`（本文件提交之前的最终产品候选）—
-  `test(web): keep removed pause phases out of the current journeys`
+- `8adfe426` — `test(web): keep removed pause phases out of the current journeys`
+  （最终产品候选）
 
-审查范围：`2e460b71735ac0284e58928c884baac9d3f46009..8adfe426`（完整 Task Base..Head）。
+审查范围：`2e460b71735ac0284e58928c884baac9d3f46009..HEAD`；`8adfe426..HEAD` 仅为本交接
+文档，产品代码/测试/前端与 `8adfe426` 完全一致。
 工作区在提交前除本 Task 文件外无其他改动；`config/alist.json` 未读取、未改动。
 Slice55 仍为 ACTIVE，Slice、Roadmap、Progress 未改。
 
