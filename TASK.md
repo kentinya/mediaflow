@@ -626,3 +626,64 @@ SQLite 后，Task Base 报告凭据状态同时改写文件，候选保持文件
 的零改写和空库并发首启通过。RO-5 当前确认、丢响应核对和返回路径通过，既定 session 清理
 仍待完成。RO-6 当前目录验收已接到现行入口，完整回归与制品门禁未完成。Slice55 继续
 ACTIVE，返工留在 Task55.6。
+
+### Developer 返工交接：B55.6-04
+
+候选产品检查点：`ff008989482ba3c649a9456094e2f80b17ac213b`
+（`fix(task55.6): read credentials before opening the database`）。
+本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
+提交前工作区除实现与测试两文件外无其他改动；`config/alist.json` 未读取、未改动。
+
+**B55.6-04 — 凭据检查先于数据库打开**
+
+- `api credentials check` 现在与常驻服务一样，从 `_configuration_document` 读取部署 bootstrap，
+  再经现有 `load_management_bootstrap` 解析 `persistence.databasePath` 和 `api.principals`，
+  直接调用同一 `api_credential_statuses()` 与 `render_api_credentials()`。
+- 该分支在 `_configuration()`、`SQLiteConfigurationRepository`、`SQLiteTaskRepository` 和
+  `RuntimeDatabaseLease` 之前返回，不建表、不写 marker、不创建父目录、不获得共享或独占租约。
+  因此空路径、首次启动前、以及指向其他应用 SQLite 或损坏库的 bootstrap 都能读到环境变量的
+  SET／UNSET，而不会把数据库适用性拒绝显示成凭据状态错误。
+- 保留原有 CLI 参数解析、凭据检查退出码（全部启用身份已设置 0，缺令牌 1，参数或文档错误 2）、
+  禁用身份仍显示、输出只含 principal ID、角色、`tokenEnv` 名与 SET／UNSET，不含令牌值。
+  旧 `api.tokenEnv` 仍在读取任何数据库前以原错误拒绝并退出 2。
+- `api serve` 的启动顺序未改：仍先经 `_configuration()` 判定配置库适用性，再打开运行库；
+  其他应用 SQLite、V1 Job schema、更新版本和畸形库仍在任何写入前拒绝。
+
+**测试调整**
+
+- 既有凭据用例改用明确的隔离数据库路径，并在两次检查中同时屏蔽配置仓库与运行仓库，
+  断言已设置／缺失两种状态都不新建数据库文件。
+- 新增 `test_credential_check_leaves_an_existing_foreign_database_untouched`：用真实 SQLite
+  建立只含 `notes` 表和一行内容的文件，经正式 `final_main` 执行凭据检查，核对退出码 0、
+  SET 输出、无 secret，且 SHA-256、表集合和笔记行原样保留。
+- 旧 `api.tokenEnv` 用例同时断言退出 2、无 secret 输出且未新建数据库。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_api_credentials tests.test_configuration_status
+  tests.test_runtime_lease` → 20 项通过（0.27 秒）。
+- `.venv/bin/python -m unittest tests.test_management_setup` → 17 项通过（0.28 秒）。
+- 正式 `mediaflow api credentials check`：指向含 `notes` 表的隔离 SQLite 时退出 0、显示
+  `local-admin | admin | MEDIAFLOW_API_TOKEN | ENABLED | SET`，前后 SHA-256
+  `d5384491339117a6df4846574bb7d8961ec5d92b4979c38ca423e0c054488aeb` 一致；指向不存在
+  的嵌套路径时退出 0，数据库和父目录均未创建；旧 `api.tokenEnv` 退出 2、无 secret、无数据库。
+- 同一 foreign SQLite 上正式 `mediaflow api serve` 仍退出 2，提示 “tables but no current
+  MediaFlow schema marker … file was not modified”，前后 SHA-256 一致。
+- `.venv/bin/ruff check mediaflow tests scripts`、`ruff format --check`（336 文件）、
+  `python -m compileall -q mediaflow tests scripts`、`python3 scripts/check_governance.py`、
+  `git diff --check` 通过。
+- 本文件、上述命令输出与静态检查日志在
+  `.git/validation-evidence/ff008989482ba3c649a9456094e2f80b17ac213b/task55-6-dev/`。
+  本轮测试累计约 1 秒，远少于总耗时 30%。
+
+**剩余风险与未完成项（不记为通过）**
+
+- 凭据检查现在只验证部署 bootstrap 的 locator 与 API 身份，不再为读取凭据而校验完整 workflow
+  文档；畸形策略字段由 `api serve`、`config validate` 和发布入口继续拒绝。这是本 Task 要求的
+  诊断边界，但改变了旧命令顺带校验完整配置的行为。
+- B 的完整 T4（全量 Python、全部原生 E2E、Docker 空库／重启／安全镜像、wheel 外安装、
+  备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+
+**Slice55 结果重评。** RO-1、RO-2、RO-4、RO-5、RO-6 的既有抽测结果保留；RO-3 的凭据诊断
+入口在本候选上解除阻塞，正式配置与权限名未改。Slice55 继续 ACTIVE，返工留在 Task55.6，
+不改 Slice／Roadmap／Progress，不交 A 终审。
