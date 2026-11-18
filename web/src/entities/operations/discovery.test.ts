@@ -22,6 +22,15 @@ function payload(overrides: Record<string, unknown> = {}) {
         sideEffects: "none",
         refusal: null,
       },
+      prepare: {
+        available: true,
+        method: "POST",
+        path: "/api/v1/operations/organize/discoveries/d-1/analyze",
+        requiresVersion: true,
+        sideEffects: "none",
+        reason: null,
+        pendingReason: null,
+      },
       pause: {
         available: true,
         method: "POST",
@@ -213,6 +222,15 @@ describe("normalizeOrganizeDiscovery", () => {
             requiresVersion: true,
             sideEffects: "none",
             refusal: "discovery_budget_limited",
+          },
+          prepare: {
+            available: false,
+            method: "POST",
+            path: "/api/v1/operations/organize/discoveries/d-1/analyze",
+            requiresVersion: true,
+            sideEffects: "none",
+            reason: "the source list is not frozen",
+            pendingReason: null,
           },
           pause: {
             available: true,

@@ -35,6 +35,11 @@ function context(overrides: Partial<PendingEngineSettingsSubmission> = {}) {
     baselineRevisionId: "revision-1",
     baselineRevisionVersion: 3,
     baselineDigest: "digest-1",
+    baselineValues: {
+      "automation.maximumActiveJobs": "50",
+      "automation.workerPollSeconds": "2",
+      "automation.schedulerPollSeconds": "5",
+    },
     submittedAt: "2026-03-16T00:00:00+00:00",
     ...overrides,
   } satisfies PendingEngineSettingsSubmission;
@@ -80,6 +85,7 @@ describe("retained engine-settings submission", () => {
       "baselineDigest",
       "baselineRevisionId",
       "baselineRevisionVersion",
+      "baselineValues",
       "input",
       "submissionId",
       "submittedAt",
@@ -102,14 +108,20 @@ describe("retained engine-settings submission", () => {
     );
   });
 
-  it("keeps a context retained by an older build usable", () => {
-    // No baselineValues: it must still be readable so the submission can be
-    // reconciled; per-field recovery then asks explicitly instead of guessing.
-    writePendingSubmission(ADMIN, context());
+  it("keeps a Slice Base context reconcilable without inventing a baseline", () => {
+    // The Slice Base build could send a real submission whose retained record
+    // had no baseline values. It stays an exact, reconcilable request, but the
+    // missing baseline is reported as `null` so the form never guesses one.
+    const legacy = context() as Record<string, unknown>;
+    delete legacy["baselineValues"];
+    window.sessionStorage.setItem(
+      submissionSessionKey(ADMIN),
+      JSON.stringify(legacy),
+    );
     const read = readPendingSubmission(ADMIN);
     expect(read.available).toBe(true);
     expect(read.value?.submissionId).toBe("submission-1");
-    expect(read.value?.baselineValues).toBeUndefined();
+    expect(read.value?.baselineValues).toBeNull();
   });
 
   it("drops a malformed or over-long retained record instead of trusting it", () => {

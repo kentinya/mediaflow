@@ -483,9 +483,16 @@ describe("TaskItemRecoveryPanel", () => {
         ) {
           return new Response(
             JSON.stringify({
-              continuation_id: "continuation-1",
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: {
+                taskId: "task-1",
+                itemId: "item-1",
+                stage: "analyzing",
+              },
               sideEffects: "none",
-              next_action: "wait for the Worker",
+              executionMode: "dry_run",
+              nextAction: "wait for the Worker",
             }),
             { status: 202 },
           );
@@ -651,9 +658,16 @@ describe("TaskItemRecoveryPanel", () => {
           continueBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response(
             JSON.stringify({
-              continuation_id: "continuation-1",
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: {
+                taskId: "task-1",
+                itemId: "item-1",
+                stage: "analyzing",
+              },
               sideEffects: "none",
-              next_action: "wait for the Worker",
+              executionMode: "dry_run",
+              nextAction: "wait for the Worker",
             }),
             { status: 202 },
           );
@@ -751,9 +765,16 @@ describe("TaskItemRecoveryPanel", () => {
         ) {
           return new Response(
             JSON.stringify({
-              continuation_id: "continuation-1",
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: {
+                taskId: "task-1",
+                itemId: "item-1",
+                stage: "analyzing",
+              },
               sideEffects: "none",
-              next_action: "wait for the Worker and inspect its linked result",
+              executionMode: "dry_run",
+              nextAction: "wait for the Worker and inspect its linked result",
             }),
             { status: 202 },
           );
@@ -780,7 +801,9 @@ describe("TaskItemRecoveryPanel", () => {
       within(panel).getByRole("button", { name: "保存并重新分析" }),
     );
 
-    expect(await within(panel).findByText(/单项分析已进入队列/)).toBeVisible();
+    expect(
+      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+    ).toBeVisible();
     await waitFor(() => {
       expect(
         calls.filter((call) => call.method === "POST").map((call) => call.path),
@@ -2133,9 +2156,16 @@ describe("TaskItemRecoveryPanel", () => {
           }
           return new Response(
             JSON.stringify({
-              continuation_id: "continuation-2",
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: {
+                taskId: "task-1",
+                itemId: "item-1",
+                stage: "analyzing",
+              },
               sideEffects: "none",
-              next_action: "wait for the Worker and inspect its linked result",
+              executionMode: "dry_run",
+              nextAction: "wait for the Worker and inspect its linked result",
             }),
             { status: 202 },
           );
@@ -2170,7 +2200,9 @@ describe("TaskItemRecoveryPanel", () => {
     expect(retry).toBeEnabled();
     await user.click(retry);
 
-    expect(await within(panel).findByText(/单项分析已进入队列/)).toBeVisible();
+    expect(
+      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+    ).toBeVisible();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
     ).toEqual([

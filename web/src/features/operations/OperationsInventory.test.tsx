@@ -281,11 +281,6 @@ describe("Operations run inventory landing", () => {
       requested.some((url) => url.includes("/api/v1/management/readiness")),
     ).toBe(false);
     expect(
-      requested.some((url) =>
-        url.includes("/api/v1/operations/manual-actions"),
-      ),
-    ).toBe(false);
-    expect(
       requested.some((url) => url.includes("/api/v1/operations/runs")),
     ).toBe(true);
   });

@@ -45,8 +45,6 @@ import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 const PHASE_LABELS: Readonly<Record<string, string>> = {
   discovering: "正在发现来源",
   analyzing: "正在分析，等待计划摘要",
-  pausing: "正在确认暂停",
-  paused: "分析已暂停",
   ready: "来源清单已发现，等待冻结",
   frozen: "来源清单已冻结",
   refused: "发现未完整，已拒绝执行",
@@ -58,7 +56,6 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
 const STATUS_LABELS: Readonly<Record<string, string>> = {
   queued: "排队中",
   running: "发现中",
-  paused: "已暂停",
   waiting_stability: "等待稳定",
   completed: "发现完成",
   partial_success: "部分完成",
@@ -243,7 +240,6 @@ export function AutomationRunOncePage() {
                         partial_success: "部分完成",
                         failed: "失败",
                         cancelled: "已取消",
-                        paused: "已暂停",
                       },
                       model.status,
                     )}

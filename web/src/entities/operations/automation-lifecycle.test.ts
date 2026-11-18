@@ -73,21 +73,20 @@ describe("normalizeAutomationFormAuthority", () => {
     expect(model.limits.itemLimitMaximum).toBe(10000);
   });
 
-  it("never offers a removed run mode even when the backend advertises one", () => {
-    // The Contract amendment removed scan-only/scan-and-plan. A stale backend
-    // that still advertises them must not turn them into a selectable choice.
-    const model = normalizeAutomationFormAuthority(
-      formAuthorityPayload({
-        enums: {
-          modes: ["scan-only", "automatic-organization", "scan-and-plan"],
-          scheduleTypes: ["interval", "cron"],
-        },
-      }),
-    );
-    expect(model.modes).toEqual(["automatic-organization"]);
-    expect(model.modes).not.toContain("scan-only");
-    expect(model.modes).not.toContain("scan-and-plan");
-    // A list with no retained mode at all is malformed: no form is offered.
+  it("fails closed when the advertised mode list is not the runnable set", () => {
+    // The current authority advertises exactly the runnable mode. An unknown
+    // value is malformed evidence: filtering it would hide that the form is
+    // rendering a narrowed view of the backend's real authority.
+    expect(() =>
+      normalizeAutomationFormAuthority(
+        formAuthorityPayload({
+          enums: {
+            modes: ["scan-only", "automatic-organization", "scan-and-plan"],
+            scheduleTypes: ["interval", "cron"],
+          },
+        }),
+      ),
+    ).toThrow(AutomationLifecycleNormalizationError);
     expect(() =>
       normalizeAutomationFormAuthority(
         formAuthorityPayload({

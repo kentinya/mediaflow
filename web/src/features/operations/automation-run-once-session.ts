@@ -4,22 +4,18 @@
  * The browser creates the request identity before the POST. If the response is
  * lost, the exact durable admission can then be read back by that identity
  * instead of starting a second run. Only a principal/definition/request tuple
- * and whether it came from the retired edit entry are retained; no token,
- * configuration digest, definition fingerprint or reusable execution authority
- * is stored here.
+ * is retained; no token, configuration digest, definition fingerprint or
+ * reusable execution authority is stored here.
  *
- * The current list keeps one bounded entry per definition. The retired edit
- * page kept one whole-principal entry; those records are still read and shown
- * for exact reconciliation, never resubmitted. A new submission is refused if
- * its persistence context or random identity cannot be established, because a
- * request that cannot be reconciled must not be sent.
+ * The list keeps one bounded entry per definition. A new submission is refused
+ * if its persistence context or random identity cannot be established, because
+ * a request that cannot be reconciled must not be sent.
  */
 
 import { newRequestId } from "../../shared/api/request-id";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 
-const LEGACY_INTENT_PREFIX = "mediaflow.operations.automation-run-once-intent:";
 const LIST_INTENT_PREFIX = "mediaflow.operations.automation-run-once-intents:";
 const MAX_PENDING = 20;
 const MAX_DEFINITION_ID_LENGTH = 64;
@@ -28,14 +24,10 @@ const MAX_REQUEST_ID_LENGTH = 200;
 export interface PendingRunOnceIntent {
   readonly definitionId: string;
   readonly requestId: string;
-  /** The retired edit-page key, retained only for display and exact readback. */
-  readonly legacy: boolean;
 }
 
 export interface RunOnceSessionRead {
   readonly pending: readonly PendingRunOnceIntent[];
-  /** An old entry could not be validated; it never becomes new execution. */
-  readonly invalidLegacy: boolean;
 }
 
 export type BeginRunOnceResult =
@@ -76,10 +68,6 @@ function safeRequestId(value: unknown): value is string {
     value.length <= MAX_REQUEST_ID_LENGTH &&
     !hasControlCharacter(value)
   );
-}
-
-function legacyKey(principalSegment: string): string {
-  return `${LEGACY_INTENT_PREFIX}${principalSegment}`;
 }
 
 function listKeyPrefix(principalSegment: string): string {
@@ -137,32 +125,6 @@ function readListIntent(raw: string | null, expectedDefinitionId: string) {
   return {
     definitionId: source.definitionId,
     requestId: source.requestId,
-    legacy: false,
-  } satisfies PendingRunOnceIntent;
-}
-
-function readLegacyIntent(raw: string | null) {
-  if (raw === null) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const source = value as Record<string, unknown>;
-  if (
-    !safeDefinitionId(source.definitionId) ||
-    !safeRequestId(source.requestId)
-  ) {
-    return null;
-  }
-  return {
-    definitionId: source.definitionId,
-    requestId: source.requestId,
-    legacy: true,
   } satisfies PendingRunOnceIntent;
 }
 
@@ -196,26 +158,12 @@ export function readRunOnceSession(
 ): RunOnceSessionRead {
   const session = storage();
   if (session === null || principalId === null) {
-    return { pending: [], invalidLegacy: false };
+    return { pending: [] };
   }
-  const segment = principalSegment(principalId);
-  if (segment === null) {
-    return { pending: [], invalidLegacy: false };
+  if (principalSegment(principalId) === null) {
+    return { pending: [] };
   }
-  const pending = listPendingForPrincipal(session, principalId);
-  const rawLegacy = session.getItem(legacyKey(segment));
-  let invalidLegacy = false;
-  if (rawLegacy !== null) {
-    const legacy = readLegacyIntent(rawLegacy);
-    if (legacy === null) {
-      invalidLegacy = true;
-    } else if (
-      !pending.some((item) => item.definitionId === legacy.definitionId)
-    ) {
-      pending.unshift(legacy);
-    }
-  }
-  return { pending: pending.slice(0, MAX_PENDING), invalidLegacy };
+  return { pending: listPendingForPrincipal(session, principalId) };
 }
 
 /**
@@ -261,16 +209,15 @@ export function beginRunOnceSubmission(
   }
   return {
     ok: true,
-    intent: { definitionId, requestId, legacy: false },
+    intent: { definitionId, requestId },
   };
 }
 
 /**
  * Remove one exact retained request after a proved admission/rejection.
  *
- * A matching legacy entry is removed too, but a different definition/request
- * is never touched. Invalid legacy text is left in place rather than being
- * interpreted as a command or silently turned into another run.
+ * A different definition/request is never touched, so clearing one row's
+ * outcome cannot release another row's unreconciled submission.
  */
 export function clearRunOnceIntent(
   principalId: string | null,
@@ -293,14 +240,6 @@ export function clearRunOnceIntent(
     ) {
       session.removeItem(listKey(segment, definitionId));
     }
-    const legacy = readLegacyIntent(session.getItem(legacyKey(segment)));
-    if (
-      legacy !== null &&
-      legacy.definitionId === definitionId &&
-      (requestId === undefined || legacy.requestId === requestId)
-    ) {
-      session.removeItem(legacyKey(segment));
-    }
   } catch {
     // A failed cleanup cannot make the admission untrue; the next read still
     // shows only the bounded durable context, and reconciliation is read-only.
@@ -314,10 +253,7 @@ registerPrincipalSessionDataCleaner(() => {
   const keys: string[] = [];
   for (let index = 0; index < session.length; index += 1) {
     const key = session.key(index);
-    if (
-      key?.startsWith(LEGACY_INTENT_PREFIX) ||
-      key?.startsWith(LIST_INTENT_PREFIX)
-    ) {
+    if (key?.startsWith(LIST_INTENT_PREFIX)) {
       keys.push(key);
     }
   }

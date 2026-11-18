@@ -7,17 +7,13 @@
  * response is unknown, the list can read the durable Copy evidence back for
  * that exact intent instead of allocating a second copy.
  *
- * One entry is kept per source definition. The retired edit card wrote one
- * whole-principal entry; those records are still read and shown for exact
- * reconciliation, and are never turned into a new Copy command. Only identity
- * and the observed Active fence are stored: no token, secret or reusable
- * execution authority.
+ * One entry is kept per source definition. Only identity and the observed
+ * Active fence are stored: no token, secret or reusable execution authority.
  */
 
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 
-const LEGACY_INTENT_PREFIX = "mediaflow.operations.automation-copy-intent:";
 const LIST_INTENT_PREFIX = "mediaflow.operations.automation-copy-intents:";
 const MAX_PENDING = 20;
 const MAX_SOURCE_ID_LENGTH = 64;
@@ -38,8 +34,6 @@ export interface PendingCopyIntent {
 
 export interface CopySessionRead {
   readonly pending: readonly PendingCopyIntent[];
-  /** An old entry could not be validated; it never becomes a Copy command. */
-  readonly invalidLegacy: boolean;
 }
 
 export type BeginCopyResult =
@@ -91,10 +85,6 @@ function safeAuthority(value: unknown): value is CopyAuthority {
   );
 }
 
-function legacyKey(principalSegment: string): string {
-  return `${LEGACY_INTENT_PREFIX}${principalSegment}`;
-}
-
 function listKeyPrefix(principalSegment: string): string {
   return `${LIST_INTENT_PREFIX}${principalSegment}:`;
 }
@@ -126,7 +116,7 @@ interface StoredIntent {
   readonly authority: CopyAuthority;
 }
 
-function readIntent(value: unknown, expectedSourceId: string | null) {
+function readIntent(value: unknown, expectedSourceId: string) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -134,7 +124,7 @@ function readIntent(value: unknown, expectedSourceId: string | null) {
   const sourceId = source.sourceId;
   if (
     !safeSourceId(sourceId) ||
-    (expectedSourceId !== null && sourceId !== expectedSourceId) ||
+    sourceId !== expectedSourceId ||
     !safeAuthority(source.authority)
   ) {
     return null;
@@ -167,17 +157,6 @@ function readListIntent(raw: string | null, expectedSourceId: string) {
   return readIntent(value, expectedSourceId);
 }
 
-function readLegacyIntent(raw: string | null) {
-  if (raw === null) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  return readIntent(value, null);
-}
-
 function listPendingForPrincipal(
   session: Storage,
   sessionPrincipal: string,
@@ -204,24 +183,13 @@ function listPendingForPrincipal(
 export function readCopySession(principalId: string | null): CopySessionRead {
   const session = storage();
   if (session === null || principalId === null) {
-    return { pending: [], invalidLegacy: false };
+    return { pending: [] };
   }
   const segment = principalSegment(principalId);
   if (segment === null) {
-    return { pending: [], invalidLegacy: false };
+    return { pending: [] };
   }
-  const pending = listPendingForPrincipal(session, segment);
-  const rawLegacy = session.getItem(legacyKey(segment));
-  let invalidLegacy = false;
-  if (rawLegacy !== null) {
-    const legacy = readLegacyIntent(rawLegacy);
-    if (legacy === null) {
-      invalidLegacy = true;
-    } else if (!pending.some((item) => item.sourceId === legacy.sourceId)) {
-      pending.unshift(legacy);
-    }
-  }
-  return { pending: pending.slice(0, MAX_PENDING), invalidLegacy };
+  return { pending: listPendingForPrincipal(session, segment) };
 }
 
 /**
@@ -263,9 +231,8 @@ export function beginCopyIntent(
 /**
  * Remove one exact retained intent after a proved outcome.
  *
- * The matching retired edit-card entry is removed too; a different source's
- * entry is never touched. Invalid legacy text is left in place rather than
- * being interpreted as a command.
+ * A different source's entry is never touched, so clearing one Copy's outcome
+ * cannot release another source's unreconciled command.
  */
 export function clearCopyIntent(
   principalId: string | null,
@@ -278,10 +245,6 @@ export function clearCopyIntent(
   }
   try {
     session.removeItem(listKey(segment, sourceId));
-    const legacy = readLegacyIntent(session.getItem(legacyKey(segment)));
-    if (legacy !== null && legacy.sourceId === sourceId) {
-      session.removeItem(legacyKey(segment));
-    }
   } catch {
     // A failed cleanup cannot make a proved outcome untrue; the next read
     // still shows only the bounded durable context.
@@ -295,10 +258,7 @@ registerPrincipalSessionDataCleaner(() => {
   const keys: string[] = [];
   for (let index = 0; index < session.length; index += 1) {
     const key = session.key(index);
-    if (
-      key?.startsWith(LEGACY_INTENT_PREFIX) ||
-      key?.startsWith(LIST_INTENT_PREFIX)
-    ) {
+    if (key?.startsWith(LIST_INTENT_PREFIX)) {
       keys.push(key);
     }
   }

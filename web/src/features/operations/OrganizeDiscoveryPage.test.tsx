@@ -47,6 +47,7 @@ function discoveryDocument(progress: Record<string, unknown>) {
     actions: {
       cancel: action("cancel", true),
       finalize: action("finalize", false, "discovery_budget_limited"),
+      prepare: action("prepare", true),
       pause: action("pause", true),
       resume: action("resume", false),
     },

@@ -4,8 +4,8 @@
  * The table from the review is the contract: an unchanged field keeps the other
  * writer's value, a changed-but-unsaved field keeps the operator's value, an
  * already-equal field needs no publication, and a real same-field overlap needs an
- * explicit choice. A missing baseline (a context retained by an older build) is
- * never guessed.
+ * explicit choice. The baseline is always the exact published values the form
+ * read, never the current target supplied after the fact.
  */
 
 import { describe, expect, it } from "vitest";
@@ -95,23 +95,6 @@ describe("planRecovery", () => {
     });
     expect(useCurrent.blocked).toBe(false);
     expect(useCurrent.input["automation.maximumActiveJobs"]).toBe("90");
-  });
-
-  it("never guesses a baseline that an older context did not carry", () => {
-    const typed = { ...BASELINE, "automation.maximumActiveJobs": "3.5" };
-    const plan = planRecovery({ typed, baseline: null, current: CURRENT });
-    expect(plan.blocked).toBe(true);
-    // Conservative: every field whose suggested value differs from the current
-    // publication needs an explicit difference choice, because which fields the
-    // operator edited is genuinely unknown here.
-    expect(plan.conflicts).toEqual([
-      "automation.maximumActiveJobs",
-      "automation.schedulerPollSeconds",
-    ]);
-    // The invalid text stays visible so it can be corrected.
-    expect(plan.input["automation.maximumActiveJobs"]).toBe("3.5");
-    // A field that already equals the current value is not a conflict.
-    expect(plan.conflicts).not.toContain("automation.workerPollSeconds");
   });
 
   it("keeps an invalid entry verbatim for correction", () => {

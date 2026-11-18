@@ -192,22 +192,16 @@ export function normalizeAutomationFormAuthority(
   if (!Array.isArray(rawModes) || rawModes.length === 0) {
     return fail("enums.modes");
   }
-  // The backend may still advertise removed modes for compatibility. The form
-  // authority offers only the retained mode: anything else is filtered out
-  // rather than offered as a choice, and a list with no retained value at all
-  // is malformed so the page renders no form instead of guessing.
+  // The current authority advertises exactly the runnable mode set. An unknown
+  // value is malformed evidence rather than something to filter out: silently
+  // dropping it would present a narrowed form as the backend's real authority.
   const modes: AutomationRunMode[] = [];
   for (const [index, mode] of rawModes.entries()) {
-    let retained: AutomationRunMode;
-    try {
-      retained = normalizeEnum(
-        mode,
-        `enums.modes[${index}]`,
-        AUTOMATION_RUN_MODES,
-      );
-    } catch {
-      continue;
-    }
+    const retained = enumOrFail(
+      mode,
+      `enums.modes[${index}]`,
+      AUTOMATION_RUN_MODES,
+    );
     if (!modes.includes(retained)) {
       modes.push(retained);
     }

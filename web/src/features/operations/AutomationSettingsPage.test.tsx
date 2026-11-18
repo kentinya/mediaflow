@@ -938,10 +938,9 @@ describe("Automation engine settings surface", () => {
     // retained submission must reconcile into a *terminal, correctable* state,
     // survive a page reload while unresolved, and then allow a deliberate save.
     //
-    // This context was retained by an older build and carries no baseline values,
-    // so which fields the operator edited is genuinely unknown: every field whose
-    // typed value differs from the current publication needs an explicit choice
-    // before Save is offered (Task43.4 correction, item 1).
+    // The retained record carries the exact values the form was edited against
+    // (the Slice Base save already wrote them), so the capacity overlap is a
+    // real same-field conflict that needs an explicit choice before Save.
     const retained = {
       submissionId: "submission-lost-rejection-1",
       input: {
@@ -957,6 +956,11 @@ describe("Automation engine settings surface", () => {
       baselineRevisionId: TARGET_REVISION,
       baselineRevisionVersion: 7,
       baselineDigest: "digest-published-1",
+      baselineValues: {
+        "automation.maximumActiveJobs": "100",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
       submittedAt: "2026-03-16T00:00:02+00:00",
     };
     const storageKey =
@@ -1205,6 +1209,145 @@ describe("Automation engine settings surface", () => {
       "automation.maximumActiveJobs": 4,
       "automation.workerPollSeconds": 2,
       "automation.schedulerPollSeconds": 9,
+    });
+  });
+
+  it("reconciles a baseline-less Slice Base rejection from the current values", async () => {
+    // A Slice Base build could send a real submission whose retained record had
+    // no edit baseline: its context had been restored from an even older one.
+    // The exact request stays reconcilable, but after it proves non-publication
+    // the form must read the current published values instead of guessing which
+    // fields were edited. Any correction is then a deliberate new input.
+    const retained = {
+      submissionId: "submission-base-no-baseline",
+      input: {
+        "automation.maximumActiveJobs": "80",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
+      submittedValues: {
+        "automation.maximumActiveJobs": 80,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 5,
+      },
+      baselineRevisionId: TARGET_REVISION,
+      baselineRevisionVersion: 7,
+      baselineDigest: "digest-published-1",
+      submittedAt: "2026-03-16T00:00:03+00:00",
+    };
+    const storageKey =
+      "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin";
+    window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
+    const putBodies: Json[] = [];
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        if (call.method === "PUT") {
+          const body = JSON.parse(call.body ?? "{}") as Json;
+          putBodies.push(body);
+          if (body["reconcile"] === true) {
+            return jsonResponse({
+              state: "not_committed",
+              committed: false,
+              sideEffects: "none",
+              evidence: {
+                durableState: "submission_refused_stale",
+                evidenceComplete: true,
+                identityMatched: true,
+              },
+              nextAction: "review the current values and save deliberately",
+            });
+          }
+          return jsonResponse(
+            {
+              published: true,
+              unchanged: false,
+              revisionId: "revision-published-9",
+              sideEffects: "configuration_only",
+              readback: settingsDocument({
+                target: {
+                  revisionId: "revision-published-9",
+                  revisionVersion: 9,
+                  digest: "digest-published-9",
+                  values: {
+                    "automation.maximumActiveJobs": 61,
+                    "automation.workerPollSeconds": 2,
+                    "automation.schedulerPollSeconds": 5,
+                  },
+                },
+              }),
+            },
+            201,
+          );
+        }
+        return jsonResponse(
+          settingsDocument({
+            target: {
+              revisionId: "revision-published-2",
+              revisionVersion: 8,
+              digest: "digest-published-2",
+              values: {
+                "automation.maximumActiveJobs": 41,
+                "automation.workerPollSeconds": 2,
+                "automation.schedulerPollSeconds": 5,
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
+    expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    expect(within(panel).getByText(/没有保存当时的编辑基线/)).toBeTruthy();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "核实上次提交" }),
+    );
+    await waitFor(() => {
+      expect(within(panel).getByText(/表单已改为显示当前发布值/)).toBeTruthy();
+    });
+    // The recorded typed 80 is not re-armed; the published 41 is shown and Save
+    // is not offered until the operator deliberately enters a correction.
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    expect(jobs.value).toBe("41");
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "保存设置",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(window.sessionStorage.getItem(storageKey)).toBeNull();
+
+    await userEvent.clear(jobs);
+    await userEvent.type(jobs, "61");
+    const save = within(panel).getByRole("button", {
+      name: "保存设置",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    await waitFor(() => {
+      expect(
+        putBodies.filter((body) => body["reconcile"] !== true),
+      ).toHaveLength(1);
+    });
+    const submitted = putBodies.filter((body) => body["reconcile"] !== true)[0];
+    expect(submitted["expectedRevisionId"]).toBe("revision-published-2");
+    expect(submitted["settings"]).toEqual({
+      "automation.maximumActiveJobs": 61,
+      "automation.workerPollSeconds": 2,
+      "automation.schedulerPollSeconds": 5,
     });
   });
 
@@ -2301,10 +2444,16 @@ describe("Automation engine settings surface", () => {
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The unknown submission survived the reload and still blocks a new Save.
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    // The Slice Base record carries no edit baseline, so the form does not
+    // restore its typed 80 as if it were current: it shows the published 100
+    // and the operator decides any correction explicitly after reconciling.
+    expect(
+      await within(panel).findByText(/没有保存当时的编辑基线/),
+    ).toBeTruthy();
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
-    expect(jobs.value).toBe("80");
+    expect(jobs.value).toBe("100");
     expect(
       (
         within(panel).getByRole("button", {

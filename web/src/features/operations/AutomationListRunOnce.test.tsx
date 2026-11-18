@@ -689,6 +689,8 @@ describe("Automation list Run once", () => {
         createdAt: 1,
       }),
     );
+    // The retired edit-page record is not part of the list's population: it is
+    // neither merged into the pending rows nor reported as a list status.
     window.sessionStorage.setItem(
       `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
       JSON.stringify({ definitionId: "", requestId: "" }),
@@ -709,8 +711,7 @@ describe("Automation list Run once", () => {
 
     expect(await screen.findByText("有提交结果待核对")).toBeVisible();
     expect(screen.getByText(/下面的任务不在当前筛选或分页中/)).toBeVisible();
-    expect(screen.getByText("之前保存的提交信息无法识别")).toBeVisible();
-    expect(screen.getByText(/它不会被当成新的\s*运行请求/)).toBeVisible();
+    expect(screen.queryByText("之前保存的提交信息无法识别")).toBeNull();
     await user.click(screen.getByRole("button", { name: "查看提交结果" }));
     await waitFor(() =>
       expect(
@@ -731,54 +732,37 @@ describe("Automation list Run once", () => {
     expect(router.state.location.pathname).toBe("/operations/automation");
   });
 
-  it("continues the retired edit-page key through exact readback and never POSTs it", async () => {
+  it("does not read the retired edit-page key as a pending run", async () => {
+    // The retired edit card was the only writer of this whole-principal key.
+    // No current button can produce it, so it is not a pending list submission:
+    // the row keeps its normal Run-once action and never enters readback.
     window.sessionStorage.setItem(
       `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
       JSON.stringify({
         definitionId: DEFINITION_ID,
         requestId: "legacy-request",
-        authority: {
-          revisionId: "old-revision",
-          version: 1,
-          digest: "a".repeat(64),
-        },
-        fingerprint: "old-fingerprint",
       }),
     );
-    const user = userEvent.setup();
-    const calls = recordingFetch((call) => {
-      if (
-        call.method === "GET" &&
-        call.url.includes("/run-once?admissionRequestId=legacy-request")
-      ) {
-        return jsonResponse(runOnceDocument("task-legacy"));
-      }
-      return baseResponder()(call);
-    });
+    const calls = recordingFetch((call) => baseResponder()(call));
     const { table } = await renderConnected();
 
-    expect(await within(row(table)).findByText("暂未收到回复")).toBeVisible();
-    await user.click(
-      within(row(table)).getByRole("button", { name: "查看提交结果" }),
-    );
-    expect(await within(row(table)).findByText("已提交")).toBeVisible();
+    expect(
+      within(row(table)).getByRole("button", { name: "运行一次" }),
+    ).toBeVisible();
+    expect(within(row(table)).queryByText("暂未收到回复")).toBeNull();
+    expect(screen.queryByText("有提交结果待核对")).toBeNull();
     expect(
       calls.some(
         (call) =>
           call.method === "GET" &&
           call.url.includes("admissionRequestId=legacy-request"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       calls.filter(
         (call) => call.method === "POST" && call.url.endsWith("/run-once"),
       ),
     ).toHaveLength(0);
-    expect(
-      window.sessionStorage.getItem(
-        `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
-      ),
-    ).toBeNull();
   });
 
   it("refuses to POST when the row has no saved Active version", async () => {

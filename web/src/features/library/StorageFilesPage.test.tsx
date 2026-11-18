@@ -4283,6 +4283,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       actions: {
         cancel: { available: true, method: "POST", path: "/x" },
         finalize: { available: false, method: "POST", path: "/x" },
+        prepare: { available: false, method: "POST", path: "/x" },
         pause: { available: true, method: "POST", path: "/x" },
         resume: { available: false, method: "POST", path: "/x" },
       },

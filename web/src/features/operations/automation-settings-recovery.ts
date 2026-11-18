@@ -17,10 +17,10 @@
  * | `I` differs and `C` equals `I` | use `C`: nothing to publish for this field |
  * | `I`, `C` and `B` all differ | a real same-field conflict → explicit choice |
  *
- * A missing baseline (a context retained by an older build) cannot be guessed,
- * so every field whose typed value differs from `C` becomes an explicit choice.
- * Nothing here publishes, retries or infers an identity: it only decides what
- * the form should show and whether a Save may be offered.
+ * A baseline is always the exact published values the edit was read from; this
+ * planner never guesses one from the current target. Nothing here publishes,
+ * retries or infers an identity: it only decides what the form should show and
+ * whether a Save may be offered.
  */
 
 import {
@@ -36,7 +36,7 @@ export type FieldResolution = "current" | "mine";
 export interface RecoveryPlan {
   /** The values the form should show: deterministic merges already applied. */
   readonly input: Record<string, string>;
-  /** Fields a real conflict (or an unknown baseline) left undecided. */
+  /** Fields a real same-field conflict left undecided. */
   readonly conflicts: readonly AutomationEngineField[];
   /** One human-readable line per decided/undecided field, for the form's copy. */
   readonly notes: readonly string[];
@@ -82,11 +82,8 @@ function fieldLabel(field: AutomationEngineField): string {
 export interface RecoveryOptions {
   /** The operator's typed input (text, so an invalid entry survives). */
   readonly typed: FormValues;
-  /**
-   * The published values the edit started from, or `null` when the retained
-   * context predates this field. A missing baseline is *not* inferred.
-   */
-  readonly baseline: FormValues | null;
+  /** The published values the edit was read from; never inferred. */
+  readonly baseline: FormValues;
   /** The values published right now. */
   readonly current: FormValues;
   /** Choices the operator already made for conflicting fields. */
@@ -97,9 +94,8 @@ export interface RecoveryOptions {
  * Merge only what the operator actually changed into the current target.
  *
  * Deterministic cases complete without any confirmation; only a genuine
- * same-field conflict (or an unknown baseline) leaves `blocked` true, and the
- * form then requires an explicit "keep mine" / "use current" choice before a
- * Save is offered.
+ * same-field conflict leaves `blocked` true, and the form then requires an
+ * explicit "keep mine" / "use current" choice before a Save is offered.
  */
 export function planRecovery(options: RecoveryOptions): RecoveryPlan {
   const input: Record<string, string> = {};
@@ -110,21 +106,6 @@ export function planRecovery(options: RecoveryOptions): RecoveryPlan {
     const current = options.current[field] ?? "";
     const typed = options.typed[field] ?? current;
     input[field] = current;
-    if (options.baseline === null) {
-      if (sameTypedValue(typed, current)) continue;
-      const choice = resolutions[field];
-      if (choice === "mine") {
-        input[field] = typed;
-        continue;
-      }
-      if (choice === "current") continue;
-      input[field] = typed;
-      conflicts.push(field);
-      notes.push(
-        `${fieldLabel(field)}:本次提交没有可用的原始编辑基线,当前发布值为 ${current},你输入的值是 ${typed}。请明确选择采用当前值或保留你的修改。`,
-      );
-      continue;
-    }
     const baseline = options.baseline[field] ?? "";
     const edited = !sameTypedValue(typed, baseline);
     if (!edited) {

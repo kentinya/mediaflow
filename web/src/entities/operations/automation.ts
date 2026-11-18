@@ -548,16 +548,19 @@ function normalizeOutcomeSummary(
   if (source === null) {
     return null;
   }
-  const rawCounts = source["statusCounts"] ?? source["counts"];
+  // The current occurrence summary publishes `statusCounts` only. A response
+  // without it is not re-read from another field: the count set is the
+  // backend's own status partition, and a guessed one could misstate outcomes.
+  const countsSource = readRecord(
+    source["statusCounts"],
+    `${field}.statusCounts`,
+  );
   const counts: Record<string, number> = {};
-  if (rawCounts !== null && rawCounts !== undefined) {
-    const countsSource = readRecord(rawCounts, `${field}.statusCounts`);
-    for (const [key, value] of Object.entries(countsSource)) {
-      if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-        counts[key] = value;
-      } else {
-        return fail(`${field}.statusCounts`);
-      }
+  for (const [key, value] of Object.entries(countsSource)) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      counts[key] = value;
+    } else {
+      return fail(`${field}.statusCounts`);
     }
   }
   const rawAttention = source["attention"];
@@ -578,18 +581,12 @@ function normalizeOutcomeSummary(
       });
     }
   }
-  const bound =
-    source["bound"] === undefined
-      ? null
-      : readRecord(source["bound"], `${field}.bound`);
+  const bound = readRecord(source["bound"], `${field}.bound`);
   return {
     taskId: optionalText(source, "taskId"),
     totalItems: count(source, "totalItems"),
     statusCounts: counts,
-    boundStatement:
-      bound === null
-        ? text(source, "boundStatement")
-        : text(bound, "statement"),
+    boundStatement: text(bound, "statement"),
     attention,
     attentionTruncated: flag(source, "attentionTruncated"),
   };
@@ -747,8 +744,10 @@ export function normalizeAutomationDefinition(
   const source = readRecord(value, field);
   withReadiness = withReadiness || source["executionReadiness"] !== undefined;
   const document = normalizeAutomationDefinitionDocument(source, field);
+  // The current definition projection publishes its occurrence state under
+  // `occurrenceState` only; the duplicated early field is not re-read.
   const occurrence = readRecord(
-    source["occurrenceState"] ?? source["occurrence"],
+    source["occurrenceState"],
     `${field}.occurrenceState`,
   );
   const draftState = normalizeAutomationDraftState(

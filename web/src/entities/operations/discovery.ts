@@ -527,22 +527,10 @@ export function normalizeOrganizeDiscovery(
     actions: {
       cancel: normalizeAction(actions, "cancel"),
       finalize: normalizeAction(actions, "finalize"),
-      // The preparation re-analysis action is additive: a legacy projection
-      // that predates it simply offers no such action.
-      prepare:
-        actions["prepare"] === undefined
-          ? {
-              available: false,
-              method: null,
-              path: null,
-              requiresVersion: false,
-              sideEffects: "none",
-              refusal: null,
-              pendingReason: null,
-              reason: null,
-              nextAction: null,
-            }
-          : normalizeAction(actions, "prepare"),
+      // Every current discovery document publishes the preparation re-analysis
+      // action, so its absence is malformed evidence rather than a projection
+      // that simply offers nothing.
+      prepare: normalizeAction(actions, "prepare"),
     },
     sources: ((rawSources ?? []) as unknown[]).map((item, index) => {
       const source = readRecord(item, `sources[${index}]`);

@@ -2002,7 +2002,6 @@ export function AutomationListPage({
                   onEditCopy={openEditDialog}
                   copyFeedback={copyFeedback}
                   copyPending={copySession.pending}
-                  copyInvalidLegacy={copySession.invalidLegacy}
                   copiedCopies={copiedCopies}
                   onRunOnce={(definition) => void submitRunOnce(definition)}
                   onCheckRunOnce={(definitionId) =>
@@ -2010,7 +2009,6 @@ export function AutomationListPage({
                   }
                   runOnceFeedback={runOnceFeedback}
                   runOncePending={runOnceSession.pending}
-                  runOnceInvalidLegacy={runOnceSession.invalidLegacy}
                   onNext={(next) =>
                     submitSearch(
                       definitionState({ cursor: next, dir: "next" }),
@@ -2156,13 +2154,11 @@ function DefinitionsTab({
   onEditCopy,
   copyFeedback,
   copyPending,
-  copyInvalidLegacy,
   copiedCopies,
   onRunOnce,
   onCheckRunOnce,
   runOnceFeedback,
   runOncePending,
-  runOnceInvalidLegacy,
   onNext,
   onPrevious,
   onReset,
@@ -2203,13 +2199,11 @@ function DefinitionsTab({
   readonly onEditCopy: (definitionId: string) => void;
   readonly copyFeedback: Readonly<Record<string, AutomationCopyRowFeedback>>;
   readonly copyPending: readonly PendingCopyIntent[];
-  readonly copyInvalidLegacy: boolean;
   readonly copiedCopies: Readonly<Record<string, CopiedCopy>>;
   readonly onRunOnce: (definition: AutomationDefinitionModel) => void;
   readonly onCheckRunOnce: (definitionId: string) => void;
   readonly runOnceFeedback: Readonly<Record<string, RunOnceFeedback>>;
   readonly runOncePending: readonly PendingRunOnceIntent[];
-  readonly runOnceInvalidLegacy: boolean;
   readonly onNext: (cursor: string) => void;
   readonly onPrevious: (cursor: string) => void;
   readonly onReset: () => void;
@@ -2386,15 +2380,6 @@ function DefinitionsTab({
         </StatusBanner>
       )}
 
-      {copyInvalidLegacy && (
-        <StatusBanner variant="info" title="之前保存的复制信息无法识别">
-          <p>
-            编辑页留下的一次复制信息已损坏，无法自动核对。它不会被当成新的复制
-            请求；请刷新清单确认实际结果，不要重复复制。
-          </p>
-        </StatusBanner>
-      )}
-
       {hasHiddenRunOnce && (
         <StatusBanner
           variant="info"
@@ -2446,14 +2431,6 @@ function DefinitionsTab({
               )}
             </div>
           ))}
-        </StatusBanner>
-      )}
-      {runOnceInvalidLegacy && (
-        <StatusBanner variant="info" title="之前保存的提交信息无法识别">
-          <p>
-            编辑页留下的一次运行提交信息已损坏，无法自动核对。它不会被当成新的
-            运行请求；请打开执行记录确认实际结果，不要重复提交。
-          </p>
         </StatusBanner>
       )}
       {page.items.length === 0 ? (

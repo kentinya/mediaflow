@@ -10,8 +10,8 @@
  * across a real reload/navigation:
  *
  * - the client-generated submission identity,
- * - the four typed values that were submitted,
- * - the published identity the form was edited against, and
+ * - the three typed values that were submitted,
+ * - the published identity and published values the form was edited against,
  * - the operator's typed input, so a correctable value is not lost.
  *
  * It never stores a bearer token, a secret, a digest-based grant or any reusable
@@ -41,17 +41,32 @@ export interface PendingEngineSettingsSubmission {
   readonly baselineRevisionVersion: number | null;
   readonly baselineDigest: string;
   /**
-   * The published four values the edit started from.
+   * The published three values the edit started from.
    *
    * Without them a recovery cannot tell "the operator changed this field" from
    * "the form simply carried the published value", so a recovered submission
    * could silently overwrite another writer's change. They are stored as text
    * so a rejected entry (for example `3.5` for an integer field) survives
-   * verbatim. Contexts retained by an older build lack the field; recovery then
-   * falls back to an explicit per-field difference choice instead of guessing.
+   * verbatim. Every context this build writes carries the complete map.
    */
-  readonly baselineValues?: Readonly<Record<string, string>>;
+  readonly baselineValues: Readonly<Record<string, string>>;
   readonly submittedAt: string;
+}
+
+/**
+ * A submission read back from storage.
+ *
+ * A Slice Base build could retain an exact official submission before this
+ * build required the edit baseline. Such a record is a real request with
+ * durable backend evidence, so it is still reconciled through the same
+ * identity/values entry; it is only never used as a form-merge baseline.
+ * `null` therefore marks a reconcile-only context, never a new format.
+ */
+export interface RetainedEngineSettingsSubmission extends Omit<
+  PendingEngineSettingsSubmission,
+  "baselineValues"
+> {
+  readonly baselineValues: Readonly<Record<string, string>> | null;
 }
 
 function principalStorageSegment(principalId: string): string {
@@ -115,9 +130,8 @@ function isValid(value: unknown): value is PendingEngineSettingsSubmission {
         Number.isFinite(value["baselineRevisionVersion"]))) &&
     typeof value["baselineDigest"] === "string" &&
     value["baselineDigest"].length > 0 &&
-    // Absent is valid: a context retained by an older build keeps working, with
-    // the conservative explicit-difference recovery instead of a guessed
-    // baseline. Present must be a complete, bounded three-field value map.
+    // Missing is accepted only as a reconcile-only context written by the
+    // Slice Base build; present must be a complete, bounded value map.
     (value["baselineValues"] === undefined ||
       isStringMap(value["baselineValues"], 8)) &&
     typeof value["submittedAt"] === "string" &&
@@ -128,7 +142,7 @@ function isValid(value: unknown): value is PendingEngineSettingsSubmission {
 export type PendingSubmissionRead =
   | {
       readonly available: true;
-      readonly value: PendingEngineSettingsSubmission | null;
+      readonly value: RetainedEngineSettingsSubmission | null;
     }
   | { readonly available: false; readonly value: null };
 
@@ -148,7 +162,13 @@ export function readPendingSubmission(
       window.sessionStorage.removeItem(submissionSessionKey(principalId));
       return { available: true, value: null };
     }
-    return { available: true, value: parsed };
+    return {
+      available: true,
+      value: {
+        ...parsed,
+        baselineValues: parsed["baselineValues"] ?? null,
+      },
+    };
   } catch {
     return { available: false, value: null };
   }

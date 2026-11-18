@@ -75,10 +75,6 @@ const drafts = new Map<string, RuleDraftRecord>();
 // pre-principal and unscoped-mode spellings are superseded so neither a stale
 // unscoped draft nor a Copy/Edit key collision can ever be resurrected.
 const STORAGE_KEY = "mediaflow.rules.correctable-drafts.v3";
-const LEGACY_STORAGE_KEYS = [
-  "mediaflow.rules.correctable-drafts",
-  "mediaflow.rules.correctable-drafts.v2",
-];
 
 function isBaseline(value: unknown): value is ActiveAuthorityIdentity {
   if (value === null || typeof value !== "object") return false;
@@ -107,9 +103,6 @@ function isDraftRecord(value: unknown): value is RuleDraftRecord {
 function loadDrafts(): void {
   if (typeof window === "undefined") return;
   try {
-    for (const legacy of LEGACY_STORAGE_KEYS) {
-      window.sessionStorage.removeItem(legacy);
-    }
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw) as Record<string, unknown>;

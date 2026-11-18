@@ -1596,11 +1596,6 @@ export async function fetchWorkerList(
 // ---------------------------------------------------------------------------
 
 import {
-  normalizeManualActionMatrix,
-  type ManualActionMatrixModel,
-} from "../../entities/operations/manual-actions";
-
-import {
   normalizeOrganizeAdmissionOutcome,
   normalizeOrganizeExecution,
   normalizeOrganizeExecutionList,
@@ -1686,69 +1681,6 @@ import {
   readRecord,
 } from "../../entities/shared/normalize";
 import { normalizePrincipalId } from "../auth/principal-identity";
-
-// --- Manual action matrix ---
-
-export interface ManualActionMatrixQueryOptions {
-  /** Omitted for the bounded ResourceLibrary discovery read. */
-  readonly scopeKind?: "file" | "resourceLibrary" | null;
-  readonly fileId?: string | null;
-  readonly resourceLibraryId?: string | null;
-}
-
-export function manualActionMatrixUrl(
-  options: ManualActionMatrixQueryOptions,
-): string {
-  const params = new URLSearchParams();
-  if (options.scopeKind) params.set("scopeKind", options.scopeKind);
-  if (options.fileId) params.set("fileId", options.fileId);
-  if (options.resourceLibraryId)
-    params.set("resourceLibraryId", options.resourceLibraryId);
-  const query = params.toString();
-  return `/api/v1/operations/manual-actions${query ? `?${query}` : ""}`;
-}
-
-export async function fetchManualActionMatrix(
-  token: string | null,
-  options: ManualActionMatrixQueryOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<OperationsRead<ManualActionMatrixModel>> {
-  let response: Response;
-  try {
-    response = await fetchImpl(manualActionMatrixUrl(options), {
-      method: "GET",
-      headers: operationsHeaders(token),
-    });
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (response.status >= 500) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("rejected") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeManualActionMatrix(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Manual Organize: durable intent, exact Preview, one Execute action, outcome
@@ -1836,7 +1768,8 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
   // (Scheduler due / Run once / remote or direct organize) names the same Task
   // and TaskItem its zero-mutation analysis re-entered.  Neither publishes a
   // Job or a child Task, so the caller must not be given a fabricated
-  // continuation identity.
+  // continuation identity.  The two current answers are exact: an Ignore
+  // admission returns `requestId`, and a Continue returns `nativeAnalysis`.
   const nativeAnalysis = source["nativeAnalysis"];
   const nativeIdentitySource =
     typeof nativeAnalysis === "object" &&
@@ -1851,12 +1784,7 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
       : typeof nativeIdentitySource?.["taskId"] === "string"
         ? nativeIdentitySource["taskId"]
         : undefined;
-  const identity =
-    source["continuation_id"] ??
-    source["continuationId"] ??
-    source["requestId"] ??
-    source["batch_id"] ??
-    nativeIdentity;
+  const identity = source["requestId"] ?? nativeIdentity;
   return {
     identity: normalizeBoundedText(identity, "recovery identity"),
     sideEffects: "none",

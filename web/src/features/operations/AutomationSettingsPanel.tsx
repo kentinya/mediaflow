@@ -63,6 +63,7 @@ import {
   readPendingSubmission,
   writePendingSubmission,
   type PendingEngineSettingsSubmission,
+  type RetainedEngineSettingsSubmission,
 } from "./automation-settings-session";
 import { prefersReducedMotion } from "./automation-card-shell";
 import {
@@ -107,10 +108,11 @@ interface EditState {
    * The values are what makes a later recovery safe: without them the form can
    * only see the operator's whole input, and re-arming it against a newer
    * publication would silently revert a field this operator never touched.
+   * They are always the exact values this form actually read, never the
+   * current Active values supplied after the fact.
    */
   readonly baseline: Baseline;
-  /** The published values editing started from; `null` for an older context. */
-  readonly baselineValues: FormState | null;
+  readonly baselineValues: FormState;
   readonly input: FormState;
 }
 
@@ -522,7 +524,7 @@ export function AutomationSettingsPanel() {
   // A freshly-minted unknown submission in this tab, or the one restored after a
   // reload.  Either way it blocks further saves until it is reconciled.
   const [unresolved, setUnresolved] =
-    useState<PendingEngineSettingsSubmission | null>(null);
+    useState<RetainedEngineSettingsSubmission | null>(null);
   const [lastPublished, setLastPublished] = useState<{
     readonly revisionId: string;
     readonly revisionVersion: number | null;
@@ -549,7 +551,7 @@ export function AutomationSettingsPanel() {
   const restoredKey = `${authGeneration}:${principalId ?? ""}`;
   const [restored, setRestored] = useState<{
     readonly key: string;
-    readonly value: PendingEngineSettingsSubmission | null;
+    readonly value: RetainedEngineSettingsSubmission | null;
   } | null>(null);
   let pendingFromStorage = restored?.value ?? null;
   if (principalId !== null && restored?.key !== restoredKey) {
@@ -558,20 +560,23 @@ export function AutomationSettingsPanel() {
     setRestored({ key: restoredKey, value: pendingFromStorage });
     setUnresolved(pendingFromStorage);
     setResolutions({});
-    if (pendingFromStorage !== null) {
-      setEditState({
-        baseline: {
-          revisionId: pendingFromStorage.baselineRevisionId,
-          revisionVersion: pendingFromStorage.baselineRevisionVersion,
-          digest: pendingFromStorage.baselineDigest,
-        },
-        // A context retained by an older build has no baseline values. It can
-        // still be reconciled and corrected; per-field recovery then requires an
-        // explicit choice instead of guessing which fields the operator changed.
-        baselineValues: pendingFromStorage.baselineValues ?? null,
-        input: pendingFromStorage.input,
-      });
-    }
+    // Only a context that carries the published values it was edited against
+    // may become form input. A Slice Base record without them is still a real
+    // submission: it is reconciled first, and only after that read is the form
+    // rebuilt from the current published values.
+    setEditState(
+      pendingFromStorage !== null && pendingFromStorage.baselineValues !== null
+        ? {
+            baseline: {
+              revisionId: pendingFromStorage.baselineRevisionId,
+              revisionVersion: pendingFromStorage.baselineRevisionVersion,
+              digest: pendingFromStorage.baselineDigest,
+            },
+            baselineValues: pendingFromStorage.baselineValues,
+            input: pendingFromStorage.input,
+          }
+        : null,
+    );
   }
 
   const pendingSubmission = unresolved;
@@ -599,7 +604,7 @@ export function AutomationSettingsPanel() {
       edit !== null && staleBaseline && published !== null
         ? planRecovery({
             typed: edit.input,
-            baseline: edit.baselineValues ?? null,
+            baseline: edit.baselineValues,
             current: publishValues(published),
             resolutions: reviewedResolutions(resolutions, published),
           })
@@ -613,8 +618,6 @@ export function AutomationSettingsPanel() {
   // merge already happened, so the backend still fences a concurrent writer.
   const submitBaseline: Baseline | null =
     recovery !== null ? baseline : (edit?.baseline ?? baseline);
-  const submitBaselineValues =
-    recovery !== null ? publishedValues : (edit?.baselineValues ?? null);
   const dirty = edit !== null && !sameValues(submitInput, publishedValues);
   const canSave =
     model !== null &&
@@ -638,6 +641,9 @@ export function AutomationSettingsPanel() {
       return "已发布的设置在此期间被其他保存改变。你输入的值仍保留在表单中;保存将只发布你改过的字段。";
     }
     if (pendingSubmission !== null) {
+      if (pendingSubmission.baselineValues === null) {
+        return "上一次保存的结果未知,且该浏览器记录没有保存当时的编辑基线。系统不会自动重试,表单也不会按猜测恢复旧输入;请先用下方的核实操作确认结果,之后表单显示当前发布值。";
+      }
       return "上一次保存的结果未知:请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;请先用下方的核实操作确认结果。";
     }
     return null;
@@ -684,9 +690,10 @@ export function AutomationSettingsPanel() {
       baselineRevisionId: checkedAgainst.revisionId,
       baselineRevisionVersion: checkedAgainst.revisionVersion,
       baselineDigest: checkedAgainst.digest,
-      ...(submitBaselineValues === null
-        ? {}
-        : { baselineValues: submitBaselineValues }),
+      // A Save always retains the exact values it was written against. The
+      // merged candidate is bound to the currently published values, so a later
+      // recovery compares field by field instead of guessing.
+      baselineValues: recovery !== null ? publishedValues : edit.baselineValues,
       submittedAt: new Date().toISOString(),
     };
     // The retained context is written *before* the mutation, so a lost response
@@ -886,12 +893,39 @@ export function AutomationSettingsPanel() {
       }
       // A readable current target proves the publication again.
       setReadFailureAt(null);
+      setResolutions({});
+      // A Slice Base record carries the exact submission but not the values it
+      // was edited against. Guessing one from the current target could silently
+      // restore input over another writer's change, so the form is rebuilt from
+      // the current published values instead; the operator decides every
+      // correction explicitly with a new Save.
+      if (pendingContext.baselineValues === null) {
+        applyEdit(null);
+        setFailure(
+          result.rejectionCode !== null
+            ? {
+                stage: "输入校验",
+                durableState: "本次提交在发布前被拒绝,Active 未改变",
+                nextAction:
+                  result.nextAction ??
+                  "表单已显示当前发布值;如需修改,请明确输入后另行保存。",
+                fieldError:
+                  result.rejectionField === null
+                    ? result.rejectionCode
+                    : `${result.rejectionField}:${result.rejectionCode}`,
+              }
+            : null,
+        );
+        setMessage(
+          "核对完成:本次提交没有发布。该记录没有保存当时的编辑基线,因此表单已改为显示当前发布值;如需修改,请明确输入后另行保存。",
+        );
+        return;
+      }
       const merged = planRecovery({
         typed: pendingContext.input,
-        baseline: pendingContext.baselineValues ?? null,
+        baseline: pendingContext.baselineValues,
         current: publishValues(currentTarget),
       });
-      setResolutions({});
       // The original editing context — the identity *and the values* this input
       // was written against — is preserved, not rebased onto the current target.
       // Rebasing it would consume the B/I comparison before its conflicts are
@@ -899,15 +933,14 @@ export function AutomationSettingsPanel() {
       // conflict set and offer Save without an explicit choice.  Recovery keeps
       // comparing the original baseline against the live published target, so a
       // real overlap stays visible; the Save itself is fenced against that exact
-      // current identity.  An older context without baseline values stays without
-      // them for the same reason and keeps its conservative explicit choices.
+      // current identity.
       applyEdit({
         baseline: {
           revisionId: pendingContext.baselineRevisionId,
           revisionVersion: pendingContext.baselineRevisionVersion,
           digest: pendingContext.baselineDigest,
         },
-        baselineValues: pendingContext.baselineValues ?? null,
+        baselineValues: pendingContext.baselineValues,
         input: pendingContext.input,
       });
       setFailure(

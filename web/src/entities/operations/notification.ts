@@ -40,12 +40,14 @@ export const NOTIFICATION_EVENT_TYPES = [
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 
 /**
- * Already-supported configuration documents may still spell the Task events
- * with their historical ``job.*`` names. The Python contract parses those
- * literals into the same Task event (and every response it emits uses the
- * canonical ``task.*`` name), so the browser accepts exactly those aliases and
- * displays/saves the canonical Task identity. Unknown strings still fail
- * closed; this is a bounded compatibility map, not an open event catalog.
+ * An already accepted configuration document may still spell a Task lifecycle
+ * event with its historical ``job.*`` name. The Python projection really does
+ * return those stored bytes for an accepted definition
+ * (`_webhooks_projection`), so the operator page must keep reading them as the
+ * same Task event; the current-input validator is the backend boundary that
+ * makes a *changed* definition adopt the canonical names. This is a bounded
+ * read mapping, not an open event catalog: unknown strings still fail closed
+ * and no control ever offers a retired spelling.
  */
 export const LEGACY_NOTIFICATION_EVENT_ALIASES: Readonly<
   Record<string, NotificationEventType>

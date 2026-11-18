@@ -22,9 +22,8 @@ const ACTIVE_REVISION = "revision-active-1";
 const DIGEST = "a".repeat(64);
 const DEFINITION_ID = "auto-task";
 const COPY_ID = "auto-task-copy";
-const LEGACY_PREFIX = "mediaflow.operations.automation-copy-intent:";
 const LIST_PREFIX = "mediaflow.operations.automation-copy-intents:";
-/** The Active sequence a legacy Copy intent was submitted against. */
+/** The Active sequence the retained Copy intent records as its fence. */
 const AS_ACTIVE_VERSION = 2;
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -974,8 +973,9 @@ describe("Automation list Copy", () => {
   it("keeps an incomplete durable Copy evidence read unknown and never releases the block", async () => {
     const user = userEvent.setup();
     window.sessionStorage.setItem(
-      `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
+      `mediaflow.operations.automation-copy-intents:${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
       JSON.stringify({
+        version: 1,
         sourceId: DEFINITION_ID,
         authority: {
           revisionId: ACTIVE_REVISION,
@@ -1004,7 +1004,7 @@ describe("Automation list Copy", () => {
     });
     const { table } = await renderConnected();
 
-    // The retired edit card's principal-scoped entry stays readable.
+    // The list's own retained intent stays readable after a reload.
     expect(await within(row(table)).findByText(/复制结果待核对/)).toBeVisible();
     expect(copyEntry(table)).toHaveAttribute("aria-disabled", "true");
     await user.click(
@@ -1015,7 +1015,7 @@ describe("Automation list Copy", () => {
     expect(copyEntry(table)).toHaveAttribute("aria-disabled", "true");
     expect(
       window.sessionStorage.getItem(
-        `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
+        `mediaflow.operations.automation-copy-intents:${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
       ),
     ).not.toBeNull();
   });
@@ -1023,8 +1023,9 @@ describe("Automation list Copy", () => {
   it("releases the block only for a complete, command-free Copy evidence read", async () => {
     const user = userEvent.setup();
     window.sessionStorage.setItem(
-      `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
+      `mediaflow.operations.automation-copy-intents:${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
       JSON.stringify({
+        version: 1,
         sourceId: DEFINITION_ID,
         authority: {
           revisionId: ACTIVE_REVISION,
@@ -1061,7 +1062,7 @@ describe("Automation list Copy", () => {
     ).toHaveLength(0);
     expect(
       window.sessionStorage.getItem(
-        `${LEGACY_PREFIX}${principalIdStorageSegment(PRINCIPAL)}`,
+        `mediaflow.operations.automation-copy-intents:${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
       ),
     ).toBeNull();
   });

@@ -1081,24 +1081,6 @@ function stubDetailJourney(
         infrastructure: { services: {} },
       });
     }
-    if (url.startsWith("/api/v1/operations/manual-actions")) {
-      return jsonResponse({
-        scopeKind: null,
-        scopeId: null,
-        fileId: null,
-        resourceLibraryId: null,
-        selectionRequired: true,
-        source: null,
-        resourceLibraries: [],
-        runtime: { ready: true, condition: "ready", nextAction: null },
-        actions: {
-          scan: { available: false, reason: "not advertised" },
-          preview: { available: false, reason: "not advertised" },
-          organize: { available: false, reason: "not advertised" },
-        },
-        limits: { previewMaxItems: 100 },
-      });
-    }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
 }
@@ -2712,24 +2694,6 @@ function stubDetailJourneyResponse(url: string): Response {
       asOf: "2026-08-22T12:00:00+00:00",
       sideEffects: "none",
       infrastructure: { services: {} },
-    });
-  }
-  if (url.startsWith("/api/v1/operations/manual-actions")) {
-    return jsonResponse({
-      scopeKind: null,
-      scopeId: null,
-      fileId: null,
-      resourceLibraryId: null,
-      selectionRequired: true,
-      source: null,
-      resourceLibraries: [],
-      runtime: { ready: true, condition: "ready", nextAction: null },
-      actions: {
-        scan: { available: false, reason: "not advertised" },
-        preview: { available: false, reason: "not advertised" },
-        organize: { available: false, reason: "not advertised" },
-      },
-      limits: { previewMaxItems: 100 },
     });
   }
   return notFound;

@@ -98,7 +98,7 @@ function definitionDocument(
     itemLimit: 12,
     sourceScope: null,
     intervalSeconds: 3600,
-    occurrence: {
+    occurrenceState: {
       enabled: true,
       nextRunAt: "2026-01-01T08:00:00+00:00",
       lastOccurrenceAt: null,
@@ -434,7 +434,7 @@ function draftOnlyDefinitionDocument(
     intervalSeconds: null,
     cron: "0 8 * * *",
     timezone: "UTC",
-    occurrence: {
+    occurrenceState: {
       enabled: false,
       nextRunAt: null,
       lastOccurrenceAt: null,
