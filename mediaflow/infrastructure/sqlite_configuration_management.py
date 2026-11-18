@@ -43,10 +43,15 @@ from mediaflow.domain.configuration_management import (
     validate_configuration_object_id,
     validate_storage_configuration,
 )
-from mediaflow.infrastructure.sqlite_applicability import assert_supported_database
+from mediaflow.infrastructure.sqlite_applicability import (
+    assert_supported_database,
+    evaluate_database_applicability,
+    read_database_markers_from_connection,
+)
 from mediaflow.infrastructure.sqlite_configuration_schema import (
     CONFIGURATION_SCHEMA_VERSION,
 )
+from mediaflow.infrastructure.sqlite_initialization import execute_script
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
 
@@ -1780,16 +1785,44 @@ class SQLiteConfigurationRepository:
         return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
     def _initialize(self) -> None:
-        with self._lock, self._connection:
-            if self._database_markers.configuration_version is not None:
-                self._initialize_existing_configuration_locked()
-                return
-            self._connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version "
-                "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
-            )
-            self._connection.executescript(
-                """
+        """Create or validate the current store in one atomic write transaction.
+
+        The write lock is acquired before the layout is read, so a second
+        service starting on the same empty path waits for the first commit and
+        then opens it as an existing store.  Table creation and the version
+        mark therefore become visible together; a failure rolls the whole
+        attempt back and leaves the previous file untouched.
+        """
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                markers = read_database_markers_from_connection(self._connection)
+                evaluate_database_applicability(
+                    markers,
+                    current_runtime_version=SCHEMA_VERSION,
+                    current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+                )
+                self._database_markers = markers
+                if markers.configuration_version is not None:
+                    self._initialize_existing_configuration_locked()
+                else:
+                    self._initialize_new_configuration_locked()
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def _initialize_new_configuration_locked(self) -> None:
+        """Create every current configuration structure and the mark atomically."""
+
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version "
+            "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+        )
+        execute_script(
+            self._connection,
+            """
                 CREATE TABLE IF NOT EXISTS configuration_objects (
                     object_kind TEXT NOT NULL,
                     object_id TEXT NOT NULL,
@@ -1998,34 +2031,31 @@ class SQLiteConfigurationRepository:
                     key_material BLOB NOT NULL,
                     created_at TEXT NOT NULL
                 );
-                """
-            )
-            self._assert_current_configuration_structure_locked()
+                """,
+        )
+        self._assert_current_configuration_structure_locked()
+        self._connection.execute(
+            "INSERT INTO schema_version VALUES ('configuration_management', ?)",
+            (CONFIGURATION_SCHEMA_VERSION,),
+        )
+        self._insert_internal_key_locked()
+
+    def _initialize_existing_configuration_locked(self) -> None:
+        """Validate one supported current store without rewriting its schema.
+
+        Runs inside the caller's write transaction.
+        """
+
+        self._assert_current_configuration_structure_locked()
+        marker = self._connection.execute(
+            "SELECT version FROM schema_version WHERE component='configuration_management'"
+        ).fetchone()
+        if marker is None or int(marker["version"]) != CONFIGURATION_SCHEMA_VERSION:
             self._connection.execute(
                 "INSERT INTO schema_version VALUES ('configuration_management', ?)",
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
-            self._insert_internal_key_locked()
-
-    def _initialize_existing_configuration_locked(self) -> None:
-        """Validate one supported current store without rewriting its schema."""
-
-        self._connection.execute("BEGIN IMMEDIATE")
-        try:
-            self._assert_current_configuration_structure_locked()
-            marker = self._connection.execute(
-                "SELECT version FROM schema_version WHERE component='configuration_management'"
-            ).fetchone()
-            if marker is None or int(marker["version"]) != CONFIGURATION_SCHEMA_VERSION:
-                self._connection.execute(
-                    "INSERT INTO schema_version VALUES ('configuration_management', ?)",
-                    (CONFIGURATION_SCHEMA_VERSION,),
-                )
-            self._insert_internal_key_locked()
-            self._connection.commit()
-        except BaseException:
-            self._connection.rollback()
-            raise
+        self._insert_internal_key_locked()
 
     def _insert_internal_key_locked(self) -> None:
         # The cursor-authentication key is deployment-internal metadata.  It is

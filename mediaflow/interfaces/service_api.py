@@ -12855,7 +12855,6 @@ class MediaFlowApi:
         terminal = int(values.get("currentTerminal", 0))
         completed = int(values.get("currentCompleted", 0))
         no_work = int(values.get("currentNoWork", 0))
-        partial = int(values.get("currentPartial", 0))
         failed = int(values.get("currentFailed", 0))
         cancelled = int(values.get("currentCancelled", 0))
         uncertain = int(values.get("currentUncertain", 0))
@@ -12879,7 +12878,6 @@ class MediaFlowApi:
                 "monthToDateUnavailable": unavailable,
                 "evaluatedCount": evaluated,
                 "monthToDateNoWork": no_work,
-                "monthToDatePartial": partial,
                 "monthToDateFailed": failed,
                 "monthToDateCancelled": cancelled,
                 "monthToDateUncertain": uncertain,

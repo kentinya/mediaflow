@@ -499,6 +499,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, metrics = _request(value.api, metrics_route)
             self.assertEqual(200, status, metrics)
             self.assertTrue(metrics["available"])
+            self.assertNotIn("monthToDatePartial", metrics)
             self.assertEqual(0, metrics["monthToDateAdmitted"])
             self.assertEqual(0, metrics["evaluatedCount"])
             self.assertEqual(0, metrics["completedCount"])

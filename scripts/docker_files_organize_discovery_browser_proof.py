@@ -10,7 +10,7 @@ against the assets the production image actually serves.
 
 It proves the served artifact/source identity, the real resident Worker pickup,
 folder-only/file-only/multiple-folder/mixed discovery, the configured filter and
-exclusion findings, cooperative pause/continue, explicit finalize into the
+exclusion findings, cooperative cancellation, explicit finalize into the
 existing manual intent, zero-mutation discovery/analysis, and the native
 reviewed-Choice -> exact Preview -> separately confirmed Execute journey whose
 exact reviewed item the production Worker and OrganizerExecutor complete.
@@ -848,59 +848,8 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 {"paths": [SECOND_FOLDER]},
             )
             target_id = admitted["discoveryId"]
-            _, paused = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/operations/organize/discoveries/{target_id}/pause",
-                {"expectedVersion": 1},
-            )
-            if paused.get("pauseRequested") is not True:
-                raise RuntimeError(f"the cooperative pause was not recorded: {paused}")
-            # Acknowledge-before-Continue: the request is durable but not yet
-            # acknowledged, so Continue is not offered and a direct Continue is
-            # refused actionably without changing any work.
-            resume_action = paused.get("actions", {}).get("resume", {})
-            if resume_action.get("available") is not False:
-                raise RuntimeError(f"a pending pause advertised Continue: {paused}")
-            if resume_action.get("pendingReason") != "discovery_pause_pending":
-                raise RuntimeError(f"a pending pause gave no bounded reason: {paused}")
-            _, premature = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/operations/organize/discoveries/{target_id}/resume",
-                {"expectedVersion": paused["version"]},
-            )
-            if premature.get("error", {}).get("code") != "discovery_pause_pending":
-                raise RuntimeError(f"a premature Continue was accepted: {premature}")
-            # Wait for the resident production Worker to acknowledge the pause
-            # at its safe boundary, then continue the same durable scope, let
-            # the Worker finish the walk, and finalize.
-            acknowledged = paused
-            for _ in range(40):
-                _, acknowledged = api(
-                    base,
-                    api_token,
-                    "GET",
-                    f"/api/v1/operations/organize/discoveries/{target_id}",
-                )
-                if acknowledged.get("status") == "paused" and acknowledged.get("pauseRequested"):
-                    break
-                time.sleep(0.5)
-            if acknowledged.get("actions", {}).get("resume", {}).get("available") is not True:
-                raise RuntimeError(f"the pause was not acknowledged truthfully: {acknowledged}")
-            _, resumed = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/operations/organize/discoveries/{target_id}/resume",
-                {"expectedVersion": acknowledged["version"]},
-            )
-            if resumed.get("pauseRequested") is not False:
-                raise RuntimeError(f"continue did not clear the pause: {resumed}")
             settled_control = settle(base, api_token, target_id)
-            if settled_control["status"] not in {"completed", "partial_success"}:
+            if settled_control["status"] != "completed":
                 raise RuntimeError(f"the walk did not finish: {settled_control}")
             _, frozen = api(
                 base,
@@ -1192,7 +1141,10 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 "activeRevision": active.get("revisionId"),
                 "activeDigest": active.get("digest"),
                 "cases": results,
-                "control": {"paused": True, "resumed": True},
+                "control": {
+                    "discoveryId": target_id,
+                    "status": settled_control["status"],
+                },
                 "budgetRefusal": {
                     "status": mass_settled["status"],
                     "incompleteReason": mass_settled["progress"]["incompleteReason"],

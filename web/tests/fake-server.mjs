@@ -71,7 +71,7 @@ const TERMINAL_TASK_STATUSES = new Set([
   "failed",
   "cancelled",
 ]);
-const CANCELLABLE_TASK_STATUSES = new Set(["pending", "running", "paused"]);
+const CANCELLABLE_TASK_STATUSES = new Set(["pending", "running"]);
 const ATTENTION_RUN_STATUSES = [
   "pending",
   "paused",
@@ -5862,7 +5862,6 @@ function automationMetricsDocument(inventoryCounts) {
     monthToDateActive: 0,
     monthToDateUnavailable: 0,
     monthToDateNoWork: 0,
-    monthToDatePartial: 0,
     monthToDateFailed: 0,
     monthToDateCancelled: 0,
     monthToDateUncertain: 0,
@@ -9682,7 +9681,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryControlMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(pause|resume|cancel|finalize|analyze)$/,
+    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(cancel|finalize|analyze)$/,
   );
   if (discoveryControlMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9699,22 +9698,6 @@ const server = createServer(async (req, res) => {
     }
     const state = resourceLibraryState(session);
     const action = discoveryControlMatch[2];
-    if (action === "pause" || action === "resume") {
-      sendJson(res, 409, {
-        error: {
-          code: "pause_retired",
-          message:
-            "pause and resume-from-pause were retired for every media operation",
-          details: {
-            action,
-            durableState: "unchanged; no pause or resume request was recorded",
-            sideEffects: "none",
-            retrySafe: false,
-          },
-        },
-      });
-      return;
-    }
     if (
       !state.discovery ||
       state.discovery.discoveryId !==
@@ -11637,10 +11620,11 @@ const server = createServer(async (req, res) => {
       setTimeout(() => {
         const current = state.mediaTransfers.get(taskId);
         if (current && !current.terminal && current.status === "RUNNING") {
-          if (state.transferPause) {
-            // The durable pause the Worker observes at its per-entry boundary:
-            // the transfer keeps its started progress and becomes resumable.
-            current.status = "PAUSED";
+          if (state.transferCancel) {
+            // The Worker observes the shared cooperative cancellation boundary:
+            // the transfer keeps its started progress and becomes terminal.
+            current.status = "CANCELLED";
+            current.terminal = true;
             current.version = new Date().toISOString();
             return;
           }
@@ -11733,6 +11717,7 @@ const server = createServer(async (req, res) => {
     }
     const terminal = transfer.terminal;
     const partial = transfer.status === "PARTIAL";
+    const cancelled = transfer.status === "CANCELLED";
     sendJson(res, 200, {
       operation: transfer.operation,
       conflictMode: transfer.conflictMode,
@@ -11740,7 +11725,9 @@ const server = createServer(async (req, res) => {
       taskStatus: terminal
         ? partial
           ? "partial_success"
-          : "completed"
+          : transfer.status === "CANCELLED"
+            ? "cancelled"
+            : "completed"
         : transfer.status === "QUEUED"
           ? "pending"
           : "running",
@@ -11749,44 +11736,55 @@ const server = createServer(async (req, res) => {
       topLevelPaths: transfer.paths,
       knownEffects: transfer.paths.map((path) => ({
         path,
-        effect: terminal
-          ? state.transferPartialFor === path
-            ? "partial"
-            : "transferred"
-          : "in_progress",
-        status: terminal
-          ? state.transferPartialFor === path
-            ? "PARTIAL"
-            : "SUCCESS"
-          : "RUNNING",
+        effect: cancelled
+          ? "none"
+          : terminal
+            ? state.transferPartialFor === path
+              ? "partial"
+              : "transferred"
+            : "in_progress",
+        status: cancelled
+          ? "CANCELLED"
+          : terminal
+            ? state.transferPartialFor === path
+              ? "PARTIAL"
+              : "SUCCESS"
+            : "RUNNING",
       })),
       itemOutcomes: transfer.paths.map((path) => ({
         path,
         destination: path,
-        status: terminal
-          ? state.transferPartialFor === path
-            ? "PARTIAL"
-            : "SUCCESS"
-          : "RUNNING",
+        status: cancelled
+          ? "CANCELLED"
+          : terminal
+            ? state.transferPartialFor === path
+              ? "PARTIAL"
+              : "SUCCESS"
+            : "RUNNING",
       })),
       outcomes: transfer.paths.map((path) => ({
         path,
         destination: path,
-        status: terminal
-          ? state.transferPartialFor === path
-            ? "PARTIAL"
-            : "SUCCESS"
-          : "RUNNING",
-        checkpoints: terminal ? ["COPY"] : [],
+        status: cancelled
+          ? "CANCELLED"
+          : terminal
+            ? state.transferPartialFor === path
+              ? "PARTIAL"
+              : "SUCCESS"
+            : "RUNNING",
+        checkpoints: terminal && !cancelled ? ["COPY"] : [],
       })),
       outcomesTruncated: false,
       totalItems: transfer.paths.length,
-      succeededItems: terminal
-        ? transfer.paths.length - (state.transferPartialFor === null ? 0 : 1)
-        : 0,
+      succeededItems: cancelled
+        ? 0
+        : terminal
+          ? transfer.paths.length - (state.transferPartialFor === null ? 0 : 1)
+          : 0,
       skippedItems: 0,
-      failedItems:
-        terminal && state.transferPartialFor !== null
+      failedItems: cancelled
+        ? 0
+        : terminal && state.transferPartialFor !== null
           ? 1
           : terminal
             ? 0
@@ -11803,11 +11801,16 @@ const server = createServer(async (req, res) => {
             : { path: `/api/v1/tasks/${transfer.taskId}/cancel` }),
         },
       ],
-      sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
+      sideEffects:
+        transfer.status === "QUEUED" || cancelled
+          ? "none"
+          : "storage_mutations",
       retrySafe: false,
-      nextAction: terminal
-        ? "refresh the source and destination directories to see the current state"
-        : "the transfer is running; its per-item progress appears here",
+      nextAction: cancelled
+        ? "the transfer was cancelled; no further item is executed"
+        : terminal
+          ? "refresh the source and destination directories to see the current state"
+          : "the transfer is running; its per-item progress appears here",
     });
     return;
   }
@@ -13555,17 +13558,15 @@ const server = createServer(async (req, res) => {
   function transferTaskRecord(transfer, kind) {
     const terminal = transfer.terminal === true;
     const status =
-      transfer.status === "PAUSED"
-        ? "paused"
-        : transfer.status === "SUCCESS"
-          ? "completed"
-          : transfer.status === "PARTIAL"
-            ? "partial_success"
-            : transfer.status === "CANCELLED"
-              ? "cancelled"
-              : transfer.status === "RUNNING"
-                ? "running"
-                : "pending";
+      transfer.status === "SUCCESS"
+        ? "completed"
+        : transfer.status === "PARTIAL"
+          ? "partial_success"
+          : transfer.status === "CANCELLED"
+            ? "cancelled"
+            : transfer.status === "RUNNING"
+              ? "running"
+              : "pending";
     return {
       task_id: transfer.taskId,
       command: kind === "media" ? "media_files_transfer" : "files_transfer",
@@ -13622,10 +13623,10 @@ const server = createServer(async (req, res) => {
       status: transfer.terminal
         ? transfer.status === "PARTIAL"
           ? "partial"
-          : "success"
-        : transfer.status === "PAUSED"
-          ? "paused"
-          : "processing",
+          : transfer.status === "CANCELLED"
+            ? "cancelled"
+            : "success"
+        : "processing",
       stage: "transfer",
       attempts: 1,
       created_at: transfer.createdAt,
@@ -13758,7 +13759,7 @@ const server = createServer(async (req, res) => {
   }
 
   const taskControlMatch = url.pathname.match(
-    /^\/api\/v1\/tasks\/([^/]+)\/(cancel|pause|resume)$/,
+    /^\/api\/v1\/tasks\/([^/]+)\/cancel$/,
   );
   if (taskControlMatch && req.method === "POST") {
     if (!operationsGuard(res)) {
@@ -13768,23 +13769,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 403, { error: { code: "forbidden" } });
       return;
     }
-    const action = taskControlMatch[2];
-    if (action === "pause" || action === "resume") {
-      sendJson(res, 409, {
-        error: {
-          code: "pause_retired",
-          message:
-            "pause and resume-from-pause were retired for every media operation",
-          details: {
-            action,
-            durableState: "unchanged; no pause or resume request was recorded",
-            sideEffects: "none",
-            retrySafe: false,
-          },
-        },
-      });
-      return;
-    }
+    const action = "cancel";
     const taskId = decodeURIComponent(taskControlMatch[1]);
     const admittedTransfer =
       resourceLibraryState(session).filesTransfers.get(taskId) ??
@@ -13794,9 +13779,8 @@ const server = createServer(async (req, res) => {
       if (transfer.terminal) {
         sendJson(res, 409, {
           error: {
-            code: "pause_unavailable",
+            code: "lifecycle_conflict",
             details: {
-              category: "lifecycle_conflict",
               durableState: "the transfer already reached a terminal state",
               nextAction: "reload the transfer projection",
             },
@@ -13804,143 +13788,15 @@ const server = createServer(async (req, res) => {
         });
         return;
       }
-      if (action === "pause" && transfer.status !== "RUNNING") {
-        sendJson(res, 409, {
-          error: {
-            code: "pause_unavailable",
-            details: {
-              category: "lifecycle_conflict",
-              durableState: `a ${transfer.status.toLowerCase()} transfer cannot accept a pause request`,
-              nextAction: "reload the transfer projection and retry",
-            },
-          },
-        });
-        return;
-      }
-      if (action === "resume" && transfer.status !== "PAUSED") {
-        // Only a durably paused transfer has something to continue; the real
-        // backend refuses every other state with this same bounded reason.
-        sendJson(res, 409, {
-          error: {
-            code: "files_transfer_resume_running",
-            details: {
-              category: "resume_running",
-              durableState: "the transfer stays queued or owned by its Worker",
-              sideEffects: "none",
-              retrySafe: false,
-              nextAction: "wait for it to finish, pause or cancel it",
-            },
-          },
-        });
-        return;
-      }
-      transfer.status =
-        action === "resume"
-          ? "QUEUED"
-          : action === "pause"
-            ? "PAUSED"
-            : "CANCELLED";
-      transfer.terminal = action === "cancel";
+      transfer.status = "CANCELLED";
+      transfer.terminal = true;
       transfer.version = new Date().toISOString();
-      if (action !== "resume") {
-        sendJson(res, 200, {
-          action,
-          taskId: transfer.taskId,
-          sideEffects: "none",
-          retrySafe: false,
-          nextAction: "follow the transfer projection for the observed state",
-        });
-        return;
-      }
-      // An accepted continuation answers with the durable transfer projection
-      // *and* the same Task/lifecycle envelope every other accepted control
-      // returns, exactly as the real backend does (Slice 38 RO-6), so the
-      // Operations client reads one truthful applied control.
-      const task = {
-        task_id: transfer.taskId,
-        command: transfer.command,
-        status: "pending",
-        execute_authorized: true,
-        created_at: transfer.createdAt,
-        updated_at: transfer.version,
-        started_at: transfer.createdAt,
-        completed_at: null,
-        total_items: transfer.paths.length,
-        completed_items: 0,
-        failed_items: 0,
-        failure: null,
-        pause_requested: false,
-        configuration_snapshot_id: "snap-media-transfer",
-        item_limit: transfer.paths.length,
-      };
-      const projected = {
-        operation: transfer.operation,
-        conflictMode: transfer.conflictMode,
+      sendJson(res, 200, {
+        action,
         taskId: transfer.taskId,
-        taskStatus: "pending",
-        mediaLibraryId: transfer.sourceLibraryId,
-        destinationMediaLibraryId: transfer.destinationMediaLibraryId,
-        topLevelPaths: transfer.paths,
-        knownEffects: [],
-        itemOutcomes: transfer.paths.map((path) => ({
-          path,
-          destination: path,
-          status: "QUEUED",
-        })),
-        outcomes: [],
-        outcomesTruncated: false,
-        totalItems: transfer.paths.length,
-        succeededItems: 0,
-        skippedItems: 0,
-        failedItems: 0,
-        status: "QUEUED",
-        terminal: false,
-        version: transfer.version,
-        actions: [
-          {
-            action: "pause",
-            available: false,
-            reason: "a pending transfer cannot be paused",
-          },
-          {
-            action: "cancel",
-            available: true,
-            path: `/api/v1/tasks/${transfer.taskId}/cancel`,
-          },
-          {
-            action: "resume",
-            available: false,
-            reason: "the transfer is queued or running",
-          },
-        ],
         sideEffects: "none",
         retrySafe: false,
-        nextAction:
-          "the transfer is queued for the resident Worker; its progress appears here",
-      };
-      const lifecycle = taskLifecycle(task, []);
-      lifecycle.actions = lifecycle.actions.map((item) =>
-        item.action === "resume"
-          ? {
-              ...item,
-              available: false,
-              unavailableReason: "the transfer is queued or running",
-              durableOutcome:
-                "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
-              sideEffects:
-                "no Storage mutation in this request; the Worker later continues the remaining transfer through OrganizerExecutor",
-              nextAction:
-                "resume re-queues the transfer; follow its progress in the Files workspace or Operations",
-            }
-          : item,
-      );
-      sendJson(res, 202, {
-        ...projected,
-        action,
-        task,
-        lifecycle,
-        durableOutcome:
-          "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
+        nextAction: "follow the transfer projection for the observed state",
       });
       return;
     }
@@ -13963,147 +13819,6 @@ const server = createServer(async (req, res) => {
     if (expected.version !== null && expected.version !== task.updated_at) {
       sendJson(res, 409, {
         error: { code: "lifecycle_conflict" },
-      });
-      return;
-    }
-    if (action === "resume") {
-      // A durably paused bounded transfer re-queues its own authority; a paused
-      // scan/preview/organize Task admits one durable remaining-scope
-      // continuation for resident-Worker pickup. A mutation-authorized Task
-      // whose live authority is gone is refused with the native exact-Preview
-      // next action, exactly like the Python contract.
-      const resumable =
-        task.status === "paused" &&
-        (task.command === "files_transfer" ||
-          task.command === "media_files_transfer");
-      const continuable =
-        task.status === "paused" && CONTINUABLE_TASK_COMMANDS.has(task.command);
-      if (continuable && !resumable) {
-        if (task.execute_authorized === true && task.live_authority !== true) {
-          sendJson(res, 409, {
-            error: {
-              code: "authority_required",
-              message:
-                "the stored execute flag is not authority: the original execution authority was consumed, expired or revoked",
-              details: {
-                reason: "authority_required",
-                durableState:
-                  "the Task keeps its paused state, its recorded item outcomes and its completed effects; no further mutation was attempted",
-                sideEffects: "none",
-                retrySafe: false,
-                nextAction:
-                  "open the run's exact Preview, review the remaining scope, and authorize execution again from 操作与任务",
-              },
-            },
-          });
-          return;
-        }
-        const continuationId = `continuation-${task.task_id}`;
-        CONTINUATIONS.set(task.task_id, {
-          continuationId,
-          status: "queued",
-          command: task.command,
-          jobId: `job-${task.task_id}`,
-          newTaskId: null,
-          itemLimit: task.item_limit,
-          createdAt: "2026-08-22T12:41:00+00:00",
-          completedAt: null,
-          attemptCount: 1,
-          truncated: false,
-          nextAction:
-            "follow the linked continuation run for its independent per-item outcomes",
-          sideEffects: "none",
-        });
-        sendJson(res, 202, {
-          action,
-          taskId: task.task_id,
-          task,
-          lifecycle: taskLifecycle(
-            task,
-            TASK_RESULTS.filter((result) => result.task_id === task.task_id),
-          ),
-          continuation: {
-            continuationId,
-            sourceTaskId: task.task_id,
-            command: task.command,
-            itemLimit: task.item_limit,
-            boundary: "paused_remaining_admitted_scope",
-            status: "queued",
-            jobId: `job-${task.task_id}`,
-            newTaskId: null,
-            createdAt: "2026-08-22T12:41:00+00:00",
-            updatedAt: "2026-08-22T12:41:00+00:00",
-            startedAt: null,
-            completedAt: null,
-            error: null,
-            recovery: null,
-            nextAction:
-              "follow the linked continuation run for its independent per-item outcomes",
-            authorityStatement: null,
-            sideEffects: "none",
-          },
-          jobId: `job-${task.task_id}`,
-          durableOutcome:
-            "a durable continuation of this Task's exact remaining admitted scope is queued for the resident Worker, which preserves the original immutable pin and excludes every completed, ignored, waiting or uncertain item",
-          sideEffects: "none",
-          retrySafe: false,
-          nextAction:
-            "follow the linked continuation run for its independent per-item outcomes",
-        });
-        return;
-      }
-      if (!resumable) {
-        sendJson(res, 409, {
-          error: {
-            code: "resume_unavailable",
-            details: {
-              reason: "resume_unavailable",
-              durableState: `a ${task.status} ${task.command} Task has no durable queued continuation`,
-              nextAction:
-                "review the Task's recorded per-item outcomes; only a paused continuable Task has a remaining scope",
-            },
-          },
-        });
-        return;
-      }
-      task.status = "pending";
-      task.completed_at = null;
-      task.updated_at = bumpTimestamp(task.updated_at);
-      sendJson(res, 202, {
-        action,
-        taskId: task.task_id,
-        task,
-        lifecycle: taskLifecycle(
-          task,
-          TASK_RESULTS.filter((result) => result.task_id === task.task_id),
-        ),
-        durableOutcome:
-          "the paused scope is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
-        sideEffects: "none",
-        retrySafe: false,
-        nextAction:
-          "the continuation is queued for the resident Worker; follow its progress here",
-      });
-      return;
-    }
-    if (action === "pause") {
-      if (task.status !== "running" || task.pause_requested === true) {
-        sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
-        return;
-      }
-      task.pause_requested = true;
-      task.updated_at = bumpTimestamp(task.updated_at);
-      sendJson(res, 200, {
-        action,
-        taskId: task.task_id,
-        task,
-        lifecycle: taskLifecycle(task, []),
-        durableOutcome:
-          "a durable pause request is stored; the Task becomes paused only at a supported item boundary",
-        sideEffects: "none",
-        retrySafe: false,
-        nextAction:
-          "refresh the Task to see whether the pause was acknowledged at an item boundary",
       });
       return;
     }
@@ -17299,9 +17014,9 @@ const server = createServer(async (req, res) => {
       transferPartialFor: url.searchParams.get("transferPartial"),
       transferDenied: url.searchParams.get("transferDenied") === "1",
       // When enabled, the fake Worker stops one admitted media transfer at a
-      // durable PAUSED state instead of running it to a terminal outcome, so
-      // the Operations revisit → Resume journey is reachable in the browser.
-      transferPause: url.searchParams.get("transferPause") === "1",
+      // durable cancellation instead of running it to success, so the retired
+      // resume route and the cancelled transfer's local evidence are reachable.
+      transferCancel: url.searchParams.get("transferCancel") === "1",
     });
     res.setHeader(
       "Set-Cookie",
@@ -18357,6 +18072,11 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    sendJson(res, 404, { error: { code: "not_found" } });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/")) {
     sendJson(res, 404, { error: { code: "not_found" } });
     return;
   }

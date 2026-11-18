@@ -289,16 +289,15 @@ test("the media transfer journey works at a supported narrow viewport", async ({
   ).toBeVisible();
 });
 
-test("a paused media transfer's retired resume is refused with no replay", async ({
+test("a cancelled media transfer's retired resume is an ordinary not-found with no replay", async ({
   page,
 }) => {
-  // Slice 38 RO-6/RO-7 + Task47.2 M10: the fixture is genuine historical paused
-  // work, but Pause/Continue are retired for every media operation.  The dialog
-  // must expose no Continue action and the existing route must answer with one
-  // bounded, no-effect refusal without replaying the remaining work.
-  const taskId = await admitPausedMediaTransfer(page);
+  // The fixture is a genuinely cancelled transfer.  The retired address must
+  // not replay it or change its durable state, and the dialog exposes none of
+  // the removed pause controls.
+  const taskId = await admitCancelledMediaTransfer(page);
   const dialog = page.getByRole("dialog", { name: "复制进度" });
-  await expect(dialog.getByText(/传输已在安全边界暂停/)).toBeVisible();
+  await expect(dialog.getByText(/传输已取消/)).toBeVisible();
   await expect(dialog.getByRole("button", { name: "继续传输" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "请求暂停" })).toHaveCount(0);
 
@@ -306,22 +305,21 @@ test("a paused media transfer's retired resume is refused with no replay", async
     headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
     data: {},
   });
-  expect(refused.status()).toBe(409);
+  expect(refused.status()).toBe(404);
   const refusal = await refused.json();
-  expect(refusal.error.code).toBe("pause_retired");
-  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.code).toBe("not_found");
 
   const [transfer] = await durableMediaTransfers(page);
-  expect(transfer.status).toBe("PAUSED");
+  expect(transfer.status).toBe("CANCELLED");
 });
 
-test("a paused transfer's retired Task deep link is an ordinary not-found without replaying it", async ({
+test("a cancelled transfer's retired Task deep link is an ordinary not-found without replaying it", async ({
   page,
 }) => {
   // Task55.1: the retired `/operations/tasks/<id>` address has no resolver,
-  // alias or library guess. The paused transfer remains durable and unchanged,
-  // and the old address starts no identity read or command.
-  const taskId = await admitPausedMediaTransfer(page);
+  // alias or library guess. The cancelled transfer remains durable and
+  // unchanged, and the old address starts no identity read or command.
+  const taskId = await admitCancelledMediaTransfer(page);
   const apiRequests: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/api/")) apiRequests.push(request.url());
@@ -333,15 +331,15 @@ test("a paused transfer's retired Task deep link is an ordinary not-found withou
   await expect(page.getByLabel("API token")).toHaveCount(0);
   expect(apiRequests).toEqual([]);
   const [transfer] = await durableMediaTransfers(page);
-  expect(transfer.status).toBe("PAUSED");
+  expect(transfer.status).toBe("CANCELLED");
 });
 
 /**
- * Admit one deterministic media transfer that the fake pauses at its safe
- * boundary, and return its durable Task identity.
+ * Admit one deterministic media transfer that the fake stops at the shared
+ * cooperative cancellation boundary, and return its durable Task identity.
  */
-async function admitPausedMediaTransfer(page: Page): Promise<string> {
-  await resetMediaTransfers(page, "?transferPause=1");
+async function admitCancelledMediaTransfer(page: Page): Promise<string> {
+  await resetMediaTransfers(page, "?transferCancel=1");
   await openMediaLibrary(page);
   await page.getByRole("checkbox", { name: "选择 Dune (2021)" }).check();
   await openRowMenu(page, /Dune \(2021\)/);
@@ -353,12 +351,10 @@ async function admitPausedMediaTransfer(page: Page): Promise<string> {
   await expect.poll(async () => (await transferPosts(page)).length).toBe(1);
   const [post] = await transferPosts(page);
   expect(post.mediaLibraryId).toBe("movies");
-  // The fake Worker stops the admitted transfer at the durable safe boundary, so
-  // every following step starts from a really paused row rather than a queued one.
+  // The fake Worker stops the admitted transfer at its cooperative boundary, so
+  // every following step starts from a durable cancelled row.
   await expect(
-    page
-      .getByRole("dialog", { name: "复制进度" })
-      .getByText(/传输已在安全边界暂停/),
+    page.getByRole("dialog", { name: "复制进度" }).getByText(/传输已取消/),
   ).toBeVisible({ timeout: 10_000 });
   return "task-e2e-media-transfer-1";
 }

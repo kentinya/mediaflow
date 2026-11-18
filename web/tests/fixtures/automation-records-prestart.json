@@ -70,7 +70,6 @@
         "kind": "definition-scheduled"
       },
       "partial_items": 0,
-      "pause_requested": false,
       "problem_file_counts": {
         "classification": 0,
         "conflict": 0,
@@ -196,7 +195,6 @@
         "kind": "definition-scheduled"
       },
       "partial_items": 0,
-      "pause_requested": false,
       "problem_file_counts": {
         "classification": 0,
         "conflict": 0,

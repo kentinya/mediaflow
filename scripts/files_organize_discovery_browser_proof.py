@@ -15,7 +15,7 @@ a real Chromium browser through Slice 44 RO-6:
 * a resident Processing Worker performs the metadata-only walk, proving
   configured extensions/exclusions, real stability waiting and bounded
   exclusion findings;
-* cooperative pause/continue/cancel and explicit operator finalize are native,
+* cooperative cancellation and explicit operator finalize are native,
   durable and versioned;
 * finalize freezes one deduplicated source list and links the existing manual
   intent, which still requires a separate exact Preview and a confirmed
@@ -93,9 +93,8 @@ LONG_PATHS = (LONG_SHORT_PATH, LONG_PATH)
 MASS_FOLDER = "mass"
 DEEP_FOLDER = "deep"
 #: The bounded control-preservation scope: a second 101-source folder whose
-#: completed walk is acknowledged by a *pause* at the safe boundary.  The
-#: acknowledgement must keep the counters, findings, manifest and the
-#: encountered primary-limit refusal instead of resetting them (B44-8-1).
+#: single completed walk must keep its counters, findings, manifest and the
+#: encountered primary-limit refusal instead of resetting them.
 CONTROL_MASS_FOLDER = "control-mass"
 
 
@@ -161,8 +160,7 @@ def seed_tree(root: Path) -> None:
     for index in range(101):
         (mass / f"Bulk.{index:03d}.mkv").write_bytes(b"synthetic discovery media")
     # The control-preservation case needs its own 101-source scope so the
-    # primary-limit refusal is exercised by a pause acknowledgement rather
-    # than by a terminal walk.
+    # primary-limit refusal is exercised by one complete walk.
     control_mass = source / CONTROL_MASS_FOLDER
     control_mass.mkdir(parents=True, exist_ok=True)
     for index in range(101):
@@ -565,7 +563,8 @@ def main() -> int:
         if MIXED_FILE not in mixed["sources"]:
             raise RuntimeError(f"the explicit file was dropped: {mixed}")
 
-        # Cooperative control: pause then continue the same durable scope.
+        # The same durable scope settles through the resident Worker and can be
+        # finalized; cancellation is the remaining cooperative control.
         _, control_target = api(
             "POST",
             "/api/v1/resource-libraries/source/files/discoveries",
@@ -573,65 +572,15 @@ def main() -> int:
             expect=202,
         )
         target_id = control_target["discoveryId"]
-        _, paused = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{target_id}/pause",
-            {"expectedVersion": 1},
-            expect=200,
-        )
-        if paused["pauseRequested"] is not True:
-            raise RuntimeError(f"the cooperative pause was not recorded: {paused}")
-        _, conflicted = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{target_id}/pause",
-            {"expectedVersion": 1},
-        )
-        if conflicted["error"]["code"] != "discovery_conflict":
-            raise RuntimeError(f"a stale control was accepted: {conflicted}")
-        # Acknowledge-before-Continue: while the pause is still pending the
-        # safe-boundary acknowledgement, Continue is not offered and a direct
-        # Continue is refused actionably without changing any work.
-        if paused["actions"]["resume"]["available"] is not False:
-            raise RuntimeError(f"a pending pause advertised Continue: {paused}")
-        if paused["actions"]["resume"]["pendingReason"] != "discovery_pause_pending":
-            raise RuntimeError(f"a pending pause gave no bounded reason: {paused}")
-        _, premature = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{target_id}/resume",
-            {"expectedVersion": paused["version"]},
-        )
-        if premature.get("error", {}).get("code") != "discovery_pause_pending":
-            raise RuntimeError(f"a premature Continue was accepted: {premature}")
-        _run_worker(configuration_path)
-        time.sleep(0.4)
-        _, acknowledged = api(
-            "GET", f"/api/v1/operations/organize/discoveries/{target_id}", expect=200
-        )
-        if (
-            acknowledged["status"] != "paused"
-            or acknowledged["pauseRequested"] is not True
-            or acknowledged["actions"]["resume"]["available"] is not True
-        ):
-            raise RuntimeError(f"the pause was not acknowledged truthfully: {acknowledged}")
-        _, resumed = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{target_id}/resume",
-            {"expectedVersion": acknowledged["version"]},
-            expect=200,
-        )
-        if resumed["pauseRequested"] is not False:
-            raise RuntimeError(f"continue did not clear the pause: {resumed}")
         settled_control = _settle(configuration_path, target_id)
+        if settled_control["status"] != "completed":
+            raise RuntimeError(f"the control scope did not settle: {settled_control}")
 
-        # Control/publication preservation (B44-8-1): a real 101-source scope
-        # reaches the primary bound, and the accepted pause must never be
-        # acknowledged as a reset record.  A pause requested before pickup is
-        # honoured truthfully (no walk is claimed for it); Continue then runs
-        # the same durable scope to the bound, and the durable material refusal
-        # keeps Finalize refused.  The narrower in-flight race — a publication
-        # that loses the version CAS to a concurrent pause — is covered
-        # deterministically by the Python regressions rather than by fragile
-        # browser timing.
+        # Control/publication preservation: a real 101-source scope reaches the
+        # primary bound as one durable walk, and the durable material refusal
+        # keeps Finalize refused.  The narrower in-flight publication race is
+        # covered deterministically by the Python regressions rather than by
+        # fragile browser timing.
         _, control_mass_target = api(
             "POST",
             "/api/v1/resource-libraries/source/files/discoveries",
@@ -639,49 +588,8 @@ def main() -> int:
             expect=202,
         )
         control_mass_id = control_mass_target["discoveryId"]
-        _, control_paused = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{control_mass_id}/pause",
-            {"expectedVersion": control_mass_target["version"]},
-            expect=200,
-        )
-        if (
-            control_paused["pauseRequested"] is not True
-            or control_paused["progress"]["visitedEntries"] != 0
-            # Acknowledge-before-Continue: the request is durable but not yet
-            # acknowledged, so Continue is not offered and a direct Continue is
-            # refused actionably without changing any work.
-            or control_paused["actions"]["resume"]["available"] is not False
-            or control_paused["actions"]["resume"]["pendingReason"] != "discovery_pause_pending"
-        ):
-            raise RuntimeError(f"a pending pause advertised Continue: {control_paused}")
-        _, control_premature = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{control_mass_id}/resume",
-            {"expectedVersion": control_paused["version"]},
-        )
-        if control_premature.get("error", {}).get("code") != "discovery_pause_pending":
-            raise RuntimeError(f"a premature Continue was accepted: {control_premature}")
         _run_worker(configuration_path)
         time.sleep(0.4)
-        _, control_held = api(
-            "GET", f"/api/v1/operations/organize/discoveries/{control_mass_id}", expect=200
-        )
-        if (
-            control_held["status"] != "paused"
-            or control_held["progress"]["visitedEntries"] != 0
-            or control_held["pauseRequested"] is not True
-            or control_held["actions"]["resume"]["available"] is not True
-        ):
-            raise RuntimeError(f"a paused record was not acknowledged truthfully: {control_held}")
-        _, control_resumed = api(
-            "POST",
-            f"/api/v1/operations/organize/discoveries/{control_mass_id}/resume",
-            {"expectedVersion": control_held["version"]},
-            expect=200,
-        )
-        if control_resumed["pauseRequested"] is not False:
-            raise RuntimeError(f"continue did not clear the preservation pause: {control_resumed}")
         control_final = _settle(configuration_path, control_mass_id)
         if (
             control_final["progress"]["visitedEntries"] != 101
@@ -700,8 +608,8 @@ def main() -> int:
         if control_refused.get("error", {}).get("code") != "discovery_budget_limited":
             raise RuntimeError(f"a bounded prefix was frozen: {control_refused}")
         print(
-            "   control preservation: pending pause refused Continue; acknowledged pause "
-            "continued to 101 visited / 100 sources / primary_limit; finalize refused"
+            "   control preservation: one walk reached 101 visited / 100 sources / "
+            "primary_limit; finalize refused"
         )
 
         # Cooperative cancellation of work that no Worker has picked up yet is
@@ -1148,9 +1056,8 @@ def main() -> int:
             "requiredOutcome": "RO-6",
             "cases": results,
             "control": {
-                "paused": paused["pauseRequested"],
-                "conflictRefused": True,
-                "resumed": resumed["pauseRequested"],
+                "discoveryId": target_id,
+                "status": settled_control["status"],
             },
             "budgetRefusal": {
                 "status": mass_settled["status"],

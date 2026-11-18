@@ -197,7 +197,6 @@ function metricsDocument(): Record<string, unknown> {
     monthToDateActive: null,
     monthToDateUnavailable: null,
     monthToDateNoWork: null,
-    monthToDatePartial: null,
     monthToDateFailed: null,
     monthToDateCancelled: null,
     monthToDateUncertain: null,

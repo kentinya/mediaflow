@@ -1360,9 +1360,9 @@ test("MediaLibrary Files reaches every item of a large directory Delete", async 
  *
  * The harness gates the real Storage move so the transfer reaches the shared
  * cooperative boundary after three children already moved.  The operator
- * cancels instead of pausing, and the local status read must name those moved
- * children — never one opaque directory with an aggregate "no change".  The
- * retired resume route must not replay the remaining child.
+ * cancels, and the local status read must name those moved children — never
+ * one opaque directory with an aggregate "no change".  The retired resume
+ * route must not replay the remaining child.
  */
 test("ResourceLibrary Files keeps a cancelled folder Move's known effects locally", async ({
   page,
@@ -1435,9 +1435,12 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
     status: "cancelled",
   });
   await expect(progress.getByText(/已取消/)).toBeVisible();
-  const pausedState = await page.request.get("/__harness__/files-state");
-  const pausedDocument = (await pausedState.json()) as Record<string, unknown>;
-  const moved = pausedDocument["resourcePausedMoveMoved"] as string[];
+  const cancelledState = await page.request.get("/__harness__/files-state");
+  const cancelledDocument = (await cancelledState.json()) as Record<
+    string,
+    unknown
+  >;
+  const moved = cancelledDocument["resourcePausedMoveMoved"] as string[];
   expect(moved.length).toBe(3);
   // The cancelled transfer is terminal and keeps its own durable record.
   await progress.getByRole("button", { name: "关闭", exact: true }).click();
@@ -1491,8 +1494,8 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
   });
   await status.getByRole("button", { name: "关闭", exact: true }).click();
 
-  // The retired resume route is a bounded no-effect refusal even for the
-  // cancelled transfer; the remaining child is never replayed.
+  // The retired resume route is an ordinary unknown route for the cancelled
+  // transfer; the remaining child is never replayed.
   const operations = await page.request.get(
     "/api/v1/resource-libraries/source/file-operations",
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
@@ -1517,10 +1520,9 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
       data: { expectedUpdatedAt: detailDocument.version },
     },
   );
-  expect(refused.status()).toBe(409);
+  expect(refused.status()).toBe(404);
   const refusal = await refused.json();
-  expect(refusal.error.code).toBe("pause_retired");
-  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.code).toBe("not_found");
   const worker = await page.request.post("/__harness__/run-files-worker");
   expect(worker.ok()).toBe(true);
   const finalState = await page.request.get("/__harness__/files-state");

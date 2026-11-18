@@ -263,3 +263,61 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
                         "SELECT component, version FROM schema_version ORDER BY component"
                     ).fetchall(),
                 )
+
+
+class ConcurrentFirstInitializationTests(unittest.TestCase):
+    """Four resident services may start against one empty data directory."""
+
+    def test_empty_database_is_created_once_before_any_service_reads_it(self) -> None:
+        import sqlite3
+        import threading
+
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+        from mediaflow.infrastructure.sqlite_configuration_schema import (
+            CONFIGURATION_SCHEMA_VERSION,
+        )
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            barrier = threading.Barrier(4)
+            failures: list[BaseException] = []
+
+            def boot(index: int) -> None:
+                try:
+                    barrier.wait(5)
+                    if index % 2:
+                        with SQLiteConfigurationRepository(database):
+                            pass
+                        with SQLiteTaskRepository(database):
+                            pass
+                    else:
+                        with SQLiteTaskRepository(database):
+                            pass
+                        with SQLiteConfigurationRepository(database):
+                            pass
+                except BaseException as error:  # pragma: no cover - reported below
+                    failures.append(error)
+
+            threads = [threading.Thread(target=boot, args=(index,)) for index in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+            self.assertEqual([], failures)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    [
+                        ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
+                        ("runtime", SCHEMA_VERSION),
+                    ],
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )
+            with SQLiteTaskRepository(database) as runtime:
+                self.assertEqual(runtime.schema_version, SCHEMA_VERSION)
+            with SQLiteConfigurationRepository(database):
+                pass

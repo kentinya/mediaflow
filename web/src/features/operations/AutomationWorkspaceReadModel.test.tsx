@@ -184,7 +184,6 @@ function metricsDocument(overrides: Json = {}): Json {
     monthToDateActive: 3,
     monthToDateUnavailable: 0,
     monthToDateNoWork: 2,
-    monthToDatePartial: 0,
     monthToDateFailed: 1,
     monthToDateCancelled: 0,
     monthToDateUncertain: 1,

@@ -160,7 +160,6 @@ function definitionsPagePayload(
       monthToDateTerminal: 0,
       monthToDateActive: 1,
       monthToDateNoWork: 0,
-      monthToDatePartial: 0,
       monthToDateFailed: 0,
       monthToDateCancelled: 0,
       monthToDateUncertain: 0,

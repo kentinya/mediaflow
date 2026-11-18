@@ -246,7 +246,6 @@ function metricsDocument(
     monthToDateActive: 1,
     monthToDateUnavailable: 0,
     monthToDateNoWork: 1,
-    monthToDatePartial: 0,
     monthToDateFailed: 1,
     monthToDateCancelled: 0,
     monthToDateUncertain: 0,

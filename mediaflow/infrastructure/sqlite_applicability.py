@@ -6,6 +6,13 @@ current V2 runtime/configuration database and a configuration-only first-setup
 database are supported.  A retired V1 Job schema, a newer schema, a foreign file
 and a partially written configuration store are not.
 
+Repositories repeat the same decision on their own connection inside the
+``BEGIN IMMEDIATE`` transaction that creates the current structure, so two
+resident services racing on one empty path observe exactly one committed
+layout: the first process creates tables, indexes and the version mark
+together; the second waits for that commit and opens the committed store as an
+existing database instead of writing a second marker or seeing half a schema.
+
 The caller receives one bounded :class:`DatabaseApplicabilityError`; the file is
 left byte-for-byte unchanged, so the operator can inspect the configured path or
 restore a verified supported backup.
@@ -73,6 +80,39 @@ class DatabaseMarkers:
     tables: frozenset[str]
 
 
+def read_database_markers_from_connection(
+    connection: sqlite3.Connection,
+) -> DatabaseMarkers:
+    """Read markers on a caller-owned connection, including inside its transaction.
+
+    Repositories use this immediately after acquiring their write transaction so
+    the supported-layout decision reads only committed state, never a table or
+    marker another process has not committed yet.
+    """
+
+    try:
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    except sqlite3.DatabaseError as error:
+        raise DatabaseApplicabilityError("the file is not a readable SQLite database") from error
+    tables = frozenset(str(row[0]) for row in rows)
+    if "schema_version" not in tables:
+        return DatabaseMarkers(None, None, tables)
+    try:
+        version_rows = connection.execute(
+            "SELECT component, version FROM schema_version"
+        ).fetchall()
+    except sqlite3.DatabaseError as error:
+        raise DatabaseApplicabilityError(
+            "the schema marker cannot be read as a current MediaFlow database"
+        ) from error
+    versions = {str(row[0]): int(row[1]) for row in version_rows if isinstance(row[0], str)}
+    return DatabaseMarkers(
+        versions.get("runtime"),
+        versions.get("configuration_management"),
+        tables,
+    )
+
+
 def read_database_markers(database_path: str | Path) -> DatabaseMarkers:
     """Read schema markers and table names through one read-only connection."""
 
@@ -88,48 +128,19 @@ def read_database_markers(database_path: str | Path) -> DatabaseMarkers:
         raise DatabaseApplicabilityError("the file is not a readable SQLite database") from error
     try:
         connection.row_factory = sqlite3.Row
-        try:
-            rows = connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        except sqlite3.DatabaseError as error:
-            raise DatabaseApplicabilityError(
-                "the file is not a readable SQLite database"
-            ) from error
-        tables = frozenset(str(row["name"]) for row in rows)
-        if "schema_version" not in tables:
-            return DatabaseMarkers(None, None, tables)
-        try:
-            version_rows = connection.execute(
-                "SELECT component, version FROM schema_version"
-            ).fetchall()
-        except sqlite3.DatabaseError as error:
-            raise DatabaseApplicabilityError(
-                "the schema marker cannot be read as a current MediaFlow database"
-            ) from error
-        versions = {
-            str(row["component"]): int(row["version"])
-            for row in version_rows
-            if isinstance(row["component"], str)
-        }
-        return DatabaseMarkers(
-            versions.get("runtime"),
-            versions.get("configuration_management"),
-            tables,
-        )
+        return read_database_markers_from_connection(connection)
     finally:
         connection.close()
 
 
-def assert_supported_database(
-    database_path: str | Path,
+def evaluate_database_applicability(
+    markers: DatabaseMarkers,
     *,
     current_runtime_version: int,
     current_configuration_version: int,
 ) -> DatabaseMarkers:
-    """Refuse an unsupported existing file before the caller writes anything."""
+    """Refuse a marker/table layout this build cannot use as a current store."""
 
-    markers = read_database_markers(database_path)
     tables = markers.tables
     if markers.runtime_version is not None:
         if markers.runtime_version > current_runtime_version:
@@ -156,3 +167,19 @@ def assert_supported_database(
             "it contains configuration tables without a current configuration marker"
         )
     return markers
+
+
+def assert_supported_database(
+    database_path: str | Path,
+    *,
+    current_runtime_version: int,
+    current_configuration_version: int,
+) -> DatabaseMarkers:
+    """Refuse an unsupported existing file before the caller writes anything."""
+
+    markers = read_database_markers(database_path)
+    return evaluate_database_applicability(
+        markers,
+        current_runtime_version=current_runtime_version,
+        current_configuration_version=current_configuration_version,
+    )

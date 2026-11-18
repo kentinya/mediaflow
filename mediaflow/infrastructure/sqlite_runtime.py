@@ -235,9 +235,11 @@ from mediaflow.domain.task_scheduling import (
 from mediaflow.infrastructure.sqlite_applicability import (
     CONFIGURATION_TABLES,
     assert_supported_database,
-    read_database_markers,
+    evaluate_database_applicability,
+    read_database_markers_from_connection,
 )
 from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
+from mediaflow.infrastructure.sqlite_initialization import execute_script
 
 # Manual intent, Preview, exact execution, and Automation Task Definition
 # Preview tables are additive migrations on the runtime schema.  The table
@@ -5969,10 +5971,9 @@ class SQLiteTaskRepository:
         while remaining visible in the all-ended and active counts.  File
         success, partial/failed/skipped/ignored files, unknown effects, missing
         formal Results, a healthy empty scope and a complete history exclusion
-        can never change the flow contribution.  A legacy ``partial_success``
-        Task row is a recorded historical failure, so it participates as
-        ``failed``; a retired ``paused`` row is unavailable evidence, never
-        active work and never a fabricated terminal outcome.
+        can never change the flow contribution.  A retired aggregate value is
+        unavailable evidence: it is never active work and never a fabricated
+        terminal outcome or a separate partial bucket.
 
         ``currentNoWork`` is a separate fact, never a success condition: it
         counts a completed flow with no admitted primary source or whose whole
@@ -6045,9 +6046,6 @@ class SQLiteTaskRepository:
                             AND automation_flow_status = 'unavailable'
                             THEN 1 ELSE 0 END), 0) AS current_unavailable,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND linked_task_status = 'partial_success'
-                            THEN 1 ELSE 0 END), 0) AS current_partial,
-                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
                             AND automation_flow_status = 'failed'
                             THEN 1 ELSE 0 END), 0) AS current_failed,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
@@ -6062,8 +6060,6 @@ class SQLiteTaskRepository:
                         current_end.isoformat(),
                         previous_start.isoformat(),
                         previous_end.isoformat(),
-                        current_start.isoformat(),
-                        current_end.isoformat(),
                         current_start.isoformat(),
                         current_end.isoformat(),
                         current_start.isoformat(),
@@ -6096,7 +6092,6 @@ class SQLiteTaskRepository:
             "currentCompleted": completed,
             "currentEvaluated": completed + failed,
             "currentNoWork": int(row["current_no_work"] or 0),
-            "currentPartial": int(row["current_partial"] or 0),
             "currentFailed": failed,
             "currentCancelled": int(row["current_cancelled"] or 0),
             "currentUncertain": int(row["current_uncertain"] or 0),
@@ -18786,31 +18781,58 @@ class SQLiteTaskRepository:
             )
 
     def _initialize(self) -> None:
-        with self._lock, self._connection:
-            markers = read_database_markers(self._path)
-            if markers.runtime_version is not None:
-                self._initialize_existing_runtime_locked()
-                return
-            unexpected = (
-                markers.tables
-                - CONFIGURATION_TABLES
-                - {
-                    "schema_version",
-                    "sqlite_sequence",
-                }
-            )
-            if unexpected:
-                raise ValueError(
-                    "runtime database contains tables without a current runtime marker: "
-                    + ", ".join(sorted(unexpected))
-                    + "; the file was not modified"
+        """Create or validate the current store in one atomic write transaction.
+
+        The write lock is acquired before the layout is read, so a second
+        service starting on the same empty path waits for the first commit and
+        then opens it as an existing database.  Table creation and the version
+        mark therefore become visible together; a failure rolls the whole
+        attempt back and leaves the previous file untouched.
+        """
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                markers = read_database_markers_from_connection(self._connection)
+                evaluate_database_applicability(
+                    markers,
+                    current_runtime_version=SCHEMA_VERSION,
+                    current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
                 )
-            self._connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version "
-                "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+                self._database_markers = markers
+                if markers.runtime_version is not None:
+                    self._initialize_existing_runtime_locked()
+                else:
+                    self._initialize_new_runtime_locked(markers)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def _initialize_new_runtime_locked(self, markers) -> None:
+        """Create every current runtime structure and the mark in this transaction."""
+
+        unexpected = (
+            markers.tables
+            - CONFIGURATION_TABLES
+            - {
+                "schema_version",
+                "sqlite_sequence",
+            }
+        )
+        if unexpected:
+            raise ValueError(
+                "runtime database contains tables without a current runtime marker: "
+                + ", ".join(sorted(unexpected))
+                + "; the file was not modified"
             )
-            self._connection.executescript(
-                """
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version "
+            "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+        )
+        execute_script(
+            self._connection,
+            """
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     execute_authorized INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -19436,47 +19458,35 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS operational_logs_time
                     ON operational_logs(occurred_at, log_id);
-                """
-            )
-            # A fresh database was just created with the complete current
-            # structure, including the Task scheduling/initial-execution evidence
-            # and the source-occurrence columns/indexes.  The version mark is the
-            # last durable step.
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                self._connection.execute(_TASK_SCHEDULING_CREATE)
-                self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
-                self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
-                self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
-                self._advance_runtime_schema_marker()
-                self._connection.commit()
-            except BaseException:
-                self._connection.rollback()
-                raise
+                """,
+        )
+        # The same transaction already created the complete current structure,
+        # including the Task scheduling/initial-execution evidence and the
+        # source-occurrence columns/indexes.  The version mark is the last step.
+        self._connection.execute(_TASK_SCHEDULING_CREATE)
+        self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
+        self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
+        self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
+        self._advance_runtime_schema_marker()
 
     def _initialize_existing_runtime_locked(self) -> None:
         """Validate and minimally adjust one supported current runtime database.
 
-        Every current structure is checked before any change.  The only
-        in-place adjustment is the same-Task summary rebuild needed because
-        Slice Base wrote two retired NOT NULL columns that the current insert
-        does not supply.  It preserves every row, identity, pin, confirmation
-        and effect, and commits together with the version mark.
+        Runs inside the caller's write transaction.  Every current structure is
+        checked before any change.  The only in-place adjustment is the
+        same-Task summary rebuild needed because Slice Base wrote two retired
+        NOT NULL columns that the current insert does not supply.  It preserves
+        every row, identity, pin, confirmation and effect, and commits together
+        with the version mark.
         """
 
-        self._connection.execute("BEGIN IMMEDIATE")
-        try:
-            self._assert_current_runtime_structure_locked()
-            self._migrate_manual_recovery_preparation_legacy_columns_locked()
-            marker = self._connection.execute(
-                "SELECT version FROM schema_version WHERE component='runtime'"
-            ).fetchone()
-            if marker is None or int(marker["version"]) != SCHEMA_VERSION:
-                self._advance_runtime_schema_marker()
-            self._connection.commit()
-        except BaseException:
-            self._connection.rollback()
-            raise
+        self._assert_current_runtime_structure_locked()
+        self._migrate_manual_recovery_preparation_legacy_columns_locked()
+        marker = self._connection.execute(
+            "SELECT version FROM schema_version WHERE component='runtime'"
+        ).fetchone()
+        if marker is None or int(marker["version"]) != SCHEMA_VERSION:
+            self._advance_runtime_schema_marker()
 
     def _assert_current_runtime_structure_locked(self) -> None:
         """Refuse a malformed/partial runtime database before any business write."""

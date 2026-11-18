@@ -1235,7 +1235,6 @@ export interface AutomationMetricsModel {
   readonly monthToDateActive: number | null;
   readonly monthToDateUnavailable: number | null;
   readonly monthToDateNoWork: number | null;
-  readonly monthToDatePartial: number | null;
   readonly monthToDateFailed: number | null;
   readonly monthToDateCancelled: number | null;
   readonly monthToDateUncertain: number | null;
@@ -1365,7 +1364,6 @@ export function normalizeAutomationMetrics(
     monthToDateActive: optionalCount(source, "monthToDateActive"),
     monthToDateUnavailable: optionalCount(source, "monthToDateUnavailable"),
     monthToDateNoWork: noWork,
-    monthToDatePartial: optionalCount(source, "monthToDatePartial"),
     monthToDateFailed: optionalCount(source, "monthToDateFailed"),
     monthToDateCancelled: optionalCount(source, "monthToDateCancelled"),
     monthToDateUncertain: optionalCount(source, "monthToDateUncertain"),
