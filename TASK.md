@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.6-01–03 IN THE SAME TASK
+Next Action: B RECHECKS B55.6-01–03 ON CANDIDATE 5174c308
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -264,3 +264,86 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 新库完整结构仍未通过；RO-5 同 Task 恢复抽测通过，旧链消费者待删，既定 session 清理不并入
 本轮返工；RO-6 旧 CLI 退出，当前原生及制品门禁仍未完成。Slice 继续 ACTIVE，不新开 Task，
 不改 Slice／Roadmap／Progress，不交 A 终审。
+
+
+### Developer 返工交接：B55.6-01–03
+
+候选产品检查点：`5174c308df9cbaa1d40b3e38c62ea6e333fa2e14`
+（`fix(task55.6): reject unsupported databases before writes and retire the old recovery chain`）。
+本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
+
+**B55.6-01 — 启动前判定共享 SQLite 文件**
+
+- 新增只读 `sqlite_applicability`：在任何建表、写 marker、登记 resident 或设置发布权威
+  之前读取 schema marker 与表名。V1 Job schema（runtime < 58）、更新版本、畸形
+  SQLite、未带 marker 的配置表/运行表均拒绝；新路径、配置-only 首设库、真实 Slice Base
+  库继续。
+- `SQLiteTaskRepository` 与 `SQLiteConfigurationRepository` 都在连接后、`_initialize`
+  写入前调用同一判定；既有库路径不再先执行 `executescript` 再检查，而是先验证完整当前结构，
+  只保留 Base 必需的 `manual_recovery_preparations` 最小重建。
+- 配置仓库不再补 `base_active_revision_id`、`revision_sequence`、setup check 列，不再从旧
+  revision/audit 推断发布权威；新库直接创建 `managed_configuration_authority` 和唯一
+  revision sequence 索引，marker 最后写。真实 Base 库只读打开时配置库哈希不变。
+
+**B55.6-02 — 退役 remaining-scope 旧链与历史补写**
+
+- 删除 `scope_continuation.py`、`task_scope.py`、`task_source_schema.py` 以及 discovery /
+  preview / execution 中的 `recovery_source_task_id`、`recovery_excluded_paths`、旧 eligibility
+  分支、`find_open_recovery_discovery`、lineage 排除参数和对应 API/前端消费。
+- 新库直接创建 task source occurrence 列与索引，不调用补列 helper；新 discovery/preview
+  没有旧 remaining-scope 专属列。既有 Base 库保留其历史闲置列和 `recovery_continuations`
+  行，不清历史；只重建阻挡当前 INSERT 的旧 `manual_recovery_preparations` 列。
+- 运行投影删除 `paused`/`partial_success` Task flow 到当前状态的转换分支；历史值按
+  `unknown`/不可用处理，不再发布为暂停或失败。
+- 当前同 Task 四类恢复、`manual_recovery_preparations`、claim/lease/fence、文件级
+  partial/未知效果/缺 Result、取消和两种库普通操作保持。
+
+**B55.6-03 — 验收入口跟上五态**
+
+- 21 文件夹具 Task 改为 `running`，mixed/batch 仍欠决定的 Task 改为 `running`，已结束的
+  Docker security/restart 夹具改用 `completed`；文件失败/未知效果证据保持独立。
+- 删除无产品入口的 paused continuation 夹具、`seed-continuation`/`continuation-state` 端点
+  及对应 Playwright 用例；remaining-scope 退役入口仍用真实 Task/API 证明为普通 404。
+- 删除旧 `schema_upgrade_rehearsal.py`、`docker_upgrade_recovery_smoke_test.py`、
+  `task_base_migration_proof.py`，同步 `docs/release.md`。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_task_persistence tests.test_task_flow_status
+  tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_configuration_management tests.test_sqlite_backup tests.test_sqlite_restore
+  tests.test_release_validation tests.test_configuration_status` → 111 项通过。
+- `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_media_discovery
+  tests.test_processing_checkpoint tests.test_operations_task_center
+  tests.test_task_source_ownership_race tests.test_organize_source_history` → 116 项通过。
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers
+  tests.test_media_library_transfers tests.test_media_library_direct_commands
+  tests.test_direct_file_operations tests.test_library_file_operation_history
+  tests.test_scanner tests.test_domain_models` → 255 项通过（68 秒）。
+- `.venv/bin/python -m unittest tests.test_governance` → 20 项通过；
+  `.venv/bin/python -m unittest tests.test_configuration_status.RetiredDatabaseStartupTests`
+  → 1 项通过。
+- 真实入口反证：用 release/v1 形态的隔离库（configuration 10、runtime 33、jobs 表）启动
+  `.venv/bin/mediaflow --config ... api serve --host 127.0.0.1 --port 45678`，exit 2，
+  提示“retired V1 Job schema…file was not modified”，启动前后 SHA-256 一致。
+- 真实 Base 库（`task55-4-b/slice-base-v2-work`）打开后读到原 Active、Task/Item/Result；
+  配置-only 打开前后 SHA-256 一致。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check` 通过；
+  `npm run test -- run` → 104 个文件、1642 项通过；`npm run build` 通过。
+- `web/` 真实 Python E2E：
+  `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep 'dated views and 21-file recovery pages|retired remaining-scope|retired batch continuation'`
+  → 3 项通过。
+- `.venv/bin/ruff check mediaflow tests scripts` 通过；`ruff format --check` 337 个文件已格式化；
+  `python -m compileall -q mediaflow tests scripts`、`python3 scripts/check_governance.py`、
+  `git diff --check` 通过。
+
+**剩余风险与未完成项（不记为通过）**
+
+- 现有 Base 库仍保留历史闲置的 `recovery_source_task_id`、`recovery_excluded_paths_json`、
+  `pause_requested` 等列和 `recovery_continuations` 行；本轮按“不为删除残留而清历史”保留，
+  新库均不再创建。
+- 浏览器单测中仍保留少量 direct-file/历史状态文案映射（如 `paused` 标签）；本轮未扩大为
+  全站文案清理。
+- B 的完整 T4（全量 Python、全部原生 E2E、Docker 空库/重启、wheel 外安装、镜像身份、
+  备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
