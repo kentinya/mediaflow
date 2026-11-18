@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.6-01 AND B55.6-03 IN TASK55.6
+Next Action: B RECHECKS B55.6-01 AND B55.6-03 ON CANDIDATE dd0cd20f
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -513,3 +513,74 @@ Web 读模型退出，真实 Task flow 浏览器用例通过。资源库目录�
 RO-4 空库并发首启通过，其他 SQLite 误配的零改写仍阻塞。RO-5 21 文件分页、当前流程
 与逐项效果通过，既定 session 清理待完成。RO-6 对当前目录整理的 proof 还有上述欠项，
 最终门禁待执行。Slice55 继续 ACTIVE，返工留在 Task55.6。
+
+
+### Developer 返工交接：B55.6-01、B55.6-03
+
+候选产品检查点：`dd0cd20f958b78da68a905551a35285abee797ca`
+（`fix(task55.6): reject foreign SQLite stores and retire the stale discovery proof`）。
+本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
+工作区提交前除本文件外无其他改动；`config/alist.json` 未读取、未改动。
+
+**B55.6-01 — 在首次写入前识别其他应用的 SQLite 库**
+
+- `sqlite_applicability.evaluate_database_applicability` 在既有 V1/更新/配置表检查之后
+  增加统一判定：既无 runtime 也无 configuration marker、但任一张表存在的文件不是空库，
+  直接 `DatabaseApplicabilityError`；错误说明仍为“文件未改动，检查数据库路径或恢复已验证
+  的支持备份”。零表 SQLite、正常当前 V2、配置-only 首设库和运行库-only 库继续。
+- 配置仓库与运行仓库仍各自在 `BEGIN IMMEDIATE` 内重读 marker，建表、索引、内部键和版本
+  marker 同事务提交；判定失败发生在任何 DDL 之前。第二进程等待首笔提交后按既有库打开。
+- 新增两条现行入口测试：
+  `RetiredDatabaseStartupTests.test_api_serve_rejects_another_application_database_without_modifying_it`
+  用 `sqlite3` 建立只含 `notes` 表和一行笔记的隔离库，经正式
+  `mediaflow api serve` 启动，断言退出 2、提示表和行未变，启动前后 SHA-256 一致，表集合
+  仍只有 `notes`、笔记行原样保留；
+  `test_zero_table_sqlite_file_is_initialized_as_a_current_store` 用带 header 的零表
+  SQLite 经两个仓库打开，断言写入唯一一组 configuration 11 / runtime 58 marker。
+
+**B55.6-03 — 目录整理验收改用当前现行入口**
+
+- 删除重复且已过时的 `scripts/files_organize_discovery_browser_proof.py` 及其
+  `scripts/docker_files_organize_discovery_browser_proof.py` 包装：它们仍查询退役
+  `automation_jobs`、旧 `managed_configuration_audit`，并按旧 Task/页面形态断言；同旅程
+  已由现行真实 Python 浏览器入口 `web/tests/e2e/manual-organize-dialog.python.spec.ts`
+  覆盖，有界扫描/预算/深度/取消断言由 `tests.test_media_discovery` 等现行测试承载。
+- 运行库投影删除 discovery `partial_success` 作为 Operations run 流程状态的旧分支：有界
+  discovery 的完成流程按当前五态发布 `completed`，其自身记录继续保留 `partial_success`、
+  incomplete reason 和 finding；`original_status` 和统计集合同步退出该旧值。
+  新增 `test_operations_task_center...test_discovery_partial_result_is_a_completed_run_flow`，
+  用真实 repository 写入一个 definition-origin、budget-limited 的 discovery，断言 run
+  为 `completed`、discovery 自身仍为 `partial_success`，status counts 不含旧值。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_configuration_status` → 9 项通过。
+- `.venv/bin/python -m unittest tests.test_operations_task_center` → 27 项通过。
+- `.venv/bin/python -m unittest tests.test_resident_services tests.test_management_setup`
+  → 45 项通过；`.venv/bin/python -m unittest tests.test_media_discovery
+  tests.test_media_discovery_provider_manifest tests.test_v2_automation_run_once` → 45 项通过。
+- `.venv/bin/python -m unittest tests.test_configuration_management tests.test_sqlite_backup
+  tests.test_sqlite_restore tests.test_release_validation` → 15 项通过；
+  `tests.test_operations_run_progress_defaults tests.test_operations_run_detail_plan_evidence
+  tests.test_operations_run_detail_log_isolation tests.test_task_persistence
+  tests.test_task_flow_status` → 61 项通过。
+- `web/`：`npm run build` 通过（仅既有 chunk 体积提示）；`npm run typecheck` 通过；
+  真实 Python 浏览器
+  `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts --grep 'ten per-file candidate decisions'`
+  → 1 项通过（10.5 秒），覆盖目录选择→准备→逐项决定→精确 10 项确认→Task 中心。
+- `.venv/bin/ruff check mediaflow tests scripts`、`ruff format --check`（336 文件）、
+  `python -m compileall -q mediaflow tests scripts`、`python3 scripts/check_governance.py`、
+  `git diff --check` 通过。
+- 最终测试/构建累计约 30 秒；旧 proof 探路运行合计约 100 秒后确认其断言已过时并删除，
+  合计仍少于本轮约 30 分钟的 30%。
+
+**剩余风险与未完成项（不记为通过）**
+
+- 本轮未重跑四服务同时空库启动和首个 Draft 激活；共享判定未改空路径与事务路径，B 应在
+  修正候选上复验该门禁。
+- 删除旧目录整理 proof 后，其原有预算、深度、取消、长路径浏览器断言由现有模块测试和
+  `manual-organize-dialog` 等入口承载；本轮只运行了后者指定 1 项，没有重跑其全部用例，
+  也没有运行 Docker 包装。
+- B 的完整 T4（全量 Python、全部原生 E2E、Docker 空库/重启/安全镜像、wheel 外安装、
+  备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
