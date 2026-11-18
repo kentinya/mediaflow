@@ -284,10 +284,8 @@ class AutomationDefinitionOccurrenceService:
             },
             "scopeExhausted": None,
             "attention": [],
-            "attentionItems": [],
             "attentionLimit": _ATTENTION_LIMIT,
             "attentionTruncated": False,
-            "moreAttention": False,
         }
 
     @staticmethod
@@ -357,10 +355,8 @@ class AutomationDefinitionOccurrenceService:
             },
             "scopeExhausted": None,
             "attention": attention,
-            "attentionItems": list(attention),
             "attentionLimit": _ATTENTION_LIMIT,
             "attentionTruncated": more,
-            "moreAttention": more,
         }
 
     def _fallback_counts(self, task_ids):

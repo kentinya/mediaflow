@@ -612,6 +612,8 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                         "itemOutcomeSummary",
                         "boundReached",
                         "stoppedAtBound",
+                        "attentionItems",
+                        "moreAttention",
                     ):
                         self.assertNotIn(retired, document)
                 self.assertNotIn("itemOutcomeSummary", occurrences["items"][0])
