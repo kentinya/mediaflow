@@ -600,12 +600,27 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     tuple(job.job_id for job in ()),
                 )
                 self.assertEqual(after_read_only_state, before_read_only_state)
+                for document in (listing["items"][0], detail["definition"]):
+                    self.assertIn("occurrenceState", document)
+                    self.assertNotIn("occurrence", document)
+                for document in (
+                    listing["items"][0]["outcomeSummary"],
+                    occurrences["items"][0]["outcomeSummary"],
+                ):
+                    for retired in (
+                        "counts",
+                        "itemOutcomeSummary",
+                        "boundReached",
+                        "stoppedAtBound",
+                    ):
+                        self.assertNotIn(retired, document)
+                self.assertNotIn("itemOutcomeSummary", occurrences["items"][0])
                 list_summary = listing["items"][0]["outcomeSummary"]
                 self.assertEqual(detail["definition"]["outcomeSummary"], list_summary)
                 self.assertEqual(occurrences["items"][0]["outcomeSummary"], list_summary)
                 self.assertEqual(refreshed_detail["definition"]["outcomeSummary"], list_summary)
                 self.assertEqual(refreshed_occurrences["items"][0]["outcomeSummary"], list_summary)
-                self.assertEqual(list_summary["counts"]["failed"], 1)
+                self.assertEqual(list_summary["statusCounts"]["failed"], 1)
                 self.assertEqual(
                     list_summary["attention"][0]["failureExplanation"]["category"],
                     "storage_failure",

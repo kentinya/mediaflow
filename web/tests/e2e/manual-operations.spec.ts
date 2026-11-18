@@ -186,13 +186,12 @@ test("Read-only principal sees the inventory without a center manual-creation en
   );
 });
 
-test("hostile action-matrix evidence never reaches the built-artifact DOM", async ({
+test("a retired action-matrix scope query never reaches the Files-based DOM", async ({
   page,
 }) => {
-  // The supported landing reads the bounded action matrix for a chosen scope.
-  // A matrix carrying credential-shaped values, an absolute private path or a
-  // digest must never render any of it, and it still offers no submit control
-  // for the retired Scan/Preview products.
+  // The retired action-matrix route has no product consumer. A scope query
+  // carrying credential-shaped evidence must issue no matrix read and must
+  // never render any of it; no retired Scan/Preview submit control appears.
   await page.goto(
     "/ui-v2/operations?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
   );
@@ -205,6 +204,9 @@ test("hostile action-matrix evidence never reaches the built-artifact DOM", asyn
   expect(rendered ?? "").not.toContain("hidden-token");
   expect(rendered ?? "").not.toContain("/private/");
   expect(rendered ?? "").not.toContain("a".repeat(64));
+  expect(
+    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions"),
+  ).toHaveLength(0);
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
     0,

@@ -5,7 +5,6 @@ configuration, a real ``LocalStorage`` source, a real scanner-produced
 FileIndex record and the real Preview services, and captures the
 exact bounded documents the V2 Operations workspace consumes:
 
-``GET  /api/v1/operations/manual-actions``
 ``POST /api/v1/operations/scans``
 ``GET  /api/v1/operations/scans/{taskId}``
 ``POST /api/v1/operations/previews``
@@ -286,27 +285,6 @@ class ManualOperationsContractTests(unittest.TestCase):
 
     def _capture(self, value) -> dict[str, object]:
         api = value.api
-        file_id = value.record.path
-
-        status, action_matrix = _request(
-            api,
-            "/api/v1/operations/manual-actions",
-            query=f"scopeKind=file&fileId={file_id}&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        status, discovery_matrix = _request(
-            api,
-            "/api/v1/operations/manual-actions",
-            query="scopeKind=resourceLibrary",
-        )
-        self.assertEqual(200, status)
-        status, selected_library_matrix = _request(
-            api,
-            "/api/v1/operations/manual-actions",
-            query="scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-
         # The standalone current-source Preview product is retired: its old
         # routes answer as ordinary not-found results and start no work.
         for method, path, body in (
@@ -430,9 +408,6 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertEqual("completed", organize_execution_detail["status"])
 
         return {
-            "actionMatrix": action_matrix,
-            "resourceLibraryDiscovery": discovery_matrix,
-            "resourceLibrarySelected": selected_library_matrix,
             "organizeIntent": organize_intent,
             "organizeIntentChoice": organize_intent_choice,
             "organizeIntentWithPlan": organize_intent_with_plan,
@@ -497,34 +472,25 @@ class ManualOperationsContractTests(unittest.TestCase):
         )
         self.assertEqual("target", plan["destination"]["storageId"])
 
-    def test_resource_library_discovery_offers_no_action_without_a_selection(self) -> None:
+    def test_retired_manual_action_matrix_route_is_not_found(self) -> None:
         with self.fixture() as value:
-            status, matrix = _request(
-                value.api,
-                "/api/v1/operations/manual-actions",
-                query="scopeKind=resourceLibrary",
-            )
-        self.assertEqual(200, status)
-        self.assertTrue(matrix["selectionRequired"])
-        self.assertIsNone(matrix["scopeId"])
-        self.assertNotIn("scan", matrix["actions"])
-        self.assertFalse(matrix["actions"].get("preview", {}).get("available", False))
-        self.assertEqual(
-            ["library"],
-            [item["resourceLibraryId"] for item in matrix["resourceLibraries"]],
-        )
-        self.assertTrue(matrix["resourceLibraries"][0]["enabled"])
-        self.assertNotIn("scan", matrix["actions"])
-
-    def test_unknown_scope_kind_fails_closed(self) -> None:
-        with self.fixture() as value:
-            status, body = _request(
-                value.api,
-                "/api/v1/operations/manual-actions",
-                query="scopeKind=host_path",
-            )
-        self.assertEqual(400, status)
-        self.assertEqual("invalid_request", body["error"]["code"])
+            for query in (
+                f"scopeKind=file&fileId={value.record.path}&resourceLibraryId=library",
+                "scopeKind=resourceLibrary",
+                "scopeKind=resourceLibrary&resourceLibraryId=library",
+                "scopeKind=host_path",
+            ):
+                with self.subTest(query=query):
+                    status, body = _request(
+                        value.api,
+                        "/api/v1/operations/manual-actions",
+                        query=query,
+                    )
+                    self.assertEqual(404, status, body)
+                    self.assertEqual("not_found", body["error"]["code"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
 
 if __name__ == "__main__":

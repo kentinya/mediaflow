@@ -8676,12 +8676,16 @@ class ConfigurationObjectService:
             try:
                 # The projection reads an already accepted revision, so a
                 # Webhook accepted with the earlier event names is still a
-                # readable, deliverable definition; editing it is what has to
-                # adopt the current names.
-                accepted_webhook_definition(candidate)
+                # readable, deliverable definition; the shared accepted
+                # parser maps those stored bytes to the current event names
+                # for this read projection only. Editing the definition is
+                # what has to persist the current names.
+                accepted = accepted_webhook_definition(candidate)
             except ValueError as error:
                 structural_valid = False
                 validation_error = cls._bounded_utf8(str(error), 384)
+            else:
+                candidate["events"] = [event.value for event in accepted.events]
             env_name = candidate.get("secretEnv")
             readiness = []
             if isinstance(env_name, str) and env_name:

@@ -178,8 +178,6 @@ class AutomationDefinitionOccurrenceService:
             occurrence["lastTaskId"] = None
             occurrence["lastFailureCategory"] = None
         occurrence["outcomeSummary"] = _outcome_summary
-        occurrence["itemOutcomeSummary"] = _outcome_summary
-        document["occurrence"] = occurrence
         document["occurrenceState"] = occurrence
         document["definitionFingerprint"] = definition_fingerprint
         document["lastOccurrence"] = latest_document
@@ -191,7 +189,6 @@ class AutomationDefinitionOccurrenceService:
         document["lastTaskId"] = occurrence["lastTaskId"]
         document["lastFailureCategory"] = occurrence["lastFailureCategory"]
         document["outcomeSummary"] = _outcome_summary
-        document["itemOutcomeSummary"] = _outcome_summary
         if configuration is not None:
             document["activeConfiguration"] = {
                 key: configuration.get(key)
@@ -216,7 +213,6 @@ class AutomationDefinitionOccurrenceService:
             )
             occurrence_id = getattr(value, "occurrence_id", document.get("occurrenceId", ""))
             document["outcomeSummary"] = summaries.get(occurrence_id)
-            document["itemOutcomeSummary"] = document["outcomeSummary"]
             projected.append(document)
         return projected
 
@@ -280,15 +276,12 @@ class AutomationDefinitionOccurrenceService:
         return {
             "taskId": task_id,
             "totalItems": 0,
-            "counts": counts,
             "statusCounts": dict(counts),
             "bound": {
                 "configuredItemLimit": item_limit,
                 "reached": False,
                 "statement": statement,
             },
-            "boundReached": False,
-            "stoppedAtBound": False,
             "scopeExhausted": None,
             "attention": [],
             "attentionItems": [],
@@ -356,15 +349,12 @@ class AutomationDefinitionOccurrenceService:
         return {
             "taskId": task_id,
             "totalItems": total,
-            "counts": counts,
             "statusCounts": dict(counts),
             "bound": {
                 "configuredItemLimit": item_limit,
                 "reached": reached,
                 "statement": statement,
             },
-            "boundReached": reached,
-            "stoppedAtBound": reached,
             "scopeExhausted": None,
             "attention": attention,
             "attentionItems": list(attention),

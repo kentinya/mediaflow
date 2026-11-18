@@ -746,19 +746,6 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
     return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
 
 
-def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[str, object]:
-    """Prove the backend-computed manual action matrix is operator-safe.
-
-    ``MediaFlowApi`` constructs this document from the exact principal,
-    runtime binding and current source.  Keep the transport projection behind
-    the same recursive key/value guard used by analysis and Preview so a malformed
-    ResourceLibrary identifier or status value cannot bypass
-    the redaction boundary.
-    """
-
-    return _bounded_operator_document(document, preserve_manual_source_paths=True)
-
-
 def manual_step_error_document(error: object, *, fallback_code: str = "manual_organize_rejected"):
     """One bounded, secret-free failure envelope for a manual Organize step.
 
@@ -2395,7 +2382,6 @@ __all__ = [
     "bounded_identity_path",
     "is_files_worker_task_command",
     "is_files_transfer_task_command",
-    "manual_action_matrix_operator_document",
     "manual_execution_plan_evidence_operator",
     "require_cancellable",
     "run_accounting_basis",

@@ -2,11 +2,10 @@
 
 Covers:
 - Server-bound Preview admission (no fingerprint echo)
-- Server-bound preview admission (no fingerprint echo)
-- Bounded action matrix projection
 - Bounded Preview operator documents
 - Preview zero-mutation invariant
 - Error/failure states are truthfully projected
+- The retired action matrix route is an ordinary not-found route
 """
 
 from __future__ import annotations
@@ -104,8 +103,6 @@ def _api(
     ),
     library_value: ResourceLibrary | None = None,
     storage: FakeStorage | None = None,
-    include_manual_scan: bool = True,
-    include_manual_preview: bool = True,
 ) -> MediaFlowApi:
     from mediaflow.application.manual_organize import ManualOrganizeIntentService
     from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -136,15 +133,11 @@ def _api(
         repository,
         configuration_resolver=_config_resolver,
     )
-    previews = (
-        ManualOrganizePreviewService(
-            repository,
-            intents,
-            configuration=manual_snapshot,
-            storages={"source": storage},
-        )
-        if include_manual_preview
-        else object()
+    previews = ManualOrganizePreviewService(
+        repository,
+        intents,
+        configuration=manual_snapshot,
+        storages={"source": storage},
     )
     return MediaFlowApi(
         repository,
@@ -442,211 +435,24 @@ class HostileProjectionTests(unittest.TestCase):
         self.assertEqual("none", item["sideEffects"])
 
 
-class ActionMatrixTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage = FakeStorage("source")
-        self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
-        self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+class RetiredManualActionMatrixTests(unittest.TestCase):
+    """The old action matrix route has no current product consumer."""
 
-    def _make_api(self, permissions=None):
-        if permissions is None:
-            permissions = frozenset(
-                {
-                    ApiPermission.READ,
-                    ApiPermission.SUBMIT_DRY_RUN,
-                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
-                }
-            )
-        return _api(
-            permissions=permissions,
-            library_value=self.library_value,
-            storage=self.storage,
-        )
-
-    def test_file_scope_action_matrix_points_at_live_selection(self) -> None:
-        """A single-file admission now names the live directory, not an ID."""
-
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=file&fileId=any-id"
-            "&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertEqual("file", body["scopeKind"])
-        self.assertIsNone(body["source"])
-        self.assertNotIn("scan", body["actions"])
-        # The standalone Preview action is retired; only the Organize entry
-        # remains and it names the live selection prerequisite.
-        self.assertNotIn("preview", body["actions"])
-        self.assertFalse(body["actions"]["organize"]["available"])
-        self.assertIn("live file", body["actions"]["organize"]["reason"])
-
-    def test_action_matrix_with_unavailable_scan_service_offers_no_submission(self) -> None:
-        """An advertised action must have a callable bound application service."""
-
-        api = _api(
-            permissions=frozenset(
-                {
-                    ApiPermission.READ,
-                    ApiPermission.SUBMIT_DRY_RUN,
-                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
-                }
-            ),
-            library_value=self.library_value,
-            storage=self.storage,
-            include_manual_scan=False,
-        )
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertNotIn("scan", body["actions"])
-        self.assertNotIn("scan", body["actions"])
-        post_status, post_body = _post(
-            api,
-            "/api/v1/operations/scans",
-            {
-                "scopeKind": "resourceLibrary",
-                "resourceLibraryId": "library",
-                "mode": "full",
-            },
-        )
-        self.assertEqual(404, post_status)
-        self.assertEqual("not_found", post_body["error"]["code"])
-
-    def test_action_matrix_without_a_preview_service_still_offers_organize(self) -> None:
-        """The shared Organize entry owns the summary, not a separate Preview."""
-
-        api = _api(
-            permissions=frozenset(
-                {
-                    ApiPermission.READ,
-                    ApiPermission.SUBMIT_DRY_RUN,
-                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
-                }
-            ),
-            library_value=self.library_value,
-            storage=self.storage,
-            include_manual_preview=False,
-        )
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertNotIn("preview", body["actions"])
-        post_status, post_body = _post(
-            api,
-            "/api/v1/operations/previews",
-            {
-                "scopeKind": "resourceLibrary",
-                "resourceLibraryId": "library",
-            },
-        )
-        self.assertEqual(404, post_status)
-        self.assertEqual("not_found", post_body["error"]["code"])
-
-    def test_library_scope_action_matrix(self) -> None:
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertEqual("resourceLibrary", body["scopeKind"])
-        self.assertEqual("library", body["scopeId"])
-        self.assertFalse(body["selectionRequired"])
-        self.assertNotIn("scan", body["actions"])
-        self.assertNotIn("scan", body["actions"])
-
-    def test_library_discovery_matrix_offers_no_action_without_a_selection(self) -> None:
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary",
-        )
-        self.assertEqual(200, status)
-        self.assertEqual("resourceLibrary", body["scopeKind"])
-        self.assertIsNone(body["scopeId"])
-        self.assertTrue(body["selectionRequired"])
-        self.assertIsNone(body["source"])
-        self.assertNotIn("scan", body["actions"])
-        self.assertFalse(body["actions"].get("preview", {}).get("available", False))
-        self.assertNotIn("scan", body["actions"])
-        self.assertEqual(
-            ["library"], [item["resourceLibraryId"] for item in body["resourceLibraries"]]
-        )
-        self.assertTrue(body["resourceLibraries"][0]["enabled"])
-
-    def test_viewer_without_scan_permission(self) -> None:
-        api = self._make_api(permissions=frozenset({ApiPermission.READ}))
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=file&fileId=any-id"
-            "&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertNotIn("scan", body["actions"])
-
-    def test_file_not_found_returns_unavailable(self) -> None:
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=file&fileId=nonexistent&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        self.assertNotIn("scan", body["actions"])
-        self.assertFalse(body["actions"].get("preview", {}).get("available", False))
-
-    def test_unknown_scope_kind_fails_closed(self) -> None:
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=host_path",
-        )
-        self.assertEqual(400, status)
-        self.assertEqual("invalid_request", body["error"]["code"])
-
-    def test_file_scope_requires_an_exact_source_identity(self) -> None:
-        api = self._make_api()
-        status, _ = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=file&resourceLibraryId=library",
-        )
-        self.assertEqual(400, status)
-
-    def test_resource_library_not_enabled(self) -> None:
-        disabled = ResourceLibrary(
-            "disabled", "Disabled", "source", "", exclude_rules=(), enabled=False
-        )
-        api = _api(
-            permissions=frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
-            library_value=disabled,
-            storage=self.storage,
-        )
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=disabled",
-        )
-        self.assertEqual(200, status)
-        self.assertNotIn("scan", body["actions"])
-
-    def test_action_matrix_redacts_credential_shaped_file_labels(self) -> None:
-        """A credential-shaped file label cannot bypass the redaction boundary."""
-
-        self.storage.add_file("Bearer hidden-token.mkv", 10, NOW - timedelta(hours=2))
-        api = self._make_api()
-        status, body = _get(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=file&fileId=Bearer%20hidden-token.mkv"
-            "&resourceLibraryId=library",
-        )
-        self.assertEqual(200, status)
-        serialized = json.dumps(body)
-        self.assertNotIn("hidden-token", serialized)
-        self.assertNotIn("Bearer hidden-token", serialized)
+    def test_old_registered_queries_are_ordinary_not_found(self) -> None:
+        storage = FakeStorage("source")
+        storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
+        library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+        api = _api(library_value=library_value, storage=storage)
+        for query in (
+            "scopeKind=file&fileId=any-id&resourceLibraryId=library",
+            "scopeKind=resourceLibrary",
+            "scopeKind=resourceLibrary&resourceLibraryId=library",
+            "scopeKind=host_path",
+        ):
+            with self.subTest(query=query):
+                status, body = _get(api, f"/api/v1/operations/manual-actions?{query}")
+                self.assertEqual(404, status)
+                self.assertEqual("not_found", body["error"]["code"])
 
 
 class RetiredServerBoundPreviewTests(unittest.TestCase):

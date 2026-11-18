@@ -2994,13 +2994,13 @@ function fileBySourceDocument(storageId, path) {
 
 // --- Manual Scan / Preview fake state ---
 //
-// The V2 Operations workspace reads the bounded /api/v1/operations/* alias for
-// the manual action matrix, the bounded Scan admission/detail/cancel routes and
-// the zero-mutation Preview routes. The fake keeps deterministic, internally
-// consistent state (`scan-e2e-001`, `preview-e2e-001`) whose documents mirror
-// the committed `manual-operations.json` fixture field names and value types
-// exactly. Only bounded, secret-free request metadata is recorded for the
-// browser proof; no Bearer value, fingerprint or raw body is ever stored.
+// The V2 Operations workspace reads the bounded Files admission and Organize
+// routes; the retired action-matrix alias has no route here. The fake keeps
+// deterministic Scan admission/detail/cancel and Preview fixtures
+// (`scan-e2e-001`, `preview-e2e-001`) whose documents mirror the committed
+// `manual-operations.json` field names and value types exactly. Only bounded,
+// secret-free request metadata is recorded for the browser proof; no Bearer
+// value, fingerprint or raw body is ever stored.
 
 const MANUAL_SCAN_TASK_ID = "scan-e2e-001";
 const MANUAL_PREVIEW_ID = "preview-e2e-001";
@@ -3013,12 +3013,11 @@ const MANUAL_ITEM_LIMIT_MAX = 100;
 const MANUAL_CURSOR_MAX_LENGTH = 256;
 const MANUAL_REQUEST_FIELD_MAX_LENGTH = 256;
 const MANUAL_REQUEST_BODY_MAX_BYTES = 4096;
-const MANUAL_SCAN_MODES = ["full", "incremental"];
 const MANUAL_SCAN_ACTION_PATH = "/api/v1/operations/scans";
 const MANUAL_PREVIEW_ACTION_PATH = "/api/v1/operations/previews";
 const MANUAL_FILE_SCOPE = {
-  // The action matrix, Scan admission and Organize intent still identify a
-  // FileIndex source by ID; the current server-bound Preview derives its
+  // Scan admission and Organize intent still identify a FileIndex source by
+  // ID; the current server-bound Preview derives its
   // source identity from live Storage, so it uses the ResourceLibrary-relative
   // path instead. Both are the same deterministic fake file.
   fileId: "file-index-example",
@@ -3075,16 +3074,6 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "expectedStatus",
   "expectedUpdatedAt",
   "webhookId",
-];
-
-const MANUAL_RESOURCE_LIBRARY_CHOICES = [
-  {
-    enabled: true,
-    reason: null,
-    resourceLibraryId: MANUAL_LIBRARY_ID,
-    scanMode: "full",
-    storageId: MANUAL_STORAGE_ID,
-  },
 ];
 
 function boundedManualBody(fields) {
@@ -3205,126 +3194,6 @@ function readBoundedJsonBody(req, res) {
       resolve({ document, ok: true });
     });
   });
-}
-
-function manualActionDocument({ available, modes, nextAction, path, reason }) {
-  return {
-    available,
-    method: "POST",
-    modes,
-    nextAction,
-    path,
-    reason,
-  };
-}
-
-function manualPermissionReason(permission) {
-  return `the connected API principal does not hold the permission required to ${permission}`;
-}
-
-function manualActionMatrixDocument(request, permitted) {
-  const discovery = request.resourceLibraryId === null;
-  const fileScope = request.scopeKind === "file";
-  const knownFileSource =
-    request.fileId === MANUAL_FILE_SCOPE.fileId &&
-    request.resourceLibraryId === MANUAL_FILE_SCOPE.resourceLibraryId;
-  const knownLibrary = request.resourceLibraryId === MANUAL_LIBRARY_ID;
-
-  let stateReason = null;
-  let source = null;
-  if (fileScope) {
-    if (knownFileSource) {
-      source = {
-        extension: "mkv",
-        fileId: MANUAL_FILE_SCOPE.fileId,
-        filename: "One.2001.mkv",
-        occurrenceState: "verified",
-        path: "Movies/One.2001.mkv",
-        resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
-        scanStatus: "ready",
-        sizeBytes: 12,
-        storageId: MANUAL_STORAGE_ID,
-      };
-    } else {
-      stateReason = MANUAL_UNKNOWN_SOURCE_REASON;
-    }
-  } else if (!discovery && !knownLibrary) {
-    stateReason = MANUAL_UNKNOWN_LIBRARY_REASON;
-  }
-
-  const selectReason =
-    "select an exact ResourceLibrary scope before submitting a Scan";
-  const selectPreviewReason =
-    "select an exact ResourceLibrary scope before running a Preview";
-  const scanReason = discovery
-    ? selectReason
-    : permitted
-      ? stateReason
-      : manualPermissionReason("submit a bounded Scan");
-  const previewReason = discovery
-    ? selectPreviewReason
-    : permitted
-      ? stateReason
-      : manualPermissionReason("run a zero-mutation Preview");
-  const scanAvailable = permitted && stateReason === null && !discovery;
-  const previewAvailable = permitted && stateReason === null && !discovery;
-
-  return {
-    actions: {
-      organize: manualActionDocument({
-        available: permitted && stateReason === null && !discovery,
-        modes: [],
-        nextAction:
-          permitted && stateReason === null && !discovery
-            ? "create a durable manual intent, then request an exact Preview"
-            : (previewReason ?? "the Organize action is not available"),
-        path: "/api/v1/operations/organize/intents",
-        reason: permitted ? stateReason : previewReason,
-      }),
-      preview: manualActionDocument({
-        available: previewAvailable,
-        modes: [],
-        nextAction:
-          previewAvailable || discovery
-            ? "run a zero-mutation Preview"
-            : (previewReason ?? "the Preview action is not available"),
-        path: MANUAL_PREVIEW_ACTION_PATH,
-        reason: previewReason,
-      }),
-      scan: manualActionDocument({
-        available: scanAvailable,
-        modes: MANUAL_SCAN_MODES,
-        nextAction:
-          scanAvailable || discovery
-            ? "submit a bounded Scan"
-            : (scanReason ?? "the Scan action is not available"),
-        path: MANUAL_SCAN_ACTION_PATH,
-        reason: scanReason,
-      }),
-    },
-    fileId: fileScope ? request.fileId : null,
-    // The preview bound is a permission fact of the same matrix the real
-    // backend publishes: a principal without the manage-manual-organize
-    // permission advertises no bounded preview population at all.
-    limits: {
-      previewMaxItems: permitted ? MANUAL_PREVIEW_MAX_ITEMS : 0,
-    },
-    resourceLibraries: MANUAL_RESOURCE_LIBRARY_CHOICES,
-    resourceLibraryId: discovery ? null : request.resourceLibraryId,
-    runtime: {
-      condition: "configuration_active",
-      nextAction: null,
-      ready: true,
-    },
-    scopeId: discovery
-      ? null
-      : fileScope
-        ? request.fileId
-        : request.resourceLibraryId,
-    scopeKind: discovery ? "resourceLibrary" : request.scopeKind,
-    selectionRequired: discovery,
-    source: discovery ? null : source,
-  };
 }
 
 // --- V2 manual Organize bounded fixtures ----------------------------------
@@ -5669,11 +5538,10 @@ function automationDefinitionDocument(state, token) {
     itemLimit: 12,
     sourceScope: null,
     intervalSeconds: 3600,
-    occurrence: {
+    occurrenceState: {
       enabled: true,
       nextRunAt: "2026-01-02T08:00:00+00:00",
       lastOccurrenceAt: MANUAL_RECORDED_AT,
-      lastJobId: AUTOMATION_JOB_ID,
       lastTaskId: AUTOMATION_TASK_ID,
       lastOutcome: "completed",
       lastReason: null,
@@ -5729,11 +5597,10 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
     intervalSeconds: definition.intervalSeconds ?? null,
     cron: definition.cron ?? null,
     timezone: definition.timezone ?? null,
-    occurrence: {
+    occurrenceState: {
       enabled: definition.enabled === true,
       nextRunAt: null,
       lastOccurrenceAt: null,
-      lastJobId: null,
       lastTaskId: null,
       lastOutcome: null,
       lastReason: null,
@@ -6144,7 +6011,6 @@ function automationOccurrenceDocument() {
     definitionId: AUTOMATION_DEFINITION_ID,
     occurrenceAt: MANUAL_RECORDED_AT,
     emittedAt: MANUAL_RECORDED_AT,
-    jobId: AUTOMATION_JOB_ID,
     definitionVersion: 3,
     configurationRevisionId: AUTOMATION_ACTIVE_REVISION,
     configurationRevisionVersion: 3,
@@ -6171,13 +6037,6 @@ function automationOccurrenceDocument() {
       attentionTruncated: false,
     },
     actions: {
-      job: automationAction({
-        available: true,
-        method: "GET",
-        path: `/api/v1/operations/jobs/${AUTOMATION_JOB_ID}`,
-        durableOutcome: null,
-        nextAction: "inspect the durable admission Job",
-      }),
       task: automationAction({
         available: true,
         method: "GET",
@@ -15238,11 +15097,11 @@ const server = createServer(async (req, res) => {
 
   // --- Manual Scan / Preview bounded routes ---
   //
-  // These mirror the authoritative Python contract: one bounded action matrix
-  // for the exact principal and scope, a bounded Scan admission with
-  // deterministic durable state, cooperative cancellation, and a zero-mutation
-  // Preview. Only bounded, secret-free request metadata is recorded for the
-  // built-artifact browser proof. The optional `scope` request field and the
+  // These mirror the supported Scan/Preview fixture contracts: bounded Scan
+  // admission with deterministic durable state, cooperative cancellation, and
+  // a zero-mutation Preview. Only bounded, secret-free request metadata is
+  // recorded for the built-artifact browser proof. The optional `scope`
+  // request field and the
   // Preview `snapshotId`/`snapshotDigest` fields are accepted but never change
   // the bounded scope this fake binds from the explicit identifiers, and no
   // digest value is ever echoed back into a response document.
@@ -15723,71 +15582,6 @@ const server = createServer(async (req, res) => {
     return;
   }
   // --- End Automation operator projections ---
-
-  if (url.pathname === "/api/v1/manual-actions" && req.method === "GET") {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const query = readBoundedQuery(url, [
-      "scopeKind",
-      "scope",
-      "fileId",
-      "resourceLibraryId",
-    ]);
-    if (query === null) {
-      sendJson(res, 400, { error: { code: "invalid_request" } });
-      return;
-    }
-    const scopeKind = query.scopeKind ?? null;
-    if (
-      scopeKind !== null &&
-      scopeKind !== "file" &&
-      scopeKind !== "resourceLibrary"
-    ) {
-      sendJson(res, 400, { error: { code: "invalid_request" } });
-      return;
-    }
-    const fileId = query.fileId ?? null;
-    const resourceLibraryId = query.resourceLibraryId ?? null;
-    if (
-      scopeKind === "file" &&
-      (fileId === null || resourceLibraryId === null)
-    ) {
-      sendJson(res, 400, { error: { code: "invalid_request" } });
-      return;
-    }
-    recordManualRequestForSession({
-      body: { fileId, resourceLibraryId, scopeKind },
-      method: "GET",
-      objectId: fileId ?? resourceLibraryId,
-      objectType: "manual_action_matrix",
-      path: "/api/v1/manual-actions",
-    });
-    const matrix = manualActionMatrixDocument(
-      { fileId, resourceLibraryId, scopeKind },
-      operationsPrincipal.permitted,
-    );
-    // Deliberately hostile fixture for the browser boundary proof. The
-    // frontend must reject this source before any credential-shaped value,
-    // absolute path or digest can be rendered; the fake never records it as
-    // request evidence.
-    if (fileId === "hostile-source" || resourceLibraryId === "hostile-source") {
-      matrix.source = {
-        digest: "a".repeat(64),
-        extension: "mkv",
-        fileId: "file-1",
-        filename: "Bearer hidden-token.mkv",
-        occurrenceState: "verified",
-        path: "/private/media/Bearer hidden-token.mkv",
-        resourceLibraryId: MANUAL_LIBRARY_ID,
-        scanStatus: "ready",
-        sizeBytes: 12,
-        storageId: MANUAL_STORAGE_ID,
-      };
-    }
-    sendJson(res, 200, matrix);
-    return;
-  }
 
   if (url.pathname === "/api/v1/scans" && req.method === "POST") {
     if (!operationsGuard(res)) {

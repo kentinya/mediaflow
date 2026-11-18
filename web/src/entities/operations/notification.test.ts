@@ -233,17 +233,14 @@ describe("webhook definition", () => {
     );
   });
 
-  it("maps already-supported job event literals to the canonical Task event", () => {
-    const model = normalizeWebhookDefinition(
-      definitionPayload("ops", {
-        events: ["job.completed", "job.failed", "task.cancelled"],
-      }),
-    );
-    expect(model.document.events).toEqual([
-      "task.completed",
-      "task.failed",
-      "task.cancelled",
-    ]);
+  it("rejects the retired job event spelling the API no longer projects", () => {
+    expect(() =>
+      normalizeWebhookDefinition(
+        definitionPayload("ops", {
+          events: ["job.completed", "job.failed", "task.cancelled"],
+        }),
+      ),
+    ).toThrow(NotificationNormalizationError);
   });
 
   it("fails closed when an unknown event value appears", () => {
@@ -354,11 +351,12 @@ describe("notification definitions page", () => {
     ).toThrow(NotificationNormalizationError);
   });
 
-  it("maps a legacy advertised catalog to canonical Task events", () => {
-    const page = normalizeNotificationDefinitionsPage(
-      pagePayload({ supportedEvents: ["job.completed", "task.failed"] }),
-    );
-    expect(page.supportedEvents).toEqual(["task.completed", "task.failed"]);
+  it("rejects a retired event in the advertised catalog", () => {
+    expect(() =>
+      normalizeNotificationDefinitionsPage(
+        pagePayload({ supportedEvents: ["job.completed", "task.failed"] }),
+      ),
+    ).toThrow(NotificationNormalizationError);
   });
 
   it("fails closed on an unsupported event in the advertised catalog", () => {

@@ -150,13 +150,14 @@ def _activate(harness):
 
 
 class WebhookManagementTests(unittest.TestCase):
-    def test_accepted_historical_webhook_is_projected_as_readable(self) -> None:
-        """An accepted definition keeps its meaning on the managed read path.
+    def test_accepted_historical_webhook_is_projected_with_current_events(self) -> None:
+        """An accepted definition keeps its bytes while reads use current events.
 
         The previous version stored the Webhook with the then-current event
-        names.  The projection must present it as a readable, deliverable
-        definition with its original bytes; only a changed definition has to
-        adopt the current names.
+        names.  Its exact ID, document and digest stay intact, while every
+        current read projection presents the same Task lifecycle meaning with
+        the current ``task.*`` names.  Only a changed definition has to adopt
+        the current names on write.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -164,7 +165,8 @@ class WebhookManagementTests(unittest.TestCase):
             try:
                 legacy = example_document()
                 webhook = legacy.pop("webhooks")[0]
-                webhook["events"] = ["job.completed", "job.failed", "schedule.emitted"]
+                stored_events = ["job.completed", "job.failed", "schedule.emitted"]
+                webhook["events"] = stored_events
                 legacy["notifications"]["webhooks"] = [webhook]
                 legacy["persistence"]["databasePath"] = harness.runtime_database
                 now = datetime.now(UTC)
@@ -180,19 +182,75 @@ class WebhookManagementTests(unittest.TestCase):
                         now,
                     )
                 )
+                validated = harness.configuration.validate(accepted.revision_id, actor="bootstrap")
+                active = harness.configuration.activate(
+                    accepted.revision_id,
+                    expected_version=validated.version,
+                    actor="bootstrap",
+                )
+                self.assertEqual(active.revision_id, accepted.revision_id)
+                self.assertEqual(active.digest, accepted.digest)
+                original_document = json.loads(json.dumps(active.document))
+                canonical_events = ["task.completed", "task.failed", "schedule.emitted"]
+
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{accepted.revision_id}/objects",
+                    f"/api/v1/configuration/revisions/{active.revision_id}/objects",
                 )
                 self.assertEqual(status, 200, detail)
                 projected = detail["objects"]["webhooks"][0]
                 self.assertTrue(projected["structuralValid"])
-                self.assertEqual(
-                    projected["events"],
-                    ["job.completed", "job.failed", "schedule.emitted"],
-                    "the accepted definition keeps its stored bytes",
-                )
+                self.assertEqual(projected["events"], canonical_events)
                 self.assertEqual(projected["secretReadiness"][0]["env"], "MEDIAFLOW_WEBHOOK_SECRET")
+
+                status, page = request(
+                    harness.api,
+                    "/api/v1/operations/notifications/webhooks",
+                )
+                self.assertEqual(status, 200, page)
+                self.assertEqual([item["id"] for item in page["items"]], ["operations-webhook"])
+                self.assertEqual(page["items"][0]["events"], canonical_events)
+                self.assertEqual(page["activeConfiguration"]["revisionId"], active.revision_id)
+
+                status, operator_detail = request(
+                    harness.api,
+                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                )
+                self.assertEqual(status, 200, operator_detail)
+                self.assertEqual(operator_detail["webhook"]["events"], canonical_events)
+                self.assertEqual(
+                    operator_detail["activeConfiguration"]["revisionId"],
+                    active.revision_id,
+                )
+
+                draft = harness.configuration.create_successor_draft(
+                    actor="bootstrap",
+                    expected_active_revision_id=active.revision_id,
+                    expected_active_digest=active.digest,
+                )
+                status, draft_detail = request(
+                    harness.api,
+                    "/api/v1/operations/notifications/webhooks/operations-webhook/draft",
+                )
+                self.assertEqual(status, 200, draft_detail)
+                self.assertEqual(draft_detail["webhook"]["events"], canonical_events)
+                self.assertEqual(draft_detail["draft"]["webhook"]["events"], canonical_events)
+
+                # The read projection never rewrites the accepted Active bytes.
+                reread = harness.configuration.require(active.revision_id)
+                self.assertEqual(reread.digest, accepted.digest)
+                self.assertEqual(reread.document, original_document)
+                self.assertEqual(
+                    reread.document["notifications"]["webhooks"][0]["events"],
+                    stored_events,
+                )
+                self.assertEqual(
+                    draft.document["notifications"]["webhooks"][0]["events"], stored_events
+                )
+                current = harness.configuration.active()
+                self.assertIsNotNone(current)
+                self.assertEqual(current.revision_id, active.revision_id)
+                self.assertEqual(current.digest, active.digest)
             finally:
                 harness.close()
 

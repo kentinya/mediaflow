@@ -76,7 +76,6 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
-    manual_action_matrix_operator_document,
     manual_execution_operator_document,
     manual_execution_plan_evidence_operator,
     manual_intent_analysis_document,
@@ -146,10 +145,7 @@ from mediaflow.domain.explore import ExploreError, ExploreErrorCode
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
-from mediaflow.domain.manual_organize import (
-    MAX_MANUAL_INTENT_ITEMS,
-    ManualIntentError,
-)
+from mediaflow.domain.manual_organize import ManualIntentError
 from mediaflow.domain.manual_organize_preview import ManualPreviewError
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.media_discovery import (
@@ -1559,7 +1555,6 @@ class MediaFlowApi:
         }
         supported_operations = {
             "automation",
-            "manual-actions",
             "notifications",
             "organize",
             "rules",
@@ -1681,9 +1676,6 @@ class MediaFlowApi:
                 except Exception:
                     binding = self._runtime_binding
         # --- V2 Preview operations routes (bounded, server-bound) ---
-        if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            return self._manual_action_matrix(start_response, environ, principal, binding)
         # --- V2 Operations: manual Organize intent, exact Preview, one Execute action ---
         if (
             len(parts) == 6
@@ -8386,211 +8378,6 @@ class MediaFlowApi:
             decode_directional_cursor(raw_result_cursor[0], "task_results")
             if raw_result_cursor
             else None,
-        )
-
-    def _manual_action_matrix(
-        self,
-        start_response: Callable,
-        environ: dict,
-        principal: ResolvedApiPrincipal,
-        binding: _ApiRuntimeBinding,
-    ):
-        """Action matrix projection for the V2 Manual Scan/Preview surfaces.
-
-        The matrix is authoritative for the exact authenticated principal, the
-        exact current source/scope and runtime readiness.  It is also the
-        bounded discovery surface for the ResourceLibrary choices the operator
-        may select: a request without an exact scope reports
-        ``selectionRequired`` and offers no actionable submission.
-        """
-
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"scopeKind", "scope", "fileId", "resourceLibraryId"}) or any(
-            len(value) != 1 for value in values.values()
-        ):
-            raise ValueError("manual action matrix query contains unsupported fields")
-        raw_kind = values.get("scopeKind", values.get("scope", [None]))[0]
-        file_id = values.get("fileId", [None])[0]
-        resource_library_id = values.get("resourceLibraryId", [None])[0]
-        if raw_kind == "resourceLibrary":
-            raw_kind = "resource_library"
-        if (
-            raw_kind is None
-            and isinstance(resource_library_id, str)
-            and resource_library_id.strip()
-        ):
-            raw_kind = "resource_library"
-        if raw_kind is not None and raw_kind not in {"file", "resource_library"}:
-            raise ValueError("manual action matrix scopeKind must be file or resource_library")
-        if raw_kind is None and file_id is not None:
-            raise ValueError("manual action matrix file scope requires scopeKind=file")
-        if raw_kind == "file" and not isinstance(resource_library_id, str):
-            raise ValueError("manual action matrix resourceLibraryId is required for file scope")
-
-        can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
-        can_execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
-        configuration_snapshot_id = getattr(binding, "snapshot_id", None)
-        # Determine runtime readiness: the binding has a snapshot_id when a
-        # configuration has been activated and loaded.
-        runtime_ready = bool(configuration_snapshot_id)
-        intent_service_ready = callable(getattr(self._manual_intents, "create", None))
-        preview_intent_ready = callable(getattr(self._manual_previews, "create", None))
-        execution_service_ready = callable(
-            getattr(self._manual_execution, "begin_web_execution", None)
-        )
-        organize_worker = (
-            self._organize_worker_evidence()
-            if execution_service_ready
-            else {
-                "ready": False,
-                "condition": "execution_service_unavailable",
-                "durableState": "the admitted manual execution boundary is unavailable",
-                "nextAction": "restore the admitted execution services, then refresh",
-            }
-        )
-        organize_available = (
-            can_execute
-            and can_preview
-            and runtime_ready
-            and intent_service_ready
-            and preview_intent_ready
-            and execution_service_ready
-            and bool(organize_worker["ready"])
-        )
-        organize_reason = (
-            None
-            if organize_available
-            else (
-                "the connected API principal does not hold the manage_manual_organize "
-                "permission required to build a manual intent"
-                if not can_preview
-                else "the connected API principal does not hold the execute_manual_organize "
-                "permission required for Organize"
-                if not can_execute
-                else "the Active runtime is unavailable for Organize"
-                if not runtime_ready
-                else "the manual intent, Preview or execution service is unavailable"
-                if not (intent_service_ready and preview_intent_ready and execution_service_ready)
-                else str(
-                    organize_worker.get("durableState")
-                    or "the resident Processing Worker cannot claim admitted work"
-                )
-                if not organize_worker["ready"]
-                else "Organize is unavailable"
-            )
-        )
-        # Resolve the ResourceLibrary choices from the system_status snapshot.
-        sys_doc = {}
-        system_status = getattr(binding, "system_status", None)
-        if system_status is not None and callable(getattr(system_status, "as_document", None)):
-            sys_doc = system_status.as_document()
-        raw_rls = (
-            sys_doc.get("resource_libraries", {}).get("items", [])
-            if isinstance(sys_doc.get("resource_libraries"), dict)
-            else []
-        )
-        rl_map: dict[str, dict] = {}
-        for rl in raw_rls:
-            if isinstance(rl, dict) and isinstance(rl.get("id"), str):
-                rl_map[rl["id"]] = rl
-        resource_libraries = [
-            {
-                "resourceLibraryId": rl["id"],
-                "storageId": rl.get("storage_id"),
-                "enabled": bool(rl.get("enabled", False)),
-                "reason": (
-                    None
-                    if rl.get("enabled", False)
-                    else "this ResourceLibrary is disabled in the Active configuration"
-                ),
-            }
-            for rl in list(rl_map.values())[:100]
-        ]
-        source: dict[str, object] = {}
-        selection_required = raw_kind is None
-        if raw_kind is None:
-            organize_available = False
-            organize_reason = "select an exact scope before organizing"
-        elif raw_kind == "file":
-            if not isinstance(file_id, str) or not file_id.strip():
-                raise ValueError("manual action matrix fileId is required for file scope")
-            # A single-file admission is made from the live library directory, not
-            # from a remembered catalog identity.  This bounded matrix therefore
-            # states the exact prerequisite instead of resolving a file ID.
-            rl_info = rl_map.get(resource_library_id)
-            organize_available = False
-            if rl_info is None or not rl_info.get("enabled", False):
-                organize_reason = "the configured ResourceLibrary is not available"
-            else:
-                organize_reason = (
-                    "select the live file from the ResourceLibrary directory to organize it"
-                )
-        else:
-            if file_id is not None:
-                raise ValueError("manual action matrix file scope is required for resource_library")
-            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
-                # Bounded discovery: the operator has not selected an exact
-                # ResourceLibrary yet, so nothing is actionable.
-                selection_required = True
-                organize_available = False
-                organize_reason = "select an exact ResourceLibrary scope before organizing"
-            else:
-                rl_info = rl_map.get(resource_library_id)
-                if rl_info is None or not rl_info.get("enabled", False):
-                    organize_available = False
-                    organize_reason = "the configured ResourceLibrary is not available"
-                else:
-                    source = {
-                        "resourceLibraryId": resource_library_id,
-                        "storageId": rl_info.get("storage_id"),
-                    }
-        scope_id = file_id if raw_kind == "file" else resource_library_id
-        return self._response(
-            start_response,
-            200,
-            manual_action_matrix_operator_document(
-                {
-                    "scopeKind": "resourceLibrary" if raw_kind == "resource_library" else raw_kind,
-                    "scopeId": scope_id if isinstance(scope_id, str) and scope_id else None,
-                    "fileId": file_id if raw_kind == "file" else None,
-                    "resourceLibraryId": resource_library_id,
-                    "selectionRequired": bool(selection_required),
-                    "source": source if source else None,
-                    "resourceLibraries": resource_libraries,
-                    "runtime": {
-                        "ready": runtime_ready,
-                        "condition": (
-                            "configuration_active" if runtime_ready else "configuration_unavailable"
-                        ),
-                        "nextAction": (
-                            None if runtime_ready else "restore or activate a valid Active runtime"
-                        ),
-                    },
-                    "actions": {
-                        "organize": {
-                            "available": organize_available,
-                            "reason": organize_reason,
-                            "method": "POST",
-                            "path": (
-                                f"/api/v1/resource-libraries/{resource_library_id}"
-                                "/files/discoveries"
-                                if raw_kind == "resource_library"
-                                else ""
-                            ),
-                            "nextAction": (
-                                "select the live files in the library directory, then review the "
-                                "prepared summary"
-                                if organize_available
-                                else organize_reason
-                            ),
-                            "modes": [],
-                        },
-                    },
-                    "limits": {
-                        "organizeMaxItems": MAX_MANUAL_INTENT_ITEMS if can_preview else 0,
-                    },
-                }
-            ),
         )
 
     @staticmethod

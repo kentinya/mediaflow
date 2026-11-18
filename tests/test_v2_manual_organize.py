@@ -5,8 +5,7 @@ This module drives the real ``MediaFlowApi`` over a real managed runtime, real
 intent/Preview/execution services and the real admitted-execution Worker.  It
 proves the Slice 33 manual Organize journey end to end:
 
-``GET  /api/v1/operations/manual-actions``
-``POST /api/v1/operations/organize/intents``
+``POST /api/v1/resource-libraries/{resourceLibraryId}/files/organize``
 ``GET  /api/v1/operations/organize/intents/{intentId}``
 ``POST /api/v1/operations/organize/intents/{intentId}/items/{itemId}/choice``
 ``POST /api/v1/operations/organize/intents/{intentId}/previews``
@@ -1239,18 +1238,6 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
     def test_web_journey_admits_one_execution_and_the_worker_completes_it(self) -> None:
         with self.journey() as value:
-            status, matrix = self._request(
-                value,
-                "/api/v1/operations/manual-actions"
-                "?scopeKind=resourceLibrary&resourceLibraryId=library",
-            )
-            self.assertEqual(200, status)
-            organize = matrix["actions"]["organize"]
-            self.assertTrue(organize["available"], organize)
-            self.assertEqual(
-                "/api/v1/resource-libraries/library/files/discoveries", organize["path"]
-            )
-
             intent = self._create_reviewed_intent(value)
             self.assertEqual("organize", intent["journey"])
             self.assertTrue(intent["zeroMutation"])
@@ -1524,15 +1511,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
     def test_viewer_and_manager_without_execute_permission_render_no_control(self) -> None:
         with self.journey() as value:
-            status, matrix = self._request(
-                value,
-                "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-                token=VIEWER_TOKEN,
-            )
-            self.assertEqual(200, status)
-            self.assertFalse(matrix["actions"]["organize"]["available"])
-            self.assertIn("manage_manual_organize", matrix["actions"]["organize"]["reason"])
-            # A viewer cannot even create the durable intent.
+            # A viewer cannot even create the durable Files intent.
             status, error = self._request(
                 value,
                 "/api/v1/resource-libraries/library/files/organize",
@@ -1543,14 +1522,6 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(403, status)
 
             # A manager may review and Preview but can never execute.
-            status, matrix = self._request(
-                value,
-                "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-                token=MANAGER_TOKEN,
-            )
-            self.assertEqual(200, status)
-            self.assertFalse(matrix["actions"]["organize"]["available"])
-            self.assertIn("execute_manual_organize", matrix["actions"]["organize"]["reason"])
             status, error = self._request(
                 value,
                 "/api/v1/resource-libraries/library/files/organize",
@@ -1755,15 +1726,6 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
     def test_execute_action_withholds_itself_when_the_worker_is_unavailable(self) -> None:
         with self.journey(register_worker=False) as value:
-            status, matrix = self._request(
-                value,
-                "/api/v1/operations/manual-actions"
-                "?scopeKind=resourceLibrary&resourceLibraryId=library",
-            )
-            self.assertEqual(200, status)
-            self.assertFalse(matrix["actions"]["organize"]["available"])
-            self.assertIn("worker", matrix["actions"]["organize"]["reason"].lower())
-
             intent = self._create_reviewed_intent(value)
             # The analysis is Task work: without a resident Worker the admitted
             # Task stays queued and no plan or execution authority is invented.
@@ -1804,6 +1766,26 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(200, status)
             self.assertFalse(replayed["actions"]["execute"]["available"])
             self.assertFalse(replayed["worker"]["ready"])
+
+    def test_retired_action_matrix_route_is_ordinary_not_found(self) -> None:
+        with self.journey() as value:
+            for query in (
+                "scopeKind=file&fileId=any-id&resourceLibraryId=library",
+                "scopeKind=resourceLibrary",
+                "scopeKind=resourceLibrary&resourceLibraryId=library",
+            ):
+                for token in (OPERATOR_TOKEN, VIEWER_TOKEN):
+                    with self.subTest(query=query, token=token):
+                        status, body = self._request(
+                            value,
+                            f"/api/v1/operations/manual-actions?{query}",
+                            token=token,
+                        )
+                        self.assertEqual(404, status, body)
+                        self.assertEqual("not_found", body["error"]["code"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_recognition_type_c_is_preserved_in_the_executed_result(self) -> None:
         with self.journey() as value:

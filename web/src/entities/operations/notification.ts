@@ -39,24 +39,6 @@ export const NOTIFICATION_EVENT_TYPES = [
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 
-/**
- * An already accepted configuration document may still spell a Task lifecycle
- * event with its historical ``job.*`` name. The Python projection really does
- * return those stored bytes for an accepted definition
- * (`_webhooks_projection`), so the operator page must keep reading them as the
- * same Task event; the current-input validator is the backend boundary that
- * makes a *changed* definition adopt the canonical names. This is a bounded
- * read mapping, not an open event catalog: unknown strings still fail closed
- * and no control ever offers a retired spelling.
- */
-export const LEGACY_NOTIFICATION_EVENT_ALIASES: Readonly<
-  Record<string, NotificationEventType>
-> = {
-  "job.completed": "task.completed",
-  "job.failed": "task.failed",
-  "job.cancelled": "task.cancelled",
-};
-
 export const NOTIFICATION_DELIVERY_STATUSES = [
   "pending",
   "delivering",
@@ -421,11 +403,9 @@ function optionalRecord(
 }
 
 function eventType(value: unknown, field: string): NotificationEventType {
-  const canonical =
-    typeof value === "string"
-      ? (LEGACY_NOTIFICATION_EVENT_ALIASES[value] ?? value)
-      : value;
-  return enumOrFail(canonical, field, NOTIFICATION_EVENT_TYPES);
+  // The read projection publishes current event names only; a retired
+  // ``job.*`` spelling is malformed evidence rather than a second catalog.
+  return enumOrFail(value, field, NOTIFICATION_EVENT_TYPES);
 }
 
 function eventList(
