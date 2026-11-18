@@ -1,30 +1,32 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.6 — 现有 V2 数据继续使用，Task 只走五态
+
+用户明确要求“激活Task”，据此将已提交的 Task55.6 草案激活为正式实施 Task。
 
 Task55.5：**B PASS**。固定审查范围
 `8a9d2460d0fb4df1afee0e157af3736f136a64c8..63d87814bc61f5da8b6300c70e4f5d3b62110d15`；
 完整报告与证据索引见 `git show 2e460b71735ac0284e58928c884baac9d3f46009:TASK.md`。
-Slice55 仍为 ACTIVE。下文仅为规划草案，不授权实施。
-
-## 草案：Task55.6 — 现有 V2 数据继续使用，Task 只走五态
-
 依据已提交 [Slice55](SLICE.md) 的 RO-4 及 RO-2/3/5/6 中和 Task 状态、持久化直接相关的部分。
 需求为 [V2-RETIRE-002–007/009–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-active)；
 生命周期和测试分工遵循 [开发流程](docs/development-workflow.md)。
 
 ```text
-Proposed Task ID: 55.6
-Proposed Task Type: SLICE
-Proposed Parent Slice: 55
-Draft Status: PLANNED — NOT AUTHORIZED FOR IMPLEMENTATION
-Proposed Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
+Task ID: 55.6
+Task Type: SLICE
+Parent Slice: 55
+Status: PLANNED
+Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
+Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
+Next Action: DEVELOPER STARTS TASK55.6 IMPLEMENTATION
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
 治理检查通过。Slice Base 仍为 `2b2e7c1824fa5681864455714d0f97b26555c7dc`，它是证明原有 V2
-数据继续使用的起点；Task Base 是本单元的代码比较起点。草案提交不重设任一 Base。
+数据继续使用的起点；Task Base 是本单元的代码比较起点。草案和激活提交不重设任一 Base。
+激活前 `main` 的 HEAD 为 `3991ddc9`，工作区干净，治理检查通过；Task Base 到草案
+提交仅变更本文件。激活不改变目标、范围、验收和测试分工。
 
 ### Goal 与完整操作旅程
 
@@ -135,8 +137,9 @@ Settings 等纯迁移 session、无生产调用的旧全局批量审核及其他
 
 ### 交接状态
 
-草案未激活，尚无 Developer 候选，无本 Task 的 PASS/FIX REQUIRED 结论；不改变 Slice、Roadmap
-或 Progress。
+已获实施授权，状态为 PLANNED。下一步由 Developer 按本 Task 实施，交付固定候选及实际测试
+结果，标记 READY FOR B REVIEW；B 再独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED。
+当前尚无实施候选；Slice55 仍为 ACTIVE，Slice、Roadmap 和 Progress 不变。
 
 规划检查：`python3 scripts/check_governance.py` 通过，`python3 -m unittest tests.test_governance`
 20 项通过（6.5 秒），旧 CLI 入口确认仅运行 `mediaflow upgrade --help`。未运行产品 T4。
