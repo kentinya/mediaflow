@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: B RECHECKS B55.6-01–03 ON CANDIDATE 38a0a6d2
+Next Action: DEVELOPER FIXES B55.6-01 AND B55.6-03 IN TASK55.6
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -475,3 +475,41 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.pyt
   映射，Web 单测也保留若干可选 `pauseRequested` 字段；它们不在本次三个阻塞的当前入口断言中，
   未扩大为全站夹具清理。
 - 任何浏览器/原生门禁若再发现旧响应约定，应回到本 Task 修正，而不是删除现有断言。
+
+### B 返工复核 — FIX REQUIRED（候选 `38a0a6d2`）
+
+独立审查完整范围 `2e460b71735ac0284e58928c884baac9d3f46009..38a0a6d2f161159a356b12578ce3b980c17b74d1`。
+交接 `fe8755e6cb5e7a80211b5f595937df4811cd40f4` 仅更新本 Task。复核起点为该提交，
+`main` 工作区和暂存干净，治理检查通过。
+
+| 阻塞 | 实际操作与原因 |
+|---|---|
+| **B55.6-01（P1，AC-4）API 拒绝其他应用的 SQLite 文件前已改写该文件** | 管理员设置 bootstrap 时误选另一个 SQLite 文件，再用 `mediaflow api serve` 启动。B 用 `sqlite3` 创建一份只含笔记的隔离库实测，API 退出 2，提示文件未改动，但前后 SHA-256 不同，已新增管理配置、发布权威及版本表，原笔记记录仍在。共享检查对无 MediaFlow 标记的普通 SQLite 没有作出完整判断，API 读取 Active 时配置仓库先提交建表；runtime 随后才拒绝。`5174c308`（2026-11-18）引入了这一先写后拒绝的路径，`38a0a6d2` 解决了并发首启，仍保留这条路径。 |
+| **B55.6-03（P1，AC-5）现有目录整理 proof 仍绑定退役的 Job 表** | 运行已修改的 `scripts/files_organize_discovery_browser_proof.py`，它通过当前 API 启动和配置激活，准备验证管理员选择目录、观察扫描并明确确认。首轮本机文件系统拒绝原长路径夹具；仅将隔离夹具缩至 706 字符，保留超过 512 的条件后，从同一 proof 入口运行。脚本在读取基线时查询已退役的 `automation_jobs`，SQLite 报表不存在，未进入目录旅程。该查询引入于 `657e137d`（2026-10-09）。资源库移动取消的浏览器用例已走完并通过，现有报告没有证实目录整理产品操作失败。 |
+
+#### Developer 返工指导
+
+1. 让共享库适用性判断在 API 第一次打开配置仓库时就能识别其他应用的 SQLite 库。沿现有
+   共用判定把零表空库、现有正常 V2、配置-only 首设库和不支持的布局分清，并在任一仓库
+   首次建表或写标记前完成判定。保留本轮建表、索引、版本同事务提交。用最小 bootstrap
+   指向正常创建的非 MediaFlow SQLite，从正式 `api serve` 验证退出原因及文件、表和行
+   均未改变，再确认原四服务空库与首个 Draft 激活通过。
+2. 让目录整理的验收使用现行记录证明实际效果。清理 proof 对旧 Job、旧配置审计和旧 Task
+   流程状态的断言。保留有界扫描、失败原因、取消、零变更预览和明确确认后的文件效果。
+   现有原生或集成用例已能覆盖的断言复用现有入口，收掉重复的旧 proof。用保留下来的
+   现行入口走完整旅程，并交改动与直接受影响的测试结果。
+
+**本轮通过。** 四服务同时打开空库，HTTP health 与 readiness 正常，首个 Draft 校验并激活，
+只写入一组 configuration 11 / runtime 58 标记。B55.6-02 的旧指标字段已从查询、API 和
+Web 读模型退出，真实 Task flow 浏览器用例通过。资源库目录移动在取消后逐项显示三个已移动
+文件，旧地址 `404 not_found`，Worker 再跑后三个剩余文件仍在。Web build、5 项原生浏览器
+用例、10 项 SQLite／V1 拒绝／备份恢复测试及 19 项 Automation 测试通过。测试和构建累计
+约 31 秒，少于本轮一半。证据在
+`.git/validation-evidence/38a0a6d2f161159a356b12578ce3b980c17b74d1/task55-6-b/`。
+完整 T4、wheel 和 Docker 门禁待修正候选。
+
+**Slice55 结果重评。** RO-1 的既有 Web 入口结果保留。RO-2 旧恢复路径退出，当前移动取消
+与同 Task 的续作路径已抽查。RO-3 既有正式配置和权限契约保留，五态统计不读旧流程值。
+RO-4 空库并发首启通过，其他 SQLite 误配的零改写仍阻塞。RO-5 21 文件分页、当前流程
+与逐项效果通过，既定 session 清理待完成。RO-6 对当前目录整理的 proof 还有上述欠项，
+最终门禁待执行。Slice55 继续 ACTIVE，返工留在 Task55.6。
