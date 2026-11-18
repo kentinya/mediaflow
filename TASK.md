@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: B RECHECKS B55.6-01–03 ON CANDIDATE 5174c308
+Next Action: DEVELOPER FIXES B55.6-01–03 IN TASK55.6
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -268,7 +268,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 
 ### Developer 返工交接：B55.6-01–03
 
-候选产品检查点：`5174c308df9cbaa1d40b3e38c62ea6e333fa2e14`
+候选产品检查点：`5174c308b8fac7a989addfd6beac6ccca386abcb`
 （`fix(task55.6): reject unsupported databases before writes and retire the old recovery chain`）。
 本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
 
@@ -347,3 +347,52 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
   全站文案清理。
 - B 的完整 T4（全量 Python、全部原生 E2E、Docker 空库/重启、wheel 外安装、镜像身份、
   备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+
+### B 返工复核 — FIX REQUIRED
+
+独立审查完整范围 `2e460b71735ac0284e58928c884baac9d3f46009..5174c308b8fac7a989addfd6beac6ccca386abcb`。
+`f4e20cc8922cb30e2a9ed39a0f4e84f6d939dd04` 只改 Task 交接文档。本轮起点为该提交，`main`
+暂存和工作区干净，治理检查通过。交接原先写错候选完整 SHA，已用 Git 核对并更正。
+
+| 阻塞 | 实际操作及原因 |
+|---|---|
+| **B55.6-01（P1，AC-3/4）空库并发首启会中断** | 管理员准备空数据目录，用最小 bootstrap 同时启动默认部署的 API、Worker、Scheduler 和 Notification Worker。四次隔离启动中一次 API 因配置版本记录重复写入退出，通知服务则把另一个进程已建表但尚未提交版本的库判为不支持并退出。管理员此时无法打开 API 完成首次设置。`5174c308`（2026-11-18）把是否新库的判定、建表和版本提交分开，进程因此看见中间状态。真实 V1 库四服务拒绝前后校验和、版本、结构一致，上轮 V1 改写已修复。 |
+| **B55.6-02（P1，AC-2）Automation 统计仍单独读取退役的 Task 流程值** | 管理员打开 Automation，月度统计的现行 API 仍从 Task 表筛选 `partial_success`，用 `monthToDatePartial` 发布该计数。这个筛选来自此前的历史状态处理，本轮修改后仍在。旧 remaining-scope 模块、新库专属列和主要读写已退出，当前同 Task 恢复通过抽查。此项来自现有统计入口的源码核对。 |
+| **B55.6-03（P1，AC-2/5）当前原生验收仍依赖已经移除的 Pause 响应** | 在资源库选择目录并点击移动，Worker 移完三个子项后，管理员取消并打开当前页操作状态。浏览器确认已取消并逐项显示三个已移动的子项。现有用例随后访问以前实际注册的 resume 路径，候选正确返回普通 404，测试仍按 2026-10-31 引入的旧约定要求 `409 pause_retired`，因此跳过了后续 Worker 再跑和剩余三个文件未动的验证。MediaLibrary 假服务和两个 Files discovery proof 脚本仍主动构造或要求暂停，来自源码核对。上一轮失败的 21 文件分页已经通过。 |
+
+#### Developer 返工指导
+
+1. 先收敛 SQLite 首次初始化。让同路径的进程在 SQLite 写事务内判断已提交的结构，再在
+   同一事务完成需要创建的表、索引和版本记录。新进程等前一笔提交后按已有库继续打开。
+   现有 V2 的最小结构调整和数据保留仍走当前路径，V1 或不支持的库在写入前拒绝。用现有
+   四服务空库入口复现首次并发启动，核对各服务能到达就绪，随后完成首次 Draft 与激活。
+2. 从现行 Automation 月度统计去掉退役 Task 状态的专属筛选和响应字段，清理相应消费者。
+   保留 completed、failed、cancelled、运行中和不可用事实，文件级部分结果继续由现有
+   文件结果路径展示。沿现有 `task-flow.python.spec.ts` 核对管理员看到的统计和文件效果。
+3. 让资源库原生用例核对普通 `404 not_found`，并走完原有的取消证据、Worker 再跑和
+   文件未重放断言。把假服务 MediaLibrary 的暂停夹具改接当前操作，退出两个 discovery
+   proof 的旧 Pause/Continue 路径，保留仍适用的当前旅程断言。被移除的暂停测试中涉及
+   未知效果、Worker 换班和取消的独立断言接回现有相关案例。只运行改动与直接受影响的测试。
+
+```sh
+# web/，先用 npm run build 构建候选
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --grep "cancelled folder Move's known effects locally"
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts
+```
+
+**独立实测。** Web 构建通过；真实 Task 五态用例 3 项、21 文件分页及两条旧恢复入口用例
+3 项、认证停用／同 Task 续作及 SQLite 备份恢复单测 11 项通过。用 `release/v1 jobs list`
+建库验证四个当前服务均以退出码 2 拒绝，数据库未改动。用 Slice Base 在同一隔离路径发布
+有效 V2 Active、经 Files 接口受理后，候选 CLI 成功读取原 Active 和待执行 Task，核对了
+原 digest 与 pin。最初复制夹具时更改了固定路径，另一次 Base 夹具自带旧调度配置；两次
+均在改用原路径和发布时使用有效 V2 输入后重新验证。目录移动首跑采用了通用浏览器配置，
+更正为 Files 专用配置后复现上表断言失败。证据在
+`.git/validation-evidence/5174c308b8fac7a989addfd6beac6ccca386abcb/task55-6-b/`。
+测试和构建累计约 25 秒，少于本轮一半。完整 T4、wheel 和 Docker 门禁待修正候选。
+
+**Slice55 结果重评。** RO-1 保留此前接受的 Web 入口结果。RO-2 本轮验证普通未知路由，
+旧 remaining-scope 执行路径已清理，Cancel 与同 Task 续作通过抽查。RO-3 此前接受的配置
+和权限契约保留，旧 Task／ScanTask 删除。RO-4 已通过 V1 零改写、局部 V2 重开及五态原生
+抽查，空库并发首启仍阻塞。RO-5 当前同 Task 续作及 21 文件恢复通过，本 Task 仍有旧状态
+统计，既定 session 清理仍待完成。RO-6 旧升级工具已退出，当前验收仍有上述遗漏，最终门禁
+待执行。Slice55 继续 ACTIVE，返工留在 Task55.6。
