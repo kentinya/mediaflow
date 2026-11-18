@@ -14,7 +14,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.5 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.5-01 AND B55.5-02 IN TASK55.5
+Next Action: DEVELOPER COMPLETES AC-4 CONFIRMATION RECOVERY ACROSS REFRESH IN TASK55.5
 ```
 
 规划时 main／上述 HEAD，tracked／untracked 干净，工作区和 Git 可写，治理 PASS。
@@ -417,6 +417,91 @@ execution 相同”反证已受理的兄弟子集。当前打开但未选择的�
   Docker 安全／重启、Base 真实数据继续使用仍由 B 在修正候选上执行。B 需在干净 harness
   重跑新增旅程并确认已知 13 个 Base 失败的环境归因；本报告不声称这些门禁 PASS。
 - 未改动产品 API／schema／权限／CLI 注册；没有新增全局队列、别名或隐性替代入口。
+
+### B 修正候选复核 — 2026-11-18 / FIX REQUIRED
+
+```text
+Reviewed Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Fix Candidate: 2f574e5d70a8a82c7a02de70b0fb3d88a255dc64
+Reviewed Handoff Head: b9be747a3ec0f5390c91050db8d5aa3f077ba577
+Decision: FIX REQUIRED
+Next Action: DEVELOPER COMPLETES THE SAME TASK'S AC-4
+```
+
+本轮从干净 main／上述 Head 开始，治理 PASS、工作区和 Git 可写。候选到交接 Head 仅
+TASK.md 报告变更；完整 Task Base..Head 为42个文件，沿用上轮已逐项审查的原实现，并
+检查本轮全部6文件增量及其调用关系。原 Base、Goal、Scope、High／T4 保持。
+
+**上轮修正已核对：** B55.5-01 的当前页面直接核对场景已修正：known 受理证据可解除
+未选文件的确认锁定；B55.5-02 的当前契约测试数据已补齐。B 独立运行四个受影响模块，
+**4 files／55 tests passed**；构建 PASS；在新 Python harness 上独立运行新增的
+`the opened item reconciles the exact sibling subset admission it did not select`，
+**1 passed**，包括原 Task、选中兄弟的实际 Worker 结果及核对后的关闭／重开。
+
+**AC-4 尚未完成 — 响应未知时先刷新，原确认身份丢失（P1）。**
+
+真实旅程：Files 受理 One／Two，同 Task 保存识别决定并完成分析；打开 One 的摘要，只
+勾选 Two，真实 Execute 已返回202，浏览器丢弃该响应。此时页面提供“重新读取条目后再
+继续”。用户在点击核对之前刷新并重新登录，仍打开原 Task／One：原核对入口和未知状态
+消失，摘要默认勾选两个文件，出现可点击的“确认继续整理 2 项”。页面没有发出原请求的
+admission GET。用实际提交的选择／版本／效果许可读取正式 admission，仍得到原 Two
+execution、原 taskId 和 `outcome=known`。本轮只有一次 Execute，没有据此声称发生了
+重复媒体效果；未满足的是原请求跨刷新后的准确恢复和确认状态。
+
+原因：`TaskItemRecoveryPanel` 把提交身份写入 `task-item-recovery-session.tsx` 的 React
+`useState`，该 provider 在刷新／重新认证时重建；`submittedConfirmation` 和锁定随之丢失。
+候选新增 E2E 在点击核对成功后才刷新，后半段由测试自身保存的 `committed` 变量直接查询
+API，因此没有检验“未知状态先刷新”的用户操作。原候选 `3bff923d` 已将本次完整确认身份
+保存到同一内存 store，本轮 `2f574e5d` 未改变该模块；本轮行为实证针对修正候选，不把它
+描述为 `2f574e5d` 新引入的回归。
+
+**Developer 开发指导：**
+
+1. 补全当前 Task 恢复确认的提交身份保存／恢复：按当前主体、run、Task、item 关联，保留
+   preparation、原 Preview、选中项、intent version、效果许可及待核对状态。刷新／重新
+   认证返回同一项时恢复原请求的读取入口，继续用已有 Execute／admission 和同 Task 模型。
+   原请求核对完成后再展示其已受理事实或当前合法确认动作；未选文件保持自己的状态。
+2. 将现有真实 E2E 的刷新／重新认证安排到丢响应之后、首次点击核对之前，由页面恢复并
+   读取原请求，验证仍是原 Two 子集、原 execution／Task，Execute 总数为1。随后沿用已
+   有 Worker、兄弟修正／重新分析步骤，证明原请求身份保持。单元测试对应覆盖 provider
+   重建后的恢复；原来直接核对、迟到响应、关闭重开和主体隔离断言继续执行。
+
+验收结果应为：未知确认刷新后仍能从界面核对原提交；读取只携带原选择和版本／效果；
+known 后显示原执行及原 Task；兄弟的新摘要独立处理。该修正属于本 Task 原有 AC-4，
+继续使用原授权范围，不另建 Task 或扩大到其他业务 session。
+
+Developer 运行下列直接测试（cwd `web/`），完成后提交修正候选；B 承担后续完整门禁：
+
+```sh
+npm run test -- run src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunDetailTabs.test.tsx src/entities/operations/task-item-recovery.test.ts src/shared/api/api-client.test.ts
+npm run typecheck
+npm run lint
+npm run format:check
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'the opened item reconciles the exact sibling subset admission it did not select'
+```
+
+**本轮证据与尚待验收：**
+`.git/validation-evidence/2f574e5d/task55-5-b/` 中保留实际命令／时间的 `runs.jsonl`、上述
+通过日志，以及 `unknown-refresh.log`、`unknown-refresh-result.json` 和真实截图
+`unknown-refresh.png`。独立复现使用已有 `ManualTaskDiscoveryTests` 的临时 Files／Task
+旅程和生产 API／构建资产，介入点只是丢弃真实202响应；未创建猜测的产品入口。临时服务
+已停止并清理自己的 SQLite／媒体夹具。这些是稳定本地证据，不是远程 CI。
+
+已证明上述产品阻塞，按工作流提前 FIX REQUIRED。本轮未启动完整 Python／Web／E2E、
+Base 数据继续使用、wheel／源码外消费者或 Docker 门禁；上轮及 Developer 的结果保留
+原候选身份。Developer 报告的整份原生 spec／Base 失败及环境归因，本轮未独立复现，
+继续由 B 核对，不作为已通过依据，也未据此要求 Developer 扩做过程工具。
+
+**本轮时间：** 2026-11-18 08:13:30 至 08:20:26（+0800），
+复核 6.94 分钟；测试／构建命令累计 12.2 秒（2.9%），另有不足1秒
+的治理／短检查，合计小于50%；原始记录见 `runs.jsonl`／`timing.json`。
+
+**全部 Slice 结果重评：** RO-1 与55.2–55.4 已接受的相应结果保持。RO-2 的旧传输注销及
+本次普通确认路径保留，但当前恢复的 AC-4 未完成；Pause 退出仍未交付。RO-3 的旧
+Task／ScanTask 模型、RO-4 的全局 schema／暂停清理及 Base 真实数据验收仍未完成。
+RO-5 的当前确认跨刷新恢复仍在本 Task 内，其他已列 session 清理未交付。RO-6 的最终
+回归／制品和 CURRENT 协调仍待完成。Slice55 继续 ACTIVE，不规划下一 Task，不作关闭。
 
 ### 规划阶段检查记录（激活前）
 
