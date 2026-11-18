@@ -13,13 +13,13 @@ Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9ac
 Task ID: 55.7
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES TASK55.7 AND RESUBMITS FOR B REVIEW
+Next Action: B REVIEWS TASK55.7 FIX CANDIDATE
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
@@ -310,3 +310,88 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 | RO-4 | 五态、新库结构及合法 V2 库的较早验收仍适用，候选差异涉及 Web 消费端。此次独立跨版本通知读回保留 Active ID 与摘要。 |
 | RO-5 | 候选已清退列表单条旧会话和规则旧 key 清理。当前会话的真实丢响应核对已有上述结果。协议收敛及 Base 浏览器原请求连续性仍待完成。 |
 | RO-6 | 本候选的浏览器测试服务与真实协议差异已定位。全局批量审核应用／持久化残留、空实例脚本和发布说明的全链路收敛、Slice 最终制品与安全验收仍待交付。 |
+
+### Developer 修正交接 — READY FOR B REVIEW（2026-11-19，北京时间）
+
+```text
+Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
+Developer Candidate: 83423d212af207d3d99807506d173c7bfb211c00
+Branch: main
+```
+
+候选由 `cb0145fe6ca7fdf1176322b1dfeac80c9917de5a` 与
+`83423d212af207d3d99807506d173c7bfb211c00` 两个本地检查点组成；后一提交仅删除
+`outcomeSummary` 中未被任何消费者读取的 `attentionItems`／`moreAttention` 重复投影。
+候选提交后工作区仅余本文件，下一次文档检查点只记录这份交接。B 审查完整
+`27789283a0e1b04bc1e9204002ecdb8cfc44e946..83423d212af207d3d99807506d173c7bfb211c00`。
+
+**对应 B55.7-01 — 自动化定义与执行历史投影**
+
+- `automation_definition_occurrence.py` 定义只发布 `occurrenceState`，删除同值的
+  `occurrence`；摘要删除 `counts`、`itemOutcomeSummary`、`boundReached`、
+  `stoppedAtBound`，保留 `statusCounts`、`bound.reached`、`bound.statement`、注意项、
+  文件结果和 Task 链接。
+- 真实 API 集成测试的失败计数断言改为 `statusCounts`，并断言上述重复字段不再出现。
+- `web/tests/fake-server.mjs` 的已发布与仅草稿定义改用 `occurrenceState`；执行历史夹具
+  删除无当前生产者的 `jobId`／Job action，保留原 Task 链接和既有浏览器操作。
+
+**对应 B55.7-02 — 通知规范事件投影**
+
+- `ConfigurationObjectService._webhooks_projection` 复用
+  `accepted_webhook_definition` 的已接受定义解析结果，把读取投影的 `events` 规范为
+  `task.*`／`schedule.emitted`；不改写持久化文档、原 ID、digest 或 Active 指针。
+- `test_webhook_management.py` 用旧事件字节建立并激活一个真实历史 Active，验证配置对象、
+  通知列表、详情、草稿编辑均返回规范事件，同时复核原存储字节、原摘要和读取前后 Active
+  ID／digest 不变。
+- `web/src/entities/operations/notification.ts` 删除 `job.*` 读别名；列表、详情、草稿、
+  投递只接受当前事件目录，旧拼写按格式错误保守拒绝。相关前端用例改为拒绝旧拼写。
+
+**对应 B55.7-03 — 旧手工 action matrix 退出**
+
+- 删除 `GET /api/v1/operations/manual-actions` 的注册、`_manual_action_matrix` 专用投影、
+  `manual_action_matrix_operator_document` 导出及 Node 假服务路由／文档函数。
+- 旧入口在有效普通授权下返回通用 `404/not_found`；契约、原生旅程和假服务用例均按此断言，
+  并验证零 Task、零 Storage 变更。
+- 原矩阵测试删除；有界选择、权限、源身份、分析摘要、确认、最终效果和零重放继续由真实
+  Files 入口用例覆盖（`FilesAdmissionJourneyTests`、manual Organize 旅程和契约夹具）。
+
+**实际验证（cwd 与命令，结果）**
+
+- 仓库根 `ruff format --check`／`ruff check` 于全部改动 Python 文件通过；
+  `python3 scripts/check_governance.py` → PASS；`compileall -q mediaflow tests scripts`
+  通过；`git diff --check` 通过。
+- `.venv/bin/python -m unittest tests.test_manual_operations tests.test_manual_operations_contract
+  tests.test_v2_manual_organize tests.test_webhook_management tests.test_v2_automation_operations
+  tests.test_automation_authorized_execution_matrix` → 93 项通过（9.8 秒）。
+- 另跑 `test_automation_definition_occurrence`（13 项）、`test_v2_notification_operations`
+  （25 项）、`test_v2_automation_operations`（19 项）及最终两次改动后复跑，均通过。
+- web `npm run test -- run src/entities/operations/automation.test.ts
+  src/entities/operations/notification.test.ts src/features/operations/NotificationRouter.test.tsx
+  src/entities/operations/organize.test.ts src/entities/operations/preview.test.ts` →
+  5 文件／166 项通过（6.7 秒）。
+- web `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过
+  （构建仅既有 chunk 体积提示）。
+- 默认浏览器 `npm run test:e2e -- tests/e2e/automation.spec.ts
+  -g 'definition table|occurrence history'` → 3 项通过；
+  `notifications.spec.ts` → 12 项通过；`manual-operations.spec.ts` → 6 项通过。
+- 真实 Python 浏览器
+  `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts -g "Notifications page reads the real Task event contract"`
+  → 1 项通过。
+- 测试与构建累计约 55 秒，小于本轮总用时（约 50 分钟）的 30%。
+
+**未由 Developer 执行（不记为通过；B 的 T4 门禁）**
+
+- 完整 T4 回归、真实 Python 丢 Copy／Run once／设置响应链路、双管理员并发、Base→候选
+  同一浏览器来源换资产连续性、Docker 空实例／重启／安全镜像、wheel 与源码外安装。
+- 全量 Web 浏览器门禁及其余 Python 模块回归。
+- 本报告不构成 PASS；B 需按修正后的候选重新复现三个阻塞并完成适用门禁。
+
+**剩余风险／需 B 核对**
+
+- 通知读取投影规范化的是响应 `events`，原 Active／Draft 存储字节仍保留旧事件拼写；
+  这是有意保留的已接受配置读取，写入新定义仍由现有校验拒绝 `job.*`。
+- 自动化定义的顶层便利字段（如 `nextRunAt`、`outcomeSummary`）未在本轮 B 指定删除
+  列表内，仍保留原 API 形状；Web 只消费 `occurrenceState`。如 B 认为同属重复协议，
+  需在同一 Task 继续裁定。
+- `scopeExhausted` 仍随摘要输出且当前恒为 `None`；不在本轮明确删除列表内。
