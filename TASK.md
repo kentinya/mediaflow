@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.6-05 AND B55.6-06 IN TASK55.6
+Next Action: B RECHECKS B55.6-05 AND B55.6-06 ON CANDIDATE 6f8702b5
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -739,3 +739,76 @@ Task Center／手工整理组合 55 项通过。Automation 组合 28 通过、1 
 通过。RO-4 误选 SQLite 的零改写保持，合法 Base 无 Task 摘要待修复。RO-5 当前确认与核对
 主路径通过，既定 session 清理待完成。RO-6 wheel 已通过，当前测试数据与五态契约仍有
 缺口，最终门禁待完成。Slice55 继续 ACTIVE，返工留在 Task55.6。
+
+### Developer 返工交接：B55.6-05、B55.6-06
+
+候选产品检查点：`6f8702b5f4d2a773bb2406eb1e0ec3a0a39253da`
+（`fix(task55.6): confirm pre-change summaries and align current fixtures`）。
+本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
+提交前工作区除实现、测试和前端 fixture 八文件外无其他改动；`config/alist.json` 未读取、
+未改动。Slice、Roadmap、Progress 未改。
+
+**B55.6-05 — 已保存的合法摘要继续确认**
+
+- `_adopt_prechange_summary` 改为按当前 `PersistentTask` 字段用关键字构造 Task，去掉
+  退役 `pause_requested` 参数后遗留的位置错位，不再把 `False` 当成 `scope_path`。
+- 共享精确确认的 Task 入库改用 `_TASK_INSERT` 的显式列清单，删除 17 值无列名 INSERT；
+  原事务范围、preview/pin、来源归属、一次性授权和同 Task 收敛未变。
+- 用 Slice Base 源码（`2062f7f4/task55-4-b/slice-base-source`）在隔离目录真实形成
+  已审阅、无 Task 的摘要；候选重新打开同一 intent 与 pin、确认、Worker 领取并完成：
+  Task `completed`，1 条 Result 且 RecognitionType 仍为 C，源文件已移走，目标文件生成，
+  原 discovery 已在同一 Task 上。证据见
+  `.git/validation-evidence/6f8702b5f4d2a773bb2406eb1e0ec3a0a39253da/task55-6-dev/`。
+
+**B55.6-06 — 现有配置与 Task Center 验收接回当前状态**
+
+- 四个配置用例不再把 marker 改成 schema 6／7／8／9、drop 当前表并期待旧升级；改为关闭
+  仓库后按当前 V2 schema 重开，继续断言保存的命名／分类预览、整理授权、目标预览／预检、
+  本地 setup 证据、Active 拒绝和当前 marker。删除只为旧升级存在的表删除与回填期待。
+- fake Task Center 只发布当前五态：`task-006` 为 running，`task-007` 为 cancelled；
+  `KNOWN_TASK_STATUSES`、终态、attention、run 视图不再接受 `paused`／`partial_success`，
+  删除 `pause_requested`、Pause/Resume 分支和 `pauseRequested` 生命周期字段。文件级的
+  `partial`、效果未知和缺 Result 仍独立；transfer 的 Task 流程为 completed，文件结果
+  继续保留 partial。
+- 真实 API 对照 fixture 删除 `pauseRequested`；`tests.test_manual_operations_contract`
+  与 Web 读模型重新一致。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_configuration_classification
+  tests.test_configuration_destination tests.test_configuration_destination_precheck
+  tests.test_configuration_organize tests.test_manual_operations_contract
+  tests.test_v2_manual_organize tests.test_release_security` → 108 项通过。
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution` → 33 项通过；
+  `tests.test_task_flow_status tests.test_task_persistence tests.test_task_scheduling
+  tests.test_task_scheduling_fencing tests.test_manual_task_engine
+  tests.test_operations_task_center tests.test_media_discovery
+  tests.test_processing_checkpoint tests.test_operations_run_detail_plan_evidence
+  tests.test_operations_run_detail_log_isolation tests.test_task_source_ownership_race
+  tests.test_organize_source_history` → 223 项通过。
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers
+  tests.test_media_library_transfers tests.test_media_library_direct_commands
+  tests.test_direct_file_operations tests.test_library_file_operation_history`
+  → 230 项通过（62 秒）；`tests.test_configuration_management
+  tests.test_configuration_status tests.test_sqlite_backup tests.test_sqlite_restore
+  tests.test_release_validation` → 24 项通过。
+- 真实 Base 摘要：Base 形成 preview、无 Task、源文件仍在；候选确认返回 admitted，
+  Worker 完成后 Task completed、1 条 C 结果、源文件消失、目标生成（见上证据目录）。
+- `web/`：相关 `npm run test` 17 文件／360 项、6 文件／103 项通过；
+  `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
+- 默认浏览器 `npm run test:e2e -- tests/e2e/library-files.spec.ts
+  tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts
+  tests/e2e/operations.spec.ts` → 96 项通过（55.4 秒），覆盖 Files→确认→Task Center、
+  21 文件分页、列表／分页、窄屏和运行详情。
+- `.venv/bin/ruff check mediaflow tests scripts`、`ruff format --check`（336 文件）、
+  `python -m compileall -q mediaflow tests scripts`、`python3 scripts/check_governance.py`、
+  `git diff --check` 通过。测试和构建累计约 4 分钟，小于本轮约 50 分钟的 30%。
+
+**剩余风险与未完成项（不记为通过）**
+
+- 本轮没有重跑完整 Python／Web E2E、Docker 空库／重启／安全镜像、wheel 外安装、镜像身份
+  和备份恢复实机链路；这些 T4 门禁仍由 B 在冻结候选上执行，不能由本次结果替代。
+- 真实 Base 验证使用现有 Slice Base 源码和本地隔离目录，没有读取或改动用户运行库、媒体
+  和私有配置；Base 后的完整四类恢复仍由现有测试和 B 验收覆盖。
+- 原有 Web 单测中仍保留若干历史 `paused` 文案映射和可选旧字段，不在本轮三个当前入口的
+  阻塞断言内，未扩大为全站文案清理。
