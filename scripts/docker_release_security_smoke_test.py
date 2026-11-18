@@ -1451,9 +1451,6 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                 print("Proving current V2 static serving and retired V1 routes...")
                 assert_v2_static_serving(base, canaries)
 
-                print("Probing authentication, RBAC and zero-side-effect denial...")
-                assert_rbac_and_no_side_effects(base, canaries, token_values)
-
                 print("Activating the managed runtime snapshot...")
                 activate_runtime(base, token_values["admin"], activation_file)
 
@@ -1468,6 +1465,9 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                     )
 
                 wait_until(management_ready, timeout=90.0, description="managed runtime ready")
+
+                print("Probing authentication, RBAC and zero-side-effect denial...")
+                assert_rbac_and_no_side_effects(base, canaries, token_values)
 
                 print("Restarting Worker against the exact Active snapshot...")
                 run([*command, "restart", "worker"], environment=environment)
