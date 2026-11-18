@@ -338,7 +338,9 @@ def final_main(
             # and must never create, migrate or write-lock the runtime database,
             # so it bootstraps only the immutable locator here.
             configuration = load_management_bootstrap(_configuration_document(arguments.config))
-        elif arguments.command in {"worker", "scheduler", "notification-worker"}:
+        elif arguments.command in {"worker", "scheduler", "notification-worker"} or (
+            arguments.command == "api" and arguments.api_command == "credentials"
+        ):
             # Resident services bootstrap from deployment-owned authority alone.
             # The immutable locator is enough to open the durable database, run
             # the heartbeat and claim a bounded unit of already-pinned work.  It
@@ -348,6 +350,14 @@ def final_main(
             # current — or its own admitted pin — at the boundary where it
             # actually needs business configuration, which is what lets a
             # running process adopt a later publication without restarting.
+            #
+            # ``api credentials check`` is the preflight the operator runs
+            # before the first startup or after correcting a database path.  It
+            # reports deployment-owned token names from the bootstrap alone and
+            # must not open, initialize or validate the configured database;
+            # otherwise an unsupported file would hide the SET/UNSET diagnosis
+            # and a first start would create the store just to read environment
+            # variables.
             configuration = load_management_bootstrap(_configuration_document(arguments.config))
         else:
             try:

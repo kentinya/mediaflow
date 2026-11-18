@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -90,7 +91,9 @@ class ApiCredentialTests(unittest.TestCase):
 
     def test_credential_check_is_redacted_config_only_and_reports_missing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
             document = json.loads(Path("config/strategy.example.json").read_text())
+            document["persistence"] = {"databasePath": str(database)}
             document["api"]["principals"].append(
                 {
                     "id": "retired-viewer",
@@ -106,6 +109,12 @@ class ApiCredentialTests(unittest.TestCase):
                     os.environ,
                     {"MEDIAFLOW_API_TOKEN": "top-secret-value", "RETIRED_TOKEN": "old-secret"},
                     clear=True,
+                ),
+                patch(
+                    "mediaflow.final_cli.SQLiteConfigurationRepository",
+                    side_effect=AssertionError(
+                        "credential check opened the configuration database"
+                    ),
                 ),
                 patch(
                     "mediaflow.final_cli.SQLiteTaskRepository",
@@ -124,10 +133,16 @@ class ApiCredentialTests(unittest.TestCase):
             self.assertIn("retired-viewer | viewer | RETIRED_TOKEN | DISABLED | SET", rendered)
             self.assertNotIn("top-secret-value", rendered)
             self.assertNotIn("old-secret", rendered)
-            self.assertFalse(Path(directory, "mediaflow.sqlite3").exists())
+            self.assertFalse(database.exists())
 
             with (
                 patch.dict(os.environ, {}, clear=True),
+                patch(
+                    "mediaflow.final_cli.SQLiteConfigurationRepository",
+                    side_effect=AssertionError(
+                        "credential check opened the configuration database"
+                    ),
+                ),
                 patch(
                     "mediaflow.final_cli.SQLiteTaskRepository",
                     side_effect=AssertionError("credential check opened the runtime database"),
@@ -141,10 +156,54 @@ class ApiCredentialTests(unittest.TestCase):
                 )
             self.assertEqual(status, 1)
             self.assertIn("MEDIAFLOW_API_TOKEN | ENABLED | UNSET", missing.getvalue())
+            self.assertFalse(database.exists())
+
+    def test_credential_check_leaves_an_existing_foreign_database_untouched(self) -> None:
+        import hashlib
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "notes.sqlite3")
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("CREATE TABLE notes (note_id TEXT PRIMARY KEY, body TEXT)")
+                connection.execute("INSERT INTO notes VALUES ('n-1', 'keep this note')")
+                connection.commit()
+            document = json.loads(Path("config/strategy.example.json").read_text())
+            document["persistence"] = {"databasePath": str(database)}
+            path = Path(directory, "strategy.json")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            before = hashlib.sha256(database.read_bytes()).hexdigest()
+            output, error = io.StringIO(), io.StringIO()
+            with patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "top-secret-value"}, clear=True):
+                status = final_main(
+                    ["--config", str(path), "api", "credentials", "check"],
+                    stdout=output,
+                    stderr=error,
+                )
+            self.assertEqual(status, 0)
+            self.assertEqual("", error.getvalue())
+            self.assertIn(
+                "local-admin | admin | MEDIAFLOW_API_TOKEN | ENABLED | SET", output.getvalue()
+            )
+            self.assertNotIn("top-secret-value", output.getvalue())
+            self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertEqual(
+                    [("notes",)],
+                    connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall(),
+                )
+                self.assertEqual(
+                    [("n-1", "keep this note")],
+                    connection.execute("SELECT note_id, body FROM notes").fetchall(),
+                )
 
     def test_legacy_single_token_credentials_are_rejected_without_secret_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
             document = json.loads(Path("config/strategy.example.json").read_text())
+            document["persistence"] = {"databasePath": str(database)}
             document["api"] = {"tokenEnv": "LEGACY_API_TOKEN"}
             path = Path(directory, "strategy.json")
             path.write_text(json.dumps(document), encoding="utf-8")
@@ -160,6 +219,7 @@ class ApiCredentialTests(unittest.TestCase):
             self.assertIn("api.tokenEnv is retired", error.getvalue())
             self.assertEqual(output.getvalue(), "")
             self.assertNotIn("legacy-secret", error.getvalue())
+            self.assertFalse(database.exists())
 
     def test_non_loopback_requires_explicit_insecure_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
