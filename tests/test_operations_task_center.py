@@ -313,6 +313,68 @@ class _TaskCenterTestCase(unittest.TestCase):
 
 
 class TaskCenterViewTests(_TaskCenterTestCase):
+    def test_discovery_partial_result_is_a_completed_run_flow(self) -> None:
+        """A bounded discovery keeps its partial result but its flow is completed.
+
+        The discovery record's own status still names the budget-limited result;
+        the Operations run aggregate only has the current five flow states and
+        must never publish ``partial_success`` as a Task flow value.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DefinitionRunOnceOrigin,
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        origin = DefinitionRunOnceOrigin(
+            "nightly",
+            "Nightly",
+            "f" * 64,
+            "revision-1",
+            1,
+            "d" * 64,
+            "source",
+            "Movies",
+            10,
+            10,
+        )
+        discovery = MediaDiscovery(
+            "definition-run-partial",
+            "viewer",
+            "source",
+            "source",
+            "snapshot-1",
+            "a" * 64,
+            DiscoveryStatus.PARTIAL_SUCCESS,
+            1,
+            DiscoveryBudgets(),
+            DiscoveryProgress(
+                phase="settled",
+                scope_entries=(DiscoveryScopeEntry("Movies", DiscoveryEntryKind.DIRECTORY),),
+                counters=DiscoveryCounters(visited_entries=101, primary_sources=100),
+                incomplete_reason=DiscoveryIncompleteReason.PRIMARY_LIMIT,
+            ),
+            NOW,
+            NOW,
+            definition_origin=origin,
+        )
+        self.repository.create_media_discovery(discovery)
+
+        run = self.repository.operations_run(discovery.discovery_id)
+        self.assertIsNotNone(run)
+        self.assertEqual("completed", run.status.value)
+        self.assertEqual("partial_success", discovery.status.value)
+        window = self.repository.operations_runs_window(limit=20)
+        self.assertEqual(1, window.status_counts.get("completed", 0))
+        self.assertNotIn("partial_success", window.status_counts)
+
     def test_eight_views_are_independent_and_deep_linkable(self) -> None:
         recognition = self._task("organize")
         self._recognition_problem(recognition.task_id, "recog-item")

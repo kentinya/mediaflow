@@ -264,6 +264,88 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
                     ).fetchall(),
                 )
 
+    def test_api_serve_rejects_another_application_database_without_modifying_it(
+        self,
+    ) -> None:
+        import hashlib
+        import sqlite3
+
+        from mediaflow.final_cli import final_main
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "notes.sqlite3")
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE notes (note_id TEXT PRIMARY KEY, body TEXT)")
+                connection.execute("INSERT INTO notes VALUES ('n-1', 'keep this note')")
+                connection.commit()
+            source = example_document()
+            source["persistence"]["databasePath"] = str(database)
+            config = Path(directory, "strategy.json")
+            config.write_text(json.dumps(source), encoding="utf-8")
+            before = hashlib.sha256(database.read_bytes()).hexdigest()
+            stderr = io.StringIO()
+            code = final_main(
+                [
+                    "--config",
+                    str(config),
+                    "api",
+                    "serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "45678",
+                ],
+                stdout=io.StringIO(),
+                stderr=stderr,
+            )
+            self.assertEqual(2, code)
+            self.assertIn("tables but no current MediaFlow schema marker", stderr.getvalue())
+            self.assertIn("file was not modified", stderr.getvalue())
+            self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    [("notes",)],
+                    connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall(),
+                )
+                self.assertEqual(
+                    [("n-1", "keep this note")],
+                    connection.execute("SELECT note_id, body FROM notes").fetchall(),
+                )
+
+    def test_zero_table_sqlite_file_is_initialized_as_a_current_store(self) -> None:
+        import sqlite3
+
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+        from mediaflow.infrastructure.sqlite_configuration_schema import (
+            CONFIGURATION_SCHEMA_VERSION,
+        )
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "empty.sqlite3")
+            with sqlite3.connect(database) as connection:
+                connection.execute("PRAGMA user_version = 1")
+                connection.commit()
+            self.assertGreater(database.stat().st_size, 0)
+            with SQLiteConfigurationRepository(database):
+                pass
+            with SQLiteTaskRepository(database) as runtime:
+                self.assertEqual(runtime.schema_version, SCHEMA_VERSION)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    [
+                        ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
+                        ("runtime", SCHEMA_VERSION),
+                    ],
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )
+
 
 class ConcurrentFirstInitializationTests(unittest.TestCase):
     """Four resident services may start against one empty data directory."""

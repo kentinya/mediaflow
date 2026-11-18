@@ -2,9 +2,9 @@
 
 The decision is read-only and runs before a repository creates a table, writes
 a schema marker or registers a publishing authority.  A current empty path, a
-current V2 runtime/configuration database and a configuration-only first-setup
-database are supported.  A retired V1 Job schema, a newer schema, a foreign file
-and a partially written configuration store are not.
+zero-table SQLite file, a current V2 runtime/configuration database and a
+configuration-only first-setup database are supported.  A retired V1 Job
+schema, a newer schema, a foreign file and a partially written store are not.
 
 Repositories repeat the same decision on their own connection inside the
 ``BEGIN IMMEDIATE`` transaction that creates the current structure, so two
@@ -165,6 +165,14 @@ def evaluate_database_applicability(
     elif tables & CONFIGURATION_TABLES:
         raise DatabaseApplicabilityError(
             "it contains configuration tables without a current configuration marker"
+        )
+    if markers.runtime_version is None and markers.configuration_version is None and tables:
+        # A file with tables but no MediaFlow schema marker is another
+        # application's SQLite database (or an interrupted foreign write).  It
+        # must never be adopted as a new store: doing so would add MediaFlow
+        # tables to a file the operator only aimed at by mistake.
+        raise DatabaseApplicabilityError(
+            "it contains tables but no current MediaFlow schema marker"
         )
     return markers
 

@@ -5319,7 +5319,11 @@ class SQLiteTaskRepository:
                                WHEN 'running' THEN 'running'
                                WHEN 'waiting_stability' THEN 'waiting'
                                WHEN 'completed' THEN 'completed'
-                               WHEN 'partial_success' THEN 'partial_success'
+                               -- A bounded discovery whose walk finished but
+                               -- stopped at a budget/depth bound is a
+                               -- completed discovery flow; the own discovery
+                               -- record keeps its partial result and reasons.
+                               WHEN 'partial_success' THEN 'completed'
                                WHEN 'failed' THEN 'failed'
                                ELSE 'cancelled'
                            END
@@ -5583,7 +5587,7 @@ class SQLiteTaskRepository:
                                   WHEN 'running' THEN 'running'
                                   WHEN 'waiting_stability' THEN 'waiting'
                                   WHEN 'completed' THEN 'completed'
-                                  WHEN 'partial_success' THEN 'partial_success'
+                                  WHEN 'partial_success' THEN 'completed'
                                   WHEN 'failed' THEN 'failed'
                                   ELSE 'cancelled'
                               END
@@ -5714,11 +5718,11 @@ class SQLiteTaskRepository:
         summary_sql = f"""SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN derived_status NOT IN (
-                'completed', 'partial_success', 'failed', 'cancelled'
+                'completed', 'failed', 'cancelled'
             ) THEN 1 ELSE 0 END) AS running,
             SUM(derived_attention) AS attention,
             SUM(CASE WHEN derived_status IN (
-                'completed', 'partial_success', 'failed', 'cancelled'
+                'completed', 'failed', 'cancelled'
             ) THEN 1 ELSE 0 END) AS ended,
             SUM(has_recognition_problem) AS recognition_tasks,
             SUM(has_metadata_problem) AS metadata_tasks,
@@ -5885,11 +5889,11 @@ class SQLiteTaskRepository:
                     f"""SELECT
                         COUNT(*) AS total,
                         SUM(CASE WHEN derived_status NOT IN (
-                            'completed', 'partial_success', 'failed', 'cancelled'
+                            'completed', 'failed', 'cancelled'
                         ) THEN 1 ELSE 0 END) AS running,
                         SUM(derived_attention) AS attention,
                         SUM(CASE WHEN derived_status IN (
-                            'completed', 'partial_success', 'failed', 'cancelled'
+                            'completed', 'failed', 'cancelled'
                         ) THEN 1 ELSE 0 END) AS ended,
                         SUM(has_recognition_problem) AS recognition,
                         SUM(has_metadata_problem) AS metadata,
