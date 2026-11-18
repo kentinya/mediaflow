@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from mediaflow.application.media_organizer import MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -30,6 +33,7 @@ from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
+from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from tests.managed_config_fixture import publish_managed_document
@@ -145,6 +149,13 @@ class RecognitionReviewTests(unittest.TestCase):
                 )
                 self.assertEqual(resolved.selected_recognition_type, "C")
                 self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.PENDING)
+                self.assertEqual(
+                    [
+                        value.item_id
+                        for value in coordinator.retryable_items(task.task_id, failed_only=False)
+                    ],
+                    [item.item_id],
+                )
                 audit = repository.list_recognition_review_audit(review.review_id)
                 self.assertEqual(audit[0].recognition_type_id, "C")
                 self.assertEqual(audit[0].note, "preserve C")
@@ -225,6 +236,118 @@ class RecognitionReviewTests(unittest.TestCase):
                     repository.get_item(item.item_id).status,
                     TaskItemStatus.WAITING_RECOGNITION,
                 )
+
+    def test_resolve_failure_rolls_back_review_item_and_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("organize", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "unknown", "Unknown.mkv", "Unknown.mkv"
+                )
+                service = RecognitionReviewService(
+                    repository, development_strategy_configuration().recognition_types
+                )
+                review = service.create(
+                    item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED)
+                )
+            connection = sqlite3.connect(database)
+            connection.execute(
+                """CREATE TRIGGER reject_recognition_decision
+                BEFORE INSERT ON recognition_review_decision_audit
+                BEGIN SELECT RAISE(ABORT, 'injected'); END"""
+            )
+            connection.commit()
+            connection.close()
+            with SQLiteTaskRepository(database) as repository:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    RecognitionReviewService(
+                        repository, development_strategy_configuration().recognition_types
+                    ).resolve(review.review_id, "C", actor="operator")
+                self.assertEqual(
+                    repository.get_recognition_review(review.review_id).status,
+                    RecognitionReviewStatus.PENDING,
+                )
+                self.assertEqual(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_RECOGNITION,
+                )
+                self.assertEqual(repository.list_recognition_review_audit(review.review_id), ())
+
+    def test_concurrent_resolve_commits_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("organize", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "unknown", "Unknown.mkv", "Unknown.mkv"
+                )
+                review = RecognitionReviewService(
+                    repository, development_strategy_configuration().recognition_types
+                ).create(item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED))
+            barrier = threading.Barrier(2)
+            outcomes = []
+
+            def resolve(actor):
+                try:
+                    with SQLiteTaskRepository(database) as repository:
+                        barrier.wait()
+                        RecognitionReviewService(
+                            repository,
+                            development_strategy_configuration().recognition_types,
+                        ).resolve(review.review_id, "C", actor=actor)
+                    outcomes.append("ok")
+                except (ValueError, sqlite3.OperationalError):
+                    outcomes.append("rejected")
+
+            threads = [threading.Thread(target=resolve, args=(actor,)) for actor in ("one", "two")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(sorted(outcomes), ["ok", "rejected"])
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(len(repository.list_recognition_review_audit(review.review_id)), 1)
+
+    def test_batch_resolve_api_and_cli_are_retired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"]["databasePath"] = str(database)
+            config_path = Path(directory, "strategy.json")
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            publish_managed_document(document)
+            with SQLiteTaskRepository(database) as repository:
+                service = RecognitionReviewService(
+                    repository, development_strategy_configuration().recognition_types
+                )
+                self.assertFalse(hasattr(service, "resolve_pending"))
+                self.assertFalse(hasattr(repository, "list_pending_recognition_reviews"))
+                self.assertFalse(hasattr(repository, "resolve_recognition_reviews_batch"))
+            output, error = io.StringIO(), io.StringIO()
+            with patch.object(
+                RuntimeConfiguration,
+                "create_storages",
+                side_effect=AssertionError("retired batch CLI constructed Storage"),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "recognition-reviews",
+                            "resolve-pending",
+                            "--recognition-type",
+                            "C",
+                            "--actor",
+                            "operator",
+                        ],
+                        stdout=output,
+                        stderr=error,
+                    )
+            self.assertEqual(2, raised.exception.code)
 
 
 if __name__ == "__main__":

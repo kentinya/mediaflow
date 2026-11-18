@@ -5,9 +5,11 @@ This is the real-process proof of the resident-service journey: a fresh
 deployment with **no media mount at all** starts the API and all three resident
 services from management-only bootstrap, they register and heartbeat, the
 Scheduler and Notification Worker report themselves as waiting rather than
-failed, an empty baseline is activated, and an eligible configuration published
+failed, the real Python-served Settings page creates, reloads, validates and
+checked-activates an empty baseline, and an eligible configuration published
 afterwards is adopted by the *same* running processes — with an eligible
-scheduled occurrence and a signed Webhook delivery produced without any restart.
+scheduled occurrence, a signed Webhook delivery and the container CLI loading
+its deployment environment through the official entrypoint, all without restart.
 
 A second, separate stack carries optional confined media mounts present
 *before* startup and proves real media work, so a permitted mount-change
@@ -540,6 +542,34 @@ class Stack:
             "registrations": json.loads(result.stdout),
         }
 
+    def prepare_isolated_media_root(self) -> str:
+        """Create an isolated, container-accessible root on every service.
+
+        The media-free stack has no media mount, so it must not point a Local
+        Storage at a host path that no container can see.  Each container gets
+        its own writable acceptance directory under the configured temporary
+        root; the path is identical in every service, as the shared Active
+        configuration requires.  This creates no media and proves only that the
+        published Storage root is reachable by the real deployment.
+        """
+
+        root = "/tmp/mediaflow-empty-baseline"
+        for service in ALL_SERVICES:
+            run(
+                [
+                    *self.compose,
+                    "exec",
+                    "-T",
+                    service,
+                    "mkdir",
+                    "-p",
+                    f"{root}/incoming",
+                    f"{root}/organized",
+                ],
+                environment=self.environment,
+            )
+        return root
+
     def wait_healthy(self) -> None:
         def healthy() -> bool:
             records = run(
@@ -805,51 +835,141 @@ def assert_real_web_status(stack: Stack) -> None:
     )
     if result.returncode:
         raise RuntimeError("real Python-served browser status failed: " + result.stderr)
-    print("   real Python-served Web renders service health, waiting and Settings recovery")
+    print("   real Python-served Web renders the operations shell without persisted credentials")
 
 
 def activate_empty_baseline_through_web(stack: Stack) -> dict:
-    """Run the native first-Draft buttons against the real Python-served SPA."""
+    """Run the native first-Draft controls against the real Python-served SPA."""
 
-    code = """
+    code = r"""
         import {chromium, expect} from '@playwright/test';
         const browser = await chromium.launch({headless:true});
-        let validatedVersion = null;
-        let activationVersion = null;
+        const writes = [];
+        const draftReads = [];
+        let created = null;
+        let validated = null;
+        let activated = null;
+        let activationBody = null;
         try {
             const page = await browser.newPage({viewport:{width:1280,height:900}});
-            page.on('response', async response => {
-                if (response.url().endsWith('/validate') && response.ok()) {
-                    validatedVersion = (await response.json()).version;
-                }
-            });
             page.on('request', request => {
-                if (request.url().endsWith('/activate')) {
-                    activationVersion = request.postDataJSON().expectedVersion;
-                }
+                const method = request.method();
+                const path = new URL(request.url()).pathname;
+                if (method !== 'GET' && path.includes('/api/v1/configuration'))
+                    writes.push(`${method} ${path}`);
+                if (method !== 'GET' &&
+                    /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(path))
+                    writes.push(`${method} ${path}`);
+                if (method === 'POST' && path.endsWith('/activate'))
+                    activationBody = request.postDataJSON();
+                if (method === 'GET' && /\/configuration\/revisions\/[^/]+$/.test(path))
+                    draftReads.push(path);
+            });
+            page.on('response', async response => {
+                const path = new URL(response.url()).pathname;
+                if (!response.ok()) return;
+                if (path.endsWith('/configuration/drafts/first'))
+                    created = await response.json();
+                if (path.endsWith('/validate'))
+                    validated = await response.json();
+                if (path.endsWith('/activate'))
+                    activated = await response.json();
             });
             await page.goto(process.env.MF_TEST_BASE + '/ui-v2/configuration');
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
             await page.getByRole('button', {name:'Connect', exact:true}).click();
-            await expect(page.getByRole('heading', {name:'需要创建首个 Draft'})).toBeVisible();
-            await page.getByRole('button', {name:'创建首个 Draft'}).click();
-            await expect(page.getByRole('button', {name:'验证 Draft'})).toBeVisible();
-            await page.getByRole('button', {name:'验证 Draft'}).click();
-            await expect(page.getByText(/Draft 验证完成/)).toBeVisible();
-            const activate = page.getByRole('button', {name:'checked-activate'});
-            await expect(activate).toBeEnabled();
-            await activate.click();
-            await expect(page.getByRole('heading', {
-                name:'Active 已激活,媒体业务尚未配置'})).toBeVisible();
-            const stores = await page.evaluate(
-                () => JSON.stringify([localStorage, sessionStorage]));
-            if(stores.includes(process.env.MF_TEST_TOKEN)) throw new Error('token persisted');
-            if(validatedVersion === null || activationVersion !== validatedVersion) {
-                throw new Error(
-                    `activation version ${activationVersion} did not match ` +
-                    `validation ${validatedVersion}`);
-            }
-            console.log(JSON.stringify({validatedVersion, activationVersion}));
+            await expect(page.getByText('需要首次设置', {exact:true})).toBeVisible();
+            await expect(page.getByRole('button', {name:'创建首个草稿'})).toBeVisible();
+            if (writes.length !== 0)
+                throw new Error('opening Settings wrote configuration or started work');
+            await page.getByRole('button', {name:'创建首个草稿'}).click();
+            await expect(page.getByText('已创建首个草稿')).toBeVisible();
+            await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
+            if (writes.length !== 1 ||
+                !/^POST \/api\/v1\/configuration\/drafts\/first$/.test(writes[0]))
+                throw new Error('the first Draft was not created by one explicit action');
+            if (created === null || typeof created.revisionId !== 'string')
+                throw new Error('the first Draft response did not identify its revision');
+
+            // A reload loses the in-memory token, reconnects, and must recover
+            // the same durable Draft rather than create another one.
+            await page.reload();
+            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
+            await page.getByRole('button', {name:'Connect', exact:true}).click();
+            await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
+            await page.getByRole('button', {name:/恢复草稿/}).click();
+            await expect(page.getByRole('heading', {name:'高级配置'})).toBeVisible();
+            await expect(page.getByRole('button', {name:'验证草稿'})).toBeVisible();
+            if (!draftReads.some(path => path.endsWith('/' + created.revisionId)))
+                throw new Error('the reloaded page did not read back the same Draft revision');
+            if (writes.length !== 1)
+                throw new Error('reload/resume created another Draft or submitted work');
+
+            await page.getByRole('button', {name:'验证草稿'}).click();
+            await expect(page.getByText('草稿验证通过')).toBeVisible();
+            await expect(
+                page.getByRole('region', {name:'发布前检查'})
+            ).toContainText('该草稿没有适用检查');
+            if (validated === null ||
+                validated.revisionId !== created.revisionId ||
+                validated.version !== created.version ||
+                validated.digest !== created.digest)
+                throw new Error('validation did not bind the exact created Draft revision');
+
+            await page.getByRole('button', {name:'激活配置'}).click();
+            await expect(page.getByRole('heading', {name:'配置已激活'})).toBeVisible();
+            await expect(page.getByText('空配置已生效', {exact:true})).toBeVisible();
+            if (activationBody === null ||
+                activationBody.checked !== true ||
+                activationBody.expectedVersion !== validated.version)
+                throw new Error('activation did not use the checked exact validated version');
+            if (activated === null ||
+                activated.revisionId !== created.revisionId ||
+                activated.version !== validated.version)
+                throw new Error('activation response did not identify the exact Active revision');
+            if (writes.some(path =>
+                !path.startsWith('POST /api/v1/configuration/drafts/first') &&
+                !/^POST \/api\/v1\/configuration\/revisions\/[^/]+\/(validate|activate)$/
+                    .test(path)))
+                throw new Error('the settings journey wrote outside its explicit actions');
+
+            // The visible Active identity and the empty-business next action
+            // must come from the same post-activation read.
+            await page.getByText('诊断', {exact:true}).click();
+            const identity = page.locator(
+                'section.mf-settings-diagnostic-block').filter({hasText:'配置身份'});
+            await expect(identity).toContainText('生效版本');
+            await expect(identity.locator('code').filter({
+                hasText:created.revisionId}).first()).toContainText(created.revisionId);
+            await expect(identity).toContainText('配置已激活，媒体业务尚未配置');
+            const browserState = await page.evaluate(async () => ({
+                localStorage: localStorage.length,
+                sessionStorage: sessionStorage.length,
+                cookie: document.cookie,
+                indexedDb: typeof indexedDB.databases === 'function'
+                    ? (await indexedDB.databases()).length
+                    : -1,
+            }));
+            const serialized = JSON.stringify(browserState);
+            if (page.url().includes(process.env.MF_TEST_TOKEN) ||
+                serialized.includes(process.env.MF_TEST_TOKEN))
+                throw new Error('token leaked into URL or browser persistence');
+            if (browserState.localStorage !== 0 || browserState.sessionStorage !== 0 ||
+                browserState.cookie !== '' || browserState.indexedDb !== 0)
+                throw new Error('unexpected persistent browser state');
+            if ((await page.locator('body').innerText()).includes(process.env.MF_TEST_TOKEN))
+                throw new Error('token leaked into rendered content');
+            if ((await page.context().cookies()).some(
+                cookie => cookie.value.includes(process.env.MF_TEST_TOKEN)))
+                throw new Error('token leaked into a browser cookie');
+            console.log(JSON.stringify({
+                writes,
+                validatedVersion: validated.version,
+                activationVersion: activationBody.expectedVersion,
+                activeRevision: activated.revisionId,
+                draftReloaded: true,
+                tokenStored: false,
+            }));
         } finally { await browser.close(); }
     """
     result = subprocess.run(
@@ -863,7 +983,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
         raise RuntimeError("real Python-served first activation failed: " + result.stderr)
     evidence = json.loads(result.stdout.strip().splitlines()[-1])
     print(
-        "   real Python-served Web created, validated and checked-activated "
+        "   real Python-served Web created, reloaded and checked-activated "
         f"exact Draft version {evidence['validatedVersion']}"
     )
     return evidence
@@ -933,6 +1053,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         identities = stack.process_ids()
         print("   publishing an eligible schedule + webhook without restarting...")
         receiver.received.clear()
+        isolated_media_root = stack.prepare_isolated_media_root()
 
         def configure(document: dict) -> None:
             # The media-free stack publishes one enabled Automation Task
@@ -954,7 +1075,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                     "id": "acceptance-source",
                     "name": "Acceptance source",
                     "type": "local",
-                    "rootPath": "/media/incoming",
+                    "rootPath": isolated_media_root + "/incoming",
                     "enabled": True,
                 }
             )
@@ -992,6 +1113,30 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                 f"{after_publication}"
             )
         print("   resident process identities unchanged across publication")
+
+        # The official container entrypoint loads the mounted deployment
+        # environment file before running any MediaFlow CLI command.  Without
+        # that environment the API credential is unset, so this is a real
+        # deployment-environment proof rather than a command that happens to
+        # work from the bootstrap alone.
+        credential_check = run(
+            [
+                *stack.compose,
+                "exec",
+                "-T",
+                "api",
+                "python",
+                "-m",
+                "mediaflow.container_entrypoint",
+                "api",
+                "credentials",
+                "check",
+            ],
+            environment=stack.environment,
+        )
+        if stack.token in credential_check.stdout or stack.token in credential_check.stderr:
+            raise RuntimeError("container CLI credential preflight exposed the API token")
+        print("   container CLI loaded deployment environment via its official entrypoint")
 
         signed = receiver.received[0]
         if not signed["signature"].startswith("sha256="):
@@ -1074,7 +1219,7 @@ def wait_task(stack: Stack, admitted: dict) -> None:
         status = current["status"]
         if status in {"failed", "cancelled"}:
             raise RuntimeError(f"admitted {current.get('command')} failed: {current}")
-        return status in {"completed", "partial_success"}
+        return status == "completed"
 
     wait_until(complete, timeout=120, description="resident Task completion")
 
@@ -1256,9 +1401,9 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
                 "exec",
                 "-T",
                 "api",
-                "mediaflow",
-                "--config",
-                "/config/mediaflow.json",
+                "python",
+                "-m",
+                "mediaflow.container_entrypoint",
                 "organize",
                 "--execute",
                 "--limit",
@@ -1308,9 +1453,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             raise RuntimeError("a resident process restarted across setup/publication/work")
         print("   process identities before: " + json.dumps(identities, sort_keys=True))
         print("   process identities after: " + json.dumps(final_identities, sort_keys=True))
-        print(
-            "   Scan, Preview, Organize and both library Copy operations completed; same processes"
-        )
+        print("   Organize and both library Copy operations completed; same processes")
 
         print("== optional media-mount stack PASSED ==")
     finally:

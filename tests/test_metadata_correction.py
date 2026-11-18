@@ -67,7 +67,7 @@ class MetadataCorrectionTests(unittest.TestCase):
     def test_not_found_correction_is_persisted_resolved_and_audited(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                _, _, item = create_processing_item(repository)
+                coordinator, task, item = create_processing_item(repository)
                 service = MetadataCorrectionService(
                     repository, self.configuration.metadata_policies
                 )
@@ -92,6 +92,13 @@ class MetadataCorrectionTests(unittest.TestCase):
                 )
                 self.assertEqual(resolved.corrected_query, "Correct Title")
                 self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.PENDING)
+                self.assertEqual(
+                    [
+                        value.item_id
+                        for value in coordinator.retryable_items(task.task_id, failed_only=False)
+                    ],
+                    [item.item_id],
+                )
                 self.assertEqual(
                     repository.list_metadata_correction_audit(review.review_id)[0].note, "fix query"
                 )

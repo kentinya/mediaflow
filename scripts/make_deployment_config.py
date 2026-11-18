@@ -122,11 +122,22 @@ def main() -> int:
         default=DEFAULT_ADMIN_TOKEN_ENV,
         help="environment variable name holding the admin API credential",
     )
+    parser.add_argument(
+        "--database-path",
+        default="/data/mediaflow.sqlite3",
+        help=(
+            "durable database locator written into the management bootstrap; "
+            "the default is the container persistence path"
+        ),
+    )
     arguments = parser.parse_args()
     document = (
         make_deployment_configuration()
         if arguments.configuration
-        else make_management_bootstrap(token_env=arguments.token_env)
+        else make_management_bootstrap(
+            database_path=arguments.database_path,
+            token_env=arguments.token_env,
+        )
     )
     rendered = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     if arguments.output is None:

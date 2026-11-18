@@ -38,6 +38,14 @@ installation, health, restart, backup/upgrade/restore and failure-recovery proce
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
+- The current product is fresh V2 plus same-version continuity. Accepted V2 data already present
+  at this Slice's Base — managed Draft/Active revisions, Storage and both library kinds, rules,
+  runtime settings, Automation/notification definitions, legal Task/request/result/audit rows and
+  original pins — keeps its IDs, relationships, digests and target semantics. It needs no
+  reinitialization or resubmission, and completed/unknown effects are never replayed. V1 and
+  obsolete migration shapes receive ordinary current rejection/not-found behavior, not a hidden
+  converter, alias or fallback. Restore uses the same artifact version that produced the supported
+  backup.
 - The same image contains the built V2 static artifact at
   `/opt/mediaflow/web/dist`, bound to the running process through
   `MEDIAFLOW_UI_V2_ASSET_ROOT`. Node, npm and the frontend source tree exist
@@ -65,6 +73,16 @@ shape a fresh installation needs and it starts every service without any media
 mount. Open `/ui-v2/configuration`, create the first Draft, and activate a valid
 empty baseline; Storage and libraries are configured afterwards through the
 business pages.
+
+In `系统设置` (`/ui-v2/configuration`), the compact `配置状态摘要` shows whether setup is required.
+Use `创建首个草稿`, reload the page and use `恢复草稿（编辑版本 N）` to prove the same Draft is
+recovered. In `高级配置`, `验证草稿` validates that exact edit version. The `发布前检查` panel
+lists only checks applicable to that revision; an empty baseline reports `该草稿没有适用检查`.
+`激活配置` is the explicit checked activation of the validated edit version. The page then shows
+`空配置已生效`, the actual Active identity under `诊断`, and no Task, delivery or media mutation.
+For a populated configuration, run each listed Storage check, offline recognition strategy test and
+destination precheck in the same panel before activation. A failed check keeps the Draft and the
+previous Active intact and offers the named correction/rerun action.
 
 If you already have a Local Storage layout, also render the canonical example as a
 managed configuration *input*:
@@ -537,7 +555,7 @@ It verifies four services, authenticated API/Web reachability, a durable job
 after an API restart, non-root execution, secret-free output, and a missing
 media-mount failure. If no Docker engine is present it prints `SKIP`.
 
-The Slice 40 empty-baseline harness proves the resident-service journey with no
+The current empty-baseline harness proves the resident-service journey with no
 media mount at all:
 
 ```bash
@@ -547,13 +565,21 @@ python3 scripts/docker_empty_baseline_smoke_test.py
 It runs two isolated stacks. The first uses the **default** topology: all four
 services start with only the bootstrap file, the environment file and `/data`;
 the resident services register and heartbeat; Scheduler and Notification Worker
-report themselves waiting with a bounded reason; an empty baseline is activated
-through the authenticated API and creates no Task, delivery or mutation; an
-eligible schedule and Webhook are then published and the **same** container
-identities produce an eligible occurrence and a signed delivery to a controlled
-local HTTPS receiver. The second stack is a separate project with the optional
-media overlay applied *before* startup, so a permitted mount change is never
-confused with configuration adoption.
+report themselves waiting with a bounded reason; the real Python-served
+`系统设置` page creates the first Draft, reloads and recovers that same Draft,
+validates it, confirms the empty baseline has no applicable publish checks and
+activates the exact checked version. The page then shows the empty Active
+identity and creates no Task, delivery or mutation. An eligible Local Storage,
+ResourceLibrary, schedule and Webhook are published against a container-local
+isolated root; the **same** container identities produce an eligible occurrence
+and a signed delivery to a controlled local HTTPS receiver. The harness runs the
+container CLI through the official entrypoint so it receives the mounted
+deployment environment, and checks the retry stays blocked after a target change
+until the original recipient is restored. The second stack is a separate project
+with the optional media overlay applied *before* startup; it completes real
+Organize and both library Copy operations, verifying Task flow and file effects
+independently, so a permitted mount change is never confused with configuration
+adoption.
 
 If a Docker daemon cannot bind-mount the platform temporary directory, point the
 harness at a directory the daemon can see with `MEDIAFLOW_SMOKE_TEMP_DIR`.

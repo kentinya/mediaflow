@@ -4,7 +4,6 @@ import io
 import json
 import sqlite3
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,7 +14,6 @@ from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.recognition_review import RecognitionReviewService
-from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.metadata import MetadataIdentificationStatus
 from mediaflow.domain.metadata_correction import MetadataCorrectionStatus
@@ -23,6 +21,7 @@ from mediaflow.domain.metadata_review import MetadataReviewStatus
 from mediaflow.domain.parser import ParseResult
 from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus
 from mediaflow.domain.recognition_review import RecognitionReviewStatus
+from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
@@ -38,6 +37,14 @@ SNAPSHOT_DIGEST = "a" * 64
 class ManualIgnoreBatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.strategy = development_strategy_configuration()
+
+    @staticmethod
+    def _snapshot_validator(snapshot_id: str, digest: str) -> None:
+        if snapshot_id != SNAPSHOT_ID or digest != SNAPSHOT_DIGEST:
+            raise ValueError("snapshot unavailable")
+
+    def _service(self, repository):
+        return ManualIgnoreService(repository, snapshot_validator=self._snapshot_validator)
 
     def _create_waiting(
         self,
@@ -90,17 +97,22 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                 actor="tester",
             )
 
-    def test_batch_ignores_supported_waiting_kinds_atomically_oldest_first(self) -> None:
+    def test_pending_ignore_admits_each_supported_kind_and_settles_the_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("organize", execute_authorized=False)
+                task = coordinator.create(
+                    "organize",
+                    execute_authorized=False,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                )
                 recognition = self._create_waiting(repository, "recognition", number=1, task=task)
                 metadata = self._create_waiting(repository, "metadata", number=2, task=task)
                 correction = self._create_waiting(
                     repository, "metadata_correction", number=3, task=task
                 )
-                decisions = ManualIgnoreService(repository).ignore_pending(
+                decisions = self._service(repository).ignore_pending(
                     actor=" operator ",
                     note=" intentionally ignored ",
                     limit=3,
@@ -122,6 +134,10 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                     self.assertEqual(
                         repository.list_manual_ignore_audit(item.item_id)[0].note,
                         "intentionally ignored",
+                    )
+                    self.assertEqual(
+                        len(repository.list_recovery_requests(item.item_id)),
+                        1,
                     )
                     if kind == "recognition":
                         self.assertEqual(
@@ -149,8 +165,18 @@ class ManualIgnoreBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                first_task = coordinator.create("organize", execute_authorized=False)
-                second_task = coordinator.create("organize", execute_authorized=False)
+                first_task = coordinator.create(
+                    "organize",
+                    execute_authorized=False,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                )
+                second_task = coordinator.create(
+                    "organize",
+                    execute_authorized=False,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                )
                 first_recognition = self._create_waiting(
                     repository, "recognition", number=1, task=first_task
                 )
@@ -160,7 +186,7 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                 second_recognition = self._create_waiting(
                     repository, "recognition", number=3, task=second_task
                 )
-                decisions = ManualIgnoreService(repository).ignore_pending(
+                decisions = self._service(repository).ignore_pending(
                     actor="operator",
                     limit=2,
                     task_id=first_task.task_id,
@@ -185,8 +211,8 @@ class ManualIgnoreBatchTests(unittest.TestCase):
     def test_invalid_actor_limits_empty_selection_and_missing_task_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                _, task, _, _ = self._create_waiting(repository, "recognition")
-                service = ManualIgnoreService(repository)
+                self._create_waiting(repository, "recognition")
+                service = self._service(repository)
                 with self.assertRaisesRegex(ValueError, "actor"):
                     service.ignore_pending(actor="   ")
                 for limit in (0, -1, 101, True):
@@ -196,77 +222,84 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "no pending"):
                     service.ignore_pending(actor="operator", task_id="missing")
 
-    def test_any_invalid_member_rolls_back_whole_batch(self) -> None:
+    def test_each_item_is_atomic_and_later_failure_preserves_earlier_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
-                _, task, first_item, first_review = self._create_waiting(
-                    repository, "recognition", number=1
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create(
+                    "organize",
+                    execute_authorized=False,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 )
-                _, _, second_item, second_review = self._create_waiting(
-                    repository, "metadata", number=2, task=task
-                )
+                first = self._create_waiting(repository, "recognition", number=1, task=task)
+                second = self._create_waiting(repository, "metadata", number=2, task=task)
+                third = self._create_waiting(repository, "metadata_correction", number=3, task=task)
+            second_item = second[2]
             connection = sqlite3.connect(database)
             connection.execute(
-                """CREATE TRIGGER reject_manual_ignore_batch BEFORE INSERT ON manual_ignore_audit
+                f"""CREATE TRIGGER reject_second_ignore BEFORE INSERT ON manual_ignore_audit
+                WHEN NEW.item_id = '{second_item.item_id}'
                 BEGIN SELECT RAISE(ABORT, 'injected'); END"""
             )
             connection.commit()
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                service = ManualIgnoreService(repository)
                 with self.assertRaises(sqlite3.IntegrityError):
-                    service.ignore_pending(actor="operator", limit=2)
+                    self._service(repository).ignore_pending(actor="operator", limit=3)
                 self.assertEqual(
-                    repository.get_item(first_item.item_id).status,
-                    TaskItemStatus.WAITING_RECOGNITION,
+                    repository.get_item(first[2].item_id).status, TaskItemStatus.IGNORED
                 )
                 self.assertEqual(
                     repository.get_item(second_item.item_id).status,
                     TaskItemStatus.WAITING_METADATA,
                 )
                 self.assertEqual(
-                    repository.get_recognition_review(first_review.review_id).status,
-                    RecognitionReviewStatus.PENDING,
+                    repository.get_item(third[2].item_id).status,
+                    TaskItemStatus.WAITING_METADATA_CORRECTION,
                 )
                 self.assertEqual(
-                    repository.get_metadata_review(second_review.review_id).status,
+                    repository.get_metadata_review(second[3].review_id).status,
                     MetadataReviewStatus.PENDING,
                 )
-                self.assertEqual(repository.list_manual_ignore_audit(first_item.item_id), ())
+                self.assertEqual(
+                    repository.list_manual_ignore_audit(first[2].item_id)[0].actor, "operator"
+                )
                 self.assertEqual(repository.list_manual_ignore_audit(second_item.item_id), ())
 
-    def test_concurrent_batch_ignore_commits_once(self) -> None:
+    def test_without_admission_service_no_direct_ignore_write_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                _, task, first_item, _ = self._create_waiting(repository, "recognition", number=1)
-                _, _, second_item, _ = self._create_waiting(
-                    repository, "metadata", number=2, task=task
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _, _, item, review = self._create_waiting(repository, "recognition")
+                with self.assertRaises(RecoveryAdmissionError) as raised:
+                    ManualIgnoreService(repository).ignore_pending(actor="operator", limit=1)
+                self.assertEqual(
+                    raised.exception.reason, RecoveryAdmissionReason.SNAPSHOT_UNAVAILABLE
                 )
-            barrier = threading.Barrier(2)
-            outcomes = []
+                self.assertEqual(
+                    repository.get_item(item.item_id).status, TaskItemStatus.WAITING_RECOGNITION
+                )
+                self.assertEqual(
+                    repository.get_recognition_review(review.review_id).status,
+                    RecognitionReviewStatus.PENDING,
+                )
+                self.assertEqual(repository.list_manual_ignore_audit(item.item_id), ())
 
-            def ignore(actor):
-                try:
-                    with SQLiteTaskRepository(database) as repository:
-                        barrier.wait()
-                        ManualIgnoreService(repository).ignore_pending(actor=actor, limit=2)
-                    outcomes.append("ok")
-                except (ValueError, sqlite3.OperationalError):
-                    outcomes.append("rejected")
+    def test_retired_direct_ignore_transports_are_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = self._service(repository)
+                self.assertFalse(hasattr(service, "_legacy_ignore"))
+                self.assertFalse(hasattr(service, "_pending_review"))
+                self.assertFalse(hasattr(repository, "ignore_waiting_item"))
+                self.assertFalse(hasattr(repository, "ignore_waiting_items"))
+        from mediaflow.domain import manual_ignore
 
-            threads = [threading.Thread(target=ignore, args=(actor,)) for actor in ("one", "two")]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-            self.assertEqual(sorted(outcomes), ["ok", "rejected"])
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(len(repository.list_manual_ignore_audit(first_item.item_id)), 1)
-                self.assertEqual(len(repository.list_manual_ignore_audit(second_item.item_id)), 1)
+        self.assertFalse(hasattr(manual_ignore, "ManualIgnoreBatchRequest"))
+        self.assertTrue(hasattr(manual_ignore, "ManualIgnoreCandidate"))
 
-    def test_cli_batch_ignore_constructs_no_storage_or_provider(self) -> None:
+    def test_cli_batch_ignore_uses_persistent_admission_without_storage_or_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
@@ -276,7 +309,7 @@ class ManualIgnoreBatchTests(unittest.TestCase):
             config_path.write_text(json.dumps(document), encoding="utf-8")
             active = self._activate_document(database, document)
             with SQLiteTaskRepository(database) as repository:
-                _, task, _, review = self._create_waiting(
+                _, task, item, review = self._create_waiting(
                     repository,
                     "recognition",
                     snapshot_id=active.revision_id,
@@ -311,16 +344,8 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                     repository.get_recognition_review(review.review_id).status,
                     RecognitionReviewStatus.IGNORED,
                 )
-
-    def test_c_preservation_and_retryable_exclusion_remain_unchanged(self) -> None:
-        runner = strategy_runner_from_configuration(development_strategy_configuration())
-        result = runner.run_path("/Unknown.2025.mkv", resource_library_id="special")
-        self.assertEqual(result.recognition.recognition_type_id, "C")
-        self.assertEqual(result.policy.metadata_policy_id, "C")
-        self.assertEqual(result.policy.naming_policy_id, "A")
-        self.assertEqual(result.policy.classification_policy_id, "A")
-        self.assertEqual(result.policy.organize_policy_id, "A")
-        self.assertTrue(result.recognition_type_preserved)
+                self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.IGNORED)
+                self.assertEqual(len(repository.list_recovery_requests(item.item_id)), 1)
 
 
 if __name__ == "__main__":

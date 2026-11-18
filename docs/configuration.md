@@ -8,7 +8,7 @@ operator guide, not a Phase or Task log. Large-Slice status is maintained in
 
 | Path | Authority |
 |---|---|
-| JSON bootstrap (`MEDIAFLOW_CONFIG`) | Compatibility runtime input before managed activation; also supports legacy/exchange/recovery use. |
+| JSON bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator and API-principal environment references. It is not managed business authority and cannot substitute for an activated revision. |
 | Managed Configuration | Explicitly activated immutable SQLite revision/digest; sole runtime authority after activation, with no JSON/Draft/stale-cache fallback. |
 | Minimal management bootstrap | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
 
@@ -18,30 +18,43 @@ prior Active are distinct states. See [the setup journey](product-experience.md#
 
 ## Bootstrap configuration
 
-The compatibility document contains at least:
+A fresh deployment starts from the minimal management bootstrap:
 
 ```json
 {
-  "storages": [
-    {"id": "source", "type": "local", "rootPath": "/media/incoming"},
-    {"id": "target", "type": "local", "rootPath": "/media/organized"}
-  ],
-  "resourceLibraries": [
-    {"id": "source-media", "storageId": "source", "storagePath": "",
-     "displayRootPath": "/media/incoming"}
-  ],
-  "mediaLibraries": [
-    {"id": "movies", "storageId": "target", "rootPath": "Movies"}
-  ],
-  "historyPath": ".mediaflow/history.jsonl",
-  "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"}
+  "version": 1,
+  "persistence": {"databasePath": "/data/mediaflow.sqlite3"},
+  "api": {
+    "principals": [
+      {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": true}
+    ]
+  }
 }
 ```
 
-For populated organizing capabilities, declare their actual recognition/type-policy/Metadata/
-Naming/Classification/Organize references; dangling objects fail validation. Unrelated empty families
-are legal and create no capability/defaults. `config/strategy.example.json` is the complete working
-example; A/B/C development/smoke constructors are test fixtures, never production fallback.
+It declares no Storage, ResourceLibrary, MediaLibrary, rule, policy or Webhook, so a fresh
+installation can start all services, expose status/recovery and create the first Draft before any
+business object exists. Generate the same shape with
+`python3 scripts/make_deployment_config.py --output config/mediaflow.json`; add
+`--database-path PATH` only when the durable locator differs from `/data/mediaflow.sqlite3`.
+
+`config/strategy.example.json` is the complete canonical business example. It is **not** a startup
+bootstrap: its example paths and deployment identity are not portable. Render its portable managed
+input and import that as an inactive Draft:
+
+```bash
+python3 scripts/make_deployment_config.py \
+  --output config/mediaflow.json \
+  --configuration-output config/mediaflow.activation.json
+mediaflow config draft-import --file config/mediaflow.activation.json
+mediaflow config draft-validate REVISION_ID
+mediaflow config activate REVISION_ID --expected-version VERSION
+```
+
+The generated input omits the database locator and API principal identity, so import binds the
+receiving deployment's own authority. Edit its Local Storage roots and library paths for the target
+deployment before validation. Unrelated empty families are legal and create no capability/defaults;
+populated references that point at missing objects fail validation.
 
 Validate without scanning, contacting a Metadata Provider or mutating Storage:
 
@@ -144,8 +157,8 @@ The two existing save paths have different outcomes:
 
 - `系统运行设置` → `保存设置` publishes only the changed runtime fields through the focused checked
   Save. No separate Draft/Validate/Activate clicks are required for these three fields.
-- `高级配置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`,
-  `通知运行` and `远程执行`. `保存到草稿` saves only that group's changed fields; other groups'
+- `高级配置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`
+  and `通知运行`. `保存到草稿` saves only that group's changed fields; other groups'
   unsaved input stays in the form. `放弃本组修改` affects only that group. Booleans use explicit
   choices, numbers are validated without truncation or blank-to-zero conversion, and each group
   shows whether activation takes effect immediately or requires a restart.
@@ -155,7 +168,7 @@ For advanced edits, select the intended Draft, use `验证草稿`, and complete 
 a selected ResourceLibrary and synthetic filename, and the destination precheck using an explicit
 sample. Correct a failed check's input or named configuration issue and rerun it; the prior Active
 and saved Draft remain intact. `激活配置` publishes only the exact validated revision through checked
-activation. A valid empty baseline has no inapplicable checks to run.
+activation. A valid empty baseline has no applicable checks to run.
 
 `配置内容` defaults to the exact Active JSON when one exists; select a Draft explicitly to inspect
 it. JSON and the separately generated redacted package identify their source. Reads and exports do
@@ -465,6 +478,14 @@ statuses. Repositories reject newer unsupported schemas; same-version restore fo
 explicit [deployment maintenance procedure](deployment.md#backup-and-same-version-recovery).
 Old-task/Job conversion and cross-version upgrade/rollback are outside current support.
 Do not infer a feature or permission to rebuild user data from an old schema number.
+
+This Slice's supported continuity is the accepted V2 data already present at its Base: existing
+managed Draft/Active revisions, Storage and two library kinds, rules, runtime settings, Automation
+and notification definitions, legal Task/request/result/audit rows and original pins retain their
+IDs, relationships, digests and target semantics. They do not need reinitialization or resubmission,
+and completed/unknown effects are not replayed. Only V1 or obsolete migration shapes are outside the
+conversion/takeover boundary; see [Deployment](deployment.md#boundary) and
+[Release](release.md#current-v2-validation-boundary).
 
 ## Current limitations and post-V1 / V2 boundaries
 

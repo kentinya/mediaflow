@@ -10,16 +10,37 @@ only explicitly authorized OrganizerExecutor work mutates media. No FFmpeg/FFpro
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e '.[dev,tmdb]'
-cp config/strategy.example.json config/mediaflow.json
+python3 scripts/make_deployment_config.py \
+  --output config/mediaflow.json \
+  --database-path "$PWD/.mediaflow/mediaflow.sqlite3" \
+  --configuration-output config/mediaflow.activation.json
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
-export TMDB_ACCESS_TOKEN="<token>"
 export MEDIAFLOW_API_TOKEN="<long-random-development-token>"
+# Optional until a configured TMDB policy/Explore is used:
+export TMDB_ACCESS_TOKEN="<token>"
 ```
 
-Edit Storage roots and library-relative paths before use. Credentials stay in environment variables;
-JSON stores references. Optional provider extras are `openlist`, `smb`, `s3`; their credential
-references are described in [Configuration](docs/configuration.md). `storage list` does not connect
-adapters; `storage check` is a bounded read-only check, not mutation authority.
+The generated `config/mediaflow.json` is the **minimal management bootstrap**: one durable
+database locator and one environment-owned admin credential reference. It contains no Storage,
+library, rule or policy defaults, so it can start and expose Settings before any business object
+exists. `config/mediaflow.activation.json` is the canonical example rendered as a managed
+configuration *input*; edit its Local Storage roots and other values for your machine, then import
+it as an inactive Draft and publish it through the normal validation/check/activation lifecycle:
+
+```bash
+.venv/bin/mediaflow config draft-import --file config/mediaflow.activation.json
+.venv/bin/mediaflow config draft-validate REVISION_ID
+.venv/bin/mediaflow config activate REVISION_ID --expected-version VERSION
+```
+
+Use `系统设置` (`/ui-v2/configuration`) for the same first-Draft, validate, read-only publish-check
+and explicit checked-activation journey. `config/strategy.example.json` is the canonical business
+example and the source for that generated input; it is not a service startup file because it
+carries the example's own deployment and principal identity rather than the receiving deployment's
+authority. Credentials stay in environment variables; JSON
+stores references. Optional provider extras are `openlist`, `smb`, `s3`; their credential references
+are described in [Configuration](docs/configuration.md). `storage list` does not connect adapters;
+`storage check` is a bounded read-only check, not mutation authority.
 
 For production installation, use [Docker deployment](docs/deployment.md). A management-only bootstrap
 can start without media mounts or business objects; Web Settings creates and activates managed

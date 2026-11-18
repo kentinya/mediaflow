@@ -272,9 +272,14 @@ corrections below state which package gates were run. An actual release still re
 exact-source container, external-service and release validation.
 
 This is development acceptance, not a V2 release. Current support is fresh initialization
-→ submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
-migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are
-excluded. Readable immutable configuration containing retired fields does not add an upgrade promise.
+→ submit new work → same-version reopen/restart and permitted safe continuation. Within one
+artifact version, accepted V2 data at the Slice Base remains usable without reinitialization:
+managed Draft/Active revisions, Storage and both library kinds, rules, runtime settings,
+Automation/notification definitions, legal Task/request/result/audit records and original pins keep
+their IDs, relationships, digests and target semantics; completed or unknown effects are never
+replayed. Old-task/Job migration or takeover, cross-version upgrade/rollback, mixed-version writers
+and V1 support are excluded. Readable immutable configuration containing retired fields does not add
+an upgrade promise, and V1/released `/ui` product behavior is not served on this line.
 
 The standalone [OpenList correction](https://github.com/kentinya/mediaflow/blob/d65e938dba698d46fc934992a7b2cd3746ceea7b/TASK.md) was accepted by B on 2026-11-08,
 from Base `6db3647c7e77d54f3a49b6725c804f0794fc7fbb` through implementation
