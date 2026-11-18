@@ -2759,6 +2759,25 @@ class ConfigurationObjectService:
             safe["url"] = redact_webhook_url_value(safe.get("url"))
         return safe
 
+    @staticmethod
+    def _accepted_webhook_for_draft_write(
+        source: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Return one stored Webhook document with its accepted events re-spelled.
+
+        Copy and enable/disable are server-assembled Draft writes from a
+        definition the stored revision already accepted.  Reading the source
+        through the same accepted-definition parser as the runtime loader keeps
+        those actions usable for a definition whose persisted events still use
+        an earlier spelling.  A user-submitted object is still judged by the
+        current input validator, which never admits those names.
+        """
+
+        candidate = copy.deepcopy(dict(source))
+        accepted = accepted_webhook_definition(candidate)
+        candidate["events"] = [event.value for event in accepted.events]
+        return candidate
+
     def copy_object(
         self,
         revision_id: str,
@@ -2784,7 +2803,11 @@ class ConfigurationObjectService:
         source = next((item for item in values if item.get("id") == object_id), None)
         if source is None:
             raise LookupError(f"{section} {object_id!r} was not found")
-        candidate = copy.deepcopy(source)
+        candidate = (
+            self._accepted_webhook_for_draft_write(source)
+            if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
+            else copy.deepcopy(source)
+        )
         if new_object_id is None:
             existing = {str(item.get("id")) for item in values}
             base = f"{object_id}-copy"
@@ -2848,7 +2871,11 @@ class ConfigurationObjectService:
         source = next((item for item in values if item.get("id") == object_id), None)
         if source is None:
             raise LookupError(f"{section} {object_id!r} was not found")
-        candidate = copy.deepcopy(source)
+        candidate = (
+            self._accepted_webhook_for_draft_write(source)
+            if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
+            else copy.deepcopy(source)
+        )
         candidate["enabled"] = enabled
         return self.mutate(
             revision_id,

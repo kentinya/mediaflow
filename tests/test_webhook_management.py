@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.configuration_integrity import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     canonical_document_digest,
@@ -19,6 +20,11 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectKind,
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
+)
+from mediaflow.domain.notification import (
+    NotificationEvent,
+    NotificationEventType,
+    accepted_webhook_definition,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
@@ -149,6 +155,43 @@ def _activate(harness):
     )
 
 
+def _accept_historical_webhook(harness):
+    """Publish one Webhook definition that still stores the earlier event names.
+
+    This is the Slice Base shape: the exact document was accepted when
+    ``job.*`` was the current spelling, so its stored bytes and digest stay
+    untouched while every current read presents the Task lifecycle meaning.
+    """
+
+    legacy = example_document()
+    webhook = legacy.pop("webhooks")[0]
+    stored_events = ["job.completed", "job.failed", "schedule.emitted"]
+    webhook["events"] = stored_events
+    webhook["enabled"] = True
+    legacy["notifications"]["webhooks"] = [webhook]
+    legacy["persistence"]["databasePath"] = harness.runtime_database
+    now = datetime.now(UTC)
+    accepted = harness.config_repository.create_revision(
+        ManagedConfigurationRevision(
+            "previous-version-webhook",
+            1,
+            ManagedConfigurationStatus.DRAFT,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            canonical_document_digest(legacy),
+            legacy,
+            now,
+            now,
+        )
+    )
+    validated = harness.configuration.validate(accepted.revision_id, actor="bootstrap")
+    active = harness.configuration.activate(
+        accepted.revision_id,
+        expected_version=validated.version,
+        actor="bootstrap",
+    )
+    return accepted, active, stored_events
+
+
 class WebhookManagementTests(unittest.TestCase):
     def test_accepted_historical_webhook_is_projected_with_current_events(self) -> None:
         """An accepted definition keeps its bytes while reads use current events.
@@ -163,31 +206,7 @@ class WebhookManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookManagementHarness(directory)
             try:
-                legacy = example_document()
-                webhook = legacy.pop("webhooks")[0]
-                stored_events = ["job.completed", "job.failed", "schedule.emitted"]
-                webhook["events"] = stored_events
-                legacy["notifications"]["webhooks"] = [webhook]
-                legacy["persistence"]["databasePath"] = harness.runtime_database
-                now = datetime.now(UTC)
-                accepted = harness.config_repository.create_revision(
-                    ManagedConfigurationRevision(
-                        "previous-version-webhook",
-                        1,
-                        ManagedConfigurationStatus.DRAFT,
-                        MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
-                        canonical_document_digest(legacy),
-                        legacy,
-                        now,
-                        now,
-                    )
-                )
-                validated = harness.configuration.validate(accepted.revision_id, actor="bootstrap")
-                active = harness.configuration.activate(
-                    accepted.revision_id,
-                    expected_version=validated.version,
-                    actor="bootstrap",
-                )
+                accepted, active, stored_events = _accept_historical_webhook(harness)
                 self.assertEqual(active.revision_id, accepted.revision_id)
                 self.assertEqual(active.digest, accepted.digest)
                 original_document = json.loads(json.dumps(active.document))
@@ -251,6 +270,251 @@ class WebhookManagementTests(unittest.TestCase):
                 self.assertIsNotNone(current)
                 self.assertEqual(current.revision_id, active.revision_id)
                 self.assertEqual(current.digest, active.digest)
+            finally:
+                harness.close()
+
+    def test_accepted_historical_webhook_copy_and_enable_write_current_events(self) -> None:
+        """Server-assembled Draft writes use the current event names.
+
+        Copy and enable/disable read the exact stored definition and assemble
+        the write themselves, so an accepted definition must stay actionable
+        after the browser is shown the canonical spelling.  Only the selected
+        Draft object changes, the accepted bytes and Active identity survive
+        until explicit activation, and the current delivery/event reads keep
+        working from the same persisted definition.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            harness = WebhookManagementHarness(directory)
+            try:
+                accepted, active, stored_events = _accept_historical_webhook(harness)
+                canonical_events = ["task.completed", "task.failed", "schedule.emitted"]
+                accepted_document = json.loads(json.dumps(accepted.document))
+                accepted_webhook = accepted_document["notifications"]["webhooks"][0]
+
+                # One delivery is already recorded under the accepted
+                # definition; its event identity uses the Task lifecycle meaning.
+                historical_definition = accepted_webhook_definition(accepted_webhook)
+                created = NotificationPublisher(
+                    harness.repository, (historical_definition,)
+                ).publish(
+                    NotificationEvent(
+                        "event-before-successor",
+                        NotificationEventType.TASK_COMPLETED,
+                        datetime.now(UTC),
+                        {"taskId": "task-before-successor"},
+                    )
+                )
+                self.assertEqual(len(created), 1)
+
+                # The operator opens the exact Active definition and follows
+                # the action the detail page offers to open a successor Draft.
+                status, detail = request(
+                    harness.api,
+                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                )
+                self.assertEqual(status, 200, detail)
+                self.assertEqual(detail["webhook"]["events"], canonical_events)
+                self.assertEqual(detail["activeConfiguration"]["revisionId"], active.revision_id)
+                create_draft = detail["webhook"]["actions"]["draftCreate"]
+                self.assertTrue(create_draft["available"])
+
+                status, draft = request(
+                    harness.api,
+                    create_draft["path"],
+                    method="POST",
+                    body=b"{}",
+                )
+                self.assertEqual(status, 201, draft)
+                revision_id = draft["revisionId"]
+                version = draft["version"]
+
+                # The detail page now offers copy and enable/disable for the
+                # open Draft and still presents the current event names.
+                status, detail = request(
+                    harness.api,
+                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                )
+                self.assertEqual(status, 200, detail)
+                self.assertEqual(detail["webhook"]["events"], canonical_events)
+                self.assertEqual(detail["webhook"]["draftState"]["revisionId"], revision_id)
+                actions = detail["webhook"]["actions"]
+                for action in ("copy", "enable", "disable"):
+                    self.assertTrue(actions[action]["available"], action)
+                    self.assertIn(
+                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/",
+                        actions[action]["path"],
+                    )
+
+                # Copy is assembled by the server from the stored definition:
+                # it succeeds, writes the current event names, produces one
+                # disabled definition with a unique id and leaves the source
+                # bytes untouched.
+                status, copied = request(
+                    harness.api,
+                    actions["copy"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version}).encode(),
+                )
+                self.assertEqual(status, 200, copied)
+                self.assertFalse(copied["object"]["enabled"])
+                self.assertEqual(copied["object"]["events"], canonical_events)
+                copy_id = copied["object"]["id"]
+                self.assertNotEqual(copy_id, "operations-webhook")
+                version += 1
+                revision = harness.configuration.require(revision_id)
+                by_id = {item["id"]: item for item in revision.document["webhooks"]}
+                self.assertEqual(set(by_id), {"operations-webhook", copy_id})
+                self.assertEqual(by_id["operations-webhook"]["events"], stored_events)
+                self.assertEqual(by_id[copy_id]["events"], canonical_events)
+                copy_before = json.loads(json.dumps(by_id[copy_id]))
+
+                # Enable/disable changes only the selected definition, writes
+                # the current event names and answers with them.
+                status, enabled = request(
+                    harness.api,
+                    actions["enable"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version}).encode(),
+                )
+                self.assertEqual(status, 200, enabled)
+                self.assertTrue(enabled["object"]["enabled"])
+                self.assertEqual(enabled["object"]["events"], canonical_events)
+                version += 1
+                status, disabled = request(
+                    harness.api,
+                    actions["disable"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version}).encode(),
+                )
+                self.assertEqual(status, 200, disabled)
+                self.assertFalse(disabled["object"]["enabled"])
+                self.assertEqual(disabled["object"]["events"], canonical_events)
+                version += 1
+                revision = harness.configuration.require(revision_id)
+                by_id = {item["id"]: item for item in revision.document["webhooks"]}
+                self.assertFalse(by_id["operations-webhook"]["enabled"])
+                self.assertEqual(by_id["operations-webhook"]["events"], canonical_events)
+                # The unselected sibling stays byte-identical.
+                self.assertEqual(by_id[copy_id], copy_before)
+
+                # A stale version fails closed and leaves the Draft untouched.
+                status, stale = request(
+                    harness.api,
+                    actions["copy"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version - 1}).encode(),
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(harness.configuration.require(revision_id).version, version)
+
+                # A read-only principal cannot perform the server-assembled write.
+                status, denied = request(
+                    harness.api,
+                    actions["enable"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version}).encode(),
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 403)
+
+                # A manually submitted definition still has to use the current
+                # spelling; only the server-assembled source read maps it.
+                status, rejected = request(
+                    harness.api,
+                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{copy_id}",
+                    method="PUT",
+                    body=json.dumps(
+                        {
+                            "object": {**by_id[copy_id], "events": ["job.completed"]},
+                            "expectedVersion": version,
+                        }
+                    ).encode(),
+                )
+                self.assertEqual(status, 400, rejected)
+                self.assertEqual(harness.configuration.require(revision_id).version, version)
+
+                # Re-enable the original definition so the published
+                # subscription can record a current delivery after activation.
+                status, reenabled = request(
+                    harness.api,
+                    actions["enable"]["path"],
+                    method="POST",
+                    body=json.dumps({"expectedVersion": version}).encode(),
+                )
+                self.assertEqual(status, 200, reenabled)
+                self.assertTrue(reenabled["object"]["enabled"])
+                version += 1
+
+                # The Active pointer and its bytes do not move before the
+                # reviewed Draft is validated and explicitly activated.
+                current = harness.configuration.active()
+                self.assertEqual(current.revision_id, accepted.revision_id)
+                self.assertEqual(current.digest, accepted.digest)
+                self.assertEqual(
+                    harness.configuration.require(accepted.revision_id).document,
+                    accepted_document,
+                )
+
+                validated = harness.configuration.validate(revision_id, actor="admin")
+                self.assertEqual(validated.validation_errors, ())
+                published = harness.configuration.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="admin",
+                )
+                self.assertEqual(published.revision_id, revision_id)
+                published_by_id = {item["id"]: item for item in published.document["webhooks"]}
+                self.assertEqual(published_by_id["operations-webhook"]["events"], canonical_events)
+                self.assertEqual(published_by_id[copy_id]["events"], canonical_events)
+
+                # The superseded revision keeps its accepted bytes and can
+                # still be read with the same subscription meaning.
+                superseded = harness.configuration.require(accepted.revision_id)
+                self.assertEqual(superseded.status, ManagedConfigurationStatus.SUPERSEDED)
+                self.assertEqual(superseded.digest, accepted.digest)
+                self.assertEqual(superseded.document, accepted_document)
+                self.assertEqual(
+                    superseded.document["notifications"]["webhooks"][0]["events"],
+                    stored_events,
+                )
+                still_accepted = accepted_webhook_definition(accepted_webhook)
+                self.assertEqual(still_accepted.webhook_id, "operations-webhook")
+                self.assertEqual([event.value for event in still_accepted.events], canonical_events)
+
+                # Delivery history stays visible; the subscription read from
+                # the persisted definition still records the current event type.
+                published_definition = accepted_webhook_definition(
+                    published_by_id["operations-webhook"]
+                )
+                self.assertTrue(published_definition.enabled)
+                created = NotificationPublisher(
+                    harness.repository, (published_definition,)
+                ).publish(
+                    NotificationEvent(
+                        "event-after-successor",
+                        NotificationEventType.TASK_COMPLETED,
+                        datetime.now(UTC),
+                        {"taskId": "task-after-successor"},
+                    )
+                )
+                self.assertEqual(len(created), 1)
+                status, deliveries = request(harness.api, "/api/v1/notifications")
+                self.assertEqual(status, 200, deliveries)
+                self.assertEqual(
+                    sorted(
+                        (item["webhookId"], item["eventType"], item["status"])
+                        for item in deliveries["items"]
+                    ),
+                    [
+                        ("operations-webhook", "task.completed", "pending"),
+                        ("operations-webhook", "task.completed", "pending"),
+                    ],
+                )
+                self.assertEqual(
+                    {item["eventId"] for item in deliveries["items"]},
+                    {"event-before-successor", "event-after-successor"},
+                )
             finally:
                 harness.close()
 
