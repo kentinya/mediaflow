@@ -13,6 +13,7 @@ import secrets
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.task_scheduling import TaskSchedulingService
@@ -210,9 +211,10 @@ class ManualOrganizeExecutionWorker:
                 SCHEMA_VERSION,
                 now,
             )
+        scheduling = TaskSchedulingService(repository, capacity=1000, locks=repository)
         worker = ManualTaskEngineWorker(
             repository,
-            TaskSchedulingService(repository, capacity=1000, locks=repository),
+            scheduling,
             None,
             self._service,
             clock=self._clock,
@@ -222,7 +224,12 @@ class ManualOrganizeExecutionWorker:
         )
         if self._parent_heartbeat is not None:
             worker.set_worker_heartbeat(self._parent_heartbeat)
-        worker.run_next()
+        # This fixture selected one exact execution above. Claim its Task so
+        # unrelated work in a shared harness queue remains independent.
+        with patch.object(
+            scheduling, "claim_next", lambda **kwargs: scheduling.claim(task_id, **kwargs)
+        ):
+            worker.run_next()
         after = self._service.get(execution_id)
         return None if after.status is ManualExecutionStatus.ADMITTED else after
 
