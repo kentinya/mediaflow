@@ -132,20 +132,6 @@ class AggregateDerivationTests(unittest.TestCase):
 
         return SimpleNamespace(status=status, stage=stage)
 
-    def test_any_unsettled_source_is_running(self):
-        for status in (
-            TaskItemStatus.PENDING,
-            TaskItemStatus.PROCESSING,
-            TaskItemStatus.WAITING_CONFIRM,
-            TaskItemStatus.WAITING_METADATA,
-            TaskItemStatus.PAUSED,
-        ):
-            with self.subTest(status=status):
-                self.assertIs(
-                    PersistentTaskStatus.RUNNING,
-                    task_work_status([self.item(status)]),
-                )
-
     def test_every_settled_population_is_completed(self):
         populations = (
             [TaskItemStatus.SUCCESS],

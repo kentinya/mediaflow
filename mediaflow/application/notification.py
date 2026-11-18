@@ -21,15 +21,11 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
 
 #: The Task statuses that are the end of one organizing work, mapped onto the
-#: already-supported Webhook event literals.  Slice 48 RO-1: the current flow
-#: statuses are completed/failed/cancelled — a completed flow publishes the
+#: already-supported Webhook event literals.  A completed flow publishes the
 #: completion event no matter how its files ended, and the payload carries the
-#: exact flow status.  The retired ``partial_success`` value stays in the map
-#: only so a legacy row keeps its honest historical event mapping; current
-#: producers never write it.
+#: exact flow status.
 TASK_TERMINAL_EVENT_TYPES: dict[PersistentTaskStatus, NotificationEventType] = {
     PersistentTaskStatus.COMPLETED: NotificationEventType.TASK_COMPLETED,
-    PersistentTaskStatus.PARTIAL_SUCCESS: NotificationEventType.TASK_COMPLETED,
     PersistentTaskStatus.FAILED: NotificationEventType.TASK_FAILED,
     PersistentTaskStatus.CANCELLED: NotificationEventType.TASK_CANCELLED,
 }

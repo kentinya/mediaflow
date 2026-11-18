@@ -1179,8 +1179,6 @@ export function ManualOrganizeDialog({
         return "准备失败；已保存的受理记录与已知状态保留，没有修改任何文件。请核对下方原因后再决定重新读取或重新发起。";
       case "cancelled":
         return "准备已取消；没有执行任何整理，已记录的进度保留。";
-      case "paused":
-        return "准备处于暂停状态；当前版本不提供继续暂停，请关闭后重新从 Files 发起新的准备。";
       default:
         return "正在读取准备状态。";
     }

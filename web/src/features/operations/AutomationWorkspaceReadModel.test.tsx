@@ -894,7 +894,6 @@ describe("V2 Automation workspace read model", () => {
       "刷新核对失败原因，并检查对应文件",
     ],
     ["running", "进行中", null, "等待本次运行结束后刷新查看结果"],
-    ["paused", "已暂停", null, "本次仍处于暂停状态，结束后再查看结果"],
     ["unknown", "状态未知", null, "刷新记录以核对结果；核对前勿重复执行"],
   ])(
     "shows the original %s result without raw or follow-up details",

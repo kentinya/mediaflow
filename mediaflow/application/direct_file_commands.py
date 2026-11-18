@@ -33,7 +33,7 @@ from mediaflow.application.storage_browser import (
     _join_resource_library_path,
     _normalize_storage_relative_path,
 )
-from mediaflow.application.task_runtime import PersistentTaskCoordinator, TaskPauseRequested
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.configuration_management import ManagedConfigurationRevision
 from mediaflow.domain.direct_files import (
     MAX_DELETE_PATHS,
@@ -634,7 +634,6 @@ class DirectFileCommandService:
             if existing is not None and existing.status in {
                 FilesTransferStatus.ADMITTED,
                 FilesTransferStatus.RUNNING,
-                FilesTransferStatus.PAUSED,
             }:
                 return self.delete_projection(existing.task_id)
 
@@ -925,28 +924,16 @@ class DirectFileCommandService:
                 target_scope=target,
             ),
         )
-        try:
-            item = self._tasks.begin_item(
-                task.task_id,
-                library.storage_id,
-                # The durable library identity carries its kind: the same ID on
-                # the other kind of library is a different source of truth and
-                # can never be claimed, reconstructed or replayed as this one's.
-                scoped_library_id(self._kind, library.library_id),
-                storage_path,
-                library_path,
-            )
-        except TaskPauseRequested:
-            self._tasks.acknowledge_pause(task.task_id)
-            raise DirectFileError(
-                "files_direct_task_paused",
-                "task_paused",
-                "the command Task was paused before execution",
-                status=409,
-                **self._identity(library),
-                path=library_path,
-                next_action="resume the Task from Operations and retry the command",
-            ) from None
+        item = self._tasks.begin_item(
+            task.task_id,
+            library.storage_id,
+            # The durable library identity carries its kind: the same ID on the
+            # other kind of library is a different source of truth and can never
+            # be claimed, reconstructed or replayed as this one's.
+            scoped_library_id(self._kind, library.library_id),
+            storage_path,
+            library_path,
+        )
         result = executor_call(storage_path)
         self._record_item(item, result, target_path=target)
         self._tasks.finish(task.task_id, _empty_batch())
@@ -1696,8 +1683,6 @@ def project_direct_delete(
             failed += 1
         elif item.status is TaskItemStatus.CANCELLED:
             state = "CANCELLED"
-        elif item.status is TaskItemStatus.PAUSED:
-            state = "PAUSED"
         elif item.status is TaskItemStatus.PROCESSING:
             state = "RUNNING"
         else:
@@ -1723,33 +1708,21 @@ def project_direct_delete(
             effect, status = "uncertain", "UNCERTAIN"
         elif "SUCCESS" in states:
             effect, status = "partial", "PARTIAL"
-        elif states.intersection({"QUEUED", "PENDING", "RUNNING", "PAUSED"}):
+        elif states.intersection({"QUEUED", "PENDING", "RUNNING"}):
             effect, status = "in_progress", "RUNNING"
         else:
             effect, status = "retained", "FAILED"
         known_effects.append({"path": target, "effect": effect, "status": status})
     terminal = task.status in {
         PersistentTaskStatus.COMPLETED,
-        PersistentTaskStatus.PARTIAL_SUCCESS,
         PersistentTaskStatus.FAILED,
         PersistentTaskStatus.CANCELLED,
     }
     states = set(outcome_by_path.values())
     if task.status is PersistentTaskStatus.PENDING:
         status = "QUEUED"
-    elif (
-        task.status is PersistentTaskStatus.RUNNING
-        and transfer is not None
-        and transfer.status is FilesTransferStatus.PAUSED
-    ):
-        # The retired Files pause is carried by the transfer row: the flow is
-        # unfinished (running) while the operation itself is suspended.
-        status = "PAUSED"
     elif task.status is PersistentTaskStatus.RUNNING:
         status = "RUNNING"
-    elif task.status is PersistentTaskStatus.PAUSED:
-        # Legacy historical rows only: pause is retired (Slice 48 RO-1).
-        status = "PAUSED"
     elif task.status is PersistentTaskStatus.CANCELLED:
         status = "CANCELLED"
     elif uncertain or "UNCERTAIN" in states:
@@ -1799,7 +1772,6 @@ def project_direct_delete(
 def _delete_command_status(
     *,
     uncertain: bool,
-    paused: bool,
     cancelled: bool,
     succeeded: int,
     failed: int,
@@ -1809,8 +1781,6 @@ def _delete_command_status(
 
     if uncertain:
         return "UNCERTAIN"
-    if paused:
-        return "PAUSED"
     if cancelled:
         return "CANCELLED"
     if failed == 0 and succeeded == attempted and attempted > 0:

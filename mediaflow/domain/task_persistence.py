@@ -100,7 +100,6 @@ def direct_command_task_command(operation: str, *, media_library: bool) -> str:
 class FilesTransferStatus(StrEnum):
     ADMITTED = "admitted"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
@@ -174,28 +173,19 @@ TRANSFER_MUTATION_IN_FLIGHT = "mutation_in_flight"
 
 
 class PersistentTaskStatus(StrEnum):
-    """The durable Task aggregate lifecycle (Slice 48 RO-1).
+    """The durable Task flow status.
 
-    The current flow statuses are exactly ``pending`` / ``running`` /
-    ``completed`` / ``failed`` / ``cancelled``.  They describe whether the Task
-    *flow* finished — never whether its files succeeded.  ``partial_success``
-    and ``paused`` are retired: current producers never write them and no
-    reader may present them as a current flow outcome.  A historical row that
-    still carries one keeps its honest recorded value as read-only evidence;
-    no migration relabels it.
+    The flow statuses are exactly ``pending`` / ``running`` / ``completed`` /
+    ``failed`` / ``cancelled``.  They describe whether the Task *flow*
+    finished — never whether its files succeeded; per-file and per-attachment
+    outcomes keep their own independent result records.
     """
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
-    #: Retired aggregate value (Slice 48 RO-1): legacy rows only, never written
-    #: or advertised as a current flow status by current producers.
-    PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    #: Retired aggregate value (Slice 48 RO-1): legacy rows only.  Pause stays
-    #: retired; no current producer re-enters it.
-    PAUSED = "paused"
 
 
 #: The five current flow statuses (module-level so the StrEnum stays pure).
@@ -224,7 +214,6 @@ class TaskItemStatus(StrEnum):
     WAITING_METADATA = "waiting_metadata"
     WAITING_METADATA_CORRECTION = "waiting_metadata_correction"
     WAITING_CLASSIFICATION = "waiting_classification"
-    PAUSED = "paused"
     IGNORED = "ignored"
 
     @property
@@ -234,13 +223,12 @@ class TaskItemStatus(StrEnum):
             self.PARTIAL,
             self.FAILED,
             self.CANCELLED,
-            self.PAUSED,
         }
 
 
 #: The TaskItem states in which one concrete source is *settled*: the item has
 #: recorded its own durable outcome and no further organizing work of that item is
-#: pending.  Every other state — queued, processing, paused, waiting for a
+#: pending.  Every other state — queued, processing, waiting for a
 #: recognition/metadata/classification/conflict decision, and a saved decision
 #: pending its next admission — still owns its source, so a second request for the
 #: same verified source cannot start the same work again.
@@ -277,17 +265,15 @@ COMPLETED_ITEM_STATUSES = frozenset(
 #: The item outcomes that count as a failed/partial source of one Task.
 FAILED_ITEM_STATUSES = frozenset({TaskItemStatus.PARTIAL, TaskItemStatus.FAILED})
 
-#: The Task flow statuses in which the whole flow has durably ended (the five-state
-#: model; ``partial_success`` is a retired legacy value that still honestly marks an
-#: ended flow).  A terminal Task can never adopt, continue or execute its remaining
-#: scope again, so its still-unsettled items are frozen evidence rather than live
-#: work: they no longer own their sources and a deliberate new Files request may
-#: re-admit them.  A pending/running/paused Task — including one waiting for a
+#: The Task flow statuses in which the whole flow has durably ended.  A
+#: terminal Task can never adopt, continue or execute its remaining scope
+#: again, so its still-unsettled items are frozen evidence rather than live
+#: work: they no longer own their sources and a deliberate new Files request
+#: may re-admit them.  A pending/running Task — including one waiting for a
 #: human decision — keeps owning its unfinished items exactly as before.
 SETTLED_TASK_FLOW_STATUSES = frozenset(
     {
         PersistentTaskStatus.COMPLETED,
-        PersistentTaskStatus.PARTIAL_SUCCESS,
         PersistentTaskStatus.FAILED,
         PersistentTaskStatus.CANCELLED,
     }
@@ -520,7 +506,6 @@ class PersistentTask:
     completed_items: int = 0
     failed_items: int = 0
     error: str | None = None
-    pause_requested: bool = False
     scope_path: str | None = None
     item_limit: int | None = None
     configuration_snapshot_id: str | None = None
@@ -854,23 +839,9 @@ class PersistentTaskRepository(Protocol):
         claim_token: str,
         now: datetime,
     ) -> bool: ...
-    def pause_files_transfer(
-        self, transfer_id: str, *, claim_token: str, now: datetime
-    ) -> bool: ...
-    def requeue_files_transfer(
-        self, transfer_id: str, now: datetime
-    ) -> PersistentFilesTransfer: ...
     def transfer_claim_is_current(
         self, transfer_id: str, claim_token: str, now: datetime
     ) -> bool: ...
-    def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...
-    def pause_task_if_current(
-        self,
-        task_id: str,
-        *,
-        updated_at: datetime,
-        expected_version: str | None = None,
-    ) -> PersistentTask | None: ...
     def cancel_task_if_current(
         self,
         task_id: str,
@@ -878,7 +849,6 @@ class PersistentTaskRepository(Protocol):
         updated_at: datetime,
         expected_version: str | None = None,
     ) -> PersistentTask | None: ...
-    def task_pause_requested(self, task_id: str) -> bool: ...
     def get_task(self, task_id: str) -> PersistentTask | None: ...
     def list_tasks(
         self,

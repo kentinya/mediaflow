@@ -58,7 +58,6 @@ from mediaflow.application.storage_browser import (
 from mediaflow.application.task_runtime import (
     PersistentTaskCoordinator,
     TaskClaimLost,
-    TaskPauseRequested,
 )
 from mediaflow.domain.direct_files import (
     MAX_TRANSFER_DEPTH,
@@ -913,11 +912,6 @@ class DirectFileTransferService:
             # instead of a fabricated business failure or a blind retry.
             self._converge_execution_failure(fence, error, code="files_transfer_invalid_authority")
             return repository.require_files_transfer(transfer.transfer_id)
-        except TaskPauseRequested:
-            repository.pause_files_transfer(
-                transfer.transfer_id, claim_token=claim_token, now=datetime.now(UTC)
-            )
-            return repository.require_files_transfer(transfer.transfer_id)
         except _TransferCancelled:
             terminal = replace(
                 repository.require_files_transfer(transfer.transfer_id),
@@ -1014,7 +1008,7 @@ class DirectFileTransferService:
         if task.status is PersistentTaskStatus.CANCELLED:
             raise _TransferCancelled()
         if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
-            raise TaskPauseRequested(f"task {task_id!r} is {task.status.value}")
+            raise _TransferExecutionFailed()
 
         library_id = authority.get("libraryId")
         storage_id = authority.get("storageId")
@@ -1109,9 +1103,6 @@ class DirectFileTransferService:
                     continue
                 if self._direct.tasks.cancellation_observed(task_id):
                     raise _TransferCancelled()
-                if self._direct.tasks.pause_requested(task_id):
-                    self._direct.tasks.acknowledge_pause(task_id)
-                    raise TaskPauseRequested(f"task {task_id!r} pause was requested")
                 if not heartbeat():
                     raise _TransferClaimLost()
                 evidence = entries_by_path.get(original.source_display)
@@ -1128,9 +1119,6 @@ class DirectFileTransferService:
                         transfer_fence=fence.value,
                         adopt_existing=True,
                     )
-                except TaskPauseRequested:
-                    self._direct.tasks.acknowledge_pause(task_id)
-                    raise
                 except TaskClaimLost:
                     raise _TransferClaimLost() from None
                 except Exception:
@@ -1163,10 +1151,6 @@ class DirectFileTransferService:
                 if self._direct.tasks.cancellation_observed(task_id):
                     self._direct.tasks.release_item_lock(item)
                     raise _TransferCancelled()
-                if self._direct.tasks.pause_requested(task_id):
-                    self._direct.tasks.release_item_lock(item)
-                    self._direct.tasks.acknowledge_pause(task_id)
-                    raise TaskPauseRequested(f"task {task_id!r} pause was requested")
                 if not heartbeat():
                     self._direct.tasks.release_item_lock(item)
                     raise _TransferClaimLost()
@@ -1910,7 +1894,7 @@ class DirectFileTransferService:
         task = repository.get_task(transfer.task_id)
         if task is not None and task.status not in {
             PersistentTaskStatus.COMPLETED,
-            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.COMPLETED,
             PersistentTaskStatus.FAILED,
             PersistentTaskStatus.CANCELLED,
         }:
@@ -1936,7 +1920,6 @@ class DirectFileTransferService:
                 completed_items=completed,
                 failed_items=failed,
                 error=("mutation_outcome" if uncertain else _bounded_transfer_error(None, code)),
-                pause_requested=False,
             )
         terminal_transfer = replace(
             transfer,
@@ -1994,7 +1977,7 @@ class DirectFileTransferService:
         if task.status is PersistentTaskStatus.CANCELLED:
             raise _TransferCancelled()
         if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
-            raise TaskPauseRequested(f"task {task_id!r} is {task.status.value}")
+            raise _TransferExecutionFailed()
         # A crashed Worker leaves its own item locks behind.  They are *not*
         # deleted here: retiring them would leave the normalized paths unowned,
         # so a competing Task could acquire and mutate the same source between
@@ -2049,7 +2032,6 @@ class DirectFileTransferService:
         """Drive the claimed Task's items to their per-item terminal outcomes."""
 
         repository = self._direct.tasks.repository
-        paused = False
         cancelled = False
         errored = False
         items = repository.list_items(task_id)
@@ -2090,15 +2072,11 @@ class DirectFileTransferService:
                     lease_seconds=lease_seconds,
                     fence=fence,
                 )
-            if stopped == "pause":
-                self._direct.tasks.acknowledge_pause(task_id)
-                paused = True
-                break
             if stopped == "cancel":
                 cancelled = True
                 break
-        if paused or cancelled:
-            raise TaskPauseRequested if paused else _TransferCancelled()
+        if cancelled:
+            raise _TransferCancelled()
         if errored:
             raise _TransferExecutionFailed()
         # The durable Task outcome is the transfer's terminal aggregate: one
@@ -2139,7 +2117,6 @@ class DirectFileTransferService:
             completed_items=completed,
             failed_items=failed,
             error=("mutation_outcome" if uncertain else task.error),
-            pause_requested=False,
         )
         guarded = getattr(repository, "update_task_guarded", None)
         if callable(guarded):
@@ -2293,8 +2270,6 @@ class DirectFileTransferService:
                 transfer_fence=fence.value if fence is not None else None,
                 adopt_existing=True,
             )
-        except TaskPauseRequested:
-            return "pause"
         except TaskClaimLost:
             raise _TransferClaimLost() from None
         except Exception:
@@ -2375,8 +2350,6 @@ class DirectFileTransferService:
                 transfer_fence=fence.value if fence is not None else None,
                 adopt_existing=True,
             )
-        except TaskPauseRequested:
-            return "pause"
         except TaskClaimLost:
             raise _TransferClaimLost() from None
         except Exception:
@@ -2427,8 +2400,6 @@ class DirectFileTransferService:
         def interruption() -> str | None:
             if self._direct.tasks.cancellation_observed(task_id):
                 return "cancel"
-            if self._direct.tasks.pause_requested(task_id):
-                return "pause"
             if not heartbeat():
                 raise _TransferClaimLost()
             return None
@@ -2466,7 +2437,7 @@ class DirectFileTransferService:
             raise
         if paused or cancelled:
             self._direct.tasks.release_item_lock(item)
-            return "pause" if paused else "cancel"
+            return "cancel"
         status = _item_status(outcomes)
         unknown = "UNCERTAIN" in {str(value["status"]) for value in outcomes}
         mutated = _outcomes_have_known_effect(outcomes)
@@ -2622,141 +2593,6 @@ class DirectFileTransferService:
     # Durable continuation admission (resume without execution)
     # ------------------------------------------------------------------
 
-    def requeue_transfer(self, task_id: str) -> dict[str, object]:
-        """Re-admit one paused or abandoned transfer for Worker pickup.
-
-        The HTTP resume request performs zero Storage work: it re-queues the
-        persisted authority and returns the durable operator projection.  The
-        resident Worker claims the transfer and continues only from each
-        item's recorded known-safe checkpoint.
-        """
-
-        task = self._direct.tasks.require(task_id)
-        if task.command != self._task_command:
-            # One kind's continuation service never re-admits the other kind's
-            # transfer Task, even when the IDs collide.
-            raise DirectFileTransferError(
-                "files_transfer_resume_unavailable",
-                "resume_unavailable",
-                "only a bounded Files transfer Task can be continued this way",
-                status=409,
-                next_action="inspect the Task in Operations",
-            )
-        transfer = self._direct.tasks.repository.get_files_transfer_for_task(task_id)
-        if transfer is None:
-            raise DirectFileTransferError(
-                "files_transfer_resume_unavailable",
-                "resume_unavailable",
-                "the transfer has no durable continuation authority",
-                status=409,
-                next_action="submit a fresh bounded transfer instead",
-            )
-        if transfer.status in {
-            FilesTransferStatus.COMPLETED,
-            FilesTransferStatus.PARTIAL_SUCCESS,
-            FilesTransferStatus.FAILED,
-            FilesTransferStatus.CANCELLED,
-        }:
-            raise DirectFileTransferError(
-                "files_transfer_resume_unavailable",
-                "resume_unavailable",
-                "the transfer already reached a terminal state",
-                status=409,
-                next_action="inspect the recorded per-item outcomes",
-            )
-        if transfer.status is not FilesTransferStatus.PAUSED:
-            # Only a durably paused (or abandoned) transfer has something to
-            # continue.  A transfer that is still queued or running is owned by
-            # the Worker lifecycle: a live claim is never re-queued beneath its
-            # owner, and a duplicate resume of already-queued work is refused
-            # with the same bounded reason instead of surfacing an internal
-            # refusal.
-            live_claim = (
-                transfer.claim_expires_at is not None
-                and transfer.claim_expires_at > datetime.now(UTC)
-            )
-            raise DirectFileTransferError(
-                "files_transfer_resume_running",
-                "resume_running",
-                (
-                    "the transfer is still owned by a live Worker claim"
-                    if live_claim
-                    else "the transfer is already queued or owned by its Worker"
-                ),
-                status=409,
-                next_action="wait for it to finish, pause or cancel it",
-            )
-        self._direct.tasks.requeue(task_id)
-        transfer = self._direct.tasks.repository.requeue_files_transfer(
-            transfer.transfer_id, datetime.now(UTC)
-        )
-        return self.transfer_projection(task_id)
-
-    def requeue_delete(self, task_id: str) -> dict[str, object]:
-        """Requeue only the safe remaining scope of a paused direct Delete."""
-
-        repository = self._direct.tasks.repository
-        task = repository.get_task(task_id)
-        expected = direct_command_task_command(
-            FILES_DELETE_TASK_COMMAND, media_library=self._is_media
-        )
-        transfer = repository.get_files_transfer_for_task(task_id)
-        if task is None or task.command != expected or transfer is None:
-            raise DirectFileTransferError(
-                "files_delete_resume_unavailable",
-                "resume_unavailable",
-                "only a Delete Task owned by this library kind can be continued",
-                status=409,
-                next_action="inspect the Task in Operations",
-            )
-        authority = _parse_authority(transfer.authority_json)
-        if (
-            authority.get("authorityType") != "direct_delete"
-            or authority.get("libraryKind") != self._kind.value
-        ):
-            raise DirectFileTransferError(
-                "files_delete_resume_unavailable",
-                "resume_unavailable",
-                "the Delete Task authority is not readable by this library kind",
-                status=409,
-                next_action="inspect the Task in Operations",
-            )
-        if transfer.mutation_state is not None or task.error == "mutation_outcome":
-            raise DirectFileTransferError(
-                "files_delete_resume_unavailable",
-                "mutation_outcome",
-                "an uncertain Delete effect is investigation-only and cannot be continued",
-                status=409,
-                durable_state="mutation_effect_uncertain",
-                next_action="refresh the directory and inspect item outcomes before acting",
-            )
-        if task.status is not PersistentTaskStatus.PAUSED:
-            raise DirectFileTransferError(
-                "files_delete_resume_unavailable",
-                "resume_unavailable",
-                "only a paused Delete Task can be continued",
-                status=409,
-                next_action="inspect the Task's current state in Operations",
-            )
-        if transfer.status is FilesTransferStatus.ADMITTED:
-            # Pause may have been accepted before the Worker claimed the
-            # admission row. Its exact authority is still queued, so only the
-            # Task status needs to return to pending.
-            self._direct.tasks.requeue(task_id)
-        else:
-            self._direct.tasks.requeue(task_id)
-            try:
-                repository.requeue_files_transfer(transfer.transfer_id, datetime.now(UTC))
-            except (LookupError, ValueError) as error:
-                raise DirectFileTransferError(
-                    "files_delete_resume_unavailable",
-                    "resume_unavailable",
-                    "the Delete is still owned or its remaining scope is not safe to continue",
-                    status=409,
-                    next_action="wait for the Worker or inspect the Task in Operations",
-                ) from error
-        return self.delete_projection(task_id)
-
     def delete_projection(
         self, task_id: str, *, library_id: str | None = None
     ) -> dict[str, object]:
@@ -2857,7 +2693,7 @@ class DirectFileTransferService:
         )
         terminal = task.status in {
             PersistentTaskStatus.COMPLETED,
-            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.COMPLETED,
             PersistentTaskStatus.FAILED,
             PersistentTaskStatus.CANCELLED,
         }
@@ -3793,8 +3629,6 @@ class DirectFileTransferService:
             def interruption() -> str | None:
                 if self._direct.tasks.cancellation_observed(task_id):
                     return "cancel"
-                if self._direct.tasks.pause_requested(task_id):
-                    return "pause"
                 return None
 
         # The Worker-driven caller receives every recorded outcome through
@@ -3930,7 +3764,7 @@ class DirectFileTransferService:
         ):
             stop = interruption()
             if stop is not None:
-                return recorded, stop == "pause", stop == "cancel"
+                return recorded, False, stop == "cancel"
             destination_path = plan.destination_for(entry.path)
             if destination_path is None:
                 continue
@@ -3964,7 +3798,7 @@ class DirectFileTransferService:
                 continue
             stop = interruption()
             if stop is not None:
-                return recorded, stop == "pause", stop == "cancel"
+                return recorded, False, stop == "cancel"
             if entry.path in skip_paths:
                 # Completed before the interruption; a completed effect stays
                 # terminal and is never replayed.
@@ -4048,7 +3882,7 @@ class DirectFileTransferService:
             )
             recorded.extend(removals)
             if stop is not None:
-                return recorded, stop == "pause", stop == "cancel"
+                return recorded, False, stop == "cancel"
             progress()
         return recorded, False, False
 
@@ -4481,8 +4315,6 @@ def _transfer_status(
 
     if uncertain:
         return "UNCERTAIN"
-    if paused:
-        return "PAUSED"
     if cancelled:
         return "CANCELLED"
     if transferred and not (partial or failed or skipped):
@@ -4926,8 +4758,6 @@ def _projection_transfer_status(
         return "QUEUED"
     if task.status is PersistentTaskStatus.RUNNING:
         return "RUNNING"
-    if task.status is PersistentTaskStatus.PAUSED:
-        return "PAUSED"
     if task.status is PersistentTaskStatus.CANCELLED:
         return "CANCELLED"
     return _precedence_status(statuses, known_mutation=known_mutation, uncertain=uncertain)
@@ -4978,10 +4808,9 @@ def _projection_destination_library(
 def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, object]]:
     """The backend-advertised lifecycle actions of one durable transfer.
 
-    Pause and resume-from-pause were retired for every media operation, so a
-    transfer advertises cancellation only; a running item keeps its own
+    A transfer advertises cancellation only; a running item keeps its own
     effects and a completed sibling keeps its recorded outcome.  The
-    ``claim_live`` argument is retained for callers but no longer selects a
+    ``claim_live`` argument is retained for callers but does not select a
     control.
     """
 
@@ -4990,7 +4819,6 @@ def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, 
     if task.status in {
         PersistentTaskStatus.PENDING,
         PersistentTaskStatus.RUNNING,
-        PersistentTaskStatus.PAUSED,
     }:
         actions.append(
             {
@@ -5021,11 +4849,6 @@ def _projection_next_action(task: PersistentTask, transfer_status: str, terminal
         return "the transfer is queued for the resident Worker; its progress appears here"
     if task.status is PersistentTaskStatus.RUNNING:
         return "the transfer is running; its per-item progress appears here"
-    if task.status is PersistentTaskStatus.PAUSED:
-        return (
-            "this is a historically paused transfer; resume-from-pause is retired, so "
-            "inspect its recorded item effects and start a fresh bounded operation if needed"
-        )
     if task.status is PersistentTaskStatus.CANCELLED:
         return (
             "the transfer was cancelled; completed effects stay terminal and each item "

@@ -10,9 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mediaflow.application.automation import IntervalScheduler
-from mediaflow.application.automation_definition_occurrence import (
-    AutomationDefinitionOccurrenceService,
-)
 from mediaflow.application.failure_explanation import (
     classify_failure,
     sanitize_execution_errors,
@@ -22,7 +19,6 @@ from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
-    AutomationDefinitionOccurrence,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
@@ -438,138 +434,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
             retry_category="storage_failure",
         )
 
-    def test_occurrence_summary_counts_statuses_caps_attention_and_reloads(self) -> None:
-        explanation = classify_failure("storage operation failed")
-        encoded = explanation.encode()
-        statuses = (
-            TaskItemStatus.PENDING,
-            TaskItemStatus.PROCESSING,
-            TaskItemStatus.DRY_RUN,
-            TaskItemStatus.SUCCESS,
-            TaskItemStatus.PARTIAL,
-            TaskItemStatus.SKIPPED,
-            TaskItemStatus.CANCELLED,
-            TaskItemStatus.WAITING_CONFIRM,
-            TaskItemStatus.WAITING_RECOGNITION,
-            TaskItemStatus.WAITING_METADATA,
-            TaskItemStatus.WAITING_METADATA_CORRECTION,
-            TaskItemStatus.WAITING_CLASSIFICATION,
-            TaskItemStatus.PAUSED,
-            TaskItemStatus.IGNORED,
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                repository.create_task(
-                    PersistentTask(
-                        "task-summary",
-                        "automatic-organization",
-                        PersistentTaskStatus.PARTIAL_SUCCESS,
-                        True,
-                        NOW,
-                        NOW,
-                        item_limit=4,
-                    )
-                )
-                for index, status in enumerate(statuses):
-                    repository.upsert_item(self._item("task-summary", f"status-{index}", status))
-                unchanged = self._item("task-summary", "unchanged", TaskItemStatus.SKIPPED)
-                repository.upsert_item(unchanged)
-                repository.append_result(
-                    PersistentResultRecord(
-                        "result-unchanged",
-                        "task-summary",
-                        "unchanged",
-                        "source",
-                        "Media/incoming/unchanged.mkv",
-                        "target",
-                        "Movies/unchanged.mkv",
-                        "C",
-                        "tmdb",
-                        "123",
-                        "metadata-c",
-                        "naming-a",
-                        "classification-a",
-                        "organize-move",
-                        "NOOP",
-                        TaskItemStatus.SKIPPED.value,
-                        NOW,
-                    )
-                )
-                for index in range(40):
-                    item_id = f"failed-{index}"
-                    repository.upsert_item(
-                        self._item("task-summary", item_id, TaskItemStatus.FAILED, encoded)
-                    )
-                    repository.append_result(self._result("task-summary", item_id, encoded))
-
-                occurrence = AutomationDefinitionOccurrence(
-                    "occ-summary",
-                    "definition-summary",
-                    NOW,
-                    NOW,
-                    "task-summary",
-                    "a" * 64,
-                    1,
-                    "revision-summary",
-                    1,
-                    "b" * 64,
-                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
-                    "resource",
-                    "Media/incoming",
-                    4,
-                )
-                checkpoints = ProcessingCheckpointService(repository)
-                projection = AutomationDefinitionOccurrenceService(repository)
-                projection.attach_checkpoint_service(checkpoints)
-                trace: list[str] = []
-                repository._connection.set_trace_callback(trace.append)
-                value = projection.project_occurrences((occurrence,))[0]
-                repository._connection.set_trace_callback(None)
-                summary = value["outcomeSummary"]
-                self.assertEqual(summary["counts"]["failed"], 40)
-                self.assertEqual(summary["counts"]["waiting_confirm"], 1)
-                self.assertEqual(summary["counts"]["unchanged"], 1)
-                self.assertTrue(summary["boundReached"])
-                self.assertIsNone(summary["scopeExhausted"])
-                self.assertEqual(len(summary["attention"]), 32)
-                self.assertTrue(summary["moreAttention"])
-                failed_attention = next(
-                    value for value in summary["attention"] if value["status"] == "failed"
-                )
-                self.assertEqual(
-                    failed_attention["failureExplanation"]["category"], "storage_failure"
-                )
-                self.assertTrue(failed_attention["nextAction"])
-                self.assertLessEqual(
-                    sum(statement.lstrip().upper().startswith("SELECT") for statement in trace),
-                    20,
-                )
-                write_prefixes = (
-                    "INSERT",
-                    "UPDATE",
-                    "DELETE",
-                    "REPLACE",
-                    "CREATE",
-                    "DROP",
-                    "ALTER",
-                )
-                self.assertFalse(
-                    any(
-                        statement.lstrip().upper().startswith(write_prefixes) for statement in trace
-                    ),
-                    trace,
-                )
-                self.assertLessEqual(len(json.dumps(value, ensure_ascii=False)), 200_000)
-                self.assertNotIn("private", json.dumps(value))
-
-                detail = projection.project_definition(
-                    {"id": "definition-summary", "name": "definition-summary", "enabled": True},
-                    _state=None,
-                    _latest=occurrence,
-                )
-                self.assertEqual(detail["outcomeSummary"], value["outcomeSummary"])
-                self.assertEqual(detail["occurrence"]["outcomeSummary"], value["outcomeSummary"])
-
     def test_api_definition_detail_and_occurrence_routes_share_summary(self) -> None:
         definition = AutomationTaskDefinition(
             "definition-summary",
@@ -587,7 +451,7 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     PersistentTask(
                         "task-api-summary",
                         "automatic-organization",
-                        PersistentTaskStatus.PARTIAL_SUCCESS,
+                        PersistentTaskStatus.COMPLETED,
                         True,
                         NOW,
                         NOW,

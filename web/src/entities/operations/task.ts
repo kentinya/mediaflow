@@ -31,23 +31,17 @@ import {
 } from "./task-item-recovery";
 
 export const TASK_STATUSES = [
-  // Slice 48 RO-1: the five current flow statuses.  `partial_success` and
-  // `paused` are retired aggregate values — accepted here only so a historical
-  // row keeps its honest recorded state; current producers never write them.
   "pending",
   "running",
   "completed",
-  "partial_success",
   "failed",
   "cancelled",
-  "paused",
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /** Task statuses that durably end the Task aggregate. */
 export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = [
   "completed",
-  "partial_success",
   "failed",
   "cancelled",
 ];
@@ -66,7 +60,6 @@ export const TASK_ITEM_STATUSES = [
   "waiting_metadata",
   "waiting_metadata_correction",
   "waiting_classification",
-  "paused",
   "ignored",
 ] as const;
 export type TaskItemStatus = (typeof TASK_ITEM_STATUSES)[number];
@@ -119,7 +112,6 @@ export interface TaskSummary {
   readonly failedItems: number;
   readonly itemLimit: number | null;
   readonly failure: TaskFailureExplanation | null;
-  readonly pauseRequested: boolean;
   /** Pinned managed configuration revision identity; never a digest. */
   readonly configurationSnapshotId: string | null;
 }
@@ -369,14 +361,8 @@ function normalizeTaskSummary(source: Record<string, unknown>): TaskSummary {
   }
   const startedAt = optionalText(source, "started_at");
   const completedAt = optionalText(source, "completed_at");
-  const pauseRequested = flag(source, "pause_requested");
   const terminal = TERMINAL_TASK_STATUSES.includes(status);
   if (terminal !== (completedAt !== null)) {
-    fail();
-  }
-  if (pauseRequested && status !== "running") {
-    // A pending pause request can only belong to a running Task: an
-    // acknowledged pause clears it and a terminal Task cannot hold one.
     fail();
   }
   return {
@@ -393,7 +379,6 @@ function normalizeTaskSummary(source: Record<string, unknown>): TaskSummary {
     failedItems,
     itemLimit: optionalCount(source, "item_limit"),
     failure: normalizeFailure(source["failure"]),
-    pauseRequested,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
   };
 }

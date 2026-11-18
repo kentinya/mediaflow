@@ -648,32 +648,6 @@ export function OrganizeIntentPage() {
                 </StatusBanner>
               ) : null}
               {intent.analysis !== null &&
-              intent.analysis.pauseRequested &&
-              !LIVE_ANALYSIS_PHASES.has(intent.analysis.phase) ? (
-                <StatusBanner variant="warning" title="分析已暂停">
-                  <p>
-                    这次分析被操作者暂停；Worker
-                    已在安全边界确认，没有发布新的计划。
-                    继续该运行后，再重新生成摘要。
-                  </p>
-                  <div className="mf-actions">
-                    <Link
-                      className="mf-button mf-button-secondary"
-                      to="/operations/organize/discovery/$discoveryId"
-                      params={{ discoveryId: intent.analysis.discoveryId }}
-                      search={{
-                        ...(filesReturn === null
-                          ? {}
-                          : filesReturnSearch(filesReturn)),
-                        ...operationsReturnSearch(operationsReturn),
-                      }}
-                    >
-                      打开分析运行
-                    </Link>
-                  </div>
-                </StatusBanner>
-              ) : null}
-              {intent.analysis !== null &&
               intent.analysis.status === "cancelled" ? (
                 <StatusBanner variant="warning" title="分析已取消">
                   <p>

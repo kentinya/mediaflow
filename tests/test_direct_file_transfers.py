@@ -2790,66 +2790,6 @@ class PauseCancelResumeTests(TransferTestCase):
         thread.start()
         return thread
 
-    def test_pause_inside_one_directory_is_observed_and_resumed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
-            source = _GatedSource("source-storage", root / "source", gate_after=3)
-            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
-            transfers = self._transfers(api, active)
-            self._tree(root)
-            # Admission happens on this (API) stack and returns before the
-            # first mutation.
-            queued = self._admit(transfers, runtime)
-            self.assertEqual(queued["status"], "QUEUED")
-            self.assertEqual(queued["taskStatus"], "pending")
-            self.assertEqual(queued["sideEffects"], "none")
-            task_id = queued["taskId"]
-            self.assertFalse((root / "source" / "Movies" / "show").exists())
-
-            # A separately invoked Worker claim executes the transfer in its
-            # own thread; the test pauses the genuinely running transfer from
-            # this control "request" while the third move is in flight.
-            results: list = []
-            thread = self._run_worker_async(transfers, runtime, results)
-            self.assertTrue(source.reached.wait(30))
-            paused = runtime.pause_task_if_current(task_id, updated_at=datetime.now(UTC))
-            self.assertIsNotNone(paused)
-            source.release.set()
-            thread.join(30)
-            self.assertFalse(thread.is_alive())
-            self.assertEqual(
-                [transfer.status.value for transfer in results if transfer is not None],
-                ["paused"],
-            )
-            task = runtime.get_task(task_id)
-            self.assertEqual(task.status.value, "running")
-            items = runtime.list_items(task_id)
-            self.assertEqual(items[0].status, TaskItemStatus.PAUSED)
-            progress = json.loads(items[0].progress)
-            # The created destination directory and the completed file moves
-            # are the recorded known-safe state.
-            self.assertEqual(progress["completedEntries"], 4)
-            self.assertEqual(len(progress["confirmedEntries"]), 7)
-            copied_after_pause = source.mutation_calls
-            moved_files = list((root / "source" / "Movies" / "show").glob("*.mkv"))
-            self.assertEqual(len(moved_files), 3)
-
-            # Resume re-queues the persisted authority; the Worker (never the
-            # resume request) continues from the recorded checkpoints.
-            requeued = transfers.requeue_transfer(task_id)
-            self.assertEqual(requeued["status"], "QUEUED")
-            finished = self._run_worker(transfers, runtime)
-            self.assertEqual([transfer.status.value for transfer in finished], ["completed"])
-            projection = transfers.transfer_projection(task_id)
-            self.assertEqual(projection["status"], "SUCCESS")
-            # Already-moved entries are never replayed.
-            self.assertEqual(source.mutation_calls - copied_after_pause, 3)
-            self.assertEqual(len(list((root / "source" / "Movies" / "show").glob("*.mkv"))), 6)
-            self.assertFalse((root / "source" / "show").exists())
-            final = runtime.get_task(task_id)
-            self.assertEqual(final.status.value, "completed")
-
     def test_cancel_of_a_running_transfer_is_observed_at_a_safe_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2883,56 +2823,6 @@ class PauseCancelResumeTests(TransferTestCase):
             remaining = len(list((root / "source" / "show").glob("*.mkv")))
             self.assertEqual(moved + remaining, 6)
             self.assertEqual(source.mutation_calls, 3)
-
-    def test_resume_requeues_pinned_keep_both_and_refuses_a_live_claim(self) -> None:
-        """Keep-both continues only from its admission-pinned unique names."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
-            source = _PausingSource(
-                "source-storage", root / "source", root / "runtime.sqlite3", after=1
-            )
-            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
-            transfers = self._transfers(api, active)
-            self._tree(root, count=3)
-            queued = self._admit(transfers, runtime, conflict_mode="keep_both")
-            task_id = queued["taskId"]
-            self._run_worker(transfers, runtime)
-            task = runtime.get_task(task_id)
-            self.assertEqual(task.status.value, "running")
-            items = runtime.list_items(task_id)
-            # The pinned keep-both root stays the admission-pinned unique name
-            # across the pause (the whole subtree kept its pinned identity).
-            pinned_root = json.loads(items[0].progress)["destinationPath"]
-            self.assertTrue(pinned_root.startswith("Movies/show"))
-            moved_before = list((root / "source" / "Movies").glob("show*"))
-            self.assertEqual(len(moved_before), 1)
-
-            # Re-queuing keeps the pinned keep-both root: the Worker continues
-            # beneath exactly the admission-pinned destination.
-            requeued = transfers.requeue_transfer(task_id)
-            self.assertEqual(requeued["status"], "QUEUED")
-            self.assertEqual(runtime.get_task(task_id).status.value, "pending")
-            # A running transfer with a live claim is never re-queued under
-            # its owner.
-            from mediaflow.application.files_transfer_worker import FilesTransferWorker
-
-            worker = FilesTransferWorker(
-                transfers, runtime, lease_seconds=3600.0, worker_id="worker-live"
-            )
-            self.assertIsNotNone(
-                runtime.claim_next_files_transfer(
-                    datetime.now(UTC),
-                    worker_id="worker-live",
-                    claim_token="token-live",
-                    lease_seconds=3600.0,
-                )
-            )
-            with self.assertRaises(Exception) as running:
-                transfers.requeue_transfer(task_id)
-            self.assertIn("claim", str(running.exception))
-            del worker
 
     def test_takeover_after_process_loss_continues_from_persisted_checkpoints(self) -> None:
         """A crashed Worker's transfer is taken over by a replacement Worker.

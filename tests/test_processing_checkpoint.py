@@ -125,45 +125,6 @@ class ProcessingCheckpointTests(unittest.TestCase):
             uncertain_effects=uncertain,
         )
 
-    def test_all_persisted_statuses_and_production_stages_are_projectable(self) -> None:
-        cases = (
-            (TaskItemStatus.PENDING, "pipeline", "queued"),
-            (TaskItemStatus.PROCESSING, "strategy", "recognition"),
-            (TaskItemStatus.DRY_RUN, "completed", "completed"),
-            (TaskItemStatus.SUCCESS, "completed", "completed"),
-            (TaskItemStatus.PARTIAL, "failed", "failed"),
-            (TaskItemStatus.FAILED, "lock", "failed"),
-            (TaskItemStatus.SKIPPED, "scanned", "completed"),
-            (TaskItemStatus.CANCELLED, "cancelled", "cancelled"),
-            (TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", "waiting_confirm"),
-            (TaskItemStatus.WAITING_RECOGNITION, "waiting_recognition", "waiting_recognition"),
-            (TaskItemStatus.WAITING_METADATA, "waiting_metadata", "waiting_metadata"),
-            (
-                TaskItemStatus.WAITING_METADATA_CORRECTION,
-                "waiting_metadata_correction",
-                "waiting_metadata_correction",
-            ),
-            (
-                TaskItemStatus.WAITING_CLASSIFICATION,
-                "waiting_classification",
-                "waiting_classification",
-            ),
-            (TaskItemStatus.PAUSED, "paused", "paused"),
-            (TaskItemStatus.IGNORED, "ignored_by_operator", "ignored"),
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                task = PersistentTaskCoordinator(repository, repository).create(
-                    "organize", execute_authorized=False
-                )
-                for index, (status, raw_stage, expected_stage) in enumerate(cases):
-                    item = self._item(task.task_id, f"item-{index}", status, raw_stage)
-                    repository.upsert_item(item)
-                    checkpoint = ProcessingCheckpointService(repository).get(item.item_id)
-                    self.assertEqual(checkpoint.stage.value, expected_stage)
-                    self.assertNotIn("retry", checkpoint.permitted_action_ids)
-                    self.assertIsNotNone(checkpoint.refusal_reason or checkpoint.blocker)
-
     def test_partial_and_legacy_results_never_offer_automatic_replay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:

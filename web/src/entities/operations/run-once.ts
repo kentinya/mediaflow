@@ -13,11 +13,6 @@ export const RUN_ONCE_PHASES = [
   "executing",
   "completed",
   "analyzing",
-  // A durable pause was requested (``pausing``) and then acknowledged by the
-  // resident Worker at its safe boundary (``paused``); both stop advertising a
-  // confirmable plan for the interrupted analysis.
-  "pausing",
-  "paused",
   "ready",
   "frozen",
   "refused",
@@ -34,7 +29,6 @@ const PHASES: ReadonlySet<string> = new Set(RUN_ONCE_PHASES);
 const STATUSES: ReadonlySet<string> = new Set([
   "queued",
   "running",
-  "paused",
   "waiting_stability",
   // The frozen manifest's durable analysis stage: the exact plan is being
   // produced by the resident Worker on this same run.

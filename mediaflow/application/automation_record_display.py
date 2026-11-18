@@ -139,20 +139,15 @@ def automation_record_display(
             statement=statement,
             nextStep="本次已取消，不会自动继续；如需处理请重新发起",
         )
-    elif status in {"pending", "running", "paused", "waiting"}:
+    elif status in {"pending", "running", "waiting"}:
         # A48-01: the live waiting facet is the Task's current durable item
         # evidence, never the frozen first stage's historical handoff.
         statement = {
             "pending": "本次正在等待执行",
             "running": "本次正在等待人工处理" if waiting else "本次正在执行",
-            "paused": "本次已暂停，尚未结束",
             "waiting": "本次正在等待，尚未结束",
         }[status]
-        next_step = (
-            "等待本次运行结束后刷新查看结果"
-            if status != "paused"
-            else "本次仍处于暂停状态，结束后再查看结果"
-        )
+        next_step = "等待本次运行结束后刷新查看结果"
         if status == "running" and waiting:
             next_step = "在任务中心处理等待的文件并明确继续"
         result.update(statement=statement, nextStep=next_step)

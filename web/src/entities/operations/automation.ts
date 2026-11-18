@@ -1576,7 +1576,7 @@ export function normalizeAutomationOccurrencesPage(
  * One read-only Automation execution record.
  *
  * The record carries the original durable outcome plus its exact recovery
- * ownership. It never carries a file-decision form, re-analysis, pause/resume/
+ * ownership. It never carries a file-decision form, re-analysis, continuation/
  * cancel or a recovery execution: `startAgainAllowed` is published as a
  * backend decision and is never inferred from a missing Task link.
  */
@@ -1663,14 +1663,12 @@ export interface AutomationRecordFailureStageModel {
 }
 
 export const AUTOMATION_RECORD_OUTCOMES = [
-  // Slice 48 RO-4: the record outcome is the exact current durable Task flow
-  // status the Task Center reads.  `cancelled` is its own flow outcome;
-  // `paused` stays accepted for historical rows only.
+  // The record outcome is the exact current durable Task flow status the Task
+  // Center reads; `cancelled` is its own flow outcome.
   "completed",
   "failed",
   "pending",
   "running",
-  "paused",
   "waiting",
   "cancelled",
   "unknown",

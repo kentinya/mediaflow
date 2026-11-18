@@ -94,7 +94,6 @@ def is_files_worker_task_command(command: object) -> bool:
 TASK_TERMINAL_STATUSES = frozenset(
     {
         PersistentTaskStatus.COMPLETED,
-        PersistentTaskStatus.PARTIAL_SUCCESS,
         PersistentTaskStatus.FAILED,
         PersistentTaskStatus.CANCELLED,
     }
@@ -103,7 +102,6 @@ TASK_CANCELLABLE_STATUSES = frozenset(
     {
         PersistentTaskStatus.PENDING,
         PersistentTaskStatus.RUNNING,
-        PersistentTaskStatus.PAUSED,
     }
 )
 
@@ -291,7 +289,7 @@ def summarize_effects(
             True,
             (
                 f"{verified} of {observed} recorded item result(s) completed a verified Storage "
-                "effect; a cooperative pause or cancel does not undo it"
+                "effect; a cooperative cancellation does not undo it"
             ),
         )
     return EffectSummary(
@@ -599,7 +597,6 @@ def task_operator_document(task: PersistentTask) -> dict[str, object]:
         "total_items": task.total_items,
         "completed_items": task.completed_items,
         "failed_items": task.failed_items,
-        "pause_requested": task.pause_requested,
         # The immutable revision identity is the operator-visible pin evidence.
         # The snapshot digest is a fingerprint and stays out of the document.
         "configuration_snapshot_id": task.configuration_snapshot_id,
@@ -853,7 +850,7 @@ def manual_intent_analysis_document(document: dict[str, object]) -> dict[str, ob
 
     The intent-page analysis request only records a durable stage; the resident
     Worker builds the plan.  This projection publishes the run identity, its
-    real stage and the operator-facing control facts (pause/cancel requests)
+    real stage and the operator-facing cancellation facts
     so the same page shows the true durable state instead of pretending the
     summary already exists.  It never carries a claim token, a configuration
     digest, a fingerprint or a physical Storage path.
@@ -885,7 +882,6 @@ def manual_intent_analysis_document(document: dict[str, object]) -> dict[str, ob
             if isinstance(preview_identity, str) and preview_identity
             else None
         ),
-        "pauseRequested": bool(document.get("pauseRequested")),
         "cancelRequested": bool(document.get("cancelRequested")),
         "message": _bounded_evidence_text(document.get("message")),
         "actions": bounded_actions,
@@ -1730,13 +1726,9 @@ def _permission_reason(permitted: bool, permission: ApiPermission) -> str | None
     )
 
 
-_SYNCHRONOUS_PAUSE_REASON = (
-    "this Task is executed synchronously by the manual Organize authorization boundary and "
-    "observes no Web pause request"
-)
 _SYNCHRONOUS_CANCEL_REASON = (
     "this Task is executed synchronously by the manual Organize authorization boundary and "
-    "observes neither a Web pause request nor a Web cancellation"
+    "observes no Web cancellation"
 )
 _SYNCHRONOUS_NEXT_ACTION = (
     "follow the linked manual execution to its bounded outcome; this Task has no cooperative "
@@ -1801,10 +1793,9 @@ def task_lifecycle_document(
         next_action=cancel_next_action,
     )
 
-    # Pause and resume-from-pause are retired for every media operation.  The
-    # accepted cancellation above is the only cooperative lifecycle control; a
-    # four-type problem is continued through its own decision/analysis/summary
-    # journey on the same Task, not through this control projection.
+    # Cancellation is the only cooperative lifecycle control; a four-type
+    # problem is continued through its own decision/analysis/summary journey on
+    # the same Task, not through this control projection.
     actions: list[dict[str, object]] = [cancel]
     return {
         "objectType": "task",
@@ -1815,7 +1806,6 @@ def task_lifecycle_document(
         "permitted": permitted,
         "permission": ApiPermission.CANCEL_JOB.value,
         "executionPath": execution.path.value,
-        "pauseRequested": task.pause_requested,
         "effectCertainty": effects.certainty,
         "resultsObserved": effects.observed_results,
         "resultsComplete": effects.results_complete,
@@ -1888,55 +1878,6 @@ class TaskLifecycleService:
             retry_safe=True,
             current_version=current,
         )
-
-    def pause(self, task_id: str, *, expected_version: str | None) -> PersistentTask:
-        task = self.require(task_id)
-        if self.is_kernel_managed(task_id):
-            return self._kernel_control(task_id, TaskControl.PAUSE, expected_version)
-        context = self.execution_context(task)
-        if context.path is not TaskExecutionPath.OPERATOR_WORKFLOW:
-            reason = _SYNCHRONOUS_PAUSE_REASON
-            next_action = _SYNCHRONOUS_NEXT_ACTION
-            raise OperationsLifecycleConflict(
-                "pause_unavailable",
-                reason,
-                durable_state=f"the Task remains {task.status.value}",
-                next_action=next_action,
-                current_version=task.updated_at.isoformat(),
-            )
-        updated = self._repository.pause_task_if_current(
-            task_id,
-            updated_at=datetime.now(UTC),
-            expected_version=expected_version,
-        )
-        if updated is not None:
-            return updated
-        current = self.require(task_id)
-        if expected_version is not None and expected_version != current.updated_at.isoformat():
-            raise self._stale_conflict(current.updated_at.isoformat())
-        if current.pause_requested:
-            raise OperationsLifecycleConflict(
-                "already_requested",
-                "a durable pause request is already stored for this Task",
-                durable_state=(
-                    "the Task stays running until the stored pause request is acknowledged at a "
-                    "supported item boundary"
-                ),
-                next_action=(
-                    "reload the Task later to read whether the pause was acknowledged; do not "
-                    "submit the same request again"
-                ),
-                current_version=current.updated_at.isoformat(),
-            )
-        if current.status is not PersistentTaskStatus.RUNNING:
-            raise OperationsLifecycleConflict(
-                "pause_unavailable",
-                f"a {current.status.value} Task cannot accept a pause request",
-                durable_state=f"the Task remains {current.status.value}",
-                next_action="refresh the Task; only a running Task accepts a pause request",
-                current_version=current.updated_at.isoformat(),
-            )
-        raise self._stale_conflict(current.updated_at.isoformat())
 
     def cancel(self, task_id: str, *, expected_version: str | None) -> PersistentTask:
         task = self.require(task_id)

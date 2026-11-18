@@ -621,7 +621,6 @@ _TASK_SCHEDULING_INSERT = (
 _KERNEL_RESUMABLE_ITEM_STATUSES = frozenset(
     {
         TaskItemStatus.PENDING,
-        TaskItemStatus.PAUSED,
         TaskItemStatus.FAILED,
         # An analyzed item that produced no four-type problem is waiting for the
         # operator's own initial exact confirmation.  The confirmed execution
@@ -678,8 +677,8 @@ _TERMINAL_MANUAL_EXECUTION_STATUSES = frozenset(
 _TASK_INSERT = (
     "INSERT INTO tasks (task_id, command, status, execute_authorized, created_at, "
     "updated_at, started_at, completed_at, total_items, completed_items, failed_items, "
-    "error, pause_requested, scope_path, item_limit, configuration_snapshot_id, "
-    "configuration_snapshot_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "error, scope_path, item_limit, configuration_snapshot_id, "
+    "configuration_snapshot_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 #: The columns one claim-fenced aggregate publication may write.  Command,
@@ -688,7 +687,7 @@ _TASK_INSERT = (
 #: and outcome, never authority.
 _TASK_SCHEDULED_PUBLICATION_UPDATE = (
     "UPDATE tasks SET status=?, updated_at=?, started_at=?, completed_at=?, "
-    "total_items=?, completed_items=?, failed_items=?, error=?, pause_requested=? "
+    "total_items=?, completed_items=?, failed_items=?, error=? "
     "WHERE task_id=?"
 )
 
@@ -1088,9 +1087,7 @@ _JOB_RUN_STATUS_MAP = {
 _TASK_RUN_STATUS_MAP = {
     "pending": OperationsRunStatus.PENDING,
     "running": OperationsRunStatus.RUNNING,
-    "paused": OperationsRunStatus.PAUSED,
     "completed": OperationsRunStatus.COMPLETED,
-    "partial_success": OperationsRunStatus.PARTIAL_SUCCESS,
     "failed": OperationsRunStatus.FAILED,
     "cancelled": OperationsRunStatus.CANCELLED,
 }
@@ -1098,7 +1095,6 @@ _TASK_RUN_STATUS_MAP = {
 _RUN_TERMINAL_STATUSES = frozenset(
     {
         OperationsRunStatus.COMPLETED,
-        OperationsRunStatus.PARTIAL_SUCCESS,
         OperationsRunStatus.FAILED,
         OperationsRunStatus.CANCELLED,
     }
@@ -1240,7 +1236,11 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             self._connection.execute(
                 """
-                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (task_id, command, status, execute_authorized, created_at,
+                    updated_at, started_at, completed_at, total_items, completed_items,
+                    failed_items, error, scope_path, item_limit, configuration_snapshot_id,
+                    configuration_snapshot_digest)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._task_values(task),
             )
@@ -1254,7 +1254,7 @@ class SQLiteTaskRepository:
                 """
                 UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
                     updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?,
-                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?,
+                    failed_items=?, error=?, scope_path=?, item_limit=?,
                     configuration_snapshot_id=?, configuration_snapshot_digest=?
                     WHERE task_id=?
                 """,
@@ -1262,72 +1262,6 @@ class SQLiteTaskRepository:
             )
             if cursor.rowcount != 1:
                 raise LookupError(f"task {task.task_id!r} is not configured")
-
-    def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask:
-        with self._lock, self._connection:
-            self._reject_scheduling_managed_task(task_id, "the generic pause request")
-            cursor = self._connection.execute(
-                "UPDATE tasks SET pause_requested=1, updated_at=? WHERE task_id=? AND status=?",
-                (updated_at.isoformat(), task_id, PersistentTaskStatus.RUNNING.value),
-            )
-            if cursor.rowcount != 1:
-                existing = self.get_task(task_id)
-                if existing is None:
-                    raise LookupError(f"task {task_id!r} was not found")
-                if existing.status is PersistentTaskStatus.RUNNING and existing.pause_requested:
-                    return existing
-                raise ValueError("only a running task can be paused")
-            row = self._connection.execute(
-                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-        return self._task(row)
-
-    def task_pause_requested(self, task_id: str) -> bool:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT pause_requested FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-        if row is None:
-            raise LookupError(f"task {task_id!r} was not found")
-        return bool(row["pause_requested"])
-
-    def pause_task_if_current(
-        self,
-        task_id: str,
-        *,
-        updated_at: datetime,
-        expected_version: str | None = None,
-    ) -> PersistentTask | None:
-        """Atomically store one pause request for the exact observed Task state.
-
-        The single UPDATE binds the Task identity, its running state, the unset
-        pause flag and (when the operator submitted one) the version that was
-        read.  Two concurrent submissions of the same control therefore cannot
-        both be admitted, and a Task that already carries a durable request is
-        refused instead of silently re-acknowledged.
-        """
-
-        statement = (
-            "UPDATE tasks SET pause_requested=1, updated_at=? "
-            "WHERE task_id=? AND status=? AND pause_requested=0"
-        )
-        parameters: list[object] = [
-            updated_at.isoformat(),
-            task_id,
-            PersistentTaskStatus.RUNNING.value,
-        ]
-        if expected_version is not None:
-            statement += " AND updated_at=?"
-            parameters.append(expected_version)
-        with self._lock, self._connection:
-            self._reject_scheduling_managed_task(task_id, "the version-checked pause request")
-            cursor = self._connection.execute(statement, tuple(parameters))
-            if cursor.rowcount != 1:
-                return None
-            row = self._connection.execute(
-                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-        return self._task(row) if row is not None else None
 
     def cancel_task_if_current(
         self,
@@ -1349,7 +1283,7 @@ class SQLiteTaskRepository:
 
         statement = (
             "UPDATE tasks SET status=?, updated_at=?, completed_at=?, error=? "
-            "WHERE task_id=? AND status IN (?, ?, ?)"
+            "WHERE task_id=? AND status IN (?, ?)"
         )
         parameters: list[object] = [
             PersistentTaskStatus.CANCELLED.value,
@@ -1359,7 +1293,6 @@ class SQLiteTaskRepository:
             task_id,
             PersistentTaskStatus.PENDING.value,
             PersistentTaskStatus.RUNNING.value,
-            PersistentTaskStatus.PAUSED.value,
         ]
         if expected_version is not None:
             statement += " AND updated_at=?"
@@ -1367,7 +1300,6 @@ class SQLiteTaskRepository:
         cancellable_items = (
             TaskItemStatus.PENDING.value,
             TaskItemStatus.PROCESSING.value,
-            TaskItemStatus.PAUSED.value,
         )
         with self._lock, self._connection:
             self._reject_scheduling_managed_task(task_id, "the version-checked cancellation")
@@ -1782,7 +1714,7 @@ class SQLiteTaskRepository:
                         t.total_items AS task_total_items,
                         t.completed_items AS task_completed_items,
                         t.failed_items AS task_failed_items, t.error AS task_error,
-                        t.pause_requested AS task_pause_requested, t.scope_path AS task_scope_path,
+                        t.scope_path AS task_scope_path,
                         t.item_limit AS task_item_limit,
                         t.configuration_snapshot_id AS task_configuration_snapshot_id,
                         t.configuration_snapshot_digest AS task_configuration_snapshot_digest
@@ -2086,7 +2018,6 @@ class SQLiteTaskRepository:
             status=task_work_status(items),
             updated_at=now,
             completed_at=now,
-            pause_requested=False,
         )
         self._require_scheduled_authority_locked(updated)
         self._connection.execute(
@@ -2862,8 +2793,8 @@ class SQLiteTaskRepository:
                     t.updated_at AS task_updated_at, t.started_at AS task_started_at,
                     t.completed_at AS task_completed_at, t.total_items AS task_total_items,
                     t.completed_items AS task_completed_items, t.failed_items AS task_failed_items,
-                    t.error AS task_error, t.pause_requested AS task_pause_requested,
-                    t.scope_path AS task_scope_path, t.item_limit AS task_item_limit,
+                    t.error AS task_error, t.scope_path AS task_scope_path,
+                    t.item_limit AS task_item_limit,
                     t.configuration_snapshot_id AS task_configuration_snapshot_id,
                     t.configuration_snapshot_digest AS task_configuration_snapshot_digest
                 FROM task_items i JOIN tasks t ON t.task_id=i.task_id WHERE i.item_id=?""",
@@ -2886,7 +2817,6 @@ class SQLiteTaskRepository:
                 row["task_completed_items"],
                 row["task_failed_items"],
                 row["task_error"],
-                bool(row["task_pause_requested"]),
                 row["task_scope_path"],
                 row["task_item_limit"],
                 row["task_configuration_snapshot_id"],
@@ -5191,7 +5121,7 @@ class SQLiteTaskRepository:
                        ELSE 'resource'
                    END AS library_kind,
                    task_status.total_items, task_status.completed_items,
-                   task_status.failed_items, task_status.pause_requested,
+                   task_status.failed_items,
                    -- The item bound this admission itself recorded.  Only the
                    -- Job occurrence records a *containment* bound (the
                    -- definition's item limit at emission time), which is the
@@ -6863,7 +6793,6 @@ class SQLiteTaskRepository:
         }
         terminal = overview.status in {
             OperationsRunStatus.COMPLETED,
-            OperationsRunStatus.PARTIAL_SUCCESS,
             OperationsRunStatus.FAILED,
             OperationsRunStatus.CANCELLED,
         }
@@ -7892,7 +7821,6 @@ class SQLiteTaskRepository:
             failed_items=(None if run_kind == "discovery" else row["failed_items"]),
             processed_items=(None if run_kind == "discovery" else row["processed_items"]),
             current_stage=(str(row["current_stage"]) if row["current_stage"] is not None else None),
-            pause_requested=bool(row["pause_requested"]),
             attention=bool(row["derived_attention"]),
             problem_types=problem_types,
             problem_file_counts=problem_file_counts,
@@ -9305,7 +9233,7 @@ class SQLiteTaskRepository:
                     "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                     "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
                     "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL, attempts=?, "
-                    "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
+                    "cancel_requested=?, error=?, updated_at=? "
                     "WHERE discovery_id=? AND version=? AND intent_id IS NULL",
                     (
                         discovery.status.value,
@@ -9324,7 +9252,6 @@ class SQLiteTaskRepository:
                             else None
                         ),
                         discovery.attempts,
-                        1 if discovery.pause_requested else 0,
                         1 if discovery.cancel_requested else 0,
                         discovery.error,
                         discovery.updated_at.isoformat(),
@@ -9442,7 +9369,7 @@ class SQLiteTaskRepository:
             ).fetchone()
             if (
                 source_task is None
-                or source_task["status"] != PersistentTaskStatus.PAUSED.value
+                or source_task["status"] in {value.value for value in SETTLED_TASK_FLOW_STATUSES}
                 or source_task["configuration_snapshot_id"] != preview.configuration_snapshot_id
                 or source_task["configuration_snapshot_digest"]
                 != preview.configuration_snapshot_digest
@@ -10642,7 +10569,6 @@ class SQLiteTaskRepository:
                     0,
                     0,
                     None,
-                    False,
                     None,
                     len(items),
                     execution.configuration_snapshot_id,
@@ -10664,7 +10590,7 @@ class SQLiteTaskRepository:
                         or existing["status"]
                         in {
                             PersistentTaskStatus.COMPLETED.value,
-                            PersistentTaskStatus.PARTIAL_SUCCESS.value,
+                            PersistentTaskStatus.COMPLETED.value,
                             PersistentTaskStatus.FAILED.value,
                             PersistentTaskStatus.CANCELLED.value,
                         }
@@ -10716,13 +10642,6 @@ class SQLiteTaskRepository:
                                 "the organizing Task already accepted cancellation",
                                 code="task_cancelled",
                                 next_action="start a fresh organizing request; this Task is final",
-                            )
-                        if scheduling.queue_state is TaskQueueState.PAUSED:
-                            raise ManualExecutionError(
-                                "the organizing Task is paused; resume it explicitly "
-                                "before confirming",
-                                code="task_paused",
-                                next_action="resume the paused Task, then confirm the same summary",
                             )
                         if scheduling.queue_state is not TaskQueueState.WAITING_HUMAN:
                             raise ManualExecutionError(
@@ -11066,7 +10985,7 @@ class SQLiteTaskRepository:
         "configuration_snapshot_id, configuration_snapshot_digest, status, version, "
         "budgets_json, progress_json, sources_json, intent_id, frozen_at, "
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
-        "pause_requested, cancel_requested, error, created_at, updated_at, "
+        "cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
         "auto_prepare, preview_id, definition_origin_json, recovery_source_task_id, "
         "recovery_excluded_paths_json, organize_task_id, storage_scope_json"
@@ -11152,8 +11071,8 @@ class SQLiteTaskRepository:
                     )
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -11755,7 +11674,7 @@ class SQLiteTaskRepository:
                         details={"refusedSources": refused_sources},
                     )
                 self._connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    _TASK_INSERT,
                     self._task_values(task),
                 )
                 if scheduling is not None:
@@ -11795,8 +11714,8 @@ class SQLiteTaskRepository:
                     )
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -11897,7 +11816,7 @@ class SQLiteTaskRepository:
                 if self._scheduled_capacity_use_locked() >= capacity:
                     raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 self._connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    _TASK_INSERT,
                     self._task_values(task),
                 )
                 self._connection.execute(
@@ -11910,7 +11829,7 @@ class SQLiteTaskRepository:
                 cursor = self._connection.execute(
                     "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                     "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
-                    "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
+                    "cancel_requested=?, error=?, updated_at=?, "
                     "next_observation_at=?, preview_id=?, storage_scope_json=?, "
                     "organize_task_id=?, claim_worker_id=NULL, claim_token=NULL, "
                     "claim_expires_at=NULL "
@@ -11938,7 +11857,6 @@ class SQLiteTaskRepository:
                             else None
                         ),
                         discovery.attempts,
-                        1 if discovery.pause_requested else 0,
                         1 if discovery.cancel_requested else 0,
                         discovery.error,
                         discovery.updated_at.isoformat(),
@@ -13004,7 +12922,6 @@ class SQLiteTaskRepository:
                 TaskQueueState.QUEUED,
                 TaskQueueState.CLAIMED,
                 TaskQueueState.WAITING_HUMAN,
-                TaskQueueState.PAUSED,
             }:
                 # A finished or non-kernel owner holds no slot and no live
                 # claim: its recorded outcome stays pure history.
@@ -13582,7 +13499,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                 "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
-                "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
+                "cancel_requested=?, error=?, updated_at=?, "
                 "next_observation_at=?, preview_id=?, storage_scope_json=? "
                 "WHERE discovery_id=? AND version=?",
                 (
@@ -13594,7 +13511,6 @@ class SQLiteTaskRepository:
                     discovery.intent_id,
                     discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None,
                     discovery.attempts,
-                    1 if discovery.pause_requested else 0,
                     1 if discovery.cancel_requested else 0,
                     discovery.error,
                     discovery.updated_at.isoformat(),
@@ -13866,7 +13782,7 @@ class SQLiteTaskRepository:
         persisted claim* in the same statement as the version CAS, so a Worker
         whose lease was taken over cannot publish status, progress, findings,
         counters, manifest or stability observations for a discovery it no
-        longer owns.  The operator-owned ``pause_requested``/``cancel_requested``
+        longer owns.  The operator-owned ``cancel_requested``
         flags and the claim columns are deliberately not written on that path:
         an accepted pause or cancel request can never be silently discarded by a
         Worker publication, and a stale owner can never rewrite the successor's
@@ -13916,10 +13832,8 @@ class SQLiteTaskRepository:
             ),
         ]
         if claim_token is None:
-            columns += ", pause_requested=?, cancel_requested=?"
-            parameters.extend(
-                (1 if discovery.pause_requested else 0, 1 if discovery.cancel_requested else 0)
-            )
+            columns += ", cancel_requested=?"
+            parameters.append(1 if discovery.cancel_requested else 0)
         parameters.extend((discovery.discovery_id, expected_version))
         statement = f"UPDATE media_discoveries SET {columns} WHERE discovery_id=? AND version=?"
         if claim_token is not None:
@@ -14067,7 +13981,7 @@ class SQLiteTaskRepository:
         freshly confirmable exact plan.  The Provider/Storage analysis already
         happened before this call: nothing slow runs inside this transaction.
 
-        The operator-owned ``pause_requested``/``cancel_requested`` flags are not
+        The operator-owned ``cancel_requested`` flag is not
         written here, exactly like the ordinary Worker publication path, so an
         accepted control can never be discarded by the analyzing Worker.
         """
@@ -14306,7 +14220,7 @@ class SQLiteTaskRepository:
         values = tuple(observations)
         statement = (
             "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
-            "sources_json=?, attempts=?, pause_requested=?, cancel_requested=?, "
+            "sources_json=?, attempts=?, cancel_requested=?, "
             "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL, "
             "error=?, updated_at=? WHERE discovery_id=? AND version=?"
         )
@@ -14316,7 +14230,6 @@ class SQLiteTaskRepository:
             json.dumps(discovery.progress.document(), ensure_ascii=False, sort_keys=True),
             json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
             discovery.attempts,
-            1 if discovery.pause_requested else 0,
             1 if discovery.cancel_requested else 0,
             discovery.error,
             discovery.updated_at.isoformat(),
@@ -14405,7 +14318,6 @@ class SQLiteTaskRepository:
                 else None
             ),
             discovery.attempts,
-            1 if discovery.pause_requested else 0,
             1 if discovery.cancel_requested else 0,
             discovery.error,
             discovery.created_at.isoformat(),
@@ -14509,7 +14421,6 @@ class SQLiteTaskRepository:
                     "claimToken": row["claim_token"],
                     "claimExpiresAt": row["claim_expires_at"],
                     "attempts": row["attempts"],
-                    "pauseRequested": bool(row["pause_requested"]),
                     "cancelRequested": bool(row["cancel_requested"]),
                     "error": row["error"],
                     "createdAt": row["created_at"],
@@ -14753,7 +14664,7 @@ class SQLiteTaskRepository:
                     self._connection.commit()
                     return
                 self._connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    _TASK_INSERT,
                     self._task_values(task),
                 )
                 for item in items:
@@ -15139,13 +15050,12 @@ class SQLiteTaskRepository:
         statuses = (
             FilesTransferStatus.ADMITTED.value,
             FilesTransferStatus.RUNNING.value,
-            FilesTransferStatus.PAUSED.value,
         )
         with self._lock:
             rows = self._connection.execute(
                 """SELECT files_transfers.* FROM files_transfers
                 JOIN tasks ON tasks.task_id=files_transfers.task_id
-                WHERE tasks.command=? AND files_transfers.status IN (?, ?, ?)
+                WHERE tasks.command=? AND files_transfers.status IN (?, ?)
                 ORDER BY files_transfers.updated_at DESC, files_transfers.created_at DESC
                 LIMIT 500""",
                 (command, *statuses),
@@ -15527,77 +15437,6 @@ class SQLiteTaskRepository:
             )
         return cursor.rowcount == 1
 
-    def pause_files_transfer(self, transfer_id: str, *, claim_token: str, now: datetime) -> bool:
-        """Record the paused state at a safe boundary for the claim owner."""
-
-        if not isinstance(claim_token, str) or not claim_token.strip():
-            raise ValueError("files transfer claim token is invalid")
-        if now.tzinfo is None:
-            raise ValueError("files transfer timestamp needs timezone")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
-                claimed_at=NULL, claim_expires_at=NULL, updated_at=?
-                WHERE transfer_id=? AND claim_token=? AND status=?
-                AND mutation_state IS NULL""",
-                (
-                    FilesTransferStatus.PAUSED.value,
-                    now.isoformat(),
-                    transfer_id,
-                    claim_token,
-                    FilesTransferStatus.RUNNING.value,
-                ),
-            )
-        return cursor.rowcount == 1
-
-    def requeue_files_transfer(self, transfer_id: str, now: datetime) -> PersistentFilesTransfer:
-        """Re-admit one paused (or abandoned) transfer for Worker pickup.
-
-        The persisted per-item authority is untouched: the Worker continues
-        from each item's recorded known-safe checkpoint.  A transfer with a
-        live claim is refused instead of being re-queued beneath its owner.
-
-        A transfer whose claim owner entered a Storage mutation is never
-        re-queued: an in-flight operation may already have taken effect, so it
-        stays on the investigation path instead of becoming a fresh replay of
-        the same unchanged authority.
-        """
-
-        if now.tzinfo is None:
-            raise ValueError("files transfer timestamp needs timezone")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
-                claimed_at=NULL, claim_expires_at=NULL, error=NULL, next_action=NULL,
-                updated_at=? WHERE transfer_id=? AND status IN (?, ?)
-                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
-                AND mutation_state IS NULL""",
-                (
-                    FilesTransferStatus.ADMITTED.value,
-                    now.isoformat(),
-                    transfer_id,
-                    FilesTransferStatus.PAUSED.value,
-                    FilesTransferStatus.RUNNING.value,
-                    now.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                row = self._connection.execute(
-                    "SELECT * FROM files_transfers WHERE transfer_id=?", (transfer_id,)
-                ).fetchone()
-                if row is None:
-                    raise LookupError(f"files transfer {transfer_id!r} was not found")
-                current = self._files_transfer(row)
-                if current.mutation_state is not None:
-                    raise ValueError(
-                        "the transfer has an unresolved in-flight mutation; it cannot be "
-                        "re-queued or replayed"
-                    )
-                if current.claim_expires_at is not None and current.claim_expires_at > now:
-                    raise ValueError("the transfer is still owned by a live Worker claim")
-                raise ValueError(f"a {current.status.value} transfer cannot be re-queued")
-        return self.require_files_transfer(transfer_id)
-
     def release_files_transfer_claim(
         self,
         transfer_id: str,
@@ -15613,10 +15452,6 @@ class SQLiteTaskRepository:
         immutable runtime.  The exact claim token is compared, so a Worker that
         already lost ownership writes nothing; the pinned authority and the
         per-item checkpoints are preserved for a compatible Worker.
-
-        An unresolved in-flight boundary is deliberately *kept*: releasing the
-        claim must never turn a mutation that may already have taken effect into
-        replayable work.  Only an explicit investigation resolution clears it.
         """
 
         if not isinstance(claim_token, str) or not claim_token.strip():
@@ -15811,7 +15646,7 @@ class SQLiteTaskRepository:
                     """
                     UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
                         updated_at=?, started_at=?, completed_at=?, total_items=?,
-                        completed_items=?, failed_items=?, error=?, pause_requested=?,
+                        completed_items=?, failed_items=?, error=?,
                         scope_path=?, item_limit=?, configuration_snapshot_id=?,
                         configuration_snapshot_digest=?
                         WHERE task_id=?
@@ -15878,7 +15713,7 @@ class SQLiteTaskRepository:
                         """
                         UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
                             updated_at=?, started_at=?, completed_at=?, total_items=?,
-                            completed_items=?, failed_items=?, error=?, pause_requested=?,
+                            completed_items=?, failed_items=?, error=?,
                             scope_path=?, item_limit=?, configuration_snapshot_id=?,
                             configuration_snapshot_digest=?
                             WHERE task_id=?
@@ -16077,7 +15912,7 @@ class SQLiteTaskRepository:
                     cursor = self._connection.execute(
                         "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
                         "updated_at=?, started_at=?, completed_at=?, total_items=?, "
-                        "completed_items=?, failed_items=?, error=?, pause_requested=?, "
+                        "completed_items=?, failed_items=?, error=?, "
                         "scope_path=?, item_limit=?, configuration_snapshot_id=?, "
                         "configuration_snapshot_digest=? WHERE task_id=?",
                         (*self._task_values(task)[1:], task.task_id),
@@ -16227,7 +16062,7 @@ class SQLiteTaskRepository:
                 cursor = self._connection.execute(
                     "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
                     "updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?, "
-                    "failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?, "
+                    "failed_items=?, error=?, scope_path=?, item_limit=?, "
                     "configuration_snapshot_id=?, configuration_snapshot_digest=? WHERE task_id=?",
                     (*self._task_values(task)[1:], task.task_id),
                 )
@@ -17244,8 +17079,7 @@ class SQLiteTaskRepository:
                     return None
                 now = fence.now.isoformat()
                 cursor = self._connection.execute(
-                    """UPDATE tasks SET status=?, updated_at=?, started_at=COALESCE(started_at, ?),
-                        pause_requested=0
+                    """UPDATE tasks SET status=?, updated_at=?, started_at=COALESCE(started_at, ?)
                     WHERE task_id=? AND status=?""",
                     (
                         PersistentTaskStatus.RUNNING.value,
@@ -17449,8 +17283,7 @@ class SQLiteTaskRepository:
         return (
             state.claim_token is None
             and not state.mutation_in_flight
-            and state.queue_state
-            in {TaskQueueState.QUEUED, TaskQueueState.WAITING_HUMAN, TaskQueueState.PAUSED}
+            and state.queue_state in {TaskQueueState.QUEUED, TaskQueueState.WAITING_HUMAN}
         )
 
     def _scheduled_control_items_locked(
@@ -17458,17 +17291,10 @@ class SQLiteTaskRepository:
     ) -> tuple[tuple[PersistentTaskItem, ...], TaskQueueState]:
         from dataclasses import replace
 
-        if control is TaskControl.PAUSE:
-            wanted = {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
-            target = TaskItemStatus.PAUSED
-            stage = "paused"
-            error = None
-            queue_state = TaskQueueState.PAUSED
-        else:
+        if True:
             wanted = {
                 TaskItemStatus.PENDING,
                 TaskItemStatus.PROCESSING,
-                TaskItemStatus.PAUSED,
                 TaskItemStatus.WAITING_CONFIRM,
                 TaskItemStatus.WAITING_RECOGNITION,
                 TaskItemStatus.WAITING_METADATA,
@@ -17492,26 +17318,12 @@ class SQLiteTaskRepository:
     ) -> PersistentTask:
         from dataclasses import replace
 
-        if control is TaskControl.PAUSE:
-            # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
-            # suspended flow is unfinished work, so the acknowledged pause
-            # keeps the Task ``running`` while the queue row carries the pause
-            # eligibility and the items record their suspended state.
-            return replace(
-                task,
-                status=PersistentTaskStatus.RUNNING,
-                updated_at=now,
-                completed_at=None,
-                error=None,
-                pause_requested=False,
-            )
         return replace(
             task,
             status=PersistentTaskStatus.CANCELLED,
             updated_at=now,
             completed_at=now,
             error="task cancelled",
-            pause_requested=False,
         )
 
     def _refresh_task_item_counts_locked(self, task_id: str) -> None:
@@ -17572,52 +17384,35 @@ class SQLiteTaskRepository:
     ) -> None:
         """Settle the linked discovery's display under the Task release."""
 
-        if control is TaskControl.PAUSE:
-            self._connection.execute(
-                "UPDATE media_discoveries SET status=?, version=version+1, "
-                "pause_requested=1, claim_worker_id=NULL, claim_token=NULL, "
-                "claim_expires_at=NULL, updated_at=? "
-                "WHERE discovery_id=? AND status NOT IN (?, ?, ?)",
+        # Cancelling the Task cancels *this* bounded preparation, whatever
+        # stage it reached.  An analysis that already produced its exact
+        # summary is no exception: the work it belonged to is final, so the
+        # admission must not keep presenting itself as a live, confirmable
+        # summary — or keep owning the concrete source against a later,
+        # deliberate organizing request.  Known findings, the counters and
+        # the linked plan rows are preserved exactly as recorded; only the
+        # operator-visible stage and the cancellation fact change.
+        self._connection.execute(
+            "UPDATE media_discoveries SET status=?, version=version+1, "
+            "cancel_requested=1, claim_worker_id=NULL, claim_token=NULL, "
+            "claim_expires_at=NULL, updated_at=?, "
+            "progress_json = CASE WHEN json_valid(progress_json) THEN json_set("
+            "progress_json, '$.phase', ?, '$.message', ?) ELSE progress_json END "
+            "WHERE discovery_id=? AND status NOT IN (?, ?)",
+            (
+                DiscoveryStatus.CANCELLED.value,
+                now.isoformat(),
+                "cancelled",
                 (
-                    DiscoveryStatus.PAUSED.value,
-                    now.isoformat(),
-                    discovery.discovery_id,
-                    DiscoveryStatus.COMPLETED.value,
-                    DiscoveryStatus.PARTIAL_SUCCESS.value,
-                    DiscoveryStatus.CANCELLED.value,
+                    "this organizing work was cancelled by the operator; its known "
+                    "findings and summary are preserved as history and no further "
+                    "analysis or execution is admitted for it"
                 ),
-            )
-        else:
-            # Cancelling the Task cancels *this* bounded preparation, whatever
-            # stage it reached.  An analysis that already produced its exact
-            # summary is no exception: the work it belonged to is final, so the
-            # admission must not keep presenting itself as a live, confirmable
-            # summary — or keep owning the concrete source against a later,
-            # deliberate organizing request.  Known findings, the counters and
-            # the linked plan rows are preserved exactly as recorded; only the
-            # operator-visible stage and the cancellation fact change.
-            self._connection.execute(
-                "UPDATE media_discoveries SET status=?, version=version+1, "
-                "cancel_requested=1, claim_worker_id=NULL, claim_token=NULL, "
-                "claim_expires_at=NULL, updated_at=?, "
-                "progress_json = CASE WHEN json_valid(progress_json) THEN json_set("
-                "progress_json, '$.phase', ?, '$.message', ?) ELSE progress_json END "
-                "WHERE discovery_id=? AND status NOT IN (?, ?, ?)",
-                (
-                    DiscoveryStatus.CANCELLED.value,
-                    now.isoformat(),
-                    "cancelled",
-                    (
-                        "this organizing work was cancelled by the operator; its known "
-                        "findings and summary are preserved as history and no further "
-                        "analysis or execution is admitted for it"
-                    ),
-                    discovery.discovery_id,
-                    DiscoveryStatus.FAILED.value,
-                    DiscoveryStatus.CANCELLED.value,
-                    DiscoveryStatus.PAUSED.value,
-                ),
-            )
+                discovery.discovery_id,
+                DiscoveryStatus.FAILED.value,
+                DiscoveryStatus.CANCELLED.value,
+            ),
+        )
 
     @staticmethod
     def _control_discovery_projection(
@@ -17627,21 +17422,6 @@ class SQLiteTaskRepository:
     ) -> MediaDiscovery:
         from dataclasses import replace
 
-        if control is TaskControl.PAUSE:
-            return replace(
-                discovery,
-                status=discovery.status,
-                version=discovery.version + 1,
-                pause_requested=True,
-                updated_at=now,
-                progress=replace(
-                    discovery.progress,
-                    phase=discovery.progress.phase,
-                    message=(
-                        "a cooperative pause was requested; the Worker stops at a safe boundary"
-                    ),
-                ),
-            )
         return replace(
             discovery,
             status=DiscoveryStatus.CANCELLED,
@@ -17719,10 +17499,9 @@ class SQLiteTaskRepository:
         queue_state = TaskQueueState(queue_state)
         if queue_state not in {
             TaskQueueState.WAITING_HUMAN,
-            TaskQueueState.PAUSED,
             TaskQueueState.SETTLED,
         }:
-            raise ValueError("a released Task must settle, pause or wait for a human")
+            raise ValueError("a released Task must settle or wait for a human")
         if initial_execution_stage is not None and not isinstance(initial_execution_stage, str):
             raise ValueError("the initial execution stage label must be a string or None")
         if fence is not None and not isinstance(fence, TaskClaimFence):
@@ -18162,9 +17941,9 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         f"task {task_id!r} was not admitted by the Task scheduling kernel"
                     )
-                if state.queue_state not in {TaskQueueState.WAITING_HUMAN, TaskQueueState.PAUSED}:
+                if state.queue_state is not TaskQueueState.WAITING_HUMAN:
                     raise TaskControlRejected(
-                        "only human-waiting or acknowledged-paused work can be re-queued"
+                        "only human-waiting or decision-pending work can be re-queued"
                     )
                 if state.mutation_in_flight:
                     raise TaskControlRejected(
@@ -18207,8 +17986,7 @@ class SQLiteTaskRepository:
                     self._connection.rollback()
                     raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 self._connection.execute(
-                    """UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL,
-                        pause_requested=0
+                    """UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL
                     WHERE task_id=?""",
                     (
                         PersistentTaskStatus.PENDING.value,
@@ -18274,12 +18052,9 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         f"task {task_id!r} was not admitted by the Task scheduling kernel"
                     )
-                if state.queue_state not in {
-                    TaskQueueState.WAITING_HUMAN,
-                    TaskQueueState.PAUSED,
-                }:
+                if state.queue_state is not TaskQueueState.WAITING_HUMAN:
                     raise TaskControlRejected(
-                        "only human-waiting or acknowledged-paused work can re-enter analysis"
+                        "only human-waiting or decision-pending work can re-enter analysis"
                     )
                 if state.mutation_in_flight:
                     raise TaskControlRejected(
@@ -18304,7 +18079,7 @@ class SQLiteTaskRepository:
                     raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 cursor = self._connection.execute(
                     "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
-                    "preview_id=?, error=?, updated_at=?, pause_requested=0, "
+                    "preview_id=?, error=?, updated_at=?, "
                     "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL "
                     "WHERE discovery_id=? AND version=?",
                     (
@@ -18330,8 +18105,8 @@ class SQLiteTaskRepository:
                         },
                     )
                 self._connection.execute(
-                    "UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL, "
-                    "pause_requested=0 WHERE task_id=?",
+                    "UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL "
+                    "WHERE task_id=?",
                     (PersistentTaskStatus.PENDING.value, now.isoformat(), task_id),
                 )
                 self._connection.execute(
@@ -18354,106 +18129,6 @@ class SQLiteTaskRepository:
                 raise
             self._connection.commit()
         return self.get_media_discovery(discovery.discovery_id)
-
-    def resume_scheduled_task(
-        self,
-        task_id: str,
-        *,
-        expected_version: str | None,
-        capacity: int,
-        now: datetime,
-    ) -> PersistentTask:
-        """Resume one acknowledged-paused Task on the same durable identity.
-
-        A discovered Files Task whose paused machine stage was interrupted is
-        re-queued with its original discovery/projection, re-checking the shared
-        capacity in the same transaction.  A Task that was paused while waiting
-        for a human decision has no machine work to re-queue, so it returns to
-        its waiting state and keeps holding zero slots.  An accepted cancel is
-        never resumed.
-        """
-
-        require_capacity(capacity)
-        if now.tzinfo is None:
-            raise ValueError("Task resume timestamp needs timezone")
-        current = self.get_task(task_id)
-        if current is None:
-            raise LookupError(f"task {task_id!r} was not found")
-        if expected_version is not None and expected_version != current.updated_at.isoformat():
-            raise TaskControlRejected("the Task changed before this resume was submitted")
-        state = self.get_task_scheduling(task_id)
-        if state is None:
-            raise TaskControlRejected("the Task was not admitted by the scheduling kernel")
-        if state.control_request is TaskControl.CANCEL:
-            raise TaskControlRejected("a cancel was already accepted for this Task")
-        if state.queue_state is not TaskQueueState.PAUSED:
-            raise TaskControlRejected("only a paused Task can be resumed")
-        discovery = self.get_media_discovery_for_task(task_id)
-        if (
-            discovery is not None
-            and discovery.status is DiscoveryStatus.PAUSED
-            and not discovery.terminal
-        ):
-            from dataclasses import replace
-
-            if discovery.frozen and discovery.intent_id is not None:
-                target = DiscoveryStatus.ANALYZING
-                stage = TaskMachineStage.ANALYSIS
-            else:
-                target = DiscoveryStatus.QUEUED
-                stage = TaskMachineStage.DISCOVERY
-            updated = replace(
-                discovery,
-                status=target,
-                version=discovery.version + 1,
-                pause_requested=False,
-                updated_at=now,
-                error=None,
-                progress=replace(
-                    discovery.progress,
-                    phase=target.value,
-                    message=(
-                        "resumed by the operator; the resident Worker continues the same scope"
-                    ),
-                ),
-            )
-            self.requeue_scheduled_analysis(
-                task_id,
-                updated,
-                expected_version=discovery.version,
-                capacity=capacity,
-                now=now,
-                stage=stage,
-            )
-            return self.get_task(task_id) or current
-        with self._lock, self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                fresh = self._scheduled_state_locked(task_id)
-                if fresh is None or fresh.queue_state is not TaskQueueState.PAUSED:
-                    raise TaskControlRejected("only a paused Task can be resumed")
-                if fresh.control_request is TaskControl.CANCEL:
-                    raise TaskControlRejected("a cancel was already accepted for this Task")
-                self._connection.execute(
-                    "UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL, "
-                    "pause_requested=0 WHERE task_id=?",
-                    (PersistentTaskStatus.RUNNING.value, now.isoformat(), task_id),
-                )
-                self._connection.execute(
-                    """UPDATE task_scheduling
-                    SET queue_state=?, machine_stage=NULL, queue_eligible_at=NULL,
-                        claim_generation=claim_generation+1, claim_token=NULL,
-                        claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
-                        heartbeat_at=NULL, control_request=NULL, control_requested_at=NULL,
-                        control_acknowledged_at=NULL, updated_at=?
-                    WHERE task_id=?""",
-                    (TaskQueueState.WAITING_HUMAN.value, now.isoformat(), task_id),
-                )
-            except BaseException:
-                self._connection.rollback()
-                raise
-            self._connection.commit()
-        return self.get_task(task_id) or current
 
     def upsert_scheduled_item(
         self,
@@ -19273,7 +18948,6 @@ class SQLiteTaskRepository:
             task.completed_items,
             task.failed_items,
             task.error,
-            int(task.pause_requested),
             task.task_id,
         )
 
@@ -19381,7 +19055,6 @@ class SQLiteTaskRepository:
                     updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
                     total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
                     failed_items INTEGER NOT NULL, error TEXT,
-                    pause_requested INTEGER NOT NULL DEFAULT 0,
                     scope_path TEXT, item_limit INTEGER,
                     configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT
                 );
@@ -19556,7 +19229,6 @@ class SQLiteTaskRepository:
                     intent_id TEXT, frozen_at TEXT,
                     claim_worker_id TEXT, claim_token TEXT, claim_expires_at TEXT,
                     attempts INTEGER NOT NULL DEFAULT 0,
-                    pause_requested INTEGER NOT NULL DEFAULT 0,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -19994,8 +19666,30 @@ class SQLiteTaskRepository:
                     ON operational_logs(occurred_at, log_id);
                 """
             )
+            if row is None:
+                # A fresh database was just created with the complete current
+                # structure, so it has no historical column to add, no row to
+                # backfill and no previous layout to rebuild: the version mark is
+                # its only remaining initialization step.  Tables are created by
+                # idempotent CREATE ... IF NOT EXISTS statements, so a concurrent
+                # open of the same empty path completes the same structure and
+                # both sides write the same marker.
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    ensure_task_occurrence_columns(self._connection)
+                    self._connection.execute(_TASK_SCHEDULING_CREATE)
+                    self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
+                    self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
+                    self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
+                    self._advance_runtime_schema_marker()
+                    self._connection.commit()
+                except BaseException:
+                    self._connection.rollback()
+                    raise
+                return
             # sqlite does not start a transaction for ALTER/CREATE statements.
-            # All additive upgrades and the version marker must fail atomically.
+            # Every required structural adjustment and the version marker must
+            # fail atomically on an existing database.
             self._connection.execute("BEGIN IMMEDIATE")
             ensure_task_occurrence_columns(self._connection)
             if self._connection.execute(
@@ -20218,10 +19912,6 @@ class SQLiteTaskRepository:
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
             }
-            if "pause_requested" not in task_columns:
-                self._connection.execute(
-                    "ALTER TABLE tasks ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0"
-                )
             if "scope_path" not in task_columns:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN scope_path TEXT")
             # Schema 40: the unified Operations run inventory reads task rows
@@ -20349,19 +20039,6 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE metadata_reviews ADD COLUMN {name} {declaration}"
                     )
-            lock_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(file_locks)").fetchall()
-            }
-            if "owner_token" not in lock_columns:
-                # Schema 38: every acquisition carries its own opaque owner
-                # generation.  Existing rows keep a conservative legacy identity
-                # so they are neither unlocked nor broadly releasable during the
-                # upgrade; a generation-carrying release never matches them.
-                self._connection.execute(
-                    "ALTER TABLE file_locks ADD COLUMN owner_token TEXT NOT NULL "
-                    f"DEFAULT '{LEGACY_LOCK_OWNER_TOKEN}'"
-                )
             self._migrate_manual_execution_task_scope_locked()
             self._migrate_manual_recovery_preparation_legacy_columns_locked()
             self._migrate_task_initial_executions_locked()
@@ -21077,7 +20754,6 @@ class SQLiteTaskRepository:
             task.completed_items,
             task.failed_items,
             task.error,
-            int(task.pause_requested),
             task.scope_path,
             task.item_limit,
             task.configuration_snapshot_id,
@@ -21129,7 +20805,6 @@ class SQLiteTaskRepository:
             row["completed_items"],
             row["failed_items"],
             row["error"],
-            bool(row["pause_requested"]),
             row["scope_path"],
             row["item_limit"],
             row["configuration_snapshot_id"],

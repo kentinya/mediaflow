@@ -121,7 +121,6 @@ function readFailureCodeOf(
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  pause: "请求暂停",
   cancel: "取消",
   resume: "继续",
 };

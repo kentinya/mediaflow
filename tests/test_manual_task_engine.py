@@ -53,7 +53,6 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 continue
             if state.queue_state in {
                 TaskQueueState.WAITING_HUMAN,
-                TaskQueueState.PAUSED,
                 TaskQueueState.SETTLED,
             }:
                 return discovery
@@ -316,9 +315,8 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     "POST",
                     {"expectedVersion": discovery.version},
                 )
-                self.assertEqual(409, status, refused)
-                self.assertEqual("pause_retired", refused["error"]["code"])
-                self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+                self.assertEqual(404, status, refused)
+                self.assertEqual("not_found", refused["error"]["code"])
             # The retirement is a bounded refusal with no durable effect: the
             # Task identity, its slot and the discovery are exactly as admitted.
             self.assertIs(value.repository.get_task(task_id).status, before_status)
@@ -354,8 +352,8 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     "POST",
                     {"expectedUpdatedAt": task.updated_at.isoformat()},
                 )
-                self.assertEqual(409, status, refused)
-                self.assertEqual("pause_retired", refused["error"]["code"])
+                self.assertEqual(404, status, refused)
+                self.assertEqual("not_found", refused["error"]["code"])
             # No requested state, no released slot and no new Worker work.
             self.assertIs(
                 value.repository.get_task(task_id).status,
@@ -384,8 +382,8 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 "POST",
                 {"expectedUpdatedAt": task.updated_at.isoformat()},
             )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("pause_retired", refused["error"]["code"])
+            self.assertEqual(404, status, refused)
+            self.assertEqual("not_found", refused["error"]["code"])
             # Human-waiting work keeps its own state and slot (zero machine
             # slots) with no pause recorded and no Storage mutation.
             self.assertIs(
@@ -522,7 +520,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 task = value.repository.get_task(task_id)
                 if task.status in {
                     PersistentTaskStatus.COMPLETED,
-                    PersistentTaskStatus.PARTIAL_SUCCESS,
+                    PersistentTaskStatus.COMPLETED,
                     PersistentTaskStatus.FAILED,
                 }:
                     break
@@ -645,7 +643,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task = value.repository.get_task(task_id)
             if task.status in {
                 PersistentTaskStatus.COMPLETED,
-                PersistentTaskStatus.PARTIAL_SUCCESS,
+                PersistentTaskStatus.COMPLETED,
                 PersistentTaskStatus.FAILED,
                 PersistentTaskStatus.CANCELLED,
             }:
@@ -1966,7 +1964,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 task = value.repository.get_task(task_id)
                 if task.status in {
                     PersistentTaskStatus.COMPLETED,
-                    PersistentTaskStatus.PARTIAL_SUCCESS,
+                    PersistentTaskStatus.COMPLETED,
                     PersistentTaskStatus.FAILED,
                     PersistentTaskStatus.CANCELLED,
                 }:

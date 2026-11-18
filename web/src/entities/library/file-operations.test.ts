@@ -20,7 +20,6 @@ function entryDocument(overrides: Record<string, unknown> = {}) {
     commandLabel: "文件维护",
     status: "completed",
     terminal: true,
-    pauseRequested: false,
     createdAt: "2024-01-15T10:30:00+00:00",
     updatedAt: "2024-01-15T10:30:01+00:00",
     version: "2024-01-15T10:30:01+00:00",
@@ -229,7 +228,7 @@ describe("library file-operation normalization", () => {
         settledItems: 1,
         succeededItems: 1,
         pendingItems: 2,
-        durableState: "task_paused",
+        durableState: "task_in_progress",
         effectCertainty: "partial",
         itemTotal: 3,
         itemsTruncated: true,
@@ -239,8 +238,8 @@ describe("library file-operation normalization", () => {
             itemId: "item-1",
             path: "show",
             destination: "Movies/show",
-            status: "PAUSED",
-            stage: "paused",
+            status: "RUNNING",
+            stage: "processing",
             attempts: 1,
             effect: "partial",
             effectCertainty: "partial",
@@ -317,8 +316,8 @@ describe("library file-operation normalization", () => {
               itemId: "item-1",
               path: "show",
               destination: "Movies/show",
-              status: "PAUSED",
-              stage: "paused",
+              status: "RUNNING",
+              stage: "processing",
               attempts: 1,
               effect: "partial",
               effectCertainty: "partial",
@@ -442,7 +441,6 @@ describe("library operation state copy", () => {
     commandLabel: "删除",
     status: "running",
     terminal: false,
-    pauseRequested: false,
     createdAt: "2024-01-15T10:30:00+00:00",
     updatedAt: "2024-01-15T10:30:01+00:00",
     version: "2024-01-15T10:30:01+00:00",
@@ -496,11 +494,8 @@ describe("library operation state copy", () => {
     ).toContain("部分成功");
   });
 
-  it("names real progress, pause and unknown sibling outcomes", () => {
+  it("names real progress and unknown sibling outcomes", () => {
     expect(libraryOperationStateLabel(base)).toContain("执行中");
-    expect(
-      libraryOperationStateLabel({ ...base, pauseRequested: true }),
-    ).toContain("暂停请求已记录");
     expect(
       libraryOperationStateLabel({ ...base, status: "pending" }),
     ).toContain("排队等待 Worker");

@@ -114,7 +114,7 @@ export function AutomationRunOncePage() {
   };
 
   const controlMutation = useMutation({
-    mutationFn: async (action: "pause" | "resume" | "cancel" | "finalize") => {
+    mutationFn: async (action: "cancel" | "finalize") => {
       const read = query.data;
       if (read === undefined || !read.ok || read.model === undefined) {
         throw new Error("run_once_not_ready");
@@ -307,18 +307,6 @@ export function AutomationRunOncePage() {
                     常驻处理 Worker
                     正在本次运行上执行完整零变更分析；冻结清单与运行身份已耐久保存。
                     完成前不会出现可执行范围，也不会产生任何执行授权；完成后摘要会出现在本页。
-                  </p>
-                ) : null}
-                {model.phase === "pausing" ? (
-                  <p role="status">
-                    暂停请求已耐久保存，常驻处理 Worker
-                    会在安全边界确认并释放本次运行的分析；确认前不会发布可执行计划，也不会产生执行授权。
-                  </p>
-                ) : null}
-                {model.phase === "paused" ? (
-                  <p role="status">
-                    本次运行的分析已在安全边界暂停，冻结清单、固定配置与已记录的发现保持不变。
-                    未发布可执行计划；使用“继续分析”在同一运行上恢复，仍不会产生执行授权。
                   </p>
                 ) : null}
                 {model.phase === "cancelled" ? (

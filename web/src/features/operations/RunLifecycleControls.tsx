@@ -43,9 +43,7 @@ export const RUN_LIFECYCLE_ACTION_LABELS: Readonly<
 const RUN_LIFECYCLE_STATE_LABELS: Readonly<Record<string, string>> = {
   pending: "待处理",
   running: "进行中",
-  paused: "已暂停",
   completed: "已完成",
-  partial_success: "部分成功",
   failed: "失败",
   cancelled: "已取消",
 };
@@ -64,25 +62,17 @@ export const RUN_LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
     "该作业在页面加载后已变化。请先刷新读取当前持久状态，再决定是否重新提交。",
   lifecycle_conflict:
     "后端按当前持久状态拒绝了该控制。请刷新读取持久状态后再决定。",
-  resume_unavailable:
-    "该暂停范围当前没有可用的持久排队继续边界。请按后端给出的下一步操作处理。",
   command_not_continuable:
     "该任务类型没有受支持的持久排队继续边界。请按后端给出的下一步操作处理,不要改用命令行。",
   snapshot_unavailable:
     "该运行不可变的配置快照已无法解析,无法重现其精确的原始范围。请按后端给出的下一步操作处理。",
   authority_required:
     "继续该剩余范围会修改媒体,但原始执行授权已被消费、过期或撤销;存储的执行标志不是授权。请先查看零变更计划摘要,再重新明确授权执行。",
-  task_not_paused:
-    "只有持久暂停的任务才有可继续的剩余范围。请先刷新读取当前持久状态。",
   continuation_exists:
     "该任务已有正在排队或运行的继续记录,不会重复排队剩余范围。请查看已链接的继续运行。",
   task_not_found: "该任务已不存在。请刷新运行列表后重新选择。",
   insufficient_permission: "当前连接的主体没有继续该任务的权限。",
   queue_full: "队列已达到配置的最大活动作业数。请等待当前作业完成后重试。",
-  resume_running:
-    "该对象仍在排队或运行中,没有需要继续的暂停范围。请等待其到达安全边界。",
-  already_requested:
-    "该控制已持久请求过。请刷新确认是否已在受支持的边界被确认。",
   forbidden: "当前连接的主体没有执行该运行控制的权限。",
   not_found: "该运行对象已不存在。",
   invalid_request: "控制请求未通过校验,未提交任何变更。",

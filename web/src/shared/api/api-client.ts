@@ -3496,7 +3496,7 @@ export async function fetchOrganizeDiscovery(
 
 export interface OrganizeDiscoveryControlOptions {
   readonly discoveryId: string;
-  readonly action: "pause" | "resume" | "cancel";
+  readonly action: "cancel";
   readonly expectedVersion: number;
 }
 
@@ -4354,7 +4354,7 @@ async function readTransferImpactThrough(
 
 /**
  * Reads the durable bounded projection of one admitted transfer Task.
- * Polling this read is how the dialog follows queued/running/paused progress
+ * Polling this read is how the dialog follows queued/running progress
  * with the backend-advertised lifecycle actions; the projection never
  * contains a claim token, lease value or raw Task-ID ceremony.
  */
@@ -4464,7 +4464,7 @@ async function readTransferProjectionThrough(
 }
 
 /**
- * One advertised transfer lifecycle action (pause/cancel/resume) submitted
+ * One advertised transfer lifecycle action (cancel) submitted
  * through the normal authenticated Task lifecycle API.  The projection's
  * version travels as the optimistic-concurrency value, so a control against
  * changed state is refused stale.
@@ -4472,7 +4472,7 @@ async function readTransferProjectionThrough(
 export async function mutateTransferLifecycle(
   token: string | null,
   taskId: string,
-  action: "pause" | "cancel" | "resume",
+  action: "cancel",
   expectedVersion: string,
   fetchImpl: FetchLike = fetch,
   kind: DirectCommandLibraryKind = "resource",
@@ -4528,7 +4528,7 @@ export async function mutateTransferLifecycle(
       ...failureDetailsSpread(error.details),
     };
   }
-  if (action === "resume" && body !== null && typeof body === "object") {
+  if (body !== null && typeof body === "object" && !("error" in body)) {
     try {
       return {
         ok: true,
@@ -8007,7 +8007,7 @@ export async function controlAutomationRunOnce(
   token: string | null,
   options: {
     readonly discoveryId: string;
-    readonly action: "pause" | "cancel" | "resume" | "finalize";
+    readonly action: "cancel" | "finalize";
     readonly expectedVersion: number;
   },
   fetchImpl: FetchLike = fetch,

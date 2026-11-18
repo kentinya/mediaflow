@@ -221,7 +221,6 @@ class OrdinaryFileOperationRow:
     operation: str | None = None
     source_scope: str | None = None
     target_scope: str | None = None
-    pause_requested: bool = False
     configuration_snapshot_id: str | None = None
     #: Items a decision/policy left untouched (`skipped`) or an explicit human
     #: cancellation settled.  They are factual terminal outcomes, so an

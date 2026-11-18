@@ -32,7 +32,6 @@ export const MAX_DISCOVERY_SCOPES = 100;
 export type OrganizeDiscoveryStatus =
   | "queued"
   | "running"
-  | "paused"
   | "waiting_stability"
   | "analyzing"
   | "completed"
@@ -182,7 +181,6 @@ export interface OrganizeDiscoveryModel {
   } | null;
   readonly prepared: boolean;
   readonly frozen: boolean;
-  readonly pauseRequested: boolean;
   readonly cancelRequested: boolean;
   /** The durable instant waiting work may be re-observed, or `null`. */
   readonly nextObservationAt: string | null;
@@ -229,7 +227,6 @@ function fail(field: string): never {
 const STATUSES: ReadonlySet<string> = new Set([
   "queued",
   "running",
-  "paused",
   "waiting_stability",
   "analyzing",
   "completed",
@@ -510,7 +507,6 @@ export function normalizeOrganizeDiscovery(
     })(),
     prepared: record["prepared"] === true,
     frozen: record["frozen"] === true,
-    pauseRequested: record["pauseRequested"] === true,
     cancelRequested: record["cancelRequested"] === true,
     nextObservationAt: optionalText(record, "nextObservationAt"),
     // The caller's own admission request identity, echoed by the backend.  It

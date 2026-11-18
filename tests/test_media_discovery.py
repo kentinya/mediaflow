@@ -721,7 +721,6 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
                 continue
             if state.queue_state in {
                 TaskQueueState.WAITING_HUMAN,
-                TaskQueueState.PAUSED,
                 TaskQueueState.SETTLED,
             }:
                 return discovery

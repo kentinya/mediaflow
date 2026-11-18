@@ -437,7 +437,7 @@ describe("current page operation status", () => {
           operationLabel: "移动",
           command: "files_transfer",
           commandLabel: "复制/移动",
-          status: "paused",
+          status: "running",
           terminal: false,
           settled: false,
           allSucceeded: false,
@@ -451,7 +451,7 @@ describe("current page operation status", () => {
       ],
       {
         detail: {
-          status: "paused",
+          status: "running",
           terminal: false,
           settled: false,
           allSucceeded: false,
@@ -463,9 +463,7 @@ describe("current page operation status", () => {
           targetScope: "Archive/",
         },
         lifecycle: lifecycleFor("task-2", [
-          { action: "pause", available: false, reason: "already paused" },
           { action: "cancel", available: true },
-          { action: "resume", available: true },
         ]),
       },
     );
@@ -493,24 +491,24 @@ describe("current page operation status", () => {
     );
     expect(within(selected).getByText("Source/a.txt")).toBeVisible();
     // A real stage, not a fabricated success.
-    expect(within(selected).getByText(/已暂停/)).toBeVisible();
+    expect(within(selected).getByText(/执行中/)).toBeVisible();
     expect(
       within(selected).getByText(
         /成功 1 \/ 失败 0 \/ 跳过 0 \/ 取消 0 \/ 待处理 2 \/ 共 3 项/,
       ),
     ).toBeVisible();
-    // Only the backend-advertised actions are actionable; the withheld pause
-    // keeps its own bounded reason instead of a disabled button.
+    // Only the backend-advertised cancellation is actionable; pause and
+    // resume are not controls of the current operation.
     expect(
       within(selected).getByRole("button", { name: "取消" }),
     ).toBeEnabled();
     expect(
-      within(selected).getByRole("button", { name: "继续" }),
-    ).toBeEnabled();
+      within(selected).queryByRole("button", { name: "继续" }),
+    ).toBeNull();
     expect(
       within(selected).queryByRole("button", { name: "请求暂停" }),
     ).toBeNull();
-    expect(within(selected).getByText(/已暂停/)).toBeVisible();
+    expect(within(selected).getByText(/执行中/)).toBeVisible();
     // Opening and selecting performs no command submission.
     expect(posts).toHaveLength(0);
   });
@@ -1039,7 +1037,6 @@ describe("current page operation status", () => {
                   },
                 ],
                 lifecycle: lifecycleFor("task-1", [
-                  { action: "pause", available: false, reason: "已完成" },
                   { action: "cancel", available: false, reason: "已完成" },
                 ]),
               },
@@ -1064,8 +1061,8 @@ describe("current page operation status", () => {
     expect(countsFact()).toHaveTextContent("待处理 2");
     expect(certaintyFact()).toHaveTextContent("效果未知");
     expect(
-      within(selected).getByRole("button", { name: "请求暂停" }),
-    ).toBeVisible();
+      within(selected).queryByRole("button", { name: "请求暂停" }),
+    ).toBeNull();
 
     // The real work finished: the next continuation read already reports the
     // terminal operation, exactly as the durable Task does.

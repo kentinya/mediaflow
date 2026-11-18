@@ -41,7 +41,6 @@ class CheckpointStage(StrEnum):
     ORGANIZING = "organizing"
     COMPLETED = "completed"
     FAILED = "failed"
-    PAUSED = "paused"
     CANCELLED = "cancelled"
     IGNORED = "ignored"
     UNKNOWN = "unknown"

@@ -22,7 +22,7 @@ class PreviewAnalysisControlRequested(Exception):
     """Internal signal to stop an in-flight zero-mutation analysis at a boundary."""
 
     def __init__(self, action: str) -> None:
-        if action not in {"pause", "cancel"}:
+        if action != "cancel":
             raise ValueError("preview analysis control action is invalid")
         super().__init__(action)
         self.action = action

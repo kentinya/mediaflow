@@ -104,7 +104,6 @@ export interface LibraryFileOperationEntry {
   readonly commandLabel: string;
   readonly status: string;
   readonly terminal: boolean;
-  readonly pauseRequested: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: string;
@@ -152,7 +151,7 @@ export interface LibraryFileOperationItem {
  *
  * A directly selected directory is expanded into one admitted item per child,
  * and a started transfer records each child's own destination, status and
- * completed executor checkpoints.  Exposing them keeps a paused or partially
+ * completed executor checkpoints.  Exposing them keeps an in-progress or partially
  * executed folder Move truthful locally instead of collapsing it into one
  * opaque directory row.
  */
@@ -216,7 +215,6 @@ function readEntry(
     commandLabel: boundedText(source["commandLabel"], 64),
     status: boundedText(source["status"], 32),
     terminal: flag(source["terminal"]),
-    pauseRequested: flag(source["pauseRequested"]),
     createdAt: boundedText(source["createdAt"], 64),
     updatedAt: boundedText(source["updatedAt"], 64),
     version: boundedText(source["version"], 128),
@@ -302,7 +300,6 @@ const CHILD_STATUSES: Readonly<Record<string, true>> = {
   SKIPPED: true,
   CANCELLED: true,
   UNCERTAIN: true,
-  PAUSED: true,
   RUNNING: true,
   QUEUED: true,
 };
@@ -323,7 +320,6 @@ const OPERATION_DURABLE_STATES = [
   "task_partial_success",
   "task_failed",
   "task_cancelled",
-  "task_paused",
   "task_in_progress",
   "no_admitted_item",
 ] as const;
@@ -562,12 +558,6 @@ export function libraryOperationStateLabel(
 ): string {
   if (entry.settled && entry.allSucceeded) return "已完成";
   if (!entry.terminal) {
-    if (entry.pauseRequested) {
-      return `暂停请求已记录，等待安全边界（已结算 ${entry.settledItems}/${entry.totalItems} 项）`;
-    }
-    if (entry.status === "paused") {
-      return `已暂停（已结算 ${entry.settledItems}/${entry.totalItems} 项）`;
-    }
     if (entry.status === "pending") {
       return `排队等待 Worker（已结算 ${entry.settledItems}/${entry.totalItems} 项）`;
     }
@@ -654,7 +644,6 @@ export const LIBRARY_OPERATION_ITEM_STATUS_LABELS: Readonly<
   FAILED: "失败",
   SKIPPED: "已跳过",
   CANCELLED: "已取消",
-  PAUSED: "已暂停",
   RUNNING: "执行中",
   QUEUED: "排队中",
   UNCERTAIN: "效果不确定",

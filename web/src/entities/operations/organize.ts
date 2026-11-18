@@ -370,8 +370,8 @@ export interface OrganizeIntentModel {
    * The durable organize analysis stage of this intent's own organize run, or
    * `null` when the intent has no durable run identity.  The same-page summary
    * request records one durable stage and the resident Worker links the exact
-   * plan; this projection shows the real stage (observing/analyzing/paused/
-   * cancelled/prepared) instead of pretending the summary already exists.
+   * plan; this projection shows the real stage (observing/analyzing/cancelled/
+   * prepared) instead of pretending the summary already exists.
    */
   readonly analysis: OrganizeIntentAnalysisModel | null;
   readonly options: OrganizeOptionsModel;
@@ -412,7 +412,6 @@ export interface OrganizeIntentAnalysisModel {
   readonly frozen: boolean;
   readonly prepared: boolean;
   readonly previewId: string | null;
-  readonly pauseRequested: boolean;
   readonly cancelRequested: boolean;
   readonly message: string | null;
   readonly actions: Readonly<Record<string, OrganizeIntentAnalysisActionModel>>;
@@ -842,7 +841,6 @@ function normalizeAnalysis(value: unknown): OrganizeIntentAnalysisModel | null {
     frozen: flag(source, "frozen"),
     prepared: flag(source, "prepared"),
     previewId: optionalText(source, "previewId"),
-    pauseRequested: flag(source, "pauseRequested"),
     cancelRequested: flag(source, "cancelRequested"),
     message: optionalText(source, "message"),
     actions,

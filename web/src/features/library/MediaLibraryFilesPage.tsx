@@ -593,7 +593,6 @@ export function mediaLibraryCommandFailure(
       return "缺少有效的影响确认证据;请重新获取影响摘要后再确认删除。";
     case "files_direct_path_locked":
       return "目标正被其他任务占用,未做修改;请稍后重试。";
-    case "files_direct_task_paused":
       return "该命令的任务已在执行前被暂停,未做修改;请在“当前页面操作状态”中查看并继续该任务。";
     case "files_direct_storage_unavailable":
     case "files_direct_connection_failed":

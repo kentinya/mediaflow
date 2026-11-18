@@ -311,7 +311,7 @@ describe("Operations run inventory landing", () => {
             run_id: "task-metadata",
             task_id: "task-metadata",
             source_scope: "Movies/Metadata",
-            status: "partial_success",
+            status: "completed",
             attention: true,
             problem_types: ["metadata"],
             problem_file_counts: {
@@ -1563,7 +1563,7 @@ describe("Operations run inventory landing", () => {
           run_id: "task-mixed",
           task_id: "task-mixed",
           source_scope: "Movies/Mixed",
-          status: "partial_success",
+          status: "completed",
           attention: true,
           problem_types: ["metadata", "classification"],
           problem_file_counts: {

@@ -12,7 +12,6 @@ export const PREPARATION_STATUS_LABELS: Readonly<Record<string, string>> = {
   running: "正在有界发现所选范围",
   analyzing: "正在完整分析并生成计划摘要",
   waiting_stability: "等待来源稳定",
-  paused: "已暂停",
   completed: "准备完成",
   partial_success: "准备完成（范围不完整）",
   failed: "准备失败",

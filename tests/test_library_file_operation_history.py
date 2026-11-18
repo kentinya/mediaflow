@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import json
 import tempfile
-import threading
 import unittest
 import unittest.mock
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
@@ -41,7 +40,6 @@ from mediaflow.interfaces.pagination import CursorDirection, encode_cursor
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document
 from tests.test_direct_file_operations import MutationFreeStorage, request
-from tests.test_direct_file_transfers import _GatedSource
 
 
 class LibraryFileOperationHistoryTests(unittest.TestCase):
@@ -1157,113 +1155,3 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # B46.2-01: a paused folder Move keeps its recorded known effects
     # ------------------------------------------------------------------
-
-    def test_paused_folder_move_keeps_its_recorded_known_effects(self) -> None:
-        """A paused directory Move reports the children that really moved.
-
-        B reproduced this: a folder Move was paused at the cooperative boundary
-        after three files had moved, and the local detail returned only the
-        top-level directory with no known effects and an aggregate certainty of
-        "no change".  The durable per-entry progress of the unfinished item is
-        the factual evidence and must be read through the same projection the
-        transfer dialog uses.
-        """
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
-            source = _GatedSource("source-storage", root / "source", gate_after=3)
-            api, _objects, active, runtime = self._activate(
-                root, storage_adapters={"source-storage": source}
-            )
-            tree = root / "source" / "show"
-            tree.mkdir(parents=True)
-            for index in range(6):
-                (tree / f"ep{index:02d}.mkv").write_bytes(b"episode" * (index + 1))
-            transfers = self._transfers(api, active)
-            impact = transfers.transfer_impact(
-                resource_library_id="source",
-                paths=["show"],
-                destination_resource_library_id="source",
-                destination_directory="Movies",
-                operation="move",
-                conflict_mode="fail",
-            )
-            queued = transfers.submit_transfer(
-                resource_library_id="source",
-                paths=["show"],
-                destination_resource_library_id="source",
-                destination_directory="Movies",
-                operation="move",
-                conflict_mode="fail",
-                manifest_digest=impact.manifest.digest,
-            )
-            task_id = queued["taskId"]
-
-            # A separately invoked Worker claim executes in its own thread while
-            # this stack writes the same durable pause request the lifecycle API
-            # writes, then releases the gated Storage call.
-            worker_results: list = []
-
-            def run() -> None:
-                worker = FilesTransferWorker(
-                    transfers, runtime, lease_seconds=3600.0, worker_id="worker-test"
-                )
-                worker_results.append(worker.run_next())
-
-            thread = threading.Thread(target=run, daemon=True)
-            thread.start()
-            self.assertTrue(source.reached.wait(30))
-            self.assertIsNotNone(
-                runtime.pause_task_if_current(task_id, updated_at=datetime.now(UTC))
-            )
-            source.release.set()
-            thread.join(30)
-            self.assertFalse(thread.is_alive())
-            self.assertEqual(["paused"], [value.status.value for value in worker_results if value])
-            moved = list((root / "source" / "Movies" / "show").glob("*.mkv"))
-            self.assertEqual(3, len(moved))
-
-            code, detail = self._detail(api, "resource", "source", task_id)
-            self.assertEqual(200, code, detail)
-            self.assertEqual("task_paused", detail["durableState"], detail)
-            self.assertEqual("partial", detail["effectCertainty"], detail)
-            self.assertNotEqual("none", detail["effectCertainty"], detail)
-            self.assertEqual(1, len(detail["items"]), detail)
-            item = detail["items"][0]
-            self.assertEqual("PAUSED", item["status"], item)
-            self.assertEqual("partial", item["effect"], item)
-            self.assertEqual("partial", item["effectCertainty"], item)
-            children = {child["path"]: child for child in item["children"]}
-            # The destination directory and the three really moved files are
-            # named as completed children with their executor checkpoints.
-            self.assertIn("show", children, children)
-            moved_children = sorted(
-                path for path, child in children.items() if child["status"] == "SUCCESS"
-            )
-            self.assertEqual(
-                ["show", "show/ep00.mkv", "show/ep01.mkv", "show/ep02.mkv"], moved_children
-            )
-            # Each moved child keeps its own destination and its own recorded
-            # effect: nothing collapses into one opaque directory outcome.
-            for path in moved_children[1:]:
-                self.assertEqual("transferred", children[path]["effect"], children[path])
-                self.assertTrue(children[path]["destination"].startswith("Movies/show/"))
-
-            # Resume-from-pause is retired for the folder Move: the real route
-            # refuses it with no effect, so the moved children stay terminal and
-            # the remaining source files are never replayed by the request.
-            code, resume = request(
-                api,
-                f"/api/v1/tasks/{task_id}/resume",
-                method="POST",
-                body={"expectedUpdatedAt": detail["version"]},
-            )
-            self.assertEqual(409, code, resume)
-            self.assertEqual("pause_retired", resume["error"]["code"])
-            self.assertEqual("none", resume["error"]["details"]["sideEffects"])
-            code, still_paused = self._detail(api, "resource", "source", task_id)
-            self.assertEqual(200, code, still_paused)
-            self.assertEqual("task_paused", still_paused["durableState"], still_paused)
-            self.assertEqual("partial", still_paused["effectCertainty"], still_paused)
-            self.assertEqual(3, len(list((root / "source" / "Movies" / "show").glob("*.mkv"))))

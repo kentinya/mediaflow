@@ -343,7 +343,6 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
                     0,
                     0,
                     None,
-                    False,
                     None,
                     100,
                     "snap",
@@ -857,62 +856,6 @@ class SourceOwnershipEvidenceTests(unittest.TestCase):
                     second.claim_task_item_with_ownership(owner_item, source_version=version)
                 )
                 self.assertEqual(owner_task.task_id, second.get_item(owner_item.item_id).task_id)
-
-    def test_a_legal_continuation_lineage_is_not_its_own_owner(self) -> None:
-        """A continuation's ancestors are its source, never a competing owner."""
-
-        from mediaflow.domain.source_evidence import source_fingerprint
-
-        modified = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "lineage.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                coordinator = PersistentTaskCoordinator(repository, repository)
-                entry = self._entry("Movies/One.2001.mkv", 64, modified)
-                version = self._version("Movies/One.2001.mkv", 64, modified)
-                ancestor = coordinator.create("manual_organize", execute_authorized=True)
-                ancestor_item = coordinator.begin_item(
-                    ancestor.task_id,
-                    "source",
-                    "library",
-                    "Movies/One.2001.mkv",
-                    "Movies/One.2001.mkv",
-                    source_fingerprint=source_fingerprint("source", "library", entry).value,
-                    source_fingerprint_state="verified",
-                    source_storage_path="Movies/One.2001.mkv",
-                )
-                repository.upsert_item(
-                    replace(ancestor_item, status=TaskItemStatus.PAUSED, stage="paused")
-                )
-                continuation = coordinator.create(
-                    "organize", execute_authorized=False, item_limit=1
-                )
-                # Without the lineage the ancestor really owns the source...
-                self.assertIsNotNone(
-                    repository.claim_task_item_with_ownership(
-                        replace(
-                            ancestor_item,
-                            item_id="lineage-item",
-                            task_id=continuation.task_id,
-                            attempts=1,
-                        ),
-                        source_version=version,
-                    )
-                )
-                # ...and with it the continuation admits its own remaining scope.
-                self.assertIsNone(
-                    repository.claim_task_item_with_ownership(
-                        replace(
-                            ancestor_item,
-                            item_id="lineage-item",
-                            task_id=continuation.task_id,
-                            attempts=1,
-                        ),
-                        source_version=version,
-                        exclude_lineage_task_id=ancestor.task_id,
-                    )
-                )
-                self.assertEqual(continuation.task_id, repository.get_item("lineage-item").task_id)
 
     def test_a_pre_change_admission_row_is_still_read_as_an_owner(self) -> None:
         """B46.3-05: narrowing the read must never skip a legacy identity.

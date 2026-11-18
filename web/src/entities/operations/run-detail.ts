@@ -81,7 +81,6 @@ export const RUN_ITEM_STATUS_LABELS: Readonly<Record<string, string>> = {
   waiting_metadata: "等待元数据决策",
   waiting_metadata_correction: "等待元数据修正",
   waiting_classification: "等待分类决策",
-  paused: "已暂停",
   ignored: "已忽略",
 };
 

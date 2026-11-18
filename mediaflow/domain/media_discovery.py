@@ -205,7 +205,6 @@ class DiscoveryStatus(StrEnum):
 
     QUEUED = "queued"
     RUNNING = "running"
-    PAUSED = "paused"
     WAITING_STABILITY = "waiting_stability"
     #: A bounded discovery that was admitted as a full *preparation* has
     #: finished its zero-mutation walk and internally frozen its reviewed
@@ -244,15 +243,13 @@ CLAIMABLE_DISCOVERY_STATUSES = frozenset(
 )
 
 #: Lifecycle statuses a *settlement* writes rather than a bounded traversal.
-#: ``_publish_paused``, ``_cancel`` and ``_fail`` settle one boundary and release
-#: the claim; they never describe the outcome of a walk.  A fenced projection
-#: that carries one of them therefore describes a control the operator may
-#: already have superseded, so its lifecycle must never be replayed as the
-#: traversal outcome: the latest accepted control decides the lifecycle, and a
-#: cleared pause is not a completed traversal.
+#: ``_cancel`` and ``_fail`` settle one boundary and release the claim; they
+#: never describe the outcome of a walk.  A fenced projection that carries one
+#: of them therefore describes a control the operator may already have
+#: superseded, so its lifecycle must never be replayed as the traversal
+#: outcome: the latest accepted control decides the lifecycle.
 SETTLEMENT_DISCOVERY_STATUSES = frozenset(
     {
-        DiscoveryStatus.PAUSED,
         DiscoveryStatus.CANCELLED,
         DiscoveryStatus.FAILED,
     }
@@ -1114,7 +1111,6 @@ class MediaDiscovery:
     claim_token: str | None = None
     claim_expires_at: datetime | None = None
     attempts: int = 0
-    pause_requested: bool = False
     cancel_requested: bool = False
     error: str | None = None
     #: The earliest durable instant at which a waiting discovery may be
@@ -1266,7 +1262,6 @@ class MediaDiscovery:
             "intentId": self.intent_id,
             "frozenAt": self.frozen_at.isoformat() if self.frozen_at is not None else None,
             "attempts": self.attempts,
-            "pauseRequested": self.pause_requested,
             "cancelRequested": self.cancel_requested,
             "error": self.error,
             "primarySourceCount": len(self.sources),
@@ -1325,7 +1320,6 @@ class MediaDiscovery:
             str(value["claimToken"]) if isinstance(value.get("claimToken"), str) else None,
             datetime.fromisoformat(str(expires)) if isinstance(expires, str) else None,
             int(value.get("attempts", 0)),
-            bool(value.get("pauseRequested", False)),
             bool(value.get("cancelRequested", False)),
             str(value["error"]) if isinstance(value.get("error"), str) else None,
             (

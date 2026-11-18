@@ -23,7 +23,7 @@ from mediaflow.domain.library import (
     ScanRule,
     ScanRuleKind,
 )
-from mediaflow.domain.scanner import CancellationToken, FileChange, FileScanStatus
+from mediaflow.domain.scanner import CancellationToken, FileChange, FileScanStatus, ScanStatus
 from mediaflow.domain.storage import (
     StorageCapabilities,
     StorageEntry,
@@ -31,7 +31,6 @@ from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
 )
-from mediaflow.domain.tasks import TaskStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
 
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)
@@ -225,7 +224,7 @@ class ScannerTests(unittest.TestCase):
     def test_complete_scan_has_zero_mutation_calls(self) -> None:
         self.storage.add_file("Movies/A.mkv")
         result = self.scan()
-        self.assertEqual(TaskStatus.COMPLETED, result.status)
+        self.assertEqual(ScanStatus.COMPLETED, result.status)
         self.assertEqual(
             {
                 "write": 0,
@@ -411,7 +410,7 @@ class ScannerTests(unittest.TestCase):
         self.scan(library)
         self.storage.list_errors["blocked"] = StorageErrorCode.PERMISSION_DENIED
         result = self.scan(library)
-        self.assertEqual(TaskStatus.PARTIAL_SUCCESS, result.status)
+        self.assertEqual(ScanStatus.PARTIAL_SUCCESS, result.status)
         self.assertEqual(1, result.statistics.errors)
         self.assertEqual(FileScanStatus.READY, self.records["good/A.mkv"].status)
         self.assertNotIn("blocked/B.mkv", self.records)
@@ -432,7 +431,7 @@ class ScannerTests(unittest.TestCase):
         del self.storage.files["A.mkv"]
         self.storage.list_errors[""] = StorageErrorCode.AUTHENTICATION_FAILED
         result = self.scan(library)
-        self.assertEqual(TaskStatus.FAILED, result.status)
+        self.assertEqual(ScanStatus.FAILED, result.status)
         self.assertEqual({}, self.records)
 
     def test_cancelled_scan_stops_new_lists(self) -> None:
@@ -444,7 +443,7 @@ class ScannerTests(unittest.TestCase):
         result = self.scanner.scan(
             library, cancellation=token, on_progress=lambda _: token.cancel()
         )
-        self.assertEqual(TaskStatus.CANCELLED, result.status)
+        self.assertEqual(ScanStatus.CANCELLED, result.status)
         self.assertNotIn("one", self.storage.list_calls[-1:])
 
     def test_concurrency_is_bounded(self) -> None:
@@ -553,7 +552,7 @@ class LocalStorageScannerIntegrationTests(unittest.TestCase):
             result = StorageScanner({"durable": storage}).scan(
                 library, on_discovered=lambda value: first.setdefault(value.path, value)
             )
-            self.assertEqual(TaskStatus.COMPLETED, result.status)
+            self.assertEqual(ScanStatus.COMPLETED, result.status)
             self.assertEqual(("A.mkv",), tuple(first))
             target.unlink()
             second: dict[str, object] = {}

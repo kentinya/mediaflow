@@ -442,11 +442,7 @@ class DefinitionScopedExecutionService:
             display_root = posixpath.join(display_root, scoped_root_scope)
 
         def workflow_stop() -> bool:
-            return bool(
-                cancellation_check()
-                or coordinator.pause_requested(task.task_id)
-                or coordinator.cancellation_observed(task.task_id)
-            )
+            return bool(cancellation_check() or coordinator.cancellation_observed(task.task_id))
 
         from mediaflow.application.automation_execution_intent import BoundedScopeReader
 
@@ -474,7 +470,7 @@ class DefinitionScopedExecutionService:
             # B46.3-05: a scheduled occurrence is an existing entrance into the
             # same concrete sources a Files admission may already own.  Its own
             # item admission therefore asks the shared durable ownership boundary
-            # inside the same decision, so a queued/paused/decision-pending Files
+            # inside the same decision, so a queued/decision-pending Files
             # source can never be consumed (moved, deleted on the source side or
             # re-analyzed as this run's own work) by a later occurrence.  A source
             # that is genuinely free still runs exactly as before, and the
@@ -510,9 +506,6 @@ class DefinitionScopedExecutionService:
         if cancellation_check():
             self._cancel_task_if_running(coordinator, task.task_id)
             raise AutomationCancelled(task.task_id)
-        if coordinator.pause_requested(task.task_id):
-            coordinator.acknowledge_pause(task.task_id)
-            return
         coordinator.finish(task.task_id, summary)
 
     def _cancel_task_if_running(self, coordinator, task_id: str) -> None:
@@ -615,11 +608,7 @@ class DefinitionScopedExecutionService:
         )
 
         def workflow_stop() -> bool:
-            return bool(
-                cancellation_check()
-                or coordinator.pause_requested(task.task_id)
-                or coordinator.cancellation_observed(task.task_id)
-            )
+            return bool(cancellation_check() or coordinator.cancellation_observed(task.task_id))
 
         service = MediaOrganizerService(
             strategy,

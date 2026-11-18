@@ -54,8 +54,6 @@ RUN_ONCE_PHASES = (
     "executing",
     "completed",
     "analyzing",
-    "pausing",
-    "paused",
     "ready",
     "refused",
     "no_work",
@@ -378,8 +376,6 @@ class AutomationRunOnceService:
             if status == "running"
             else "discovering"
             if status == "queued"
-            else "paused"
-            if status == "paused"
             else "cancelled"
             if status == "cancelled"
             else "failed"
@@ -557,9 +553,9 @@ class AutomationRunOnceService:
             # inline finalize path writes the plan against the frozen intent, so
             # the association is resolved from that same durable intent rather
             # than from the ``preview_id`` column this path never populates.
-            # A paused, pause-pending or cancelled run publishes no plan: the
-            # operator's control won the race, so the operator must not be
-            # handed a confirmable summary for work that was stopped.
+            # A cancelled run publishes no plan: the operator's control won the
+            # race, so the operator must not be handed a confirmable summary for
+            # work that was stopped.
             "previewId": plan_id,
             "frozen": discovery.frozen,
             "frozenAt": discovery.frozen_at.isoformat() if discovery.frozen_at else None,
@@ -583,23 +579,14 @@ class AutomationRunOnceService:
         refusal: DiscoveryIncompleteReason | None,
     ) -> str:
         # The operator's own control decides the phase before anything else: a
-        # paused or pause-pending run is not "analyzing" and a cancelled run is
-        # not a recoverable refusal.  Both must stop advertising the plan they
-        # interrupted.
+        # cancelled run is not "analyzing" and is not a recoverable refusal.
         if discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED:
             return "cancelled"
-        if discovery.status is DiscoveryStatus.PAUSED:
-            return "paused"
-        if discovery.pause_requested:
-            # The pause request is durable and the Worker acknowledges it at its
-            # next safe boundary; the page states that real transient stage
-            # instead of pretending the analysis is still progressing.
-            return "pausing"
         if discovery.status in {DiscoveryStatus.QUEUED, DiscoveryStatus.RUNNING}:
             return "discovering"
         if discovery.status is DiscoveryStatus.ANALYZING:
             # The frozen manifest's exact plan is being built by the resident
-            # Worker; the run identity, progress and pause/cancel stay live.
+            # Worker; the run identity, progress and cancellation stay live.
             return "analyzing"
         if discovery.status is DiscoveryStatus.WAITING_STABILITY:
             return "analyzing"
@@ -635,14 +622,12 @@ class AutomationRunOnceService:
             terminal and refusal is None and bool(discovery.sources) and not discovery.frozen
         )
         # The operator's control owns these actions.  A cancellation request is
-        # already a durable terminal settlement.  Pause and resume-from-pause
-        # were retired for every media operation, so neither is advertised here.
+        # already a durable terminal settlement.
         cancelled = discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED
         cancel = not cancelled and discovery.status in {
             DiscoveryStatus.QUEUED,
             DiscoveryStatus.RUNNING,
             DiscoveryStatus.WAITING_STABILITY,
-            DiscoveryStatus.PAUSED,
             DiscoveryStatus.ANALYZING,
         }
         # The exact plan identity the same page re-reads after a reload.  It is
@@ -683,18 +668,10 @@ class AutomationRunOnceService:
                 # honestly null; the page shows the durable analysis stage and
                 # the plan appears here once it completes.  A cancelled run
                 # publishes no plan action at all: the operator's control won,
-                # so no confirmable summary is offered.  A historically paused
-                # run likewise exposes nothing, though pause can no longer be
-                # requested.
+                # so no confirmable summary is offered.
                 "available": (
                     bool(plan_id)
-                    or (
-                        not cancelled
-                        and discovery.status is not DiscoveryStatus.PAUSED
-                        and not discovery.pause_requested
-                        and discovery.frozen
-                        and discovery.intent_id is not None
-                    )
+                    or (not cancelled and discovery.frozen and discovery.intent_id is not None)
                 ),
                 "method": "GET",
                 "path": (f"/api/v1/operations/organize/previews/{plan_id}" if plan_id else None),
@@ -721,12 +698,7 @@ class AutomationRunOnceService:
         means this Run once has not produced a plan yet.
         """
 
-        if (
-            discovery.status is DiscoveryStatus.CANCELLED
-            or discovery.cancel_requested
-            or discovery.status is DiscoveryStatus.PAUSED
-            or discovery.pause_requested
-        ):
+        if discovery.status is DiscoveryStatus.CANCELLED or discovery.cancel_requested:
             # The operator's control decides the run, so the intent's latest
             # read-only plan must never be re-exposed for a stopped run.
             return None
@@ -752,17 +724,6 @@ class AutomationRunOnceService:
     ) -> str:
         if discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED:
             return "start a new Run once from the published definition if the scope is still wanted"
-        if discovery.status is DiscoveryStatus.PAUSED:
-            return (
-                "continue this Run once to resume the same frozen scope and configuration; no "
-                "plan was published for the interrupted analysis"
-            )
-        if discovery.pause_requested:
-            return (
-                "the cooperative pause is waiting for the resident Processing Worker to "
-                "acknowledge it at its safe boundary; continue the same Run once after the "
-                "acknowledgement"
-            )
         if refusal is not None:
             return (
                 "narrow the definition sourceScope or correct the unreadable source so a "
@@ -783,8 +744,6 @@ class AutomationRunOnceService:
                 "wait for the configured stability interval, then let the resident Worker "
                 "continue the same Run once"
             )
-        if discovery.status is DiscoveryStatus.PAUSED:
-            return "continue the Run once to resume the same bounded scope"
         if discovery.status is DiscoveryStatus.CANCELLED:
             return "start a new Run once from the published definition"
         if discovery.status is DiscoveryStatus.FAILED:

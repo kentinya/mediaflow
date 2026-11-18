@@ -68,9 +68,9 @@ SHARED_TASK_CAPACITY_FULL_MESSAGE = (
 class TaskQueueState(StrEnum):
     """Whether one Task currently occupies one shared scheduling slot.
 
-    The four situations the Slice contract distinguishes are exactly these:
+    The four situations the contract distinguishes are exactly these:
     ``QUEUED``/``CLAIMED`` hold a slot (pending machine work or an active
-    Worker stage), ``WAITING_HUMAN``/``PAUSED`` hold none (no queued or claimed
+    Worker stage), ``WAITING_HUMAN`` holds none (no queued or claimed
     machine work remains, but the Task/source ownership and every saved
     decision stay), and ``SETTLED`` holds none because the work is terminal.
     ``NOT_ADMITTED`` is the absence of a scheduling row and belongs to Tasks
@@ -81,7 +81,6 @@ class TaskQueueState(StrEnum):
     QUEUED = "queued"
     CLAIMED = "claimed"
     WAITING_HUMAN = "waiting_human"
-    PAUSED = "paused"
     SETTLED = "settled"
 
     @property
@@ -105,7 +104,6 @@ class TaskTrigger(StrEnum):
 class TaskControl(StrEnum):
     """One cooperative control request accepted for a Task."""
 
-    PAUSE = "pause"
     CANCEL = "cancel"
 
 

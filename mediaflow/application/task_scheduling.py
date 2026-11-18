@@ -70,11 +70,6 @@ from mediaflow.domain.task_scheduling import (
 
 DEFAULT_TASK_LEASE_SECONDS = 30.0
 
-#: The TaskItem states one cooperative pause may suspend: queued work and the
-#: item the owner is currently holding.  A sibling that already recorded its own
-#: outcome — success, dry run, skipped, failed, ignored, cancelled — is settled
-#: evidence and is never rewritten by a control transition.
-_PAUSABLE_ITEM_STATUSES = frozenset({TaskItemStatus.PENDING, TaskItemStatus.PROCESSING})
 #: Cancelling is the operator's final intent for the unfinished work of this
 #: Task.  A waiting-for-human item is unfinished work too, so it settles with
 #: the cancellation; an item that already recorded its own outcome is history
@@ -83,7 +78,6 @@ _CANCELLABLE_ITEM_STATUSES = frozenset(
     {
         TaskItemStatus.PENDING,
         TaskItemStatus.PROCESSING,
-        TaskItemStatus.PAUSED,
         TaskItemStatus.WAITING_CONFIRM,
         TaskItemStatus.WAITING_RECOGNITION,
         TaskItemStatus.WAITING_METADATA,
@@ -330,7 +324,7 @@ class TaskSchedulingService:
         """Extend this exact claim, or report that ownership was lost.
 
         The heartbeat never touches the operator-visible control revision, so a
-        legitimate pause/cancel request can never look stale merely because the
+        legitimate cancellation can never look stale merely because the
         owner is alive.
         """
 
@@ -377,14 +371,13 @@ class TaskSchedulingService:
         *,
         now: datetime | None = None,
     ) -> TaskSchedulingState:
-        """Record one pause/cancel intent.
+        """Record one cancellation intent.
 
-        The request is durable evidence, not an effect: a Task whose machine work
-        is still running keeps its slot until its current owner acknowledges the
-        safe boundary.  Queued, wholly human-waiting and safely paused work has
-        no owner and no in-flight call, so its safe boundary is immediate and
-        the request/acknowledgement settle atomically here.  In particular an
-        accepted cancel can never be cleared by a later resume.  Nothing here
+        The request is durable evidence, not an effect: a Task whose machine
+        work is still running keeps its slot until its current owner
+        acknowledges the safe boundary.  Queued and wholly human-waiting work
+        has no owner and no in-flight call, so its safe boundary is immediate
+        and the request/acknowledgement settle atomically here.  Nothing here
         interrupts an external call, frees a source lock of in-flight work or
         releases an uncertain effect.
         """
@@ -394,11 +387,9 @@ class TaskSchedulingService:
         if state.claim_token is None and state.queue_state in {
             TaskQueueState.QUEUED,
             TaskQueueState.WAITING_HUMAN,
-            TaskQueueState.PAUSED,
         }:
             # No owner and no in-flight call means the safe boundary is already
-            # here: the request and its acknowledgement settle together.  An
-            # accepted cancel therefore can never be cleared by a later resume.
+            # here: the request and its acknowledgement settle together.
             task = self._require_task(task_id)
             return self._settle_control(task, state, current, fence=None)
         return state
@@ -414,11 +405,11 @@ class TaskSchedulingService:
         initial_execution_stage: str | None = None,
         close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState:
-        """Acknowledge the accepted pause/cancel at the owner's safe boundary.
+        """Acknowledge the accepted cancellation at the owner's safe boundary.
 
         Only the current owner may acknowledge, and only the exact accepted
-        request may be settled: a concurrent escalation (pause → cancel) makes
-        this call fail closed instead of settling a request the owner never saw.
+        request may be settled: a superseded request makes this call fail
+        closed instead of settling a request the owner never saw.
         The Task aggregate and its affected items commit with the released slot,
         so the durable record can never show a released slot beside work that
         still claims to be running.  A linked manual execution's cancellation
@@ -568,7 +559,7 @@ class TaskSchedulingService:
         metadata-only work, or a stability wait whose next observation is due
         later, remains queued machine work.  The Task keeps its slot and source
         ownership; only the Worker ownership is returned for the next pass.
-        A pending pause/cancel is not acknowledged here; the caller settles it
+        A pending cancellation is not acknowledged here; the caller settles it
         at its safe boundary instead of silently continuing.
         """
 
@@ -613,7 +604,7 @@ class TaskSchedulingService:
         """Re-admit this Task's remaining machine work after a human boundary.
 
         Re-entry is only for work that provably has no machine stage running
-        (human-waiting or acknowledged-paused), verifies the caller's observed
+        (human-waiting), verifies the caller's observed
         control revision and the Task's original pin, and re-checks the shared
         capacity inside the same transaction.  At full capacity nothing changes:
         the saved choices, summary, results and consumed authority stay, no
@@ -660,7 +651,7 @@ class TaskSchedulingService:
         source.  The previous attempt's row (and its recorded outcome) is
         preserved: only the attempt counter advances.  A source that already
         succeeded, was ignored or recorded a non-empty/unverified effect is not
-        started again; only a new source, a paused/pending item or a provably
+        started again; only a new source, a pending item or a provably
         effect-free failed analysis attempt may continue.  Resuming the same
         item keeps its known occurrence/fingerprint, ResourceLibrary/Storage
         path and first observation: a different known version is refused rather
@@ -1004,53 +995,25 @@ class TaskSchedulingService:
                 f"task {task.task_id!r} has no accepted control request to settle"
             )
         items = self._repository.list_items(task.task_id)
-        if control is TaskControl.PAUSE:
-            updated_items = tuple(
-                replace(
-                    item,
-                    status=TaskItemStatus.PAUSED,
-                    stage="paused",
-                    updated_at=now,
-                    error=None,
-                )
-                for item in items
-                if item.status in _PAUSABLE_ITEM_STATUSES
-            )
-            # Slice 48 RO-1: ``paused`` is a retired aggregate value — the
-            # suspended flow is unfinished work, so the Task stays ``running``
-            # while the queue row carries the pause eligibility.  No current
-            # producer writes the retired value; a historical row keeps its
-            # honest recorded state.
-            settled = replace(
-                task,
-                status=PersistentTaskStatus.RUNNING,
+        updated_items = tuple(
+            replace(
+                item,
+                status=TaskItemStatus.CANCELLED,
+                stage="cancelled",
                 updated_at=now,
-                completed_at=None,
-                error=None,
-                pause_requested=False,
-            )
-            queue_state = TaskQueueState.PAUSED
-        else:
-            updated_items = tuple(
-                replace(
-                    item,
-                    status=TaskItemStatus.CANCELLED,
-                    stage="cancelled",
-                    updated_at=now,
-                    error="task cancelled",
-                )
-                for item in items
-                if item.status in _CANCELLABLE_ITEM_STATUSES
-            )
-            settled = replace(
-                task,
-                status=PersistentTaskStatus.CANCELLED,
-                updated_at=now,
-                completed_at=now,
                 error="task cancelled",
-                pause_requested=False,
             )
-            queue_state = TaskQueueState.SETTLED
+            for item in items
+            if item.status in _CANCELLABLE_ITEM_STATUSES
+        )
+        settled = replace(
+            task,
+            status=PersistentTaskStatus.CANCELLED,
+            updated_at=now,
+            completed_at=now,
+            error="task cancelled",
+        )
+        queue_state = TaskQueueState.SETTLED
         released = self._repository.release_scheduled_claim(
             fence,
             task=settled,
@@ -1069,7 +1032,7 @@ class TaskSchedulingService:
         # The release transaction retires this Task's short-lived execution
         # locks under the same validated claim/control boundary.  A post-commit
         # task-level cleanup would be able to delete the next round's fresh
-        # generation after a quick pause -> requeue -> claim handoff.  Durable
+        # generation after a quick requeue -> claim handoff.  Durable
         # source ownership stays with the items themselves, so giving the slot
         # back never frees a source for competing work.
         return released

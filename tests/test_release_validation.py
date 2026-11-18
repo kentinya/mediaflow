@@ -49,11 +49,9 @@ class ReleaseValidationTests(unittest.TestCase):
                 for name in (
                     "mediaflow/cli.py",
                     "mediaflow/final_cli.py",
-                    "mediaflow/infrastructure/migration_rehearsal.py",
                     "mediaflow/infrastructure/sqlite_backup.py",
                     "mediaflow/infrastructure/sqlite_restore.py",
                     "mediaflow/infrastructure/runtime_lease.py",
-                    "mediaflow/infrastructure/upgrade_preflight.py",
                 ):
                     archive.writestr(name, "")
             inspect_wheel(valid)
@@ -63,11 +61,9 @@ class ReleaseValidationTests(unittest.TestCase):
                     for name in (
                         "mediaflow/cli.py",
                         "mediaflow/final_cli.py",
-                        "mediaflow/infrastructure/migration_rehearsal.py",
                         "mediaflow/infrastructure/sqlite_backup.py",
                         "mediaflow/infrastructure/sqlite_restore.py",
                         "mediaflow/infrastructure/runtime_lease.py",
-                        "mediaflow/infrastructure/upgrade_preflight.py",
                         unsafe,
                     ):
                         archive.writestr(name, "")

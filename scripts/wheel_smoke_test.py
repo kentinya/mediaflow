@@ -35,11 +35,9 @@ def inspect_wheel(wheel: Path) -> None:
     required = {
         "mediaflow/cli.py",
         "mediaflow/final_cli.py",
-        "mediaflow/infrastructure/migration_rehearsal.py",
         "mediaflow/infrastructure/sqlite_backup.py",
         "mediaflow/infrastructure/sqlite_restore.py",
         "mediaflow/infrastructure/runtime_lease.py",
-        "mediaflow/infrastructure/upgrade_preflight.py",
     }
     missing = sorted(required - names)
     if missing:
@@ -149,19 +147,6 @@ def smoke(wheel: Path, project: Path) -> None:
             cwd=root,
             environment=environment,
         )
-        run(
-            [
-                str(mediaflow),
-                "--config",
-                str(configurations[0]),
-                "upgrade",
-                "rehearse",
-                "--backup",
-                str(backup),
-            ],
-            cwd=root,
-            environment=environment,
-        )
         restored = root / "restored-runtime.sqlite3"
         restore_configuration = root / "restore.json"
         configured_copy(
@@ -228,19 +213,6 @@ def smoke(wheel: Path, project: Path) -> None:
                 "database",
                 "verify",
                 str(restored),
-            ],
-            cwd=root,
-            environment=environment,
-        )
-        run(
-            [
-                str(mediaflow),
-                "--config",
-                str(configurations[0]),
-                "upgrade",
-                "check",
-                "--backup",
-                str(backup),
             ],
             cwd=root,
             environment=environment,

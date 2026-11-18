@@ -9,7 +9,20 @@ from typing import Protocol
 
 from mediaflow.domain.library import ResourceLibrary, ScanMode
 from mediaflow.domain.storage import StorageErrorCode
-from mediaflow.domain.tasks import TaskStatus
+
+
+class ScanStatus(StrEnum):
+    """The bounded outcome of one discovery walk.
+
+    This is the scanner's own result state, not a Task flow status: a walk has
+    no Task lifecycle, claim or control.
+    """
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class FileScanStatus(StrEnum):
@@ -84,7 +97,7 @@ class ScanResult:
     scan_id: str
     resource_library_id: str
     mode: ScanMode
-    status: TaskStatus
+    status: ScanStatus
     started_at: datetime
     completed_at: datetime
     statistics: ScanStatistics

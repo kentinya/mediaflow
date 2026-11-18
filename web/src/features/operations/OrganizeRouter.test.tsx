@@ -465,58 +465,6 @@ describe("V2 manual Organize journey", () => {
     );
   });
 
-  it("shows a paused durable analysis without any confirmable plan", async () => {
-    const user = userEvent.setup();
-    const paused = intentDocument();
-    paused["analysis"] = {
-      discoveryId: "discovery-1",
-      status: "paused",
-      phase: "paused",
-      version: 4,
-      frozen: true,
-      prepared: false,
-      previewId: null,
-      pauseRequested: true,
-      cancelRequested: false,
-      message: "the operator's pause was acknowledged at the safe boundary",
-      actions: {},
-    };
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return jsonResponse({ principal_id: "operator" });
-      }
-      if (
-        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
-        call.method === "POST"
-      ) {
-        return jsonResponse(paused, 201);
-      }
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-        return jsonResponse(paused);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
-    await screen.findByRole("heading", { name: "整理意图" });
-    await user.click(
-      await screen.findByRole("button", { name: "生成分析摘要" }),
-    );
-    // An acknowledged pause explains its control state; no plan summary, no
-    // execution and no second analysis request is offered from this page.
-    await screen.findByText(/分析已暂停/);
-    expect(screen.queryByRole("heading", { name: /当前整理计划/ })).toBeNull();
-    expect(
-      calls.filter(
-        (call) => call.method === "POST" && call.url.includes("/previews"),
-      ),
-    ).toHaveLength(1);
-    expect(
-      calls.some(
-        (call) => call.method === "POST" && call.url.endsWith("/execute"),
-      ),
-    ).toBe(false);
-  });
 
   it("preserves RecognitionType C while displaying and submitting its pinned A downstream policies", async () => {
     const user = userEvent.setup();

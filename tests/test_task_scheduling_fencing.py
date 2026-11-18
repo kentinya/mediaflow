@@ -27,7 +27,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.domain.task_scheduling import (
-    TASK_MUTATION_IN_FLIGHT,
     TaskClaimFence,
     TaskClaimFenceLost,
     TaskControl,
@@ -201,7 +200,7 @@ class FencingTestCase(unittest.TestCase):
         )
         task = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             total_items=2 if success_first else 1,
             completed_items=1 if success_first else 0,
             completed_at=at + timedelta(seconds=offset + 2),
@@ -545,206 +544,6 @@ class WorkerEligibilityTests(FencingTestCase):
 
 
 class ControlFenceTests(FencingTestCase):
-    def test_a_heartbeat_never_invalidates_an_accepted_control_request(self) -> None:
-        service = self.service()
-        self.admit(service)
-        claim = self.started(service)
-        requested = service.request_control(
-            claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
-        )
-        self.assertEqual(requested.control_revision, 1)
-        heartbeats = [
-            service.heartbeat(claim, now=NOW + timedelta(seconds=4 + index)) for index in range(3)
-        ]
-        self.assertTrue(all(value.expires_at is not None for value in heartbeats))
-        after = self.repository.get_task_scheduling(claim.task_id)
-        self.assertIs(after.control_request, TaskControl.PAUSE)
-        self.assertEqual(after.control_revision, 1)
-        # The still-valid request acknowledges and settles normally.
-        acknowledged = service.acknowledge_control(heartbeats[-1], now=NOW + timedelta(seconds=8))
-        self.assertIs(acknowledged.queue_state, TaskQueueState.PAUSED)
-
-    def test_an_acknowledgement_only_settles_the_request_it_observed(self) -> None:
-        service = self.service()
-        self.admit(service)
-        claim = self.started(service)
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        # A concurrent escalation arrives between the owner's read and its ack.
-        second = self.connection()
-        self.service(repository=second).request_control(
-            claim.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=4)
-        )
-        observed = self.repository.get_task_scheduling(claim.task_id)
-        self.assertEqual(observed.control_revision, 2)
-        with self.assertRaises(TaskControlRejected):
-            # The acknowledgement observed revision 1: it must not settle a
-            # request the owner never saw.
-            self.repository.release_scheduled_claim(
-                claim.fence(NOW + timedelta(seconds=5)),
-                task=replace(
-                    self.repository.get_task(claim.task_id),
-                    status=PersistentTaskStatus.PAUSED,
-                ),
-                items=(),
-                queue_state=TaskQueueState.PAUSED,
-                stage=None,
-                expected_control_revision=1,
-            )
-        state = self.repository.get_task_scheduling(claim.task_id)
-        self.assertIs(state.control_request, TaskControl.CANCEL)
-        self.assertIs(state.queue_state, TaskQueueState.CLAIMED)
-        settled = service.acknowledge_control(claim, now=NOW + timedelta(seconds=6))
-        self.assertIs(settled.queue_state, TaskQueueState.SETTLED)
-        self.assertIs(settled.control_request, TaskControl.CANCEL)
-
-    def test_a_stale_owner_cannot_acknowledge_the_replacement_owners_claim(self) -> None:
-        service = self.service()
-        self.admit(service)
-        first = service.claim_next(worker_id="worker-1", now=NOW)
-        assert first is not None
-        service.request_control(first.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=1))
-        with self.assertRaises(TaskClaimFenceLost):
-            service.acknowledge_control(
-                replace(
-                    first,
-                    state=replace(first.state, claim_generation=first.generation + 5),
-                ),
-                now=NOW + timedelta(seconds=2),
-            )
-        self.assertIs(
-            self.repository.get_task_scheduling(first.task_id).queue_state,
-            TaskQueueState.CLAIMED,
-        )
-
-    def test_acknowledging_a_pause_retires_only_this_tasks_execution_locks(self) -> None:
-        service = self.service()
-        admission = self.admit(service)
-        claim = self.started(service)
-        self.repository.acquire(
-            "local", "媒体/电影/A.mkv", claim.task_id, NOW, owner_token="round-1-a"
-        )
-        self.repository.acquire("local", "媒体/电影/A.srt", claim.task_id, NOW)
-        other = self.admit(service, request_id="request-2", scope_path="媒体/剧集")
-        self.repository.acquire("local", "媒体/剧集/B.mkv", other.task.task_id, NOW)
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
-        self.assertFalse(
-            self.repository.lock_owned("local", "媒体/电影/A.mkv", claim.task_id, owner_token=None)
-        )
-        self.assertFalse(
-            self.repository.lock_owned("local", "媒体/电影/A.srt", claim.task_id, owner_token=None)
-        )
-        self.assertTrue(self.repository.lock_owned("local", "媒体/剧集/B.mkv", other.task.task_id))
-        self.assertEqual(self.service(capacity=2).capacity_use(), 1)
-        self.assertIs(
-            self.repository.get_task_scheduling(admission.task.task_id).queue_state,
-            TaskQueueState.PAUSED,
-        )
-
-    def test_a_late_pause_cleanup_cannot_delete_the_next_rounds_lock(self) -> None:
-        from mediaflow.application.task_scheduling import TaskSchedulingService
-
-        service = self.service()
-        admission = self.admit(service)
-        claim = self.started(service)
-        item = self.item(service, claim)
-        self.repository.acquire(
-            "local", item.source_path, claim.task_id, NOW, owner_token="round-1"
-        )
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        paused_committed = threading.Event()
-
-        original_release = self.repository.release_scheduled_claim
-
-        def release_and_signal(*args, **kwargs):
-            result = original_release(*args, **kwargs)
-            if result is not None:
-                paused_committed.set()
-            return result
-
-        self.repository.release_scheduled_claim = release_and_signal
-        cleanup_release = threading.Event()
-
-        class DelayedCleanup:
-            def reclaim_task_locks(inner, task_id, *, owner_token=None):
-                cleanup_release.wait(timeout=10)
-                return self.repository.reclaim_task_locks(task_id, owner_token=owner_token)
-
-        ack_service = TaskSchedulingService(self.repository, capacity=2, locks=DelayedCleanup())
-        errors: list[BaseException] = []
-
-        def acknowledge() -> None:
-            try:
-                ack_service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
-            except BaseException as error:  # pragma: no cover - surfaced below
-                errors.append(error)
-
-        thread = threading.Thread(target=acknowledge)
-        thread.start()
-        self.assertTrue(paused_committed.wait(timeout=10))
-
-        successor_repository = self.connection()
-        successor = self.service(repository=successor_repository)
-        requeued = successor.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            expected_control_revision=1,
-            now=NOW + timedelta(seconds=5),
-        )
-        self.assertIs(requeued.queue_state, TaskQueueState.QUEUED)
-        next_claim = successor.claim_next(worker_id="worker-2", now=NOW + timedelta(seconds=6))
-        self.assertIsNotNone(next_claim)
-        self.assertTrue(
-            successor_repository.adopt_or_acquire(
-                "local",
-                item.source_path,
-                admission.task.task_id,
-                NOW + timedelta(seconds=7),
-                owner_token="round-2",
-            )
-        )
-        # The previous round's claim generation is stale: it cannot heartbeat,
-        # publish or release the new owner's work even while its old token is
-        # still in memory.
-        stale_service = self.service(repository=self.connection())
-        with self.assertRaises(TaskClaimFenceLost):
-            stale_service.heartbeat(claim, now=NOW + timedelta(seconds=7))
-        with self.assertRaises(TaskClaimFenceLost):
-            stale_service.publish_task(
-                claim,
-                replace(
-                    self.repository.get_task(admission.task.task_id),
-                    updated_at=NOW + timedelta(seconds=7),
-                ),
-                now=NOW + timedelta(seconds=7),
-            )
-
-        cleanup_release.set()
-        thread.join(timeout=10)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(errors, [])
-        self.assertTrue(
-            successor_repository.lock_owned(
-                "local",
-                item.source_path,
-                admission.task.task_id,
-                owner_token="round-2",
-            )
-        )
-        # The new owner's own conditional release is the only thing that may
-        # retire its generation; a repeated cleanup is a harmless no-op.
-        self.assertEqual(
-            successor_repository.reclaim_task_locks(admission.task.task_id, owner_token="round-2"),
-            1,
-        )
-        self.assertEqual(
-            successor_repository.reclaim_task_locks(admission.task.task_id, owner_token="round-2"),
-            0,
-        )
-
-
-class CancellationTests(FencingTestCase):
     def test_a_cancelled_human_wait_cannot_be_requeued(self) -> None:
         service = self.service()
         admission, claim, success_item = self.waiting_human(service, success_first=True)
@@ -795,45 +594,6 @@ class CancellationTests(FencingTestCase):
         self.assertEqual(stored.claim_generation, generation)
         self.assertFalse(stored.holds_capacity)
         self.assertEqual(self.repository.list_results(admission.task.task_id), recorded)
-
-    def test_a_cancelled_pause_cannot_be_requeued(self) -> None:
-        service = self.service()
-        admission = self.admit(service)
-        claim = self.started(service)
-        item = self.item(service, claim)
-        self.repository.acquire(
-            "local", item.source_path, claim.task_id, NOW, owner_token="round-1"
-        )
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        paused = service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
-        self.assertIs(paused.queue_state, TaskQueueState.PAUSED)
-        generation = paused.claim_generation
-
-        cancelled = service.request_control(
-            claim.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=5)
-        )
-        self.assertIs(cancelled.queue_state, TaskQueueState.SETTLED)
-        self.assertIs(cancelled.control_request, TaskControl.CANCEL)
-        self.assertEqual(service.capacity_use(), 0)
-        self.assertIs(self.repository.get_item(item.item_id).status, TaskItemStatus.CANCELLED)
-        self.assertFalse(
-            self.repository.lock_owned("local", item.source_path, claim.task_id, owner_token=None)
-        )
-        with self.assertRaises(TaskControlRejected):
-            service.requeue(
-                admission.task.task_id,
-                expected_snapshot_id="snapshot-1",
-                expected_snapshot_digest="digest-1",
-                expected_control_revision=cancelled.control_revision,
-                now=NOW + timedelta(seconds=6),
-            )
-        stored = self.repository.get_task_scheduling(admission.task.task_id)
-        self.assertEqual(stored.claim_generation, generation)
-        self.assertIs(stored.control_request, TaskControl.CANCEL)
-        self.assertIs(
-            self.repository.get_task(admission.task.task_id).status,
-            PersistentTaskStatus.CANCELLED,
-        )
 
     def test_cancel_and_requeue_resolve_in_transaction_order(self) -> None:
         service = self.service()
@@ -898,7 +658,7 @@ class MixedReleaseTests(FencingTestCase):
         before_task = self.repository.get_task(claim.task_id)
         aggregate = replace(
             before_task,
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             total_items=2,
             completed_at=NOW + timedelta(seconds=4),
         )
@@ -972,7 +732,7 @@ class WhollyHumanWaitingTests(FencingTestCase):
         service.record_item(claim, waiting_b, now=NOW + timedelta(seconds=4))
         aggregate = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             total_items=2,
             completed_at=NOW + timedelta(seconds=4),
         )
@@ -1017,7 +777,7 @@ class ReleaseAdmissionRaceTests(FencingTestCase):
         service.record_item(claim, waiting, now=NOW + timedelta(seconds=3))
         aggregate = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             total_items=1,
             completed_at=NOW + timedelta(seconds=3),
         )
@@ -1132,7 +892,7 @@ class CrossTaskPublicationTests(FencingTestCase):
             claim_a,
             task=replace(
                 task_a,
-                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                status=PersistentTaskStatus.COMPLETED,
                 completed_at=NOW + timedelta(seconds=5),
             ),
             items=(),
@@ -1146,45 +906,6 @@ class CrossTaskPublicationTests(FencingTestCase):
 
 
 class UncertainEffectTests(FencingTestCase):
-    def test_an_in_flight_mutation_is_never_reclaimed_or_replayed(self) -> None:
-        service = self.service()
-        admission = self.admit(service)
-        claim = self.started(service)
-        item = self.item(service, claim)
-        service.begin_mutation(claim, item, "move", now=NOW + timedelta(seconds=3))
-        state = self.repository.get_task_scheduling(admission.task.task_id)
-        self.assertEqual(state.mutation_state, TASK_MUTATION_IN_FLIGHT)
-        self.assertEqual(state.mutation_item_id, item.item_id)
-        self.assertEqual(state.mutation_action, "move")
-
-        later = NOW + timedelta(minutes=5)
-        self.repository.heartbeat_worker("worker-2", later)
-        self.assertIsNone(
-            self.service(repository=self.connection()).claim_next(worker_id="worker-2", now=later)
-        )
-        # Pausing, cancelling or settling is refused while the effect is unknown,
-        # so a requested control can never force the slot (or the uncertainty)
-        # away.  Recording the request itself stays possible: it is the operator's
-        # durable intent, and the owner acknowledges it at a proven boundary.
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=4))
-        with self.assertRaises(TaskControlRejected):
-            service.acknowledge_control(claim, now=NOW + timedelta(seconds=5))
-
-        self.repository.close()
-        self.repository = SQLiteTaskRepository(self.database)
-        self.addCleanup(self.repository.close)
-        restarted = self.service()
-        persisted = restarted.state(admission.task.task_id)
-        self.assertEqual(persisted.mutation_state, TASK_MUTATION_IN_FLIGHT)
-        self.assertEqual(persisted.queue_state, TaskQueueState.CLAIMED)
-        with self.assertRaises(TaskControlRejected):
-            restarted.requeue(
-                admission.task.task_id,
-                expected_snapshot_id="snapshot-1",
-                expected_snapshot_digest="digest-1",
-                now=later,
-            )
-
     def test_an_in_flight_mutation_blocks_a_second_boundary(self) -> None:
         service = self.service()
         self.admit(service)

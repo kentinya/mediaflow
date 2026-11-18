@@ -1242,10 +1242,6 @@ class ManualTaskEngineWorker:
             DiscoveryStatus.RUNNING: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.WAITING_STABILITY: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.ANALYZING: PersistentTaskStatus.RUNNING,
-            # Pause stays retired (Slice 48 RO-1): a historically paused
-            # discovery row is unfinished flow work, never a current paused
-            # Task aggregate value.
-            DiscoveryStatus.PAUSED: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.COMPLETED: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.PARTIAL_SUCCESS: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.FAILED: PersistentTaskStatus.FAILED,
@@ -1292,7 +1288,6 @@ class ManualTaskEngineWorker:
             started_at=task.started_at or now,
             completed_at=now if terminal else None,
             error=error,
-            pause_requested=False,
         )
 
     def _terminal_items(

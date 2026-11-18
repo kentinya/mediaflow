@@ -96,7 +96,7 @@ def task(
     occurred = NOW + timedelta(minutes=rank)
     terminal = status in {
         PersistentTaskStatus.COMPLETED,
-        PersistentTaskStatus.PARTIAL_SUCCESS,
+        PersistentTaskStatus.COMPLETED,
         PersistentTaskStatus.FAILED,
         PersistentTaskStatus.CANCELLED,
     }

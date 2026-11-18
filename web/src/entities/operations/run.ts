@@ -53,10 +53,8 @@ import {
 export const RUN_STATUSES = [
   "pending",
   "running",
-  "paused",
   "waiting",
   "completed",
-  "partial_success",
   "failed",
   "cancelled",
   "unknown",
@@ -86,7 +84,6 @@ export const RUN_CURRENT_STAGE_LABELS: Readonly<
 /** Statuses that durably end a run's processing. */
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
   "completed",
-  "partial_success",
   "failed",
   "cancelled",
 ];
@@ -97,9 +94,7 @@ export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
  */
 export const ATTENTION_RUN_STATUSES: readonly RunStatus[] = [
   "pending",
-  "paused",
   "waiting",
-  "partial_success",
   "failed",
 ];
 
@@ -190,9 +185,7 @@ export type RunLibraryKind = (typeof RUN_LIBRARY_KINDS)[number];
 export const RUN_TASK_LIFECYCLE_STATES = [
   "pending",
   "running",
-  "paused",
   "completed",
-  "partial_success",
   "failed",
   "cancelled",
 ] as const;
@@ -242,7 +235,6 @@ export interface RunSummary {
   readonly missingResultItems: number | null;
   /** Allowlisted current stage bucket; null means the backend has none. */
   readonly currentStage: RunCurrentStage | null;
-  readonly pauseRequested: boolean;
   readonly attention: boolean;
   /** The current, real recovery problem types this Task has outstanding. */
   readonly problemTypes: readonly RunProblemType[];
@@ -403,10 +395,8 @@ function flag(source: Record<string, unknown>, field: string): boolean {
 export const RUN_STATUS_LABELS: Readonly<Record<RunStatus, string>> = {
   pending: "待处理",
   running: "进行中",
-  paused: "已暂停",
   waiting: "等待处理",
   completed: "已完成",
-  partial_success: "部分成功",
   failed: "失败",
   cancelled: "已取消",
   unknown: "未知",
@@ -663,7 +653,6 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     uncertainEffectItems,
     missingResultItems,
     currentStage,
-    pauseRequested: flag(source, "pause_requested"),
     attention,
     problemTypes,
     problemFileCounts,

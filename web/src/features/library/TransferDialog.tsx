@@ -30,8 +30,8 @@ import {
  * create no Task; only the single explicit submit admits the transfer.  The
  * submission returns the durable queued identity immediately (no Storage
  * mutation happens on the browser request), the dialog then follows the
- * bounded durable projection by polling, and pause/cancel/resume are offered
- * only when the backend projection advertises them — never as raw Task-ID or
+ * bounded durable projection by polling, and cancellation is offered only
+ * when the backend projection advertises it — never as raw Task-ID or
  * execution-token ceremony.  Entered context survives a recoverable failure,
  * duplicate submission is prevented, and Escape still closes.
  *
@@ -78,9 +78,7 @@ const CONFLICT_CHOICES: readonly {
 ];
 
 const ACTION_LABELS: Record<string, string> = {
-  pause: "请求暂停",
   cancel: "取消",
-  resume: "继续传输",
 };
 
 function transferFailureMessage(
@@ -149,8 +147,6 @@ export function transferStatusMessage(model: {
       return "传输已确认并排队等待执行；进度会显示在这里。";
     case "RUNNING":
       return "传输正在执行；每项进度会显示在这里。";
-    case "PAUSED":
-      return "传输已在安全边界暂停；已完成部分保持有效，可继续传输。";
     case "CANCELLED":
       return "传输已取消；已完成项保持有效，其余项保持原状。";
     case "UNCERTAIN":
@@ -168,7 +164,6 @@ const OUTCOME_STATUS_LABELS: Record<string, string> = {
   FAILED: "未完成",
   QUEUED: "排队中",
   RUNNING: "执行中",
-  PAUSED: "已暂停",
   CANCELLED: "已取消",
 };
 
@@ -455,20 +450,14 @@ export function TransferDialog({
     const result = await mutateTransferLifecycle(
       token,
       projection.taskId,
-      action.action as "pause" | "cancel" | "resume",
+      action.action as "cancel",
       projection.version,
       undefined,
       kind,
     );
     setActionPending(null);
     if (!result.ok) {
-      setActionError(
-        action.action === "resume"
-          ? "继续传输未被执行；请刷新后重试，或提交一次新的传输。"
-          : action.action === "pause"
-            ? "暂停请求未生效；该传输可能刚刚到达终点。"
-            : "取消请求未生效；该传输可能刚刚到达终点。",
-      );
+      setActionError("取消请求未生效；该传输可能刚刚到达终点。");
       return;
     }
     void queryClient.invalidateQueries({

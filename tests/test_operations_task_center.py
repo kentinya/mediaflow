@@ -670,9 +670,9 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
             "INSERT INTO media_discoveries (discovery_id, actor, resource_library_id,"
             " storage_id, configuration_snapshot_id, configuration_snapshot_digest,"
             " status, version, budgets_json, progress_json, sources_json,"
-            " attempts, pause_requested, cancel_requested, created_at, updated_at,"
+            " attempts, cancel_requested, created_at, updated_at,"
             " organize_task_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 discovery_id,
                 actor,
@@ -685,7 +685,6 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
                 "{}",
                 "{}",
                 "[]",
-                0,
                 0,
                 0,
                 NOW.isoformat(),
@@ -986,8 +985,8 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
             "INSERT INTO media_discoveries (discovery_id, actor, resource_library_id,"
             " storage_id, configuration_snapshot_id, configuration_snapshot_digest,"
             " status, version, budgets_json, progress_json, sources_json,"
-            " attempts, pause_requested, cancel_requested, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " attempts, cancel_requested, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 "plain-analysis",
                 "operator",
@@ -1000,7 +999,6 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
                 "{}",
                 "{}",
                 "[]",
-                0,
                 0,
                 0,
                 NOW.isoformat(),

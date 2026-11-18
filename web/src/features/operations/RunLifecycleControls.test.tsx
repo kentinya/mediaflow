@@ -49,7 +49,6 @@ function projection(
     resultsObserved: 0,
     resultsComplete: true,
     uncertainResults: 0,
-    pauseRequested: false,
     cancellationRequested: false,
     commandKind: null,
     actions: [cancel()],

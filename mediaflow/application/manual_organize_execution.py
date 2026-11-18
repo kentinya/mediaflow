@@ -1124,7 +1124,7 @@ class ManualOrganizeExecutionService:
                         return None
                     if task.status in {
                         PersistentTaskStatus.COMPLETED,
-                        PersistentTaskStatus.PARTIAL_SUCCESS,
+                        PersistentTaskStatus.COMPLETED,
                         PersistentTaskStatus.FAILED,
                         PersistentTaskStatus.CANCELLED,
                     }:
@@ -1384,7 +1384,7 @@ class ManualOrganizeExecutionService:
             return None
         if task.status in {
             PersistentTaskStatus.COMPLETED,
-            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.COMPLETED,
             PersistentTaskStatus.FAILED,
             PersistentTaskStatus.CANCELLED,
         }:
@@ -4732,7 +4732,7 @@ class ManualOrganizeExecutionService:
                     if status
                     in {
                         PersistentTaskStatus.COMPLETED,
-                        PersistentTaskStatus.PARTIAL_SUCCESS,
+                        PersistentTaskStatus.COMPLETED,
                         PersistentTaskStatus.FAILED,
                         PersistentTaskStatus.CANCELLED,
                     }

@@ -1567,7 +1567,6 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
                 continue
             if state.queue_state in {
                 _TQS.WAITING_HUMAN,
-                _TQS.PAUSED,
                 _TQS.SETTLED,
             }:
                 return discovery
@@ -1582,7 +1581,7 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
             task = value.repository.get_task(task_id)
             if task.status in {
                 _PTS.COMPLETED,
-                _PTS.PARTIAL_SUCCESS,
+                _PTS.COMPLETED,
                 _PTS.FAILED,
                 _PTS.CANCELLED,
             }:
@@ -1909,7 +1908,7 @@ class FinishedBatchCapacityTests(_SupersededHandoffFixture):
             task = value.repository.get_task(task_id)
             if task.status in {
                 PersistentTaskStatus.COMPLETED,
-                PersistentTaskStatus.PARTIAL_SUCCESS,
+                PersistentTaskStatus.COMPLETED,
                 PersistentTaskStatus.FAILED,
                 PersistentTaskStatus.CANCELLED,
             }:

@@ -18,10 +18,10 @@ from enum import StrEnum
 
 from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.task_persistence import (
+    SETTLED_TASK_FLOW_STATUSES,
     PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
-    PersistentTaskStatus,
     TaskItemStatus,
 )
 
@@ -31,10 +31,9 @@ CONTINUABLE_TASK_COMMANDS = frozenset({"preview", "organize"})
 #: The item dispositions that still hold remaining admitted work.  This mirrors
 #: the operator CLI's proven continuation eligibility exactly
 #: (``retryable_items(failed_only=False)``): pending, processing, failed,
-#: partial, cancelled and paused items are all still undecided work, while a
-#: waiting item is owned by its own decision journey, an ignored item is an
-#: explicit operator decision and a dry-run/successful sibling is already
-#: decided.
+#: partial and cancelled items are all still undecided work, while a waiting
+#: item is owned by its own decision journey, an ignored item is an explicit
+#: operator decision and a dry-run/successful sibling is already decided.
 _REMAINING_ITEM_STATUSES = frozenset(
     {
         TaskItemStatus.PENDING,
@@ -42,7 +41,6 @@ _REMAINING_ITEM_STATUSES = frozenset(
         TaskItemStatus.FAILED,
         TaskItemStatus.PARTIAL,
         TaskItemStatus.CANCELLED,
-        TaskItemStatus.PAUSED,
     }
 )
 
@@ -263,7 +261,7 @@ def recovery_scope_plan(
 
     * ``undecided_items`` are the chain's still-undecided items.  They are part
       of the recovery scope: the operator explicitly asked to review exactly
-      what is left, and a pending/processing/failed/paused item has no decided
+      what is left, and a pending/processing/failed item has no decided
       outcome yet, so refusing or silently skipping it would lose the remaining
       work;
     * ``replay_excluded`` are the recorded sources whose outcome is already
@@ -330,7 +328,7 @@ class RecoveryPreparationEligibility:
 
     ``state`` is ``ELIGIBLE`` while the preparation may still observe and
     publish its scope.  ``STALE`` is a terminal, explainable outcome: the
-    original paused admission, its immutable pin or the classification of the
+    original admission, its immutable pin or the classification of the
     remaining sources changed after admission, so the preparation may no longer
     publish a summary, authorize or execute.  ``code``/``message``/``next_action``
     are bounded, secret-free operator text; nothing here mutates media.
@@ -438,8 +436,8 @@ def recovery_preparation_eligibility(
 
     The revalidation reads only durable evidence:
 
-    * the source Task must still be a paused, continuable admission with the
-      same immutable pin that was admitted;
+    * the source Task must still be an unfinished, continuable admission with
+      the same immutable pin that was admitted;
     * the Task must still hold at least one undecided source (a completed,
       ignored or uncertain attempt retires it);
     * wherever the caller supplies its own pin, that pin must equal the source
@@ -462,17 +460,16 @@ def recovery_preparation_eligibility(
             code="recovery_source_unavailable",
             message="the run this preparation belongs to no longer exists",
             next_action=(
-                "the original paused run is unavailable, so its remaining scope cannot be "
+                "the original run is unavailable, so its remaining scope cannot be "
                 "reviewed; start a new bounded run from 操作与任务"
             ),
         )
-    if task.status is not PersistentTaskStatus.PAUSED:
+    if task.status in SETTLED_TASK_FLOW_STATUSES:
         return RecoveryPreparationEligibility(
             RecoveryPreparationState.STALE,
-            code="recovery_source_not_paused",
+            code="recovery_source_settled",
             message=(
-                "the run this preparation belongs to is no longer paused; it is "
-                f"{task.status.value}"
+                f"the run this preparation belongs to already ended; it is {task.status.value}"
             ),
             next_action=("review the run's recorded per-item outcomes, or start a new bounded run"),
         )

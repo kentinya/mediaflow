@@ -484,59 +484,7 @@ describe("V2 Automation Run once journey", () => {
     expect(screen.queryByText(/计划 preview-stale/)).toBeNull();
   });
 
-  it("shows a historically pause-pending run without any pause or resume control", async () => {
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return jsonResponse({ principal_id: "operator" });
-      }
-      if (call.url === API_PATH && call.method === "GET") {
-        return jsonResponse(pausingRunOnceDocument());
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
 
-    await screen.findByText("正在确认暂停");
-    expect(
-      await screen.findByText(/暂停请求已耐久保存，常驻处理 Worker/),
-    ).toBeVisible();
-    // The run keeps its truthful historical stage, but no plan, no execution
-    // control and no pause/resume action are offered: the retired controls are
-    // absent, not merely disabled.
-    expect(
-      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "等待暂停确认" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "继续分析" })).toBeNull();
-  });
-
-  it("shows a historically acknowledged pause with no Continue control", async () => {
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
-        return jsonResponse({ principal_id: "operator" });
-      }
-      if (call.url === API_PATH && call.method === "GET") {
-        return jsonResponse(pausedRunOnceDocument());
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
-
-    await screen.findByText("分析已暂停");
-    // Resume-from-pause is retired: a historically paused run reads back its
-    // durable state, but no Continue is offered.
-    expect(screen.queryByRole("button", { name: "继续分析" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
-    // A paused run never resurrects the plan its interrupted analysis left.
-    expect(
-      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-  });
 
   it("keeps a cancelled run terminal with no plan, recovery or confirmation", async () => {
     recordingFetch((call) => {

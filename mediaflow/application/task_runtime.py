@@ -40,10 +40,6 @@ class TaskLockError(RuntimeError):
     pass
 
 
-class TaskPauseRequested(RuntimeError):
-    pass
-
-
 class TaskClaimLost(RuntimeError):
     """A guarded Task publication found the Worker's claim no longer current."""
 
@@ -152,7 +148,6 @@ class PersistentTaskCoordinator:
             updated_at=now,
             completed_at=None,
             error=None,
-            pause_requested=False,
         )
         self.locks.reclaim_task_locks(task_id)
         self.repository.update_task(reopened)
@@ -192,8 +187,6 @@ class PersistentTaskCoordinator:
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
             raise RuntimeError(f"task {task_id!r} is not running")
-        if task.pause_requested or self.repository.task_pause_requested(task_id):
-            raise TaskPauseRequested(f"task {task_id!r} pause was requested")
         claimant = (
             getattr(self.repository, "claim_task_item_with_ownership", None)
             if enforce_source_ownership and source_storage_path is not None
@@ -421,7 +414,7 @@ class PersistentTaskCoordinator:
         releasing it as a task-level delete would let a stale owner remove a
         replacement owner's row, so such a frame releases nothing and the lock
         is retired only by the authorized Task-level transition that owns the
-        Task at that moment (takeover, cancel, pause, reclaim).
+        Task at that moment (takeover, cancel, reclaim).
         """
 
         token = getattr(item, "lock_owner_token", None)
@@ -441,7 +434,6 @@ class PersistentTaskCoordinator:
             if item.status in {
                 TaskItemStatus.PENDING,
                 TaskItemStatus.PROCESSING,
-                TaskItemStatus.PAUSED,
             }:
                 self.repository.upsert_item(
                     replace(
@@ -463,50 +455,6 @@ class PersistentTaskCoordinator:
         self.locks.reclaim_task_locks(task_id)
         return cancelled
 
-    def request_pause(self, task_id: str) -> PersistentTask:
-        return self.repository.request_task_pause(task_id, datetime.now(UTC))
-
-    def requeue(self, task_id: str) -> PersistentTask:
-        """Re-admit one paused Task for Worker pickup without executing it.
-
-        The queued state is only an admission state: the resident Worker later
-        publishes the running boundary under its own claim fence.  No Storage
-        work happens inside the caller's request.
-
-        Slice 48 RO-1: ``paused`` is a retired aggregate value, so an
-        acknowledged pause keeps the flow value ``running`` while the items
-        record their suspended state.  Re-admission is therefore legal for the
-        legacy ``paused`` rows *and* for a running Task whose every item is
-        suspended or settled — a genuinely processing item still means the
-        Worker owns live work and is never re-queued beneath it.
-        """
-
-        task = self.require(task_id)
-        if task.status is PersistentTaskStatus.PENDING:
-            return task
-        if task.status is PersistentTaskStatus.PAUSED:
-            pass  # A legacy row keeps its honest recorded value.
-        elif task.status is PersistentTaskStatus.RUNNING:
-            items = self.repository.list_items(task_id)
-            if any(item.status is TaskItemStatus.PROCESSING for item in items):
-                raise ValueError("only a paused task can be re-queued")
-        else:
-            raise ValueError("only a paused task can be re-queued")
-        now = datetime.now(UTC)
-        queued = replace(
-            task,
-            status=PersistentTaskStatus.PENDING,
-            updated_at=now,
-            completed_at=None,
-            error=None,
-            pause_requested=False,
-        )
-        self.repository.update_task(queued)
-        return queued
-
-    def pause_requested(self, task_id: str) -> bool:
-        return self.repository.task_pause_requested(task_id)
-
     def cancellation_observed(self, task_id: str) -> bool:
         """Whether one durable cooperative cancellation was accepted for this Task.
 
@@ -518,40 +466,6 @@ class PersistentTaskCoordinator:
 
         task = self.repository.get_task(task_id)
         return task is not None and task.status is PersistentTaskStatus.CANCELLED
-
-    def acknowledge_pause(self, task_id: str) -> PersistentTask:
-        task = self.require(task_id)
-        if task.status is PersistentTaskStatus.PAUSED:
-            # A legacy row keeps its honest recorded value; nothing is re-written.
-            return task
-        if task.status is not PersistentTaskStatus.RUNNING or not task.pause_requested:
-            raise ValueError("only a running task with a pause request can be paused")
-        now = datetime.now(UTC)
-        for item in self.repository.list_items(task_id):
-            if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
-                self.repository.upsert_item(
-                    replace(
-                        item,
-                        status=TaskItemStatus.PAUSED,
-                        stage="paused",
-                        updated_at=now,
-                        error=None,
-                    )
-                )
-        # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
-        # suspended flow is unfinished work, so the acknowledged pause keeps
-        # the Task ``running`` while the items record their suspended state.
-        paused = replace(
-            task,
-            status=PersistentTaskStatus.RUNNING,
-            updated_at=now,
-            completed_at=None,
-            error=None,
-            pause_requested=False,
-        )
-        self.repository.update_task(paused)
-        self.locks.reclaim_task_locks(task_id)
-        return paused
 
     def record_discovered(
         self,
@@ -1054,7 +968,6 @@ class PersistentTaskCoordinator:
                 TaskItemStatus.FAILED,
                 TaskItemStatus.PARTIAL,
                 TaskItemStatus.CANCELLED,
-                TaskItemStatus.PAUSED,
             }
         )
         successful_results = {
@@ -1316,14 +1229,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
 
         return self.require(task_id)
 
-    def pause_requested(self, task_id: str) -> bool:
-        """A pause is the Task's own scheduling control, never a generic flag."""
-
-        from mediaflow.domain.task_scheduling import TaskControl
-
-        state = self._scheduling.state(task_id)
-        return state is not None and state.control_request is TaskControl.PAUSE
-
     def cancellation_observed(self, task_id: str) -> bool:
         """Whether the operator accepted a cancel for this Task."""
 
@@ -1334,11 +1239,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
             return True
         task = self.repository.get_task(task_id)
         return task is not None and task.status is PersistentTaskStatus.CANCELLED
-
-    def acknowledge_pause(self, task_id: str) -> PersistentTask:
-        """Pause is retired; the Task engine settles any accepted control."""
-
-        return self.require(task_id)
 
     def finish(
         self,

@@ -61,7 +61,6 @@ from mediaflow.domain.manual_organize import (
 from mediaflow.domain.media_discovery import (
     BUDGET_LIMITED_REASONS,
     MAX_DISCOVERY_REFUSALS,
-    MAX_DISCOVERY_TEXT_LENGTH,
     REASON_SOURCE_ALREADY_OWNED,
     REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL,
     DefinitionRunOnceOrigin,
@@ -589,7 +588,6 @@ class MediaDiscoveryService:
             0,
             0,
             None,
-            False,
             library.root_path,
             self._budgets.max_primary_sources,
             snapshot_id,
@@ -858,7 +856,6 @@ class MediaDiscoveryService:
             0,
             0,
             None,
-            False,
             library.root_path,
             self._budgets.max_primary_sources,
             snapshot_id,
@@ -2318,11 +2315,6 @@ class MediaDiscoveryService:
                 continue
             if candidate.snapshot_id != snapshot_id or candidate.snapshot_digest != snapshot_digest:
                 continue
-            if candidate.status is DiscoveryStatus.PAUSED:
-                # A paused discovery stays open but it is an explicit
-                # operator-controlled state: resubmitting its scope is still
-                # the same work, so it reconciles rather than duplicating.
-                pass
             if discovery_scope_signature(candidate.progress.scope_entries) != signature:
                 continue
             return candidate
@@ -2410,19 +2402,10 @@ class MediaDiscoveryService:
     # Cooperative control
     # ------------------------------------------------------------------
 
-    def request_pause(
-        self, discovery_id: str, *, actor: str, expected_version: int
-    ) -> MediaDiscovery:
-        return self._request_control(
-            discovery_id, actor=actor, expected_version=expected_version, pause=True
-        )
-
     def request_cancel(
         self, discovery_id: str, *, actor: str, expected_version: int
     ) -> MediaDiscovery:
-        return self._request_control(
-            discovery_id, actor=actor, expected_version=expected_version, pause=False
-        )
+        return self._request_control(discovery_id, actor=actor, expected_version=expected_version)
 
     def request_analysis(
         self, discovery_id: str, *, actor: str, expected_version: int
@@ -2629,7 +2612,6 @@ class MediaDiscoveryService:
             0,
             0,
             None,
-            False,
             library.root_path,
             self._budgets.max_primary_sources,
             intent.snapshot_id,
@@ -2799,13 +2781,13 @@ class MediaDiscoveryService:
                 next_action="start a new Run once if the same scope is still wanted",
                 details={"status": discovery.status.value},
             )
-        if discovery.pause_requested or discovery.cancel_requested:
+        if discovery.cancel_requested:
             raise DiscoveryError(
-                "a pending pause or cancellation is acknowledged first",
+                "a pending cancellation is acknowledged first",
                 code="discovery_control_pending",
                 status=409,
                 next_action=(
-                    "refresh the run until its control is acknowledged, then start the "
+                    "refresh the run until its cancellation is acknowledged, then start the "
                     "analysis again"
                 ),
             )
@@ -2906,7 +2888,6 @@ class MediaDiscoveryService:
             0,
             0,
             None,
-            False,
             library.root_path,
             discovery.budgets.max_primary_sources,
             discovery.snapshot_id,
@@ -3109,113 +3090,17 @@ class MediaDiscoveryService:
                 "start a new preparation if the same scope is still wanted",
                 False,
             )
-        if discovery.pause_requested or discovery.cancel_requested:
+        if discovery.cancel_requested:
             return (
                 False,
                 "discovery_control_pending",
-                "refresh the preparation until its control is acknowledged, then request the "
-                "analysis again",
+                "refresh the preparation until its cancellation is acknowledged, then request "
+                "the analysis again",
                 False,
             )
         if discovery.status is DiscoveryStatus.ANALYZING:
             return (False, None, None, True)
         return (True, None, None, False)
-
-    def resume(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
-        """Clear an *acknowledged* cooperative pause so the Worker continues.
-
-        A pause stays cooperative: the resident Worker acknowledges it at its
-        next safe boundary and releases the claim in the same transaction.  A
-        Continue is only meaningful after that acknowledgement, because only
-        then has the interrupted pass's bounded work been settled durably.
-        Accepting a Continue while the pause is still pending would let the
-        operator's action race the acknowledgement and leave the record with no
-        truthful continuation, so the pending stage is refused actionably here
-        as well as in the advertised action availability.
-        """
-
-        actor = self._actor(actor)
-        discovery = self._require_version(discovery_id, expected_version)
-        if discovery.terminal:
-            raise DiscoveryError(
-                "a finished discovery cannot be resumed",
-                code="discovery_not_open",
-                status=409,
-                next_action="start a new bounded discovery from Files",
-            )
-        if discovery.cancel_requested:
-            raise DiscoveryConflict(
-                "this discovery already has a cooperative cancellation request",
-                details={"discoveryId": discovery_id},
-            )
-        if discovery.pause_requested and discovery.status is not DiscoveryStatus.PAUSED:
-            # The pause request is durable but the resident Worker has not yet
-            # acknowledged it at a safe boundary.  The pending stage is a real
-            # transient state, not an error the operator must work around: the
-            # acknowledgement is what preserves the interrupted pass's bounded
-            # work and releases ownership.  Refusing here changes nothing.
-            raise DiscoveryError(
-                "the cooperative pause has not been acknowledged yet",
-                code="discovery_pause_pending",
-                status=409,
-                next_action=(
-                    "wait for the resident Processing Worker to acknowledge the pause at "
-                    "its safe boundary, then continue the same discovery"
-                ),
-                details={"status": discovery.status.value},
-            )
-        if not discovery.pause_requested:
-            return discovery
-        now = self._clock()
-        if discovery.frozen and discovery.intent_id is not None:
-            # The acknowledged pause interrupted the frozen manifest's analysis.
-            # Continuing therefore re-enters that same durable analysis stage:
-            # the scope is already frozen and must not be walked again, and the
-            # still-unlinked plan is produced by the same resident Worker.
-            resumed = replace(
-                discovery,
-                status=DiscoveryStatus.ANALYZING,
-                version=discovery.version + 1,
-                pause_requested=False,
-                updated_at=now,
-                error=None,
-                progress=replace(
-                    discovery.progress,
-                    phase="analyzing",
-                    message=(
-                        "resumed by the operator; the resident Worker continues the complete "
-                        "zero-mutation analysis of the same frozen scope"
-                    ),
-                ),
-            )
-            if self._kernel_task_id(discovery) is not None:
-                return self._requeue_kernel_analysis(discovery, resumed)
-            return self._persist(resumed, expected_version=expected_version)
-        updated = replace(
-            discovery,
-            status=DiscoveryStatus.QUEUED,
-            version=discovery.version + 1,
-            pause_requested=False,
-            updated_at=now,
-            progress=replace(
-                discovery.progress,
-                phase="queued",
-                message="resumed by the operator; the resident Worker continues the same scope",
-            ),
-        )
-        if self._kernel_task_id(discovery) is not None:
-            # A new Files preparation is scheduled by its own Task, so a resume
-            # must re-register the same Task's bounded walk in the same
-            # transaction that clears the discovery's pause flag.  The shared
-            # capacity is re-checked, so a full queue keeps the pause and the
-            # saved scope instead of registering an automatic continuation.
-            return self._requeue_kernel_discovery(
-                discovery, updated, stage=TaskMachineStage.DISCOVERY
-            )
-        # Resume only clears the operator's own pause request: the operator-owned
-        # path never touches the claim columns, so a Worker that is still
-        # finishing its safe boundary keeps the exact claim it acquired.
-        return self._persist(updated, expected_version=expected_version)
 
     def finalize(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
         """Freeze the discovered source list under an explicit operator action.
@@ -3435,8 +3320,6 @@ class MediaDiscoveryService:
             )
         if discovery.cancel_requested:
             return self._cancel(discovery, claim_token)
-        if discovery.pause_requested:
-            return self._publish_paused(discovery, claim_token)
         if discovery.recovery_source_task_id is not None:
             # An already-admitted recovery preparation is not a standing licence
             # to publish a summary later.  The operator can legitimately confirm
@@ -3556,17 +3439,10 @@ class MediaDiscoveryService:
             try:
                 if fresh.cancel_requested:
                     return self._cancel(carried, claim_token, observations=observations)
-                if fresh.pause_requested:
-                    return self._publish_paused(carried, claim_token, observations=observations)
                 if self._publication_differs(fresh, carried):
-                    # The operator's pause was already acknowledged and then
-                    # cleared (or our lease lapsed) *and* this pass completed
-                    # bounded work that is not durable yet.  Publish it under the
-                    # live claim in the same transaction that releases that
-                    # claim, so a Continue never re-walks or resets the work this
-                    # pass already established.  A pause that is still pending
-                    # acknowledgement never reaches here: Continue is refused
-                    # until the acknowledgement has settled the bounded work.
+                    # Our lease lapsed while this pass completed bounded work
+                    # that is not durable yet.  Publish it under the live claim
+                    # in the same transaction that releases that claim.
                     return self._settle_control(
                         replace(carried, version=fresh.version + 1),
                         expected_version=fresh.version,
@@ -4348,8 +4224,6 @@ class MediaDiscoveryService:
         if status is DiscoveryStatus.COMPLETED:
             if discovery.cancel_requested:
                 return self._cancel(discovery, claim_token)
-            if discovery.pause_requested:
-                return self._publish_paused(discovery, claim_token)
             if counters.unstable_entries:
                 # The whole scope was visited, but some candidates are not yet
                 # proven stable.  That is a distinct, safely continuable outcome
@@ -6297,76 +6171,12 @@ class MediaDiscoveryService:
             observations=observations,
         )
 
-    def _publish_paused(
-        self,
-        discovery: MediaDiscovery,
-        claim_token: str,
-        message: str = "",
-        *,
-        observations: tuple[DiscoveryObservation, ...] = (),
-    ) -> MediaDiscovery:
-        """Acknowledge a cooperative pause at a safe boundary under the live claim.
-
-        A Worker that no longer owns the claim never reaches this method: the
-        caller stops with ``DiscoveryOwnershipLost`` instead, so a stale owner
-        can never pause the successor's work or leave it without a native
-        continuation.  A returning owner that already completed bounded work
-        passes its counters, findings, manifest, stability observations and
-        monotonic material refusals through the same settlement, so an accepted
-        pause acknowledges the pause without resetting consumed budgets.
-        """
-
-        now = self._clock()
-        updated = replace(
-            discovery,
-            status=DiscoveryStatus.PAUSED,
-            version=discovery.version + 1,
-            claim_worker_id=None,
-            claim_token=None,
-            claim_expires_at=None,
-            updated_at=now,
-            progress=replace(
-                discovery.progress,
-                phase="paused",
-                message=message
-                or "discovery is paused; findings and counters are durable and safe to continue",
-            ),
-        )
-        return self._settle_control(
-            updated,
-            expected_version=discovery.version,
-            claim_token=claim_token,
-            observations=observations,
-        )
-
-    def _fail(self, discovery: MediaDiscovery, claim_token: str, code: str) -> MediaDiscovery:
-        now = self._clock()
-        updated = replace(
-            discovery,
-            status=DiscoveryStatus.FAILED,
-            version=discovery.version + 1,
-            claim_worker_id=None,
-            claim_token=None,
-            claim_expires_at=None,
-            updated_at=now,
-            error=code[:MAX_DISCOVERY_TEXT_LENGTH],
-            progress=replace(
-                discovery.progress,
-                phase="failed",
-                message="discovery could not continue under its pinned configuration",
-            ),
-        )
-        return self._settle_control(
-            updated, expected_version=discovery.version, claim_token=claim_token
-        )
-
     def _request_control(
         self,
         discovery_id: str,
         *,
         actor: str,
         expected_version: int,
-        pause: bool,
     ) -> MediaDiscovery:
         actor = self._actor(actor)
         discovery = self._require_version(discovery_id, expected_version)
@@ -6379,33 +6189,10 @@ class MediaDiscoveryService:
             )
         if self._kernel_task_id(discovery) is not None:
             # A new Files preparation is advanced by the Task engine, so its
-            # pause/cancel must land on the same Task control boundary the Task
-            # Center uses.  The discovery display still records the operator's
-            # request, but the durable Task control is what releases the slot.
-            return self._request_kernel_control(
-                discovery, pause=pause, expected_version=expected_version
-            )
+            # cancellation must land on the same Task control boundary the Task
+            # Center uses.
+            return self._request_kernel_control(discovery, expected_version=expected_version)
         now = self._clock()
-        if pause:
-            if discovery.pause_requested:
-                return discovery
-            updated = replace(
-                discovery,
-                pause_requested=True,
-                version=discovery.version + 1,
-                updated_at=now,
-                progress=replace(
-                    discovery.progress,
-                    message=(
-                        "a cooperative pause was requested; the Worker stops at a safe boundary"
-                    ),
-                ),
-            )
-            # A pause stays cooperative: the Worker acknowledges it at its next
-            # safe boundary.  The request itself must survive a concurrent
-            # Worker publication, so it is written by the operator-owned path
-            # that never touches the live claim.
-            return self._persist(updated, expected_version=expected_version)
         # Cancellation is settled here, atomically, as one terminal
         # acknowledgement: the record, the request flag and the claim release
         # are a single transaction.  A cancellation can therefore never be left
@@ -6435,9 +6222,9 @@ class MediaDiscoveryService:
         return self._settle_control(cancelled, expected_version=expected_version)
 
     def _request_kernel_control(
-        self, discovery: MediaDiscovery, *, pause: bool, expected_version: int
+        self, discovery: MediaDiscovery, *, expected_version: int
     ) -> MediaDiscovery:
-        """Route one pause/cancel of a kernel-managed discovery to its Task."""
+        """Route one cancellation of a kernel-managed discovery to its Task."""
 
         handler = getattr(self._repository, "request_scheduled_discovery_control", None)
         if not callable(handler):
@@ -6445,7 +6232,7 @@ class MediaDiscoveryService:
         try:
             return handler(
                 discovery,
-                control=TaskControl.PAUSE if pause else TaskControl.CANCEL,
+                control=TaskControl.CANCEL,
                 expected_version=expected_version,
                 now=self._clock(),
             )
@@ -6509,7 +6296,6 @@ class MediaDiscoveryService:
         DiscoveryStatus.RUNNING: PersistentTaskStatus.RUNNING,
         DiscoveryStatus.WAITING_STABILITY: PersistentTaskStatus.RUNNING,
         DiscoveryStatus.ANALYZING: PersistentTaskStatus.RUNNING,
-        DiscoveryStatus.PAUSED: PersistentTaskStatus.PAUSED,
         DiscoveryStatus.COMPLETED: PersistentTaskStatus.RUNNING,
         DiscoveryStatus.PARTIAL_SUCCESS: PersistentTaskStatus.RUNNING,
         DiscoveryStatus.FAILED: PersistentTaskStatus.FAILED,
@@ -6549,7 +6335,7 @@ class MediaDiscoveryService:
             return
         terminal_task = {
             PersistentTaskStatus.COMPLETED,
-            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.COMPLETED,
             PersistentTaskStatus.CANCELLED,
             PersistentTaskStatus.FAILED,
         }

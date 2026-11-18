@@ -760,15 +760,9 @@ class MediaOrganizerService:
         except RetryExhausted as error:
             return self._failed(source, None, error, tracked_item, error.events)
         except Exception as error:
-            from mediaflow.application.task_runtime import (
-                TaskClaimLost,
-                TaskLockError,
-                TaskPauseRequested,
-            )
+            from mediaflow.application.task_runtime import TaskClaimLost, TaskLockError
 
-            if tracked_item is None and not isinstance(
-                error, (TaskLockError, TaskPauseRequested, TaskClaimLost)
-            ):
+            if tracked_item is None and not isinstance(error, (TaskLockError, TaskClaimLost)):
                 # A failure raised before any TaskItem was begun (for example a
                 # pre-Provider source/Storage boundary) must still publish its
                 # own durable failed item.  Otherwise the aggregate would read

@@ -1523,7 +1523,6 @@ function RunTable({
                         ? "已完成（恢复成功）"
                         : RUN_STATUS_LABELS[run.status]}
                     </span>
-                    {run.pauseRequested && "（已请求暂停）"}
                     {run.status === "unknown" && "（证据不足）"}
                     {!running &&
                       !attention &&
@@ -2369,9 +2368,6 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
           <span className="mf-run-flow-note">
             ：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。
           </span>
-        )}
-        {run.pauseRequested && (
-          <span className="mf-run-flow-note">（已请求暂停，等待确认）</span>
         )}
         {run.status === "unknown" && (
           <span className="mf-run-flow-note">（证据不足）</span>

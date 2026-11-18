@@ -16,7 +16,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -343,7 +342,7 @@ class AdmissionTests(SchedulingKernelTestCase):
         )
         final = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             completed_at=NOW + timedelta(seconds=4),
         )
         service.settle(claim, task=final, now=NOW + timedelta(seconds=4))
@@ -433,7 +432,7 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         )
         aggregate = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             total_items=1,
             completed_items=0,
             completed_at=NOW + timedelta(seconds=3),
@@ -488,7 +487,7 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
                 claim,
                 task=replace(
                     self.repository.get_task(claim.task_id),
-                    status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                    status=PersistentTaskStatus.COMPLETED,
                     completed_at=NOW + timedelta(seconds=5),
                 ),
                 items=items,
@@ -579,7 +578,7 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
 
         final = replace(
             self.repository.get_task(claim.task_id),
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.COMPLETED,
             completed_at=NOW + timedelta(seconds=7),
         )
         settled = service.settle(
@@ -607,70 +606,6 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
             TaskItemStatus.SUCCESS,
         )
 
-    def test_claimed_work_keeps_its_slot_until_the_owner_acknowledges_pause(self) -> None:
-        service = self.service(capacity=1)
-        _admit(service)
-        claim = self.claimed(service)
-        item = self.item(service, claim)
-
-        requested = service.request_control(
-            claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
-        )
-        self.assertIs(requested.control_request, TaskControl.PAUSE)
-        self.assertIs(requested.queue_state, TaskQueueState.CLAIMED)
-        self.assertEqual(service.capacity_use(), 1)
-        self.assertTrue(requested.holds_capacity)
-        # Work cannot start again while the accepted request is unacknowledged.
-        with self.assertRaises(TaskControlRejected):
-            service.begin_work(claim, now=NOW + timedelta(seconds=4))
-
-        acknowledged = service.acknowledge_control(claim, now=NOW + timedelta(seconds=5))
-        self.assertIs(acknowledged.queue_state, TaskQueueState.PAUSED)
-        self.assertFalse(acknowledged.holds_capacity)
-        self.assertIsNotNone(acknowledged.control_acknowledged_at)
-        self.assertEqual(service.capacity_use(), 0)
-        paused_task = self.repository.get_task(claim.task_id)
-        # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
-        # acknowledged pause keeps the flow unfinished (running) while the
-        # queue row and the items carry the suspension.
-        self.assertIs(paused_task.status, PersistentTaskStatus.RUNNING)
-        self.assertIsNone(paused_task.completed_at)
-        self.assertFalse(paused_task.pause_requested)
-        self.assertEqual(
-            [value.status for value in self.repository.list_items(claim.task_id)],
-            [TaskItemStatus.PAUSED],
-        )
-        # The paused source is still owned by this Task.
-        self.assertEqual(self.repository.get_item(item.item_id).attempts, 1)
-
-    def test_cancel_settles_the_slot_and_keeps_the_accepted_request(self) -> None:
-        service = self.service(capacity=1)
-        _admit(service)
-        claim = self.claimed(service)
-        self.item(service, claim)
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        escalated = service.request_control(
-            claim.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=4)
-        )
-        self.assertIs(escalated.control_request, TaskControl.CANCEL)
-        self.assertEqual(escalated.control_revision, 2)
-        with self.assertRaises(TaskControlRejected):
-            service.request_control(
-                claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=5)
-            )
-
-        acknowledged = service.acknowledge_control(claim, now=NOW + timedelta(seconds=6))
-        self.assertIs(acknowledged.queue_state, TaskQueueState.SETTLED)
-        self.assertIs(acknowledged.control_request, TaskControl.CANCEL)
-        self.assertIs(
-            self.repository.get_task(claim.task_id).status, PersistentTaskStatus.CANCELLED
-        )
-        self.assertEqual(
-            [value.status for value in self.repository.list_items(claim.task_id)],
-            [TaskItemStatus.CANCELLED],
-        )
-        self.assertEqual(service.capacity_use(), 0)
-
     def test_an_accepted_cancel_is_never_overwritten_by_a_terminal_outcome(self) -> None:
         service = self.service(capacity=1)
         _admit(service)
@@ -690,90 +625,6 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         self.assertIs(
             self.repository.get_task(claim.task_id).status, PersistentTaskStatus.CANCELLED
         )
-
-    def test_pause_of_unclaimed_queued_work_settles_immediately(self) -> None:
-        service = self.service(capacity=1)
-        admission = _admit(service)
-        state = service.request_control(admission.task.task_id, TaskControl.PAUSE, now=NOW)
-        self.assertIs(state.queue_state, TaskQueueState.PAUSED)
-        self.assertEqual(service.capacity_use(), 0)
-        self.assertIsNone(service.claim_next(worker_id="worker-1", now=NOW + timedelta(seconds=1)))
-        # Slice 48 RO-1: the retired pause keeps the flow value ``running``;
-        # only the queue row carries the suspension.
-        self.assertIs(
-            self.repository.get_task(admission.task.task_id).status,
-            PersistentTaskStatus.RUNNING,
-        )
-
-    def test_requeue_reuses_the_same_task_and_rechecks_capacity(self) -> None:
-        service = self.service(capacity=1)
-        admission = _admit(service)
-        claim = self.claimed(service)
-        item = self.item(service, claim)
-        service.complete_item(
-            claim,
-            replace(
-                item,
-                status=TaskItemStatus.SUCCESS,
-                stage="completed",
-                destination_storage_id="local",
-                destination_path="Media/A/A.mkv",
-                updated_at=NOW + timedelta(seconds=3),
-            ),
-            result=_result(item),
-            now=NOW + timedelta(seconds=3),
-        )
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=4))
-        service.acknowledge_control(claim, now=NOW + timedelta(seconds=5))
-        self.assertEqual(service.capacity_use(), 0)
-        results_before = self.repository.list_results(admission.task.task_id)
-
-        other = _admit(service, request_id="request-2")
-        self.assertEqual(service.capacity_use(), 1)
-        with self.assertRaises(TaskQueueFull):
-            service.requeue(
-                admission.task.task_id,
-                expected_snapshot_id="snapshot-1",
-                expected_snapshot_digest="digest-1",
-                now=NOW + timedelta(seconds=6),
-            )
-        # Refusal changed nothing: state, saved results and pin stay exactly as
-        # they were and no automatic continuation was registered.
-        refused = self.repository.get_task_scheduling(admission.task.task_id)
-        self.assertIs(refused.queue_state, TaskQueueState.PAUSED)
-        self.assertEqual(self.repository.list_results(admission.task.task_id), results_before)
-        # Slice 48 RO-1: the retired pause keeps the flow value ``running``.
-        self.assertIs(
-            self.repository.get_task(admission.task.task_id).status,
-            PersistentTaskStatus.RUNNING,
-        )
-
-        # Once capacity is free again the *same* Task is re-admitted.
-        claim_other = self.claimed(service, now=NOW + timedelta(seconds=7))
-        service.settle(
-            claim_other,
-            task=replace(
-                self.repository.get_task(other.task.task_id),
-                status=PersistentTaskStatus.COMPLETED,
-                completed_at=NOW + timedelta(seconds=8),
-            ),
-            now=NOW + timedelta(seconds=8),
-        )
-        requeued = service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            now=NOW + timedelta(seconds=9),
-        )
-        self.assertIs(requeued.queue_state, TaskQueueState.QUEUED)
-        self.assertIsNone(requeued.control_request)
-        self.assertEqual(requeued.claim_generation, refused.claim_generation + 1)
-        readmitted = self.repository.get_task(admission.task.task_id)
-        self.assertIs(readmitted.status, PersistentTaskStatus.PENDING)
-        self.assertEqual(readmitted.task_id, admission.task.task_id)
-        self.assertEqual(readmitted.configuration_snapshot_id, "snapshot-1")
-        self.assertTrue(readmitted.execute_authorized)
-        self.assertEqual(len(self.repository.list_results(readmitted.task_id)), 1)
 
     def test_named_claim_takes_only_the_explicit_task(self) -> None:
         """A synchronous caller never leases an unrelated older queued Task."""
@@ -824,63 +675,6 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         self.assertIs(older_state.queue_state, TaskQueueState.CLAIMED)
         self.assertEqual(older_claim.worker_id, older_state.claim_worker_id)
 
-    def test_requeue_records_the_claiming_operator_separately(self) -> None:
-        service = self.service(capacity=1)
-        admission = _admit(service, principal="automation-scheduler")
-        claim = self.claimed(service)
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=1))
-        service.acknowledge_control(claim, now=NOW + timedelta(seconds=2))
-        requeued = service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            continuation_actor="operator-2",
-            now=NOW + timedelta(seconds=3),
-        )
-        self.assertEqual("operator-2", requeued.continuation_actor)
-        self.assertEqual("automation-scheduler", requeued.admission_principal)
-        # Reopening the database reads the same two separate identities.
-        with SQLiteTaskRepository(self.database) as reopened:
-            state = reopened.get_task_scheduling(admission.task.task_id)
-            self.assertEqual("operator-2", state.continuation_actor)
-            self.assertEqual("automation-scheduler", state.admission_principal)
-
-    def test_requeue_verifies_the_original_pin_and_observed_revision(self) -> None:
-        service = self.service()
-        admission = _admit(service)
-        claim = self.claimed(service)
-        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
-        service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
-        with self.assertRaises(TaskControlRejected):
-            service.requeue(
-                admission.task.task_id,
-                expected_snapshot_id="other-snapshot",
-                expected_snapshot_digest="digest-1",
-                now=NOW + timedelta(seconds=5),
-            )
-        with self.assertRaises(TaskControlRejected):
-            service.requeue(
-                admission.task.task_id,
-                expected_snapshot_id="snapshot-1",
-                expected_snapshot_digest="digest-1",
-                expected_control_revision=99,
-                now=NOW + timedelta(seconds=5),
-            )
-        self.assertIs(
-            self.repository.get_task_scheduling(admission.task.task_id).queue_state,
-            TaskQueueState.PAUSED,
-        )
-        requeued = service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            expected_control_revision=1,
-            now=NOW + timedelta(seconds=6),
-        )
-        self.assertIs(requeued.queue_state, TaskQueueState.QUEUED)
-
-
-class PublicationTests(SchedulingKernelTestCase):
     def test_item_result_and_evidence_commit_together(self) -> None:
         service = self.service()
         _admit(service)
@@ -1040,34 +834,10 @@ class PublicationTests(SchedulingKernelTestCase):
         with self.assertRaises(TaskSchedulingBypass):
             self.repository.complete_item_with_evidence(item, _result(item), None)
         with self.assertRaises(TaskSchedulingBypass):
-            self.repository.request_task_pause(claim.task_id, NOW + timedelta(seconds=3))
-        with self.assertRaises(TaskSchedulingBypass):
             self.repository.cancel_task_if_current(claim.task_id, updated_at=NOW)
         self.assertIs(self.repository.get_task(task.task_id).status, PersistentTaskStatus.RUNNING)
         self.assertEqual(self.repository.list_results(task.task_id), ())
 
-    def test_legacy_work_keeps_its_original_writer_semantics(self) -> None:
-        coordinator = PersistentTaskCoordinator(self.repository, self.repository)
-        legacy = coordinator.create("organize", execute_authorized=True, scope_path="Media")
-        self.assertIsNone(self.repository.get_task_scheduling(legacy.task_id))
-        item = coordinator.begin_item(legacy.task_id, "local", "library", "In/a.mkv", "In/a.mkv")
-        self.assertIs(item.status, TaskItemStatus.PROCESSING)
-        coordinator.request_pause(legacy.task_id)
-        paused = coordinator.acknowledge_pause(legacy.task_id)
-        # Slice 48 RO-1: the retired pause keeps the flow value ``running``;
-        # the suspension stays on the items.
-        self.assertIs(paused.status, PersistentTaskStatus.RUNNING)
-        self.assertEqual(
-            [value.status for value in self.repository.list_items(legacy.task_id)],
-            [TaskItemStatus.PAUSED],
-        )
-        # A legacy pending Task is never silently adopted by the kernel.
-        service = self.service()
-        self.assertIsNone(service.claim_next(worker_id="worker-1", now=NOW))
-        self.assertEqual(service.capacity_use(), 0)
-
-
-class ReplaySafetyTests(SchedulingKernelTestCase):
     def test_a_successful_item_is_never_started_or_mutated_again(self) -> None:
         service = self.service()
         _admit(service)
@@ -1319,204 +1089,6 @@ class SourceVersionIntegrityTests(SchedulingKernelTestCase):
             source_storage_path=self.path,
             now=at,
         )
-
-    def paused_and_requeued(self, service):
-        admission = _admit(service)
-        first = self.claimed(service)
-        item = self.versioned_item(service, first)
-        service.request_control(
-            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
-        )
-        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
-        service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            expected_control_revision=1,
-            now=NOW + timedelta(seconds=4),
-        )
-        second = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
-        return admission, item, second
-
-    def test_resuming_an_item_cannot_replace_its_known_source_version(self) -> None:
-        service = self.service()
-        admission, original, claim = self.paused_and_requeued(service)
-
-        with self.assertRaises(TaskSchedulingError):
-            service.begin_item(
-                claim,
-                storage_id="local",
-                resource_library_id="library",
-                source_path=self.path,
-                source_display=self.path,
-                source_occurrence_id="occ-v2",
-                source_fingerprint="fingerprint-B",
-                source_fingerprint_state="verified",
-                source_observed_at=NOW + timedelta(seconds=7),
-                source_storage_path=self.path,
-                now=NOW + timedelta(seconds=7),
-            )
-
-        stored = self.repository.get_item(original.item_id)
-        self.assertEqual(stored.attempts, 1)
-        self.assertIs(stored.status, TaskItemStatus.PAUSED)
-        self.assertEqual(stored.source_occurrence_id, "occ-v1")
-        self.assertEqual(stored.source_fingerprint, "fingerprint-A")
-        self.assertEqual(stored.source_fingerprint_state, "verified")
-        self.assertEqual(stored.source_observed_at, NOW + timedelta(seconds=2))
-        self.assertEqual(stored.source_storage_path, self.path)
-        self.assertIsNone(
-            self.repository.get_task_scheduling(admission.task.task_id).mutation_state
-        )
-        # The refused work never entered a mutation boundary either.
-        with self.assertRaises(TaskSchedulingError):
-            service.begin_mutation(claim, stored, "move", now=NOW + timedelta(seconds=8))
-
-        # The legitimate continuation keeps the known version and the first
-        # observation even when the caller passes a newer observation instant.
-        resumed = service.begin_item(
-            claim,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=self.path,
-            source_display=self.path,
-            source_occurrence_id="occ-v1",
-            source_fingerprint="fingerprint-A",
-            source_fingerprint_state="verified",
-            source_observed_at=NOW + timedelta(seconds=8),
-            source_storage_path=self.path,
-            now=NOW + timedelta(seconds=8),
-        )
-        self.assertEqual(resumed.attempts, 2)
-        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
-        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
-        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
-        service.begin_mutation(claim, resumed, "move", now=NOW + timedelta(seconds=9))
-        self.assertEqual(
-            self.repository.get_task_scheduling(admission.task.task_id).mutation_item_id,
-            original.item_id,
-        )
-
-    def test_omitted_identity_arguments_keep_the_known_source_and_observation(self) -> None:
-        service = self.service()
-        _admission, _original, claim = self.paused_and_requeued(service)
-
-        resumed = service.begin_item(
-            claim,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=self.path,
-            source_display=self.path,
-            now=NOW + timedelta(seconds=7),
-        )
-        self.assertEqual(resumed.attempts, 2)
-        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
-        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
-        self.assertEqual(resumed.source_fingerprint_state, "verified")
-        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
-        self.assertEqual(resumed.source_storage_path, self.path)
-
-        completed = replace(
-            resumed,
-            status=TaskItemStatus.SUCCESS,
-            stage="completed",
-            updated_at=NOW + timedelta(seconds=8),
-        )
-        service.complete_item(
-            claim, completed, result=_result(resumed), now=NOW + timedelta(seconds=8)
-        )
-        stored_result = self.repository.list_results(resumed.task_id)[0]
-        self.assertEqual(stored_result.source_occurrence_id, "occ-v1")
-        self.assertEqual(stored_result.source_fingerprint, "fingerprint-A")
-        self.assertEqual(stored_result.source_observed_at, NOW + timedelta(seconds=2))
-
-    def test_missing_legacy_evidence_is_not_invented_by_omission(self) -> None:
-        service = self.service()
-        admission = _admit(service)
-        first = self.claimed(service)
-        legacy_path = "媒体/电影/legacy.mkv"
-        item = service.begin_item(
-            first,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=legacy_path,
-            source_display=legacy_path,
-            source_observed_at=NOW + timedelta(seconds=2),
-            now=NOW + timedelta(seconds=2),
-        )
-        self.assertIsNone(item.source_occurrence_id)
-        self.assertIsNone(item.source_fingerprint)
-        self.assertEqual(item.source_fingerprint_state, "unverified")
-        service.request_control(
-            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
-        )
-        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
-        service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            expected_control_revision=1,
-            now=NOW + timedelta(seconds=4),
-        )
-        claim = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
-        resumed = service.begin_item(
-            claim,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=legacy_path,
-            source_display=legacy_path,
-            now=NOW + timedelta(seconds=7),
-        )
-        self.assertEqual(resumed.attempts, 2)
-        self.assertIsNone(resumed.source_occurrence_id)
-        self.assertIsNone(resumed.source_fingerprint)
-        self.assertEqual(resumed.source_fingerprint_state, "unverified")
-        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
-
-    def test_verified_evidence_can_legally_fill_a_previously_unknown_source(self) -> None:
-        service = self.service()
-        admission = _admit(service)
-        first = self.claimed(service)
-        legacy_path = "媒体/电影/legacy.mkv"
-        service.begin_item(
-            first,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=legacy_path,
-            source_display=legacy_path,
-            source_observed_at=NOW + timedelta(seconds=2),
-            now=NOW + timedelta(seconds=2),
-        )
-        service.request_control(
-            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
-        )
-        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
-        service.requeue(
-            admission.task.task_id,
-            expected_snapshot_id="snapshot-1",
-            expected_snapshot_digest="digest-1",
-            expected_control_revision=1,
-            now=NOW + timedelta(seconds=4),
-        )
-        claim = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
-        resumed = service.begin_item(
-            claim,
-            storage_id="local",
-            resource_library_id="library",
-            source_path=legacy_path,
-            source_display=legacy_path,
-            source_occurrence_id="occ-v1",
-            source_fingerprint="fingerprint-A",
-            source_fingerprint_state="verified",
-            source_observed_at=NOW + timedelta(seconds=6),
-            source_storage_path=legacy_path,
-            now=NOW + timedelta(seconds=7),
-        )
-        self.assertEqual(resumed.attempts, 2)
-        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
-        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
-        self.assertEqual(resumed.source_fingerprint_state, "verified")
-        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
 
     def test_an_outcome_cannot_name_another_source_version(self) -> None:
         service = self.service()

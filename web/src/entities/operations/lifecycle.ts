@@ -88,7 +88,6 @@ export interface LifecycleProjection {
   readonly resultsObserved: number | null;
   readonly resultsComplete: boolean | null;
   readonly uncertainResults: number | null;
-  readonly pauseRequested: boolean | null;
   readonly cancellationRequested: boolean | null;
   readonly commandKind: string | null;
   readonly actions: readonly LifecycleAction[];
@@ -332,13 +331,6 @@ export function normalizeLifecycleProjection(
       resultsObserved: readOptionalCount("resultsObserved"),
       resultsComplete,
       uncertainResults: readOptionalCount("uncertainResults"),
-      pauseRequested:
-        source["pauseRequested"] === undefined
-          ? null
-          : normalizeBoolean(
-              source["pauseRequested"],
-              "lifecycle.pauseRequested",
-            ),
       cancellationRequested:
         source["cancellationRequested"] === undefined
           ? null

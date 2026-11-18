@@ -35,7 +35,6 @@ _RAW_STAGE_MAP: dict[str, CheckpointStage] = {
     "waiting_metadata": CheckpointStage.WAITING_METADATA,
     "waiting_metadata_correction": CheckpointStage.WAITING_METADATA_CORRECTION,
     "waiting_classification": CheckpointStage.WAITING_CLASSIFICATION,
-    "paused": CheckpointStage.PAUSED,
     "cancelled": CheckpointStage.CANCELLED,
     "completed": CheckpointStage.COMPLETED,
     "failed": CheckpointStage.FAILED,
@@ -743,8 +742,6 @@ def _stage(status: TaskItemStatus, raw_stage: str) -> CheckpointStage:
         return CheckpointStage.FAILED
     if status is TaskItemStatus.CANCELLED:
         return CheckpointStage.CANCELLED
-    if status is TaskItemStatus.PAUSED:
-        return CheckpointStage.PAUSED
     if status is TaskItemStatus.IGNORED:
         return CheckpointStage.IGNORED
     waiting = _WAITING_STATUS_TO_KIND.get(status)
@@ -1038,16 +1035,6 @@ def _actions(
         return (
             RetrySafety.SAFE,
             (CheckpointAction("retry", "Retry safe analysis", True, "task_recovery", None, True),),
-            None,
-        )
-    if status is TaskItemStatus.PAUSED:
-        return (
-            RetrySafety.UNKNOWN,
-            (
-                CheckpointAction(
-                    "resume", "Resume from checkpoint", True, "task_recovery", None, False
-                ),
-            ),
             None,
         )
     return (

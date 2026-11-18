@@ -45,10 +45,8 @@ class OperationsRunStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
-    PAUSED = "paused"
     WAITING = "waiting"
     COMPLETED = "completed"
-    PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
     UNKNOWN = "unknown"
@@ -71,8 +69,6 @@ ATTENTION_RUN_STATUSES = frozenset(
     {
         OperationsRunStatus.PENDING,
         OperationsRunStatus.WAITING,
-        OperationsRunStatus.PAUSED,
-        OperationsRunStatus.PARTIAL_SUCCESS,
         OperationsRunStatus.FAILED,
     }
 )
@@ -224,8 +220,8 @@ def is_organizing_task_command(command: object) -> bool:
 def derive_run_status(task: PersistentTask | None) -> OperationsRunStatus:
     """Aggregate status from actual Task evidence.
 
-    A paused Task stays paused; a live Task publishes its own state; no evidence
-    at all is ``unknown``, never an optimistic success.
+    A live Task publishes its own state; no evidence at all is ``unknown``,
+    never an optimistic success.
     """
 
     if task is None:
@@ -236,7 +232,6 @@ def derive_run_status(task: PersistentTask | None) -> OperationsRunStatus:
 _TERMINAL_RUN_STATUSES = frozenset(
     {
         OperationsRunStatus.COMPLETED,
-        OperationsRunStatus.PARTIAL_SUCCESS,
         OperationsRunStatus.FAILED,
         OperationsRunStatus.CANCELLED,
     }
@@ -244,9 +239,7 @@ _TERMINAL_RUN_STATUSES = frozenset(
 _PERSISTENT_TASK_RUN_STATUS = {
     PersistentTaskStatus.PENDING: OperationsRunStatus.PENDING,
     PersistentTaskStatus.RUNNING: OperationsRunStatus.RUNNING,
-    PersistentTaskStatus.PAUSED: OperationsRunStatus.PAUSED,
     PersistentTaskStatus.COMPLETED: OperationsRunStatus.COMPLETED,
-    PersistentTaskStatus.PARTIAL_SUCCESS: OperationsRunStatus.PARTIAL_SUCCESS,
     PersistentTaskStatus.FAILED: OperationsRunStatus.FAILED,
     PersistentTaskStatus.CANCELLED: OperationsRunStatus.CANCELLED,
 }
@@ -341,7 +334,6 @@ class OperationsRunOverview:
     #: is a small public bucket, never an arbitrary internal stage string.
     processed_items: int | None = None
     current_stage: str | None = None
-    pause_requested: bool = False
     #: The current, real operator-attention facet: exactly the union of the
     #: four business problem types a human must still decide.  A plain status
     #: name, a technical failure, a plain queue admission and an initial manual
@@ -515,7 +507,6 @@ _ITEM_DISPOSITION: Mapping[str, str] = MappingProxyType(
         TaskItemStatus.FAILED.value: "failed_partial",
         TaskItemStatus.CANCELLED.value: "cancelled",
         TaskItemStatus.IGNORED.value: "ignored",
-        TaskItemStatus.PAUSED.value: "waiting",
         TaskItemStatus.WAITING_CONFIRM.value: "waiting",
         TaskItemStatus.WAITING_RECOGNITION.value: "waiting",
         TaskItemStatus.WAITING_METADATA.value: "waiting",
@@ -545,7 +536,6 @@ _RAW_DISPOSITION_STATUSES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "pending": (TaskItemStatus.PENDING.value,),
         "active": (TaskItemStatus.PROCESSING.value,),
         "waiting": (
-            TaskItemStatus.PAUSED.value,
             TaskItemStatus.WAITING_CONFIRM.value,
             TaskItemStatus.WAITING_RECOGNITION.value,
             TaskItemStatus.WAITING_METADATA.value,

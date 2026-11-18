@@ -28,7 +28,6 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     total_items: 2,
     completed_items: 2,
     failed_items: 0,
-    pause_requested: false,
     attention: false,
     problem_types: [],
     attention_reason: null,
@@ -636,9 +635,7 @@ describe("run lifecycle projection normalization", () => {
     for (const state of [
       "pending",
       "running",
-      "paused",
       "completed",
-      "partial_success",
       "failed",
       "cancelled",
     ]) {

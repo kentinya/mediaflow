@@ -88,7 +88,6 @@ PROJECTION_EFFECT = {
     "CANCELLED": "retained",
     "RUNNING": "in_progress",
     "QUEUED": "in_progress",
-    "PAUSED": "in_progress",
 }
 
 #: Item statuses that no longer change without a new admission.
@@ -107,7 +106,6 @@ _UNFINISHED_ITEM_STATUSES = frozenset(
     {
         TaskItemStatus.PENDING,
         TaskItemStatus.PROCESSING,
-        TaskItemStatus.PAUSED,
         TaskItemStatus.WAITING_CONFIRM,
         TaskItemStatus.WAITING_RECOGNITION,
         TaskItemStatus.WAITING_METADATA,
@@ -148,8 +146,6 @@ def projection_item_status(item, record) -> str:
         return "QUEUED"
     if item.status is TaskItemStatus.PROCESSING:
         return "RUNNING"
-    if item.status is TaskItemStatus.PAUSED:
-        return "PAUSED"
     if item.status is TaskItemStatus.CANCELLED:
         return "CANCELLED"
     if record is not None:

@@ -59,7 +59,6 @@ function task(overrides: Record<string, unknown> = {}) {
     completed_items: 1,
     failed_items: 1,
     failure: null,
-    pause_requested: false,
     configuration_snapshot_id: "snap-1",
     item_limit: 20,
     ...overrides,
@@ -112,7 +111,6 @@ describe("normalizeTaskRecord", () => {
     expect(() =>
       normalizeTaskRecord(task({ execute_authorized: "yes" })),
     ).toThrow();
-    expect(() => normalizeTaskRecord(task({ pause_requested: 1 }))).toThrow();
   });
 
   it("rejects contradictory progress and terminal state", () => {
@@ -134,12 +132,6 @@ describe("normalizeTaskRecord", () => {
     ).toThrow();
     expect(() =>
       normalizeTaskRecord(task({ status: "failed", completed_at: null })),
-    ).toThrow();
-  });
-
-  it("rejects a pause request on a non-running Task", () => {
-    expect(() =>
-      normalizeTaskRecord(task({ pause_requested: true })),
     ).toThrow();
   });
 

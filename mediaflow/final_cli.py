@@ -86,7 +86,6 @@ from mediaflow.infrastructure.metadata_provider_bootstrap import (
     LazyMetadataProviderRegistryFactory,
     metadata_provider_registry_from_environment,
 )
-from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
     ManagementBootstrapConfiguration,
@@ -104,7 +103,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
-from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
 
 
 def final_main(
@@ -171,13 +169,10 @@ def final_main(
     task_ignore_pending.add_argument("--task-id")
     task_cancel = task_commands.add_parser("cancel")
     task_cancel.add_argument("task_id")
-    # ``pause`` and ``resume`` were retired for every media operation and are
-    # deliberately absent from the command surface: invoking one is an
-    # unrecognized-command error with zero effect.  ``retry-request`` and the
-    # independent ``retry-failed`` entrance were retired the same way (Slice 47
-    # RO-6): new organizing starts from Files/CLI organize and an existing
-    # Task's own four-type continuation; there is no separate failure-retry
-    # command and no alias that would silently recreate one.
+    # ``retry-request`` and the independent ``retry-failed`` entrance are
+    # absent from the command surface: new organizing starts from Files/CLI
+    # organize and an existing Task's own four-type continuation; there is no
+    # separate failure-retry command and no alias that would recreate one.
     storage_command = commands.add_parser("storage", help="Storage configuration and preflight")
     storage_commands = storage_command.add_subparsers(dest="storage_command", required=True)
     storage_commands.add_parser("list", help="list configured Storages without connecting")
@@ -262,13 +257,6 @@ def final_main(
     database_restore = database_commands.add_parser("restore")
     database_restore.add_argument("backup")
     database_restore.add_argument("--confirm-empty-destination", action="store_true")
-    upgrade = commands.add_parser("upgrade", help="read-only upgrade readiness")
-    upgrade_commands = upgrade.add_subparsers(dest="upgrade_command", required=True)
-    upgrade_check = upgrade_commands.add_parser("check")
-    upgrade_check.add_argument("--backup", required=True)
-    upgrade_check.add_argument("--max-backup-age-hours", type=float, default=24)
-    upgrade_rehearse = upgrade_commands.add_parser("rehearse")
-    upgrade_rehearse.add_argument("--backup", required=True)
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
@@ -313,10 +301,10 @@ def final_main(
         snapshot_id = arguments.configuration_snapshot_id
         snapshot_digest = arguments.configuration_snapshot_digest
 
-        # Database backup/restore and upgrade rehearsal/preflight are
-        # intentionally bootstrap-only.  Resolving managed workflow
-        # configuration for them would open the configured runtime database
-        # before the command's own read-only/atomic safety checks run.
+        # Database backup/restore are intentionally bootstrap-only.  Resolving
+        # managed workflow configuration for them would open the configured
+        # runtime database before the command's own read-only/atomic safety
+        # checks run.
         configuration_management_command = (
             arguments.command == "config"
             and arguments.config_command
@@ -338,7 +326,7 @@ def final_main(
                 _configuration_document(arguments.config)
             )
         managed_command = (
-            arguments.command not in {"database", "upgrade"}
+            arguments.command != "database"
             and not configuration_management_command
             and not (arguments.command == "config" and arguments.config_command == "validate")
         )
@@ -502,17 +490,6 @@ def final_main(
                     else service.verify(arguments.path)
                 )
                 stdout.write(render_database_backup(result, arguments.database_command))
-            return 0
-        if arguments.command == "upgrade":
-            if arguments.upgrade_command == "rehearse":
-                result = SQLiteMigrationRehearsalService(arguments.backup).rehearse()
-                stdout.write(render_migration_rehearsal(result))
-            else:
-                result = UpgradePreflightService(configuration.database_path).check(
-                    arguments.backup,
-                    maximum_backup_age_hours=arguments.max_backup_age_hours,
-                )
-                stdout.write(render_upgrade_preflight(result))
             return 0
         if arguments.command == "notifications":
             if arguments.notification_command in {"list", "stale"} and arguments.limit < 1:
@@ -804,7 +781,6 @@ def final_main(
             def workflow_stop() -> bool:
                 return bool(
                     (cancellation_check and cancellation_check())
-                    or coordinator.pause_requested(task.task_id)
                     or coordinator.cancellation_observed(task.task_id)
                 )
 
@@ -922,17 +898,13 @@ def final_main(
                 coordinator.cancel(task.task_id)
             elif coordinator.cancellation_observed(task.task_id):
                 # A durable cooperative cancellation already owns this Task
-                # outcome; a late finish must not overwrite it and a pause
-                # acknowledgement no longer applies.
+                # outcome; a late finish must not overwrite it.
                 pass
-            elif coordinator.pause_requested(task.task_id):
-                coordinator.acknowledge_pause(task.task_id)
             else:
                 coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
             stdout.write(render_summary(summary, execute=execute, analysis_only=analysis_only))
-            paused = coordinator.require(task.task_id).status is PersistentTaskStatus.PAUSED
-            return 130 if cancelled else 75 if paused else 1 if summary.failed else 0
+            return 130 if cancelled else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
         stderr.write(f"mediaflow error: {error}\n")
         return 2
@@ -1019,7 +991,6 @@ def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
     for task in tasks:
         lines.append(
             f"{task.task_id} | {task.command} | {task.status.value} | "
-            f"pause_requested={'yes' if task.pause_requested else 'no'} | "
             f"total={task.total_items} completed={task.completed_items} "
             f"failed={task.failed_items} | "
             f"snapshot={task.configuration_snapshot_id or '-'}"
@@ -1240,7 +1211,6 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
         f"ID: {task.task_id}",
         f"Command: {task.command}",
         f"Status: {task.status.value}",
-        f"Pause requested: {'YES' if task.pause_requested else 'NO'}",
         f"Execute authorized: {'YES' if task.execute_authorized else 'NO'}",
         f"Configuration snapshot: {task.configuration_snapshot_id or '-'}",
         f"Configuration digest: {task.configuration_snapshot_digest or '-'}",
@@ -1395,30 +1365,6 @@ def render_database_backup(value, operation: str) -> str:
     )
 
 
-def render_upgrade_preflight(value) -> str:
-    return "\n".join(
-        (
-            "",
-            "UPGRADE PREFLIGHT",
-            "",
-            f"Status: {value.status.upper()}",
-            f"Application: {value.application_version}",
-            f"Python: {value.python_version} "
-            f"(supported: {'YES' if value.python_supported else 'NO'})",
-            f"Supported schema: {value.supported_schema}",
-            f"Runtime schema: {value.runtime_schema}",
-            f"Backup schema: {value.backup_schema}",
-            f"Migration required: {'YES' if value.migration_required else 'NO'}",
-            f"Backup age hours: {value.backup_age_hours:.3f}",
-            f"Maximum backup age hours: {value.maximum_backup_age_hours:g}",
-            f"Backup size: {value.backup_size_bytes}",
-            f"Backup SHA-256: {value.backup_sha256}",
-            f"Checked: {value.checked_at.isoformat()}",
-            "",
-        )
-    )
-
-
 def render_database_restore(value) -> str:
     return "\n".join(
         (
@@ -1431,29 +1377,6 @@ def render_database_restore(value) -> str:
             f"Migration required: {'YES' if value.migration_required else 'NO'}",
             f"Size: {value.size_bytes}",
             f"SHA-256: {value.sha256}",
-            f"Completed: {value.completed_at.isoformat()}",
-            "",
-        )
-    )
-
-
-def render_migration_rehearsal(value) -> str:
-    counts = ", ".join(f"{name}={count}" for name, count in value.record_counts)
-    return "\n".join(
-        (
-            "",
-            "MIGRATION REHEARSAL",
-            "",
-            "Status: PASS",
-            f"Application: {value.application_version}",
-            f"Source schema: {value.source_schema}",
-            f"Target schema: {value.target_schema}",
-            f"Migration required: {'YES' if value.migration_required else 'NO'}",
-            f"Migration performed on copy: {'YES' if value.migration_performed else 'NO'}",
-            f"Record counts: {counts}",
-            f"Backup size: {value.backup_size_bytes}",
-            f"Backup SHA-256: {value.backup_sha256}",
-            f"Temporary cleanup: {'PASS' if value.temporary_cleanup_complete else 'FAIL'}",
             f"Completed: {value.completed_at.isoformat()}",
             "",
         )
@@ -1809,7 +1732,6 @@ def _settle_direct_organize(repository, scheduling, claim, task, *, batch, scope
         completed_items=completed,
         failed_items=failed,
         error=failure.encode() if failure is not None else None,
-        pause_requested=False,
     )
     if decision.status is PersistentTaskStatus.FAILED:
         # The pass never proved the admitted scope; no file was processed and
@@ -2329,16 +2251,7 @@ def _run_worker(
                         if hasattr(result, "task_id") and hasattr(result, "status"):
                             status = getattr(result.status, "value", str(result.status))
                             stdout.write(f"Task ID: {result.task_id}\nStatus: {status}\n")
-                            return (
-                                0
-                                if status
-                                in {
-                                    "completed",
-                                    "partial_success",
-                                    "cancelled",
-                                }
-                                else 1
-                            )
+                            return 0 if status in {"completed", "cancelled"} else 1
                         stdout.write("No pending work\n")
                         return 0
                     poll = getattr(arguments, "poll_seconds", None) or getattr(

@@ -51,7 +51,6 @@ from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
     FILES_TRANSFER_TASK_COMMAND,
-    FilesTransferStatus,
     TaskItemStatus,
 )
 
@@ -364,7 +363,6 @@ class LibraryFileOperationHistoryService:
                     operation=operation,
                     source_scope=source_scope,
                     target_scope=target_scope,
-                    pause_requested=task.pause_requested,
                     configuration_snapshot_id=task.configuration_snapshot_id,
                     item_skipped=skipped,
                     item_cancelled=cancelled,
@@ -456,9 +454,9 @@ class LibraryFileOperationHistoryService:
         anything.
 
         An unfinished item keeps the per-entry checkpoints it already recorded:
-        a paused folder Move whose first three files really moved still shows
-        those files as transferred children rather than one opaque directory
-        with "no change".
+        a cancelled folder Move whose first three files really moved still
+        shows those files as transferred children rather than one opaque
+        directory with "no change".
         """
 
         window = getattr(self._repository, "library_file_operation_items_window", None)
@@ -483,9 +481,7 @@ class LibraryFileOperationHistoryService:
             "itemLimit": limit,
             "itemTotal": total,
             "itemsTruncated": has_next,
-            "durableState": _durable_state(
-                task, fold, transfer_paused=self._transfer_paused(task.task_id)
-            ),
+            "durableState": _durable_state(task, fold),
             "effectCertainty": fold.certainty,
         }
         if outcomes and has_next:
@@ -496,18 +492,6 @@ class LibraryFileOperationHistoryService:
             }
         document["nextAction"] = _operation_next_action(task, fold, total)
         return document
-
-    def _transfer_paused(self, task_id: str) -> bool:
-        """Whether the retired Files pause is recorded on the transfer row."""
-
-        reader = getattr(self._repository, "get_files_transfer_for_task", None)
-        if not callable(reader):
-            return False
-        try:
-            transfer = reader(task_id)
-        except Exception:  # noqa: BLE001 - an unreadable row is not a pause
-            return False
-        return transfer is not None and transfer.status is FilesTransferStatus.PAUSED
 
     def _operation_fold(self, task) -> EffectCertaintyFold:
         """The effect fold of every admitted item of one operation.
@@ -566,7 +550,6 @@ class LibraryFileOperationHistoryService:
             "commandLabel": _FAMILY_LABELS.get(family, "未知文件操作"),
             "status": row.status,
             "terminal": row.terminal,
-            "pauseRequested": row.pause_requested,
             "createdAt": row.created_at.isoformat(),
             "updatedAt": row.updated_at.isoformat(),
             "version": row.updated_at.isoformat(),
@@ -741,8 +724,6 @@ def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> st
         return "等待 Worker 完成；关闭本窗口不会取消或重放该操作"
     if disposition == "QUEUED":
         return "排队等待 Worker；不要重复提交相同操作"
-    if disposition == "PAUSED":
-        return "在确认剩余范围安全后再明确继续该操作"
     if disposition == "CANCELLED":
         return "该条目已被取消，未执行的操作不会自动重放"
     if disposition == "UNCERTAIN":
@@ -752,22 +733,17 @@ def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> st
     return "核实该条目当前状态后再决定下一步"
 
 
-def _durable_state(task, fold: EffectCertaintyFold, *, transfer_paused: bool = False) -> str:
+def _durable_state(task, fold: EffectCertaintyFold) -> str:
     """The bounded durable-state name of one selected operation.
 
     The state is decided over every admitted item (``fold``), so a page of
     successes can never hide an uncertain sibling elsewhere in the operation.
-    Slice 48 RO-1: ``paused`` is a retired Task aggregate value, so the
-    retired Files pause is read from the transfer row's own suspension instead
-    of the Task status.
     """
 
     if fold.any_uncertain or task.error == "mutation_outcome":
         return "mutation_effect_uncertain"
-    if task.status.value in {"completed", "partial_success", "failed", "cancelled"}:
+    if task.status.value in {"completed", "failed", "cancelled"}:
         return f"task_{task.status.value}"
-    if task.status.value == "paused" or transfer_paused:
-        return "task_paused"
     if fold.count == 0:
         return "no_admitted_item"
     return "task_in_progress"
@@ -779,15 +755,13 @@ def _operation_next_action(task, fold: EffectCertaintyFold, total: int) -> str:
     if fold.any_uncertain or task.error == "mutation_outcome":
         return "刷新来源目录核实实际状态；结果不确定的项目不会自动重试，也不会回滚已完成的成功项目"
     status = task.status.value
-    if status in {"completed", "partial_success", "failed", "cancelled"}:
+    if status in {"completed", "failed", "cancelled"}:
         if fold.any_failed:
             return (
                 "查看逐项结果以确认哪些条目失败或部分完成（可用“加载更多”翻到后续条目）；"
                 "刷新目录核实当前状态后，明确选择需要的后续操作"
             )
         return "已无待处理条目；刷新目录即可看到当前状态"
-    if status == "paused":
-        return "确认剩余范围仍安全后，使用后端提供的继续控制；不会自动重试已完成项目"
     if total == 0:
         return "该操作没有受理任何条目；刷新目录确认当前状态"
     return "等待 Worker 在安全边界处理；关闭本窗口不会取消或重放该操作"

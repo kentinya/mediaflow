@@ -168,10 +168,8 @@ describe("run refetch interval", () => {
 
   it("polls the selected overview only while its own state is active", () => {
     expect(runRefetchInterval(overviewRead("running"))).toBe(5_000);
-    expect(runRefetchInterval(overviewRead("paused"))).toBe(5_000);
     expect(runRefetchInterval(overviewRead("completed"))).toBe(false);
     expect(runRefetchInterval(overviewRead("failed"))).toBe(false);
-    expect(runRefetchInterval(overviewRead("partial_success"))).toBe(false);
     expect(runRefetchInterval(overviewRead("cancelled"))).toBe(false);
   });
 
