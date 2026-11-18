@@ -137,9 +137,75 @@ Settings 等纯迁移 session、无生产调用的旧全局批量审核及其他
 
 ### 交接状态
 
-已获实施授权，状态为 PLANNED。下一步由 Developer 按本 Task 实施，交付固定候选及实际测试
-结果，标记 READY FOR B REVIEW；B 再独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED。
-当前尚无实施候选；Slice55 仍为 ACTIVE，Slice、Roadmap 和 Progress 不变。
+状态：READY FOR B REVIEW。Developer 已在本地提交两个真实候选检查点：
 
-规划检查：`python3 scripts/check_governance.py` 通过，`python3 -m unittest tests.test_governance`
-20 项通过（6.5 秒），旧 CLI 入口确认仅运行 `mediaflow upgrade --help`。未运行产品 T4。
+- `e53bf3f9cd13b281475181ff747ad85d495d9839` —
+  `feat(retirement): make five Task flow states the only lifecycle`
+- `8adfe426`（本文件提交之前的最终产品候选）—
+  `test(web): keep removed pause phases out of the current journeys`
+
+审查范围：`2e460b71735ac0284e58928c884baac9d3f46009..8adfe426`（完整 Task Base..Head）。
+工作区在提交前除本 Task 文件外无其他改动；`config/alist.json` 未读取、未改动。
+Slice55 仍为 ACTIVE，Slice、Roadmap、Progress 未改。
+
+**本轮实现（按开发指导）**
+
+1. 五态收敛：`PersistentTaskStatus`、`TaskQueueState`、`TaskControl`、
+   `FilesTransferStatus`、`OperationsRunStatus`、`DiscoveryStatus`（仅暂停）、
+   `TaskItemStatus`、`CheckpointStage` 中的 `paused` 成员删除；
+   `PersistentTaskStatus.partial_success` 删除，流程完成一律 `completed`，文件级
+   `partial`／效果未知／缺 Result 保持独立。Task/Item 的 `pause_requested`、Pause／resume
+   控制、调度请求、transfer 暂停／重排、discovery 暂停／继续、projection、CLI 字段和 Web
+   消费全部删除；源码中不再有 Pause 生产者或 reader。取消、claim/lease/fence、人等／稳定等、
+   四类续作、Automation 统计与通知事实未改。
+2. 入口：`/api/v1/tasks/{id}/pause|resume`、organize discovery 与 Run once 的暂停路由不再
+   注册，落入通用 `not_found`（测试用真实 HTTP 入口验证）；`TaskCenter` 与 discovery／
+   run-once／transfer 投影只发布 Cancel。
+3. 升级工具：CLI `upgrade check|rehearse`、`upgrade_preflight.py`、
+   `migration_rehearsal.py` 及专属测试删除；wheel smoke 与 release 验证清单同步。
+   `mediaflow --help` 无 `upgrade`，`mediaflow upgrade check` 为 argparse 参数错误（exit 2）。
+4. 领域拆分：删除 `domain/tasks.py`（旧 Task/ScanTask/阶段状态）；扫描输出改用
+   `domain/scanner.py` 自己的 `ScanStatus`；文件／附件／发现结果保留各自的
+   `partial_success`。
+5. 持久化：新库一次性创建当前完整结构（含 Task 调度、首轮执行证据、来源列与当前索引）后
+   才写版本标记；新库无 `pause_requested` 或暂停专属列，任务 INSERT 改为显式列名，不再依
+   赖列顺序。既有库打开时仍执行当前最小结构收敛（`manual_recovery_preparations` 旧
+   NOT NULL 列重建、`manual_executions.task_id` UNIQUE 收敛等），全部位于同一事务，版本
+   标记最后写；有效记录、ID、pin、结果不重写。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_task_flow_status tests.test_task_persistence
+  tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_operations_task_center
+  tests.test_manual_task_engine tests.test_media_discovery tests.test_processing_checkpoint
+  tests.test_library_file_operation_history tests.test_media_library_direct_commands
+  tests.test_direct_file_operations tests.test_organize_source_history
+  tests.test_automation_authorized_execution_matrix tests.test_operations_run_detail_log_isolation`
+  → 312 项通过（19.6 秒）。
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` → 98 项通过（60 秒）；
+  `.venv/bin/python -m unittest tests.test_media_library_transfers` → 26 项通过；
+  `tests.test_configuration_management tests.test_sqlite_backup tests.test_sqlite_restore
+  tests.test_release_validation` → 15 项通过；
+  `tests.test_scanner tests.test_domain_models` → 25 项通过；
+  `tests.test_governance` → 20 项通过（6.3 秒）。
+- `.venv/bin/ruff check mediaflow tests scripts` 通过；`ruff format --check` 343 个文件已格式化；
+  `.venv/bin/python -m compileall -q mediaflow tests scripts` 通过；
+  `python3 scripts/check_governance.py` 通过；`git diff --check` 通过。
+- `web/`：`npm run typecheck` 通过；`npm run lint` 通过；`npm run format:check` 通过；
+  `npm run test -- run` → 104 个文件、1643 项通过；`npm run build` 通过（仅既有 chunk
+  体积提示）。
+- 真实入口反证：`.venv/bin/mediaflow --help` 不含 `upgrade`；`mediaflow upgrade check`
+  exit 2（argparse）；`mediaflow` 的 `/api/v1/tasks/{id}/pause|resume` 与 discovery／
+  run-once 暂停路由由 `tests.test_manual_task_engine`、`tests.test_media_library_transfers`
+  经真实认证 API 验证为 404 `not_found`，无 Task、授权或 Storage 效果。
+
+**剩余风险与未完成项（不记为通过）**
+
+- 旧「remaining-scope 恢复准备」的 discovery/preview 专属列与 `scope_continuation.py`
+  读写仍在：本轮把其来源条件从 `paused` 改为「未结束」，未删除整条旧链。按本 Task
+  「移除旧恢复子 Task/remaining-scope 专属结构及读写」仍属未完成。
+- `_initialize` 对既有库的纯历史补列／回填块仅删除了 `pause_requested` 与
+  `file_locks.owner_token` 两处，其余旧补列块仍在；Base 形状已满足这些列，故不影响
+  新库与 Base 库，但与本 Task 要求的「移除纯历史补列」尚有差距。
+- B 的 T4 门禁（完整 Python／Web E2E、Docker 空库／重启、wheel 外安装与镜像身份、
+  备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
