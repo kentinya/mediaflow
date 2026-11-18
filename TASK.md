@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: B RECHECKS B55.6-01 AND B55.6-03 ON CANDIDATE dd0cd20f
+Next Action: DEVELOPER FIXES B55.6-04 IN TASK55.6
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -469,6 +469,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.pyt
 
 - B 的完整 T4（全量 Python、全部原生 E2E、wheel 外安装、Docker 空库/重启/安全镜像、备份
   恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+
 - 两个 discovery proof 脚本的 pause/continue 路径已改为当前完成/取消旅程，但本轮未实际执行
   这两个浏览器 proof 或 Docker 变体；B 应在相应门禁或源码复核中确认。
 - fake server 的 Task Center 历史夹具中仍有 `task-006/task-007` paused 行及若干 paused 文案
@@ -584,3 +585,44 @@ RO-4 空库并发首启通过，其他 SQLite 误配的零改写仍阻塞。RO-5
   也没有运行 Docker 包装。
 - B 的完整 T4（全量 Python、全部原生 E2E、Docker 空库/重启/安全镜像、wheel 外安装、
   备份恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+
+### B 返工复核 — FIX REQUIRED（候选 `dd0cd20f`）
+
+独立审查完整范围 `2e460b71735ac0284e58928c884baac9d3f46009..dd0cd20f958b78da68a905551a35285abee797ca`。
+交接 `7f9e8a35e82231dd8acc2e0ab07280b5c7051c05` 仅更新本 Task。复核起点为该提交，
+`main` 工作区和暂存干净，治理检查通过。
+
+**上轮阻塞已通过复验。** 最小 bootstrap 误指其他应用的 SQLite 时，正式 `api serve` 退出 2，
+前后文件校验和、结构与笔记行一致。四服务并发空库首启的 health、readiness 和首个 Draft
+校验激活通过，只生成一组 11/58 标记。旧目录整理脚本已退出，现行 `manual-organize-dialog`
+真实浏览器 8 项全通过，覆盖目录选择、逐项决策、精确确认、Task Center 交接和丢响应核对。
+
+**B55.6-04（P1，AC-3/4）启动前凭据检查被数据库拒绝截断。** 管理员配置好当前 bootstrap
+和令牌，准备启动服务，先运行 `mediaflow api credentials check` 核对环境变量。命令在读取
+凭据设置之前走了 `_configuration()`，打开并可能初始化配置仓库。对比同一正式入口，Task
+Base 和候选在空路径上都报告凭据已设置，同时创建数据库。将 bootstrap 指向另一应用的隔离
+SQLite 后，Task Base 报告凭据状态同时改写文件，候选保持文件不变，但退出 2，仅报告
+数据库不支持。Task55.6 从 `5174c308`（2026-11-18）引入共享适用性拒绝，`dd0cd20f` 把
+拒绝扩展到其他应用的库；原有的 `credentials check` 配置解析顺序使拒绝挡住了这一诊断入口。
+全量 Python 首轮两条既有凭据用例失败，它们沿用示例的相对数据库位置。上述绝对隔离路径
+实测复现了候选的实际行为，避免把环境错误用作结论。
+
+#### Developer 返工指导
+
+在 `api credentials check` 的正常解析分支直接使用现有最小部署身份解析和凭据状态输出，
+让管理员能在首次启动及修正数据库路径之前读取环境变量的 SET／UNSET。保留现有参数校验、
+退出码、禁用身份状态及脱敏输出，现行 `api serve` 继续在启动前拒绝不适用的库。把既有凭据
+用例改用明确的隔离数据库路径，核对已设置、缺失和旧 `api.tokenEnv` 的结果，并断言凭据检查
+既不新建数据库，也不改写已存在的文件。Developer 跑现有凭据和直接相关启动测试，B 负责 T4。
+
+**实际测试与证据。** Web build 通过，目录整理浏览器 8 项通过，四服务首启与正式 CLI
+隔离复验如上。完整 Python 首轮出现失败，定位凭据问题后中止（退出 130），不记为完整结果。
+测试和构建累计约 138 秒，少于本轮一半。原始日志见
+`.git/validation-evidence/dd0cd20f958b78da68a905551a35285abee797ca/task55-6-b/`。
+完整 T4、wheel 和 Docker 仍待验收。
+
+**Slice55 结果重评。** RO-1 的既有 Web 入口结果保留。RO-2 当前目录整理及同 Task 确认
+通过原生复验。RO-3 正式配置与权限名保留，凭据诊断入口仍阻塞。RO-4 上轮 SQLite 误配
+的零改写和空库并发首启通过。RO-5 当前确认、丢响应核对和返回路径通过，既定 session 清理
+仍待完成。RO-6 当前目录验收已接到现行入口，完整回归与制品门禁未完成。Slice55 继续
+ACTIVE，返工留在 Task55.6。
