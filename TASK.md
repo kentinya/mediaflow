@@ -13,13 +13,13 @@ Task55.5：**B PASS**。固定审查范围
 Task ID: 55.6
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2e460b71735ac0284e58928c884baac9d3f46009
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.6-01–03 IN TASK55.6
+Next Action: B RECHECKS B55.6-01–03 ON CANDIDATE 38a0a6d2
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -396,3 +396,82 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.pyt
 抽查，空库并发首启仍阻塞。RO-5 当前同 Task 续作及 21 文件恢复通过，本 Task 仍有旧状态
 统计，既定 session 清理仍待完成。RO-6 旧升级工具已退出，当前验收仍有上述遗漏，最终门禁
 待执行。Slice55 继续 ACTIVE，返工留在 Task55.6。
+
+
+### Developer 返工交接：B55.6-01–03
+
+候选产品检查点：`38a0a6d2f161159a356b12578ce3b980c17b74d1`
+（`fix(task55.6): initialize SQLite atomically and align current acceptance`）。
+本交接提交只改本文件；Task Base 仍为 `2e460b71735ac0284e58928c884baac9d3f46009`。
+工作区提交前除本文件外无其他改动；`config/alist.json` 未读取、未改动。
+
+**B55.6-01 — 首次初始化收敛为一个写事务**
+
+- 两个仓库都在 `sqlite3.connect` 后先执行 `BEGIN IMMEDIATE`，在本连接、本事务内重新读取
+  marker/表名后再决定“新库建表”还是“既有库验证”。表、索引、内部键和版本 marker 在同一
+  事务提交；失败整体回滚。第二个进程等待首笔提交后按既有库继续，不会再看到“有表无 marker”
+  的中间状态或重复写入版本记录。
+- DDL 由 `sqlite_initialization.execute_script` 逐条执行，避免 `executescript` 隐式提交；
+  新库与既有库的当前结构检查、V1/更新/畸形库拒绝都仍在任何业务写入前完成。真实 V1 库启动
+  拒绝前后 SHA-256、版本和结构不变；配置-only 首设库、真实 Slice Base 库继续。
+- 新增 `ConcurrentFirstInitializationTests`：四个线程以两种仓库顺序同时打开同一空路径，
+  断言仅有一组 11/58 marker 且随后两个仓库均可重开。
+
+**B55.6-02 — Automation 月度统计退出 partial 流程值**
+
+- 从 `automation_run_metrics` 删除 `linked_task_status = 'partial_success'` 的专属筛选与
+  `currentPartial` 返回字段；非五态历史值统一进入既有 `unavailable` 事实，不再作为独立
+  partial 桶。保留 completed/failed/cancelled、运行中、不可用、文件级部分结果和效果未知。
+- `/api/v1/operations/automation/metrics` 不再发布 `monthToDatePartial`；Web 读模型、测试
+  fixture 与 fake 响应同步清理。Python 指标用例增加“响应不含 `monthToDatePartial`”断言。
+
+**B55.6-03 — 当前验收入口跟上取消**
+
+- 真实 Python `direct-files` 目录移动用例不再要求 `409 pause_retired`；对已取消 Task 的旧
+  resume 地址断言普通 `404 not_found`，然后继续执行 Worker 再跑、3 个已移动子项保留、
+  3 个剩余文件未重放的原断言。
+- fake server 的 MediaLibrary 暂停夹具改为当前取消夹具（`transferCancel`），不再构造
+  PAUSED 传输；Task 控制只注册 cancel，discovery 控制不再匹配 pause/resume，未注册 API
+  路由统一返回 JSON `not_found`。两个 MediaLibrary 用例改为验证取消传输的普通 404、durable
+  CANCELLED 和退役深链不触发 API。
+- 两个 Files discovery proof 脚本退出 pause/continue 路径：控制/预算范围直接由 Worker 走完，
+  仍断言 101 visited/100 sources/primary_limit、finalize 拒绝、取消终态、Worker 不推进已
+  取消记录和原冻结/前缀不重放；矩阵不再发布 paused/resumed。
+
+**实际验证（命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_configuration_management tests.test_configuration_status
+  tests.test_task_persistence tests.test_task_scheduling tests.test_task_scheduling_fencing`
+  → 79 项通过；其中新增并发首启用例通过。
+- `.venv/bin/python -m unittest tests.test_v2_automation_operations tests.test_organize_source_history`
+  → 42 项通过；`.venv/bin/python -m unittest tests.test_v2_automation_run_once` → 39 项通过
+  （先发现旧 fixture 仍带 `pause_requested` 导致 1 项失败，去掉退役字段后复跑通过）。
+- `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_media_library_transfers`
+  → 66 项通过；`tests.test_operations_task_center tests.test_media_discovery
+  tests.test_processing_checkpoint` → 40 项通过；
+  `tests.test_release_validation tests.test_sqlite_backup tests.test_sqlite_restore`
+  → 11 项通过。
+- 真实四服务空库入口（最小 bootstrap，API/Worker/Scheduler/Notification 同时启动）连续三次：
+  无异常退出；`/health` 200，management readiness `managementReady=true`/`setupRequired=true`，
+  首次 Draft 校验并激活成功；marker 为 11/58。脚本与日志在
+  `.git/validation-evidence/38a0a6d2f161159a356b12578ce3b980c17b74d1/task55-6-dev/`。
+- 真实 Slice Base 夹具临时副本由两个仓库打开后仍读到原 completed Task，打开前后 SHA-256
+  一致。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过；
+  自动化/API 单测 30 项通过；真实 Python `direct-files` 指定移动用例 1 项、`task-flow` 3 项、
+  `medialib-transfers` 9 项通过；fake-server 的 operations/task-center-layout/automation/
+  deep-link 四个既有套件 38 项通过。
+- `.venv/bin/ruff check mediaflow tests scripts`、`ruff format --check`（338 文件）、
+  `compileall`、`python3 scripts/check_governance.py`、`git diff --check` 通过。
+- 测试和构建累计约 11 分钟（其中四个视觉/布局套件 8.9 分钟），少于本轮耗时 30%。
+
+**剩余风险与未完成项（不记为通过）**
+
+- B 的完整 T4（全量 Python、全部原生 E2E、wheel 外安装、Docker 空库/重启/安全镜像、备份
+  恢复实机链路）未由 Developer 运行，不能由本次结果替代。
+- 两个 discovery proof 脚本的 pause/continue 路径已改为当前完成/取消旅程，但本轮未实际执行
+  这两个浏览器 proof 或 Docker 变体；B 应在相应门禁或源码复核中确认。
+- fake server 的 Task Center 历史夹具中仍有 `task-006/task-007` paused 行及若干 paused 文案
+  映射，Web 单测也保留若干可选 `pauseRequested` 字段；它们不在本次三个阻塞的当前入口断言中，
+  未扩大为全站夹具清理。
+- 任何浏览器/原生门禁若再发现旧响应约定，应回到本 Task 修正，而不是删除现有断言。
