@@ -353,6 +353,71 @@ RO-3 的已接受配置结果保持，旧 Task／ScanTask 模型仍未交付；R
 其他已列出的 session 清理仍未交付；RO-6 因 Web 回归失败及最终制品门禁待验收而未完成。
 Slice55 继续 ACTIVE；本轮只交还 Task55.5 修复，不规划下一 Task，不作 Slice 关闭结论。
 
+### Developer 修复报告 — 2026-11-18 / READY FOR B REVIEW
+
+```text
+Task: 55.5
+Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Fix Candidate: 2f574e5d
+Status: READY FOR B REVIEW
+Prior Candidate: 3bff923de4127506c02a55b76cc7263b868554a6
+```
+
+**B55.5-01（P1）已修复。** `TaskItemRecoveryPanel` 的确认核对只以本次提交保存的
+Preview、选择、intent version、效果许可及 `organize/previews/{id}/admission` 证据为准。
+`known` 现在直接解除原提交锁定并显示返回的原 execution／Task、状态、选中数、完成／
+失败计数，随后刷新当前文件的合法状态；不再用“当前打开文件的摘要必须 confirmed 且
+execution 相同”反证已受理的兄弟子集。当前打开但未选择的文件继续保有自己的 prepared
+摘要和确认入口，没有重发 Execute，也没扩大权限或清理范围。
+
+**B55.5-02（AC-7 门禁阻塞）已修复。** `RunDetailTabs.test.tsx` 的迟到确认用例改用当前
+契约：preparation 带必填 `intent_version`，Execute 202 返回完整 execution 文档（含精确
+选中项、actions、计数与同 Task 身份）。原断言（单次提交、文件间隔离、关闭不导航、
+重开读取已受理事实）全部保留并实际执行。
+
+**受影响测试与接线**
+
+- `TaskItemRecoveryPanel.test.tsx` 新增“One 摘要只确认 Two、响应丢失、admission known”
+  用例：提交体只含兄弟项，读取 URL 只含该兄弟项与 intent version，known 后解除锁定并
+  显示原执行／Task，One 的摘要仍可确认，确认 POST 仍为 1 次。
+- `operations-inventory.python.spec.ts` 新增真实 Python 旅程：Files 受理同批两个文件→
+  Task Center 分别保存识别决定并完成零变更分析→打开其中一个摘要→取消选择本文件→只
+  确认兄弟→真实 Execute 202 被代理丢弃→读取 admission→显示原 execution／Task→关闭／
+  重开证据仍读取已受理事实→真实 Worker 只完成被选兄弟→刷新并重新认证后原 Task 可读→
+  在 Files 同卡修正并重新分析未执行文件后，原 admission 仍指向原 execution，Execute
+  仍只有 1 次。该旅程使用既有临时 SQLite／Local／Provider 夹具，新增 Fifteenth／
+  Sixteenth 专用源文件与 Provider 候选，避免消费其他旅程的媒体。
+
+**实际结果（cwd、命令、真实计数）**
+
+- `web/`：`npm run test -- run TaskItemRecoveryPanel.test.tsx RunDetailTabs.test.tsx
+  task-item-recovery.test.ts api-client.test.ts` → **4 files / 55 tests passed（6.08秒）**。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`
+  均 PASS。构建必须先于 Python E2E，否则 harness 仍服务旧 `web/dist`。
+- `web/` 聚焦原生旅程：新增用例 **1 passed（2.8秒）**；既有兄弟独立／重新分析用例
+  **1 passed（3.6秒）**（两者同一新 harness 顺序运行）。
+- `web/` 完整 `operations-inventory.python.spec.ts`：**34 passed / 14 failed（1.6分）**。
+  同一完整文件在 Task Base 源码（同一 harness、同一 provider／build 输入）为
+  **34 passed / 13 failed**，失败集合与候选完全相同（候选多出的 1 个正是新增用例）。
+  Base 复现已确认这些失败是既有环境／夹具问题，不是本次修复引入：
+  `POST /__harness__/run-manual-organize` 在 Base 同样返回 500
+  “Manual Organize Worker did not complete the admitted execution”，导致后续
+  `run-manual-worker` 取到遗留 admitted execution。新增用例在干净 harness 单独运行通过；
+  在完整文件顺序中，它受前面既有失败遗留队列影响而“取到别的执行”。B 的 T4 门禁如在该
+  环境复现同一 Base 失败，应据此归因并在修正环境后重跑；没有据此声称 Web／E2E 全部通过。
+- `scripts/operations_inventory_harness.py`：Ruff format／check PASS；
+  `python3 scripts/check_governance.py` PASS；`git diff --check` PASS。
+
+**时间与剩余风险**
+
+- 本轮自开始读取（约 2026-11-18 07:22 +0800）至修复候选 `2f574e5d`
+  （2026-11-18 08:10 +0800）约 48 分钟；实际测试／构建命令（含失败运行、完整 spec 与
+  Task Base 复现）约 11 分钟，低于本轮 30%。
+- 遗留：完整默认 E2E 的既有 13 个失败、T4 全量门禁、wheel／镜像／源码外消费者、
+  Docker 安全／重启、Base 真实数据继续使用仍由 B 在修正候选上执行。B 需在干净 harness
+  重跑新增旅程并确认已知 13 个 Base 失败的环境归因；本报告不声称这些门禁 PASS。
+- 未改动产品 API／schema／权限／CLI 注册；没有新增全局队列、别名或隐性替代入口。
+
 ### 规划阶段检查记录（激活前）
 
 本轮仅修改本文件；治理检查、`tests.test_governance` **20 tests OK（6.242秒）**、
