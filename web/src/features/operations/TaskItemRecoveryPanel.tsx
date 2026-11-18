@@ -15,6 +15,7 @@ import type {
   TaskItemDecision,
   TaskItemDecisionKind,
 } from "../../entities/operations/task-item-recovery";
+import type { OrganizeAdmissionOutcomeModel } from "../../entities/operations/organize";
 import {
   runItemEvidenceQueryKey,
   runItemsQueryKey,
@@ -897,6 +898,21 @@ export function TaskItemRecoveryPanel({
     };
   };
 
+  const admissionOutcomeMessage = (
+    model: OrganizeAdmissionOutcomeModel,
+  ): string => {
+    if (model.executionId === null || model.taskId === null) {
+      return "已读取持久状态：本次确认已经受理。 ";
+    }
+    return (
+      "已读取持久状态：本次确认已经受理。 " +
+      `原执行 ${model.executionId} 已归属 Task ${model.taskId}` +
+      `（${model.status ?? "未知"}，选中 ${model.selectedItemIds.length} 项，` +
+      `已完成 ${model.completedItemCount} 项、失败 ${model.failedItemCount} 项）。 ` +
+      "没有重发请求；当前文件按自己的持久状态继续处理。 "
+    );
+  };
+
   const reconcile = async () => {
     const result = await query.refetch();
     if (result.data?.ok !== true) {
@@ -1026,23 +1042,20 @@ export function TaskItemRecoveryPanel({
         return;
       }
       if (outcome.model.outcome === "known") {
-        if (
-          durable?.status === "confirmed" &&
-          durable.executionId === outcome.model.executionId
-        ) {
-          updateRecoverySession({
-            repeatLocked: false,
-            submittedConfirmation: null,
-            message: "已读取持久状态：本次确认已经受理。 ",
-          });
-          refreshLinkedReads();
-        } else {
-          updateRecoverySession({
-            repeatLocked: true,
-            message:
-              "已读回同一预览的受理执行，但未核对到本次计划摘要；保持提交锁定，请按当前摘要重新处理。 ",
-          });
-        }
+        // The admission service proved that the exact Preview, intent
+        // version, reviewed selection and destructive permissions this page
+        // submitted are the durable admission.  That proof is bound to the
+        // submission, not to the file currently opened: the opened file may be
+        // an unselected sibling whose own summary legitimately stays
+        // ``prepared``.  The original execution/Task facts are therefore the
+        // reconciliation result, and the current file's state is refreshed to
+        // continue on its own.
+        updateRecoverySession({
+          repeatLocked: false,
+          submittedConfirmation: null,
+          message: admissionOutcomeMessage(outcome.model),
+        });
+        refreshLinkedReads();
         return;
       }
       if (outcome.model.outcome === "not_admitted") {

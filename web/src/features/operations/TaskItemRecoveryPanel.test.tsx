@@ -47,6 +47,26 @@ function previewDocument(): Record<string, unknown> {
   return value;
 }
 
+function twoItemPreviewDocument(): Record<string, unknown> {
+  const value = previewDocument();
+  const items = value["items"] as Record<string, unknown>[];
+  const second = JSON.parse(JSON.stringify(items[0])) as Record<
+    string,
+    unknown
+  >;
+  second["itemId"] = "item-2";
+  second["previewItemId"] = "preview-item-2";
+  (second["source"] as Record<string, unknown>)["filename"] = "Two.2002.mkv";
+  second["position"] = 1;
+  value["items"] = [...items, second];
+  value["executionCandidateItemIds"] = ["item-1", "item-2"];
+  (value["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+    "item-1",
+    "item-2",
+  ];
+  return value;
+}
+
 function executionDocument(): Record<string, unknown> {
   const value = JSON.parse(
     JSON.stringify(
@@ -1338,6 +1358,152 @@ describe("TaskItemRecoveryPanel", () => {
         within(panel).queryByRole("button", { name: /确认继续整理/ }),
       ).toBeNull();
     });
+    expect(confirmAttempts).toBe(1);
+  });
+
+  it("keeps an opened sibling's prepared summary after the exact admitted subset is proven", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    // The current file (One) keeps its own prepared summary: the operator
+    // deselects One in this same summary and confirms only its sibling Two.
+    // The lost response must be reconciled against the *submitted* selection,
+    // so One's still-prepared state can never disprove Two's admission.
+    const currentRecovery = completedRecovery({
+      preparation_id: "preparation-1",
+      intent_version: 1,
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "prepared",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: null,
+      execution_id: null,
+      hasExecutionAuthority: false,
+      next_action: "review the current plan summary and confirm",
+    });
+    let confirmAttempts = 0;
+    let submittedBody: Record<string, unknown> | null = null;
+    let admissionReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(twoItemPreviewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/v1/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          admissionReads += 1;
+          const params = new URL(url, "http://localhost").searchParams;
+          // The read names exactly the submitted sibling and its intent
+          // version, never the currently opened file.
+          expect(params.get("itemIds")).toBe("item-2");
+          expect(params.get("expectedIntentVersion")).toBe("1");
+          return new Response(
+            JSON.stringify({
+              ...admissionOutcome(),
+              executionId: "execution-2",
+              status: "admitted",
+              selectedItemIds: ["item-2"],
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/operations/organize/previews/preview-1/execute"
+        ) {
+          confirmAttempts += 1;
+          submittedBody = JSON.parse(String(init?.body));
+          // The admission really committed, but the response is lost.
+          throw new TypeError("network down");
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("checkbox", {
+        name: "选择 One.2001.mkv",
+      }),
+    );
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    );
+    // The lost response is never reported as a proven refusal.
+    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
+    expect(confirmAttempts).toBe(1);
+    expect(submittedBody).toMatchObject({
+      preparationId: "preparation-1",
+      itemIds: ["item-2"],
+      expectedIntentVersion: 1,
+      allowOverwrite: false,
+      allowSourceCleanup: false,
+    });
+
+    // The admission read proves the exact submitted sibling was admitted,
+    // even though the opened file's own summary is still prepared.
+    await user.click(
+      within(panel).getByRole("button", { name: /重新读取条目后再继续/ }),
+    );
+    expect(
+      await within(panel).findByText(/原执行 execution-2 已归属 Task task-1/),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(/已读取持久状态：本次确认已经受理/),
+    ).toBeVisible();
+    expect(admissionReads).toBe(1);
+    expect(confirmAttempts).toBe(1);
+    // The lock is gone and the opened file keeps its own legitimate state.
+    expect(
+      within(panel).queryByRole("button", { name: /重新读取条目后再继续/ }),
+    ).toBeNull();
+    const stillPrepared = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    expect(
+      await within(stillPrepared).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    ).toBeEnabled();
     expect(confirmAttempts).toBe(1);
   });
 

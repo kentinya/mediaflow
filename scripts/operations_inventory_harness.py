@@ -455,6 +455,10 @@ def build_managed_fixture(
     # MOVE of one can never consume the other journey's fixtures.
     (source_root / "Ninth.2009.mkv").write_bytes(b"sibling independence synthetic media")
     (source_root / "Tenth.2010.mkv").write_bytes(b"sibling independence synthetic media")
+    # Dedicated pair for the opened-summary/subset-admission reconciliation
+    # proof, so no other journey's files or expected population changes.
+    (source_root / "Fifteenth.2015.mkv").write_bytes(b"subset reconciliation synthetic media")
+    (source_root / "Sixteenth.2016.mkv").write_bytes(b"subset reconciliation synthetic media")
     # The RO-2 new-source ambiguity proof's own source.  It has no prior
     # Result/choice/review and exactly two tied provider candidates, so the
     # preparation must withhold automatic selection and ground both candidates
@@ -1130,6 +1134,26 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Eleventh",
                         year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # The opened-summary/subset-admission proof's own pair, so
+                    # its real MOVE never consumes another journey's media.
+                    MediaCandidate(
+                        "tmdb",
+                        "115",
+                        MediaType.MOVIE,
+                        "Fifteenth",
+                        year=2015,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "116",
+                        MediaType.MOVIE,
+                        "Sixteenth",
+                        year=2016,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3871,6 +3895,8 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Ninth.2009.mkv",
         "Tenth.2010.mkv",
         "Eleventh.2011.mkv",
+        "Fifteenth.2015.mkv",
+        "Sixteenth.2016.mkv",
         "Dialog/DialogConflict.2022.mkv",
         "Dialog/DialogSibling.2023.mkv",
         "Dialog/DialogNoMatch.2024.mkv",

@@ -1536,6 +1536,271 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   expect(exactExecutePosts()).toHaveLength(1);
 });
 
+test("the opened item reconciles the exact sibling subset admission it did not select", async ({
+  page,
+  request,
+}) => {
+  // B55.5-01: after Files admits the pair, both files get their own recognition
+  // decision and zero-mutation analysis on the same Task.  The operator opens
+  // one file's summary, deselects that file, confirms only its sibling, and the
+  // browser loses the real 202.  The admitted sibling is the durable fact; the
+  // opened file's own summary stays prepared and must never keep the original
+  // request locked as unknown.
+  const api = recordApiCalls(page);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+
+  const driveDiscovery = async (passes = 12) => {
+    // Each call advances one real bounded pass; a fixed bounded number lets
+    // the production Task engine finish its own analysis without inventing a
+    // stage or a second request.
+    for (let step = 0; step < passes; step += 1) {
+      await request.post(`${BASE}/__harness__/run-discovery-worker`);
+    }
+  };
+
+  await openOrganizingSource(page);
+  await page.getByRole("checkbox", { name: "选择 Fifteenth.2015.mkv" }).check();
+  await page.getByRole("checkbox", { name: "选择 Sixteenth.2016.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscovery();
+
+  // The Task Center Task is the one Files admitted; the browser reads its
+  // exact identity from the product discovery record instead of guessing a
+  // newest row.
+  const discoveryResponse = await request.get(
+    `${BASE}/api/v1/operations/organize/discoveries/${discoveryId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(discoveryResponse.ok()).toBeTruthy();
+  const discovery = (await discoveryResponse.json()) as {
+    readonly organizeTaskId: string | null;
+  };
+  const taskId = discovery.organizeTaskId;
+  expect(taskId).toBeTruthy();
+  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  const openEvidence = async (filename: string) => {
+    await items
+      .getByRole("row")
+      .filter({ hasText: filename })
+      .getByRole("button", { name: "查看证据" })
+      .click();
+    await expect(evidence).toBeVisible();
+  };
+  const saveRecognition = async () => {
+    const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+    await expect(
+      recovery.getByRole("heading", { name: "待处理的识别决策" }),
+    ).toBeVisible();
+    await recovery.getByRole("radio", { name: "Normal Movie" }).check();
+    const decision = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/recovery/decision"),
+    );
+    await recovery.getByRole("button", { name: "保存并重新分析" }).click();
+    expect((await decision).status()).toBe(200);
+    await evidence.getByRole("button", { name: "关闭证据" }).click();
+  };
+  await openEvidence("Fifteenth.2015.mkv");
+  await saveRecognition();
+  await openEvidence("Sixteenth.2016.mkv");
+  await saveRecognition();
+  await driveDiscovery();
+
+  // Both zero-mutation analyses are complete; the opened file's own summary
+  // now waits for the operator's explicit subset confirmation.
+  await openEvidence("Fifteenth.2015.mkv");
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  const summary = detail.getByRole("region", { name: "新计划摘要" });
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (await summary.isVisible().catch(() => false)) break;
+    await recovery.getByRole("button", { name: "刷新" }).click();
+    await page.waitForTimeout(250);
+  }
+  await expect(summary).toBeVisible({ timeout: 30_000 });
+  await summary
+    .getByRole("checkbox", { name: "选择 Fifteenth.2015.mkv" })
+    .uncheck();
+  await expect(
+    summary.getByRole("button", { name: "确认继续整理 1 项" }),
+  ).toBeEnabled();
+
+  let droppedExecuteResponse = false;
+  let committed: {
+    readonly executionId: string;
+    readonly taskId: string;
+    readonly previewId: string;
+    readonly intentVersion: number;
+    readonly selectedItemIds: readonly string[];
+  } | null = null;
+  await page.route(
+    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    async (route) => {
+      if (droppedExecuteResponse) {
+        await route.continue();
+        return;
+      }
+      droppedExecuteResponse = true;
+      const response = await route.fetch();
+      expect(response.status()).toBe(202);
+      committed = (await response.json()) as typeof committed;
+      await route.abort("connectionreset");
+    },
+  );
+  const exactExecutePosts = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    );
+  await summary.getByRole("button", { name: "确认继续整理 1 项" }).click();
+  await expect(detail.getByText(/请求响应未送达/)).toBeVisible();
+  expect(exactExecutePosts()).toHaveLength(1);
+  expect(committed).not.toBeNull();
+  expect(committed!.taskId).toBe(taskId);
+  expect(committed!.selectedItemIds).toHaveLength(1);
+
+  // The bounded admission read proves this exact submitted subset, even though
+  // the opened file itself was left out and keeps its prepared summary.
+  await detail.getByRole("button", { name: /重新读取条目后再继续/ }).click();
+  await expect(detail.getByText(/原执行 .* 已归属 Task/).first()).toBeVisible();
+  await expect(detail.getByText(new RegExp(taskId!))).toBeVisible();
+  await expect(detail.getByText(/本次确认已经受理/)).toBeVisible();
+  await expect(
+    detail.getByRole("button", { name: /重新读取条目后再继续/ }),
+  ).toHaveCount(0);
+  await expect(
+    detail
+      .getByRole("region", { name: "新计划摘要" })
+      .getByRole("button", { name: "确认继续整理 1 项" }),
+  ).toBeEnabled();
+  expect(exactExecutePosts()).toHaveLength(1);
+
+  // Closing and reopening the evidence keeps the known admission fact in the
+  // exact item session instead of resubmitting it.
+  await evidence.getByRole("button", { name: "关闭证据" }).click();
+  await openEvidence("Fifteenth.2015.mkv");
+  await expect(detail.getByText(/本次确认已经受理/)).toBeVisible();
+  expect(exactExecutePosts()).toHaveLength(1);
+
+  // The real Worker completes only the admitted sibling; the opened file is
+  // untouched and both effects stay attributed to the original Task.
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBeTruthy();
+  const workerBody = (await worker.json()) as {
+    readonly completed: boolean;
+    readonly taskId?: string;
+  };
+  expect(workerBody).toMatchObject({ completed: true });
+  expect(workerBody.taskId).toBe(taskId);
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Sixteenth.2016.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({ sourceExists: false });
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Fifteenth.2015.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({ sourceExists: true });
+
+  // A reconnect after the admitted sibling progressed reads the same durable
+  // state: no replay, and the exact original admission still resolves.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  const reloadedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(reloadedDetail).toBeVisible();
+  expect(exactExecutePosts()).toHaveLength(1);
+  const admissionParams = new URLSearchParams({
+    itemIds: committed!.selectedItemIds.join(","),
+    expectedIntentVersion: String(committed!.intentVersion),
+    allowOverwrite: "false",
+    allowSourceCleanup: "false",
+  });
+  const admissionResponse = await request.get(
+    `${BASE}/api/v1/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(admissionResponse.ok()).toBeTruthy();
+  expect(await admissionResponse.json()).toMatchObject({
+    outcome: "known",
+    executionId: committed!.executionId,
+    taskId,
+    selectedItemIds: committed!.selectedItemIds,
+  });
+
+  // Correct and re-analyze the still-pending opened file on the same Files
+  // card.  The newer summary never replaces or replays the original admitted
+  // sibling execution.
+  await page.goto(
+    `${BASE}/ui-v2/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
+  );
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  const reopenedCard = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(reopenedCard).toBeVisible({ timeout: 30_000 });
+  await expect(reopenedCard.getByText(/已有受理的兄弟项/)).toBeVisible();
+  const reopenedHeading = reopenedCard.getByRole("heading", {
+    name: /第 [12] \/ 2 个/,
+  });
+  await expect(reopenedHeading).toBeVisible();
+  if ((await reopenedHeading.textContent())?.includes("第 2 /")) {
+    await reopenedCard.getByRole("button", { name: "上一项" }).click();
+  }
+  await expect(
+    reopenedCard.getByText("Fifteenth.2015.mkv", { exact: true }),
+  ).toBeVisible();
+  await reopenedCard.getByText("修正识别或作品", { exact: true }).click();
+  const reopenedSelect = reopenedCard.locator(
+    'select[aria-label^="识别类型 "]',
+  );
+  const reopenedCurrentType = await reopenedSelect.inputValue();
+  const reopenedOtherType = (
+    await reopenedSelect
+      .locator("option")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => (node as HTMLOptionElement).value),
+      )
+  ).find((value) => value !== "" && value !== reopenedCurrentType);
+  expect(reopenedOtherType).toBeTruthy();
+  await reopenedSelect.selectOption(reopenedOtherType!);
+  await expect(
+    reopenedCard.getByRole("button", { name: "保存并重新分析" }),
+  ).toBeEnabled({ timeout: 30_000 });
+  await reopenedCard.getByRole("button", { name: "保存并重新分析" }).click();
+  await driveDiscovery();
+  await expect(reopenedCard.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(exactExecutePosts()).toHaveLength(1);
+  const admissionAfterRework = await request.get(
+    `${BASE}/api/v1/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(admissionAfterRework.ok()).toBeTruthy();
+  expect(await admissionAfterRework.json()).toMatchObject({
+    outcome: "known",
+    executionId: committed!.executionId,
+    taskId,
+    selectedItemIds: committed!.selectedItemIds,
+  });
+});
+
 test("a selected execution never blocks the unselected sibling's correction and re-analysis", async ({
   page,
   request,

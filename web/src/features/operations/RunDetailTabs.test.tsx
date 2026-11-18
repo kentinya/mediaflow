@@ -850,6 +850,37 @@ function recoveryPreviewDocument(): Record<string, unknown> {
   return preview;
 }
 
+/** The current Execute response for exactly the reviewed item-2 subset. */
+function confirmedExecutionDocument(): Record<string, unknown> {
+  const execution = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)[
+        "organizeExecutionDetail"
+      ],
+    ),
+  ) as Record<string, unknown>;
+  execution["executionId"] = "execution-1";
+  execution["previewId"] = "preview-1";
+  execution["intentId"] = "intent-1";
+  execution["taskId"] = "task-001";
+  execution["selectedItemIds"] = ["item-2"];
+  execution["selectedItemCount"] = 1;
+  execution["unselectedItemIds"] = [];
+  execution["unselectedItemCount"] = 0;
+  const items = execution["items"] as Record<string, unknown>[];
+  items[0]!["itemId"] = "item-2";
+  items[0]!["taskId"] = "task-001";
+  items[0]!["taskItemId"] = "item-2";
+  const actions = execution["actions"] as Record<
+    string,
+    Record<string, unknown>
+  >;
+  actions["detail"]!["path"] =
+    "/api/v1/operations/organize/executions/execution-1";
+  actions["task"]!["path"] = "/api/v1/operations/tasks/task-001";
+  return execution;
+}
+
 /** The analyzed item whose zero-change summary waits for an explicit confirm. */
 function manualReadyRecoveryDocument(
   preparation: Record<string, unknown> | null,
@@ -878,6 +909,7 @@ function manualReadyRecoveryDocument(
 function preparedSummaryDocument(status: "prepared" | "confirmed") {
   return {
     preparation_id: "preparation-1",
+    intent_version: 1,
     status,
     preview_id: "preview-1",
     intent_id: "intent-1",
@@ -2265,18 +2297,7 @@ describe("selected-run detail tabs", () => {
       current = manualReadyRecoveryDocument(
         preparedSummaryDocument("confirmed"),
       );
-      releaseConfirm?.(
-        jsonResponse(
-          {
-            executionId: "execution-1",
-            taskId: "execution-task-1",
-            status: "admitted",
-            selectedItemIds: ["item-2"],
-            nextAction: "track the durable Worker execution",
-          },
-          202,
-        ),
-      );
+      releaseConfirm?.(jsonResponse(confirmedExecutionDocument(), 202));
     });
     expect(confirmPosts).toBe(1);
     expect(router.history.location.pathname).toBe("/ui-v2/operations");
