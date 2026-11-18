@@ -13,13 +13,13 @@ Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9ac
 Task ID: 55.7
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
-Next Action: B REVIEWS TASK55.7 FIX CANDIDATE
+Next Action: DEVELOPER FIXES TASK55.7 AND RESUBMITS FOR B REVIEW
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
@@ -110,7 +110,9 @@ Next Action: B REVIEWS TASK55.7 FIX CANDIDATE
 
 ### 测试
 
-**Developer** 运行新增、改动和直接受影响的用例。以下从已有套件中按实际改动选取，交接保留
+**Developer — 新增／修改与直接受影响测试**
+
+以下从已有套件中按实际改动选取，交接保留
 实际命令及结果。测试和构建的耗时小于本轮总用时的 50%。
 
 ```sh
@@ -131,7 +133,9 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-se
 git diff --check
 ```
 
-**B** 审查完整 `Task Base..Developer candidate`，先对照真实生产者与用户旅程复现原请求场景，
+**B — 独立验收与完整回归**
+
+审查完整 `Task Base..Developer candidate`，先对照真实生产者与用户旅程复现原请求场景，
 再跑适用的 [T4 全量门禁](docs/development-workflow.md#shared-full-regression-commands)。
 在 `web/` 构建后，逐条启动隔离的 Python/Playwright 实例，覆盖发布和复制、Run once、设置
 与统计、同 Task 决定和确认，以及两种库普通操作。
@@ -395,3 +399,78 @@ Branch: main
   列表内，仍保留原 API 形状；Web 只消费 `occurrenceState`。如 B 认为同属重复协议，
   需在同一 Task 继续裁定。
 - `scopeExhausted` 仍随摘要输出且当前恒为 `None`；不在本轮明确删除列表内。
+
+### B 第二轮独立复核 — FIX REQUIRED（2026-11-19，北京时间）
+
+```text
+Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
+Reviewed Candidate: 83423d212af207d3d99807506d173c7bfb211c00
+Reviewed Handoff Head: a1a5e2328c9c45a523e22ed75c8f12e507449991
+Decision: FIX REQUIRED / SAME TASK FIX LOOP
+```
+
+从干净的 `main` 复核完整 Task Base..Reviewed Candidate，交接提交仅变更本文件。
+B55.7-01 已复验通过，真实历史响应和默认浏览器使用当前字段，自动化列表、统计和原 Task 链接可用。
+B55.7-03 已复验通过，旧矩阵在真实有效库上返回通用 `404/not_found`，现行 Files 整理旅程通过。
+B55.7-02 已复验列表、详情及草稿的规范事件投影，已接受定义的后续操作仍有一个阻塞。
+
+#### B55.7-04 · P1 · AC-3 — 既有 Webhook 无法复制或启用
+
+在 Slice Base 用正式 API 导入、验证并激活配置，其中已有一个停用的 Webhook。用候选重开同一 SQLite
+库，Active ID 和摘要一致。管理员在「通知」打开此定义并创建后继草稿，详情正确显示当前事件，也提供
+「复制到草稿」和「在草稿中启用」。这两个按钮实际均返回 `400 invalid_request`，页面分别提示动作没有执行，
+候选的草稿版本保持 1。用 Slice Base 和同样的操作做对照，复制成功写入一个停用副本，启用成功写入原定义，
+两个结果各推进一次草稿版本，写入的都是当前事件，Active 仍保持原版。
+
+在候选中，现有编辑入口提交页面显示的当前事件可保存、验证并发布。向同一个编辑入口提交旧事件名时
+仍返回 400，草稿版本保持。这把修正范围落在服务端替用户组装草稿内容的两个方法。
+
+11 月 17 日的 `7962432a` 收紧了新写入的事件校验，`f6ab37c8` 恢复了对已接受定义的运行时读取。
+本候选又让浏览器收到规范事件名。复制及启用／停用仍将数据库里的旧事件原样送入新写入校验，
+因此管理员看到可用动作，点击后却无法继续。两项操作都由服务端从已保存定义组装输入，浏览器只提交所见草稿版本。
+
+#### 本轮开发指导
+
+1. 在 `ConfigurationObjectService.copy_object` 和 `set_object_enabled` 的 Webhook 分支，读取准确
+   草稿里的已保存源定义后，复用 `accepted_webhook_definition` 得到当前事件名。将当前事件写入本次新副本
+   或明确要启用／停用的定义，继续走现有 `mutate`、权限、版本校验和审计。保留源项、未选的其他定义及
+   原 Active 的已保存字节。用户新建或手工提交的 `job.*` 仍由当前输入校验拒绝。
+2. 扩充 `test_accepted_historical_webhook_is_projected_with_current_events` 所在用例组。以已发布的
+   Slice Base Webhook 为起点，从详情所给动作建立草稿，分别核对复制与启用／停用。复制产生唯一停用副本，
+   原定义字节保持。启用／停用只改所选定义，返回当前事件，发布前 Active ID 与摘要保持。用独立草稿核对
+   既有的检查和显式发布流程，确认原定义仍可按原订阅读取、事件历史和投递记录仍可见。保留真实 stale 版本、
+   权限和同草稿其他定义发布限制的现有断言。
+
+```sh
+# 仓库根
+.venv/bin/python -m unittest tests.test_webhook_management tests.test_v2_notification_operations
+git diff --check
+# web/，如有通知界面或夹具改动，复验同一详情入口
+npm run build
+npm run test:e2e -- tests/e2e/notifications.spec.ts
+```
+
+#### 本轮验证与 Slice55 重评
+
+- 候选 Python 定向 67 项、默认浏览器定向 28 项通过。Web 单测 102 文件／1631 项、默认浏览器全量
+  285 项通过，Web typecheck、lint、format、build 和 Python 质量检查通过。真实 Python 浏览器分实例
+  通过自动化生命周期 21 项、Run once 8 项、系统设置 18 项、自动化工作区 9 项、运营与整理 47 项。
+- Python 全量 2326 项，2318 项通过、7 项既有可选用例跳过、1 项失败。失败仅来自本 Task 测试分工标题
+  缺少仓库模板标记，B 已在本文件修正分工标题，独立复跑 `tests.test_release_security` 8 项通过。
+- 候选 wheel 构建与源码外安装 smoke 通过，SHA-256 为
+  `b8d51887f6335db264d085e3f223b45275c81cd0f71c6a9f199333ea9caad890`。
+- 两种库普通文件的原生套件启动时与生命周期套件占用同一端口，该次运行未进入用例。Docker 镜像门禁、
+  剩余文件原生套件及 Slice Base 到候选的同浏览器原请求核对留给修正候选。
+- 实际证据在 `.git/validation-evidence/83423d212af207d3d99807506d173c7bfb211c00/task55-7-b/`。
+  `webhook-base-publish.log`、`webhook-base-commands.log`、`webhook-candidate-commands.log` 和
+  `webhook-browser.log` 记录同库重开、真实请求、草稿版本和浏览器反馈，`webhook-editor-control.log`
+  记录现行编辑、发布和旧事件输入拒绝。
+
+| 结果 | 当前状态与剩余范围 |
+|---|---|
+| RO-1 | 旧 Web 入口退出的既有验收继续适用。本轮默认浏览器全量和当前自动化入口通过。 |
+| RO-2 | 旧矩阵通过注销验收。当前 Files 选取、整理、同 Task 决策和执行通过原生案例，旧调度和授权的既有验收继续适用。 |
+| RO-3 | 当前通知事件投影已验证，已接受的 Webhook 继续使用仍受 B55.7-04 阻塞。正式配置键和权限沿用既有验收。 |
+| RO-4 | 五态及正常库重开证据仍适用。本轮跨版本通知复验读到同一 Active 与摘要。 |
+| RO-5 | 当前原请求恢复和规范响应在本轮对应浏览器中通过，已有 Webhook 的完整管理旅程及跨版本浏览器原请求验收待完成。 |
+| RO-6 | 当前构建和 wheel 已验证。剩余全局批量审核实现、空实例部署脚本及发布说明，以及最终候选镜像与 Slice 验收仍待交付。 |
