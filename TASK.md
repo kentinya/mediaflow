@@ -13,13 +13,13 @@ Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9ac
 Task ID: 55.7
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER STARTS TASK55.7 IMPLEMENTATION
+Next Action: B REVIEWS CANDIDATE cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc ON 27789283
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
@@ -157,7 +157,78 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 既有有效数据、独立结果与原 pins。旧全局批量审核应用／持久化实现，以及空实例部署脚本和发布说明
 的全链路收敛，仍为 RO-6 待交付项，按实际后续重评处理。
 
-### 交接状态
+### 交接状态 — READY FOR B REVIEW
 
-已获实施授权，状态为 PLANNED。Developer 按本 Task 实施并运行直接受影响的测试，提交固定候选及
-实际结果后标记 READY FOR B REVIEW。B 随后独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED。
+候选 `cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc`（Task Base `27789283a`..该提交），分支 `main`，提交后工作区／暂存仅余本文件
+状态更新。B 审查完整 `27789283a0e1b04bc1e9204002ecdb8cfc44e946..cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc`。
+
+**本候选的改动**
+
+1. **列表会话只保留当前逐项格式。** `automation-run-once-session.ts` 与
+   `automation-copy-session.ts` 删除旧编辑卡整身份 key 的读取、合并、清理和
+   `legacy`／`invalidLegacy` 标记；列表页删除两处专用旧记录提示。当前逐身份、逐定义／来源的
+   正式记录、原请求 ID、Copy 原来源与发布版本、核对入口不变；一条结果仍只清理对应待办。
+2. **设置发布核对与表单合并分开。** 普通 Save 从实际读到的精确版本写入完整三项
+   `baselineValues`；`planRecovery` 的“缺基线逐项猜测”分支和
+   `EditState.baselineValues | null` 删除。读取侧仍接受 Slice Base 曾写出的无基线记录，
+   但只作为可精确核对的未决提交：不恢复其表单输入，也不补当前 Active 值作为历史基线；
+   核对证明未发布后表单改为显示当前发布值，用户明确输入后另行保存。
+3. **按真实生产者收敛协议。** 执行历史 summary 只读 `statusCounts` 与 `bound.statement`
+   （删除 `counts`／`boundStatement` 回落）；自动化定义只读 `occurrenceState`（删除
+   `occurrence` 回落）；表单 modes 对未知值 fail-closed 而非静默过滤；Continue／Ignore
+   共用答复只接受当前 `requestId`／`nativeAnalysis`（删除 `continuation_id`、
+   `continuationId`、`batch_id`）；discovery 的 `actions.prepare` 缺失视为格式错误；
+   删除无产品调用的手工 action matrix Web 调用链（实体、查询模块、`api-client` 请求函数及
+   专属测试）；run-once 页删除无生产者的 `pausing`／`paused` 文案。
+4. **规则会话。** 删除 v3 草稿载入时对两个旧 key 的专用清理；v3 未保存草稿、精确发布核对、
+   身份隔离、返回与焦点不变。
+5. **测试与夹具。** 旧 list key 形状改为“不被读取”的负向断言；Copy 恢复用例改用当前
+   逐来源 key；Task Center 续作用真实 `nativeAnalysis` 答复；settings 用例覆盖“有基线
+   冲突合并”和“无基线只核对、再显式修正”两条真实入口路径；删除已退出协议的假响应分支。
+
+**Base 事实复核（用于第 2 项保留义务）**
+
+- `2b2e7c18:web/src/features/operations/AutomationSettingsPanel.tsx`（Slice Base）的普通 Save
+  已写入 `baselineValues`（第 689 行），后端 `automation_settings.py` 用身份、提交 ID 与
+  请求内容核对，不依赖浏览器基线原值。
+- Base 唯一可能写出“无 `baselineValues` 的正式提交”的路径：从更早会话恢复后、原基线修订
+  仍相同的情况下直接 Save（`submitBaselineValues = edit.baselineValues ?? null` → 省略字段）。
+  该记录对应真实 durable 提交，故本候选仍按原身份／提交 ID／提交值核对，只禁止把它当表单
+  合并基线。
+
+**实际验证（命令与结果，cwd `/Users/songzhidong/mediaflow/web`）**
+
+- `npm run typecheck` 通过；`npm run lint` 通过；`npm run format:check` 通过。
+- `npm run test -- run` → 102 个文件、1631 项全部通过（162.7 秒）。其中直接相关：
+  `automation-run-once-session`／`automation-settings-session`／`automation-settings-recovery`／
+  `automation-lifecycle`／`discovery`／`automation`／`notification`／`organize`／
+  `operations-api`／`storage-management-api` 实体与 API 用例，
+  `AutomationListRunOnce`／`AutomationListCopy`／`AutomationSettingsPage`／
+  `AutomationWorkspaceReadModel`／`AutomationRouter`／`OperationsInventory`／
+  `RunDetailTabs`／`OrganizeDiscoveryPage`／`OrganizeRouter`／`ManualOrganizeDialog`／
+  `TaskItemRecoveryPanel`／`RulesEditPage`／`StorageFilesPage`。
+- `npm run build` 通过（仅有既有 chunk 体积提示）。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` 通过。
+- 本轮未改 Python 响应，故未运行 Python 模块用例；这些属于 B 的 T4 验收。
+- 测试与构建累计约 10 分钟，小于本轮约 45 分钟的 30%。
+
+**未由 Developer 执行（不记为通过；B 的 T4 门禁）**
+
+- 真实 Python／Playwright 丢响应链路（`lost Copy response`、run-once `lost reply`、
+  settings `lost rejection response` 等）、Base→候选同一浏览器来源换资产的连续性、完整 Web
+  E2E、Docker 空实例／重启／安全镜像、wheel 外安装与镜像身份、Python 全量回归。
+- 因此“从 Slice Base 产生记录后由候选同源核对”“另一管理员并发修改后的原请求核对”等
+  仍待 B 的实际实机证据。
+
+**已知未完成／需 B 裁定的相邻残留（未扩大范围）**
+
+- 通知 `job.*` 读别名**未删除**：真实 Python 投影 `ConfigurationObjectService._webhooks_projection`
+  对已接受定义原样返回存储字节，`tests/test_webhook_management.py` 明确断言该保留；
+  当前输入校验已在服务端拒绝新写 `job.*`。删除 Web 别名会使用既有合法 Active 定义在
+  Web 不可读。若 B 认为该别名仍须在本 Task 退出，需要同时改投影为规范事件并调整该
+  Python 断言，超出本轮已确认的 Web 消费者范围。
+- `GET /api/v1/operations/manual-actions` 仍有真实注册与 Python 用例，但已无任何产品消费者；
+  本候选只清掉 Web 调用链，是否撤销该 API 属于服务端接口边界决定。
+- 执行历史生产者仍同时输出 `counts`、`occurrence`、`boundReached` 等重复字段；Web 已不再读取，
+  生产者的重复字段清理未在本候选执行。
+- 完整 T4 回归、E2E 与打包门禁保持 B 所有；本报告不构成 PASS。
