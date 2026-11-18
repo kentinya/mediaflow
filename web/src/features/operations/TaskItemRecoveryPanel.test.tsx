@@ -4,6 +4,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
+import { useAuthToken } from "../../shared/api/auth-context";
 import fixture from "../../entities/operations/__fixtures__/manual-operations.json";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
@@ -203,8 +204,30 @@ function recognitionRecovery(resolved = false): Record<string, unknown> {
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  window.sessionStorage.clear();
   vi.unstubAllGlobals();
 });
+
+/**
+ * The backend-authenticated principal read that confirmation retention
+ * requires: the exact submitted request is saved under this principal before
+ * the POST, so a reload or re-auth can restore it for the same subject.
+ */
+function withPrincipalEndpoint(
+  mock: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (
+      (init?.method ?? "GET") === "GET" &&
+      String(input) === "/api/v1/auth/principal"
+    ) {
+      return new Response(JSON.stringify({ principal_id: "admin" }), {
+        status: 200,
+      });
+    }
+    return mock(input, init);
+  };
+}
 
 function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
   return {
@@ -369,6 +392,22 @@ function RecoveryPanelHarness() {
           active={false}
         />
       )}
+    </TaskItemRecoverySessionProvider>
+  );
+}
+
+/** The panel under the token-keyed landing provider: a reload or re-auth
+ * rebuilds the whole store, exactly like OperationsLanding remounts it. */
+function ReauthRecoveryHarness() {
+  const token = useAuthToken();
+  return (
+    <TaskItemRecoverySessionProvider key={token ?? "disconnected"}>
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />
     </TaskItemRecoverySessionProvider>
   );
 }
@@ -1062,7 +1101,7 @@ describe("TaskItemRecoveryPanel", () => {
         });
       },
     );
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withPrincipalEndpoint(fetchMock));
 
     renderWithProviders(
       <TaskItemRecoveryPanel
@@ -1315,7 +1354,7 @@ describe("TaskItemRecoveryPanel", () => {
         });
       },
     );
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withPrincipalEndpoint(fetchMock));
 
     renderWithProviders(
       <TaskItemRecoveryPanel
@@ -1392,6 +1431,11 @@ describe("TaskItemRecoveryPanel", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
+        if (method === "GET" && url === "/api/v1/auth/principal") {
+          return new Response(JSON.stringify({ principal_id: "admin" }), {
+            status: 200,
+          });
+        }
         if (
           method === "GET" &&
           url === "/api/v1/tasks/task-1/items/item-1/recovery"
@@ -1507,6 +1551,154 @@ describe("TaskItemRecoveryPanel", () => {
     expect(confirmAttempts).toBe(1);
   });
 
+  it("restores the exact submitted confirmation across a provider rebuild and reconciles the original sibling admission", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("first-session-token");
+    // The sibling journey with the response lost: a full reload plus re-auth
+    // rebuilds the landing provider under a new token.  The original request
+    // identity must come back from the principal-scoped retention and
+    // reconcile the same exact admission — never offer a fresh confirmation.
+    const currentRecovery = completedRecovery({
+      preparation_id: "preparation-1",
+      intent_version: 1,
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "prepared",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: null,
+      execution_id: null,
+      hasExecutionAuthority: false,
+      next_action: "review the current plan summary and confirm",
+    });
+    let confirmAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (method === "GET" && url === "/api/v1/auth/principal") {
+          return new Response(JSON.stringify({ principal_id: "admin" }), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(twoItemPreviewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/v1/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          const params = new URL(url, "http://localhost").searchParams;
+          // The restored identity reads exactly the originally submitted
+          // sibling subset and its intent version.
+          expect(params.get("itemIds")).toBe("item-2");
+          expect(params.get("expectedIntentVersion")).toBe("1");
+          return new Response(
+            JSON.stringify({
+              ...admissionOutcome(),
+              executionId: "execution-2",
+              status: "admitted",
+              selectedItemIds: ["item-2"],
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/operations/organize/previews/preview-1/execute"
+        ) {
+          confirmAttempts += 1;
+          // The admission committed; this browser never sees the 202.
+          throw new TypeError("network down");
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+
+    renderWithProviders(<ReauthRecoveryHarness />);
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("checkbox", {
+        name: "选择 One.2001.mkv",
+      }),
+    );
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    );
+    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
+    expect(confirmAttempts).toBe(1);
+
+    // A provider rebuild: everything unmounts and mounts again, exactly like
+    // the landing rebuilds after a reload or re-auth.  The in-memory session
+    // store is empty; the same principal reads the same retained request.
+    // (The token transition itself is memory-only and is covered end-to-end
+    // by the real reload journey in operations-inventory.python.spec.ts.)
+    cleanup();
+    renderWithProviders(<ReauthRecoveryHarness />);
+    const restored = await screen.findByRole("region", {
+      name: "条目审核与恢复",
+    });
+    const reconcile = await within(restored).findByRole("button", {
+      name: /重新读取条目后再继续/,
+    });
+    expect(reconcile).toBeEnabled();
+    // The original submission stays locked: the durable summary's confirm
+    // action cannot be used to send a second Execute.
+    expect(
+      await within(restored).findByRole("button", {
+        name: /确认继续整理 1 项|正在受理/,
+      }),
+    ).toBeDisabled();
+    expect(confirmAttempts).toBe(1);
+
+    // The restored entry reconciles the exact submitted sibling admission.
+    await user.click(reconcile);
+    expect(
+      await within(restored).findByText(
+        /原执行 execution-2 已归属 Task task-1/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(restored).getByText(/已读取持久状态：本次确认已经受理/),
+    ).toBeVisible();
+    // The unlocked summary offers its explicit confirm action again; the
+    // default selection is rebuilt from the durable preview (both items
+    // checked) because this fresh panel never unchecked anything.
+    await waitFor(() => {
+      expect(
+        within(restored).getByRole("button", { name: /确认继续整理/ }),
+      ).toBeEnabled();
+    });
+    expect(confirmAttempts).toBe(1);
+  });
+
   it("keeps an in-flight confirmation locked across close and reopen, then reconciles the exact preparation", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");
@@ -1536,6 +1728,11 @@ describe("TaskItemRecoveryPanel", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
+        if (method === "GET" && url === "/api/v1/auth/principal") {
+          return new Response(JSON.stringify({ principal_id: "admin" }), {
+            status: 200,
+          });
+        }
         if (
           method === "GET" &&
           url === "/api/v1/tasks/task-1/items/item-1/recovery"
