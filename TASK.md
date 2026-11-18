@@ -1,11 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.8 — 交付唯一现行 V2，走通首次部署
+
+用户要求「激活Task」，据此将已提交的 Task55.8 草案激活为正式实施 Task。
 
 Task55.7 **PASS**。B 已审查完整范围
 `27789283a0e1b04bc1e9204002ecdb8cfc44e946..96e7c2b8f35f15969292e5b8c98312fa01781e6a`。
 复核结果和全部 Slice 结果重评见 `git show 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4:TASK.md`。
-Slice55 仍为 **ACTIVE**。Task55.8 等待实施授权。
-
-## 草案 — Task55.8 交付唯一现行 V2，走通首次部署
 
 依据已提交 Slice55 的 RO-6 和 RO-2 中旧全局审核实现的退出要求，覆盖
 V2-RETIRE-002、009、010。测试和交接按开发流程执行。
@@ -13,19 +12,23 @@ V2-RETIRE-002、009、010。测试和交接按开发流程执行。
 和 [开发流程](docs/development-workflow.md)。
 
 ```text
-Proposed Task ID: 55.8
-Proposed Task Type: SLICE
-Proposed Parent Slice: 55
-Draft Status: PLANNED — NOT AUTHORIZED FOR IMPLEMENTATION
-Proposed Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
+Task ID: 55.8
+Task Type: SLICE
+Parent Slice: 55
+Status: PLANNED
+Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
+Development Authorization: TASK55.8 IMPLEMENTATION AUTHORIZED
+Next Action: DEVELOPER STARTS TASK55.8 IMPLEMENTATION
 ```
 
 规划从 `/Users/songzhidong/mediaflow` 的 `main` 开始。上述 HEAD 的工作区和暂存区干净，
 工作区与 Git 可写，规划前治理检查通过。Slice Base 仍为
 `2b2e7c1824fa5681864455714d0f97b26555c7dc`。
+激活前 `main` 的 HEAD 为 `4bc6a390258a3a5bb42e071adf78c755e5d20353`，工作区和暂存区干净，
+治理检查通过。Task Base 至草案提交仅变更本文件。
 
 重评沿用 Task55.7 同期候选的 B 证据。RO-1 的现行入口和旧路由退出、RO-3 的唯一配置权威
 和正式键、RO-4 的五态和有效 V2 库、RO-5 的原请求核对已有验收。RO-2 的旧全局传输入口已
@@ -139,3 +142,9 @@ C 复用 A 仍为 C，真实 Slice Base 数据与原请求继续使用，以及�
 
 **范围边界** 以 Slice55 当前合同为准。产品入口、现行审核行为与历史数据以本 Task 的保留
 验收为准。发布和用户部署由原授权边界管理。
+
+### 交接状态
+
+Task 已获实施授权，状态为 PLANNED。Developer 按本 Task 实施，运行直接受影响的测试，提交
+固定候选和实际测试结果后标记 READY FOR B REVIEW。B 独立审查完整 Task Base..Head，给出
+PASS 或 FIX REQUIRED。
