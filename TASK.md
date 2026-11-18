@@ -19,7 +19,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.6 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.6-04 IN TASK55.6
+Next Action: DEVELOPER FIXES B55.6-05 AND B55.6-06 IN TASK55.6
 ```
 
 规划起点：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述提交，工作区及暂存干净，
@@ -98,7 +98,7 @@ Worker 处理选中的合法工作；也可用现有 Cancel 停止未执行部�
 
 ### 测试
 
-**Developer：** 只运行改动和直接受影响的测试。以下为已有入口，按实际修改的用例选取；
+**Developer — 新增／修改与直接受影响测试。** 以下为已有入口，按实际修改的用例选取；
 交接给出实际命令/结果，测试和构建累计时间须小于本轮用时的一半。
 
 ```sh
@@ -117,7 +117,7 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.pyt
 本轮修改的 Files、transfer、discovery、CLI/源库证明用例随改动运行；不把整套原生、全回归
 或镜像矩阵转交 Developer。
 
-**B：** 对冻结候选审查完整 Task Base..Head，先用现行入口证明 AC-1、Base 数据继续使用
+**B — 独立验收与完整回归。** 对冻结候选审查完整 Task Base..Head，先用现行入口证明 AC-1、Base 数据继续使用
 及拒绝坏库，再跑 [共享 T4 门禁](docs/development-workflow.md#shared-full-regression-commands)。
 原生覆盖 `task-flow.python.spec.ts`、`operations-inventory.python.spec.ts`、`direct-files.python.spec.ts`
 与 `automation-run-once.python.spec.ts` 的相关旅程；使用各自隔离的实例及产物目录。用 Task55.5
@@ -687,3 +687,55 @@ ACTIVE，返工留在 Task55.6。
 **Slice55 结果重评。** RO-1、RO-2、RO-4、RO-5、RO-6 的既有抽测结果保留；RO-3 的凭据诊断
 入口在本候选上解除阻塞，正式配置与权限名未改。Slice55 继续 ACTIVE，返工留在 Task55.6，
 不改 Slice／Roadmap／Progress，不交 A 终审。
+
+### B 返工复核 — FIX REQUIRED（候选 `ff008989`）
+
+独立审查完整范围 `2e460b71735ac0284e58928c884baac9d3f46009..ff008989482ba3c649a9456094e2f80b17ac213b`。
+`ede7624f0500c4c56e668cd14ecf5470d8530900` 只改交接文档。复核起点 `main` 工作区及暂存干净，
+治理检查通过。验收使用候选的隔离 Git 工作区、现有本机依赖和独立 Docker 复核环境。
+
+**B55.6-04 已通过。** 正式 `api credentials check` 对空路径和另一应用的 SQLite 均正确报告
+SET（退出 0）／UNSET（退出 1），空路径的父目录未创建；同一 SQLite 经正式 `api serve`
+拒绝（退出 2），文件未改动。相关既有测试 20 项通过。
+
+| 阻塞 | 实际操作与原因 |
+|---|---|
+| **B55.6-05（P1，AC-2/4）已保存的有效 V2 整理摘要无法确认** | 用真实 Slice Base 的 Files、逐项决策和 Worker 分析入口生成已审阅的摘要，此时还没有 Task。更换为候选后，仍能读到原摘要与配置 pin，但沿现行 Execute 确认收到 HTTP 500，未产生 Task，源文件仍在。`e53bf3f9`（2026-11-18）删了 Task 的暂停字段，`_adopt_prechange_summary` 仍按旧参数位置传入；另一路已存在的精确确认入库仍用 17 列的无列名 INSERT，新表只有 16 列。全量 Python 的旧摘要确认 3 项失败，直接复测共享执行用例也报列数不匹配。用真实 Slice Base 生成、已有 Task 的四类状态继续通过复验。 |
+| **B55.6-06（P1，AC-5）现行验收仍要求已退役的 schema 和流程状态** | 管理员创建草稿并完成命名、分类、整理授权与目标预检后，应能重开当前配置并看到原证据。四个现有 Python 用例在重开前改成 schema 6／7／8／9 并期待旧升级成功，候选按合同拒绝，导致后续业务断言未执行。默认浏览器从 Files 确认或直接打开 Task Center 时，三条失败 trace 的假 API 仍返回 `job-004` 的 `paused` 流程；当前读模型拒绝整页，页面显示「任务中心暂不可用」。另一个真实 API 对照用例的前端 fixture 仍含 `pauseRequested`。真实 Python 浏览器中的现行 Task Center、确认和交接通过。 |
+
+#### Developer 返工指导
+
+1. 按当前 `PersistentTask` 字段创建旧摘要确认所需的 Task，去掉退役暂停参数。共享精确确认
+   的 Task 入库复用现有显式列清单，保留事务范围、原 preview／pin、来源归属和一次性授权。
+   沿真实 Base 生成的合法未确认摘要走「打开原摘要→确认→Worker 领取→查结果」；再核对
+   已受理的原请求重读及并发确认仍指向原执行。现行 Files 和四类续作继续走原 Task 内核。
+2. 将四个配置用例接回当前 V2 schema 的重开，继续断言保存的策略、预览、证据和 Active
+   约束。保留现有正式入口对不支持库的零改写验证。用现有真实 API fixture 生成入口更新
+   精确比对数据，把假 Task Center 列表／详情／计数的生产值收敛到现行状态；保留独立文件
+   部分结果。用原有 Files→确认→Task Center、列表／分页和窄屏用例核对这条验收旅程。
+   Developer 只运行新增／修改及直接受影响测试。整套 T4 由 B 复跑。
+
+```sh
+# 仓库根，正式 Execute、原请求核对、现行配置重开和 API fixture
+.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_manual_organize_execution tests.test_manual_operations_contract
+.venv/bin/python -m unittest tests.test_configuration_classification tests.test_configuration_destination tests.test_configuration_destination_precheck tests.test_configuration_organize
+# web/，先用 npm run build 构建候选
+npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/operations.spec.ts
+```
+
+**实际门禁。** Python 完整运行 2336 项，6 失败、27 错误、7 跳过。发布测试中的 Task 测试
+分工标题由 B 纠正。Ruff、compileall、pip check、两个样例验证和禁用依赖扫描通过。Web
+构建、typecheck、lint、format 及 104 个文件／1642 项单测通过。默认浏览器在已确认阻塞后
+中止，194 通过、14 失败、1 中断、76 未运行。真实 Files 28 项、Task flow 3 项，以及
+Task Center／手工整理组合 55 项通过。Automation 组合 28 通过、1 失败；第二次 Copy 丢响应
+用例在新的同配置隔离实例原样单跑通过，保留组合失败记录，完整组合待后续复验。wheel
+构建、源码外安装 smoke 和备份恢复入口通过。候选 Docker 镜像已构建，Docker 场景验收待执行。
+并行门禁按实际进行时间合计约 6 分 50 秒，少于本轮用时一半。
+原始日志、trace 和制品标识在
+`.git/validation-evidence/ff008989482ba3c649a9456094e2f80b17ac213b/task55-6-b/`。
+
+**Slice55 结果重评。** RO-1 的既有入口结果保持。RO-2 当前 Files 手工整理、Task Center
+和两种库普通操作通过实测，既有摘要确认仍阻塞。RO-3 正式配置和权限契约保持，凭据诊断
+通过。RO-4 误选 SQLite 的零改写保持，合法 Base 无 Task 摘要待修复。RO-5 当前确认与核对
+主路径通过，既定 session 清理待完成。RO-6 wheel 已通过，当前测试数据与五态契约仍有
+缺口，最终门禁待完成。Slice55 继续 ACTIVE，返工留在 Task55.6。
