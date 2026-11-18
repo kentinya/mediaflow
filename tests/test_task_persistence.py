@@ -243,9 +243,9 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
     """The durable identity that separates every admission kind (B45.5 P1-2).
 
     The storage writer and both open-work finders must agree on one identity, so
-    an ordinary Files preparation, two paused runs' recoveries and one repeated
-    recovery request can never alias each other.  These cases exercise the real
-    SQLite writer and both finders, including a reopen across connections.
+    an ordinary Files preparation and one definition-bound Run once can never
+    alias each other.  These cases exercise the real SQLite writer and finder,
+    including a reopen across connections.
     """
 
     @staticmethod
@@ -254,8 +254,6 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
         *,
         status=None,
         auto_prepare: bool = False,
-        recovery_task: str | None = None,
-        excluded: tuple[str, ...] = (),
         budget: int = 100,
         definition: tuple[str, str] | None = None,
     ):
@@ -308,8 +306,6 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
             now,
             auto_prepare=auto_prepare,
             definition_origin=origin,
-            recovery_source_task_id=recovery_task,
-            recovery_excluded_paths=excluded,
         )
 
     def test_prechange_adoption_rolls_back_task_scheduling_and_items_together(self) -> None:
@@ -392,31 +388,12 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
                 self.assertIsNone(stored.organize_task_id)
                 self.assertEqual(original.version, stored.version)
 
-    def test_ordinary_definition_and_recovery_admissions_never_alias(self) -> None:
+    def test_ordinary_and_definition_admissions_never_alias(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "identity.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 ordinary = self._discovery("discovery-ordinary", auto_prepare=True)
                 repository.create_media_discovery(ordinary)
-                # The same scope/pin/actor admitted as a recovery preparation of
-                # task one is a genuinely different intent and must not be
-                # refused as a duplicate of the ordinary preparation.
-                recovery = self._discovery(
-                    "discovery-recovery",
-                    auto_prepare=True,
-                    recovery_task="task-one",
-                    excluded=("Sub/Done.2001.mkv",),
-                    budget=2,
-                )
-                repository.create_media_discovery(recovery)
-                # A second paused run over the identical scope is its own work.
-                other = self._discovery(
-                    "discovery-other",
-                    auto_prepare=True,
-                    recovery_task="task-two",
-                    budget=2,
-                )
-                repository.create_media_discovery(other)
                 # Two definitions over the same scope are two intents.
                 for discovery_id, fingerprint in (
                     ("discovery-definition-a", "a" * 64),
@@ -430,7 +407,6 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
                         )
                     )
 
-                # Each finder resolves exactly its own admission kind.
                 found = repository.find_open_media_discovery(
                     actor="operator",
                     resource_library_id="library",
@@ -441,42 +417,6 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
                     auto_prepare=True,
                 )
                 assert found is not None and found.discovery_id == "discovery-ordinary"
-                for task_id, expected in (
-                    ("task-one", "discovery-recovery"),
-                    ("task-two", "discovery-other"),
-                ):
-                    recovered = repository.find_open_recovery_discovery(
-                        actor="operator",
-                        recovery_source_task_id=task_id,
-                        resource_library_id="library",
-                        storage_id="storage",
-                        snapshot_id="snap",
-                        snapshot_digest="digest",
-                        scope_signature='[["Sub","directory"]]',
-                        recovery_excluded_paths=(
-                            ("Sub/Done.2001.mkv",) if task_id == "task-one" else ()
-                        ),
-                        max_primary_sources=2,
-                    )
-                    assert recovered is not None, task_id
-                    assert recovered.discovery_id == expected, (task_id, recovered.discovery_id)
-                # A *changed* recovery context is a new admission, not a silent
-                # reuse of the record that was admitted under different
-                # exclusions/budget.
-                assert (
-                    repository.find_open_recovery_discovery(
-                        actor="operator",
-                        recovery_source_task_id="task-one",
-                        resource_library_id="library",
-                        storage_id="storage",
-                        snapshot_id="snap",
-                        snapshot_digest="digest",
-                        scope_signature='[["Sub","directory"]]',
-                        recovery_excluded_paths=(),
-                        max_primary_sources=2,
-                    )
-                    is None
-                )
                 assert (
                     repository.find_open_media_discovery(
                         actor="operator",
@@ -508,26 +448,24 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
             # The identity is durable: a second connection reads the same
             # partitions without recomputing anything from the current Active.
             with SQLiteTaskRepository(database) as reopened:
-                recovered = reopened.find_open_recovery_discovery(
+                found = reopened.find_open_media_discovery(
                     actor="operator",
-                    recovery_source_task_id="task-one",
                     resource_library_id="library",
                     storage_id="storage",
                     snapshot_id="snap",
                     snapshot_digest="digest",
                     scope_signature='[["Sub","directory"]]',
-                    recovery_excluded_paths=("Sub/Done.2001.mkv",),
-                    max_primary_sources=2,
+                    auto_prepare=True,
+                    definition_id="nightly",
+                    definition_fingerprint="a" * 64,
                 )
-                assert recovered is not None
-                assert recovered.discovery_id == "discovery-recovery"
-                assert recovered.recovery_excluded_paths == ("Sub/Done.2001.mkv",)
-                assert recovered.recovery_source_task_id == "task-one"
+                assert found is not None
+                assert found.discovery_id == "discovery-definition-a"
 
     def test_an_ordinary_admission_keeps_its_previous_durable_identity(self) -> None:
         """An already open ordinary admission still reconciles byte-identically.
 
-        The origin keys are only added for a definition/recovery admission, so a
+        The origin keys are only added for a definition-bound admission, so a
         discovery written before this correction keeps the same stored
         signature and the same reconciliation outcome.  Nothing is cleared,
         backfilled or rewritten.
@@ -600,7 +538,7 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 # Seed the row exactly as the prior implementation stored it,
                 # which is also what this build would store for the same input.
-                stored = replace(discovery, recovery_source_task_id=None)
+                stored = discovery
                 repository.create_media_discovery(stored)
                 self.assertEqual(
                     repository._connection.execute(
@@ -1595,6 +1533,47 @@ def _manual_audit(intent_id: str):
     return ManualIntentAudit(
         "audit-base", intent_id, None, "operator", "created_from_storage_source", {}, {}, now
     )
+
+
+class FreshRuntimeStructureTests(unittest.TestCase):
+    def test_fresh_database_has_the_complete_current_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "fresh.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(SCHEMA_VERSION, repository.schema_version)
+                discovery_columns = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(media_discoveries)"
+                    ).fetchall()
+                }
+                self.assertNotIn("recovery_source_task_id", discovery_columns)
+                self.assertNotIn("recovery_excluded_paths_json", discovery_columns)
+                preview_columns = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(manual_previews)"
+                    ).fetchall()
+                }
+                self.assertNotIn("recovery_source_task_id", preview_columns)
+                item_columns = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(task_items)"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {"source_occurrence_id", "source_fingerprint", "source_fingerprint_state"}
+                    <= item_columns
+                )
+                indexes = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index'"
+                    ).fetchall()
+                }
+                self.assertIn("task_items_source_occurrence", indexes)
+                self.assertIn("task_scheduling_admission_request", indexes)
 
 
 if __name__ == "__main__":

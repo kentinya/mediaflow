@@ -467,8 +467,8 @@ class BeginScheduledItemOwnershipBoundaryTests(unittest.TestCase):
         self.assertEqual(first_id, owner["taskId"])
         self.assertEqual((), self.repository.list_items(second_id))
 
-    def test_same_task_and_legal_lineage_never_refuse_themselves(self) -> None:
-        """A legal continuation of the owning work is never its own competitor."""
+    def test_same_task_never_refuses_itself_and_still_owns_the_source(self) -> None:
+        """A same-Task retry proceeds while another Task cannot take the source."""
 
         first_id, first_claim = self._admit_and_begin("worker-1")
         started = self.scheduling.begin_item(
@@ -499,16 +499,16 @@ class BeginScheduledItemOwnershipBoundaryTests(unittest.TestCase):
         self.assertTrue(written)
         self.assertIsNone(owner)
 
-        # A different Task is only admitted when the lineage is legal: the
-        # ancestor's remaining scope is the continuation's own source.
+        # The retried same-Task item is live work again, so a different Task
+        # cannot take the concrete source.
         second_id, second_claim = self._admit_and_begin("worker-2")
         written, owner = self.repository.begin_scheduled_item_with_ownership(
             second_claim.fence(self.now),
             self._item(second_id, "A.mkv"),
-            exclude_lineage_task_id=first_id,
         )
-        self.assertTrue(written)
-        self.assertIsNone(owner)
+        self.assertFalse(written)
+        self.assertIsNotNone(owner)
+        self.assertEqual(first_id, owner["taskId"])
 
     def test_settled_sibling_is_never_started_again_inside_the_transaction(self) -> None:
         """The attempt/outcome protections survive the combined boundary."""

@@ -639,7 +639,6 @@ class TaskSchedulingService:
         source_observed_at: datetime | None = None,
         source_storage_path: str | None = None,
         source_version: SourceVersionEvidence | None = None,
-        ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
         exclude_failed_history: bool = False,
         now: datetime | None = None,
@@ -720,7 +719,6 @@ class TaskSchedulingService:
                 fence,
                 started,
                 source_version=source_version,
-                ownership_lineage_task_ids=ownership_lineage_task_ids,
                 exclude_failed_history=exclude_failed_history,
             )
         elif not self._repository.upsert_scheduled_item(
@@ -737,7 +735,6 @@ class TaskSchedulingService:
         item: PersistentTaskItem,
         *,
         source_version: SourceVersionEvidence | None,
-        ownership_lineage_task_ids: tuple[str, ...],
         exclude_failed_history: bool = False,
     ) -> None:
         """The decisive ownership boundary for one scheduled item start.
@@ -759,9 +756,6 @@ class TaskSchedulingService:
                 stage=TaskItemPublication.START,
                 source_version=source_version,
                 exclude_failed_history=exclude_failed_history,
-                exclude_lineage_task_id=(
-                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
-                ),
             )
             if written:
                 return
@@ -777,9 +771,6 @@ class TaskSchedulingService:
                 resource_library_id=item.resource_library_id,
                 source_version=source_version,
                 exclude_task_id=item.task_id,
-                exclude_lineage_task_id=(
-                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
-                ),
             )
             if owner is not None:
                 raise TaskSourceOwnedError(owner)

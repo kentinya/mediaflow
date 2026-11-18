@@ -10171,7 +10171,6 @@ class MediaFlowApi:
             "autoPrepare": discovery.auto_prepare,
             "prepared": discovery.prepared,
             "previewId": discovery.preview_id,
-            "recoverySourceTaskId": discovery.recovery_source_task_id,
             "intentId": discovery.intent_id,
             "frozen": frozen,
             "frozenAt": (

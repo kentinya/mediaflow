@@ -213,7 +213,6 @@ class ManualOrganizePreviewService:
         reuse_analysis_identity: object | None = None,
         require_durable_identity: bool = False,
         skip_current_snapshot_check: bool = False,
-        recovery_source_task_id: str | None = None,
         tolerate_unready_sources: bool = False,
         persist: bool = True,
         problem_task_id: str | None = None,
@@ -223,10 +222,9 @@ class ManualOrganizePreviewService:
 
         ``skip_current_snapshot_check`` is the one explicit opt-in for a
         *pinned historical* intent: the caller has already proven the exact
-        published revision through managed authority, and the remaining-scope
-        recovery path must review the plan under that pin rather than under the
-        current Active revision.  The ordinary Files path keeps the strict
-        current-Active rule.
+        published revision through managed authority, so the plan is reviewed
+        under that pin rather than under the current Active revision.  The
+        ordinary Files path keeps the strict current-Active rule.
 
         ``problem_task_id`` names the admitted organizing Task whose own per-item
         four-type problems this analysis should publish.  It is supplied only by
@@ -472,7 +470,6 @@ class ManualOrganizePreviewService:
             truncated=any(item.truncated for item in preview_items),
             source_scope=source_scope,
             source_scope_id=source_scope_id,
-            recovery_source_task_id=recovery_source_task_id,
         )
         persisted = self._persist_create(preview) if persist else None
         return persisted or preview

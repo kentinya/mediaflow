@@ -208,3 +208,58 @@ class ConfigurationSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetiredDatabaseStartupTests(unittest.TestCase):
+    """A retired V1 runtime database is refused before any write."""
+
+    def test_api_serve_rejects_v1_job_schema_without_modifying_the_file(self) -> None:
+        import hashlib
+        import sqlite3
+
+        from mediaflow.final_cli import final_main
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "v1.sqlite3")
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TABLE schema_version ("
+                    "component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO schema_version VALUES "
+                    "('configuration_management', 10), ('runtime', 33)"
+                )
+                connection.execute("CREATE TABLE jobs (job_id TEXT PRIMARY KEY)")
+                connection.commit()
+            source = example_document()
+            source["persistence"]["databasePath"] = str(database)
+            config = Path(directory, "strategy.json")
+            config.write_text(json.dumps(source), encoding="utf-8")
+            before = hashlib.sha256(database.read_bytes()).hexdigest()
+            stderr = io.StringIO()
+            code = final_main(
+                [
+                    "--config",
+                    str(config),
+                    "api",
+                    "serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "45678",
+                ],
+                stdout=io.StringIO(),
+                stderr=stderr,
+            )
+            self.assertEqual(2, code)
+            self.assertIn("retired V1 Job schema", stderr.getvalue())
+            self.assertIn("file was not modified", stderr.getvalue())
+            self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    [("configuration_management", 10), ("runtime", 33)],
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )

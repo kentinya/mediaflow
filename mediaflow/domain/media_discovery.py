@@ -409,9 +409,6 @@ def discovery_admission_identity(
     auto_prepare: bool,
     definition_id: str | None = None,
     definition_fingerprint: str | None = None,
-    recovery_source_task_id: str | None = None,
-    recovery_excluded_paths: tuple[str, ...] = (),
-    max_primary_sources: int | None = None,
 ) -> str:
     """The complete durable identity of one discovery admission.
 
@@ -426,15 +423,9 @@ def discovery_admission_identity(
       preparation;
     * a definition-bound Run once's *definition* identity, because two
       published definitions over the same library/scope are two different
-      operator intents (the definition also supplies the primary bound);
-    * a remaining-scope recovery preparation's source Task and its exact
-      exclusion/budget context, because that preparation observes a deliberately
-      narrower scope than an ordinary Files selection over the same directory.
+      operator intents (the definition also supplies the primary bound).
 
-    An ordinary Files admission therefore never inherits a recovery
-    preparation's exclusions/origin, and two paused runs' recoveries never
-    block or alias each other.  The value contains no secret and no physical
-    Storage path.
+    The value contains no secret and no physical Storage path.
 
     Only the origin-specific keys are present, so an *ordinary* Files admission
     keeps the exact byte-identical identity earlier versions wrote: an already
@@ -454,10 +445,6 @@ def discovery_admission_identity(
     if definition_id is not None or definition_fingerprint is not None:
         identity["definitionId"] = definition_id
         identity["definitionFingerprint"] = definition_fingerprint
-    if recovery_source_task_id is not None:
-        identity["recoverySourceTaskId"] = recovery_source_task_id
-        identity["recoveryExcludedPaths"] = sorted(set(recovery_excluded_paths))
-        identity["primarySources"] = max_primary_sources
     return json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -1143,29 +1130,13 @@ class MediaDiscovery:
     #: admitted for, or ``None`` for an ordinary Files folder/mixed selection.
     #: It is durable origin evidence only and grants no execution authority.
     definition_origin: DefinitionRunOnceOrigin | None = None
-    #: The exact paused Task this discovery is an explicit *remaining-scope
-    #: recovery preparation* for, or ``None`` for an ordinary Files
-    #: folder/mixed selection or a definition-bound Run once.  It is durable
-    #: work linkage only: the discovery still observes the same bounded
-    #: ResourceLibrary scope, grants no execution authority and mutates nothing.
-    #: A recovery preparation never broadens the original Task's admitted
-    #: budget and never re-offers an already-decided sibling.
-    recovery_source_task_id: str | None = None
-    #: The exact ResourceLibrary-relative source paths this recovery preparation
-    #: must never observe or offer again because an earlier attempt of the same
-    #: continuation chain already recorded them.  It is empty for every ordinary
-    #: discovery.  The walk skips these paths entirely, so the admitted primary
-    #: bound measures only the *remaining* scope and a recorded sibling can never
-    #: be re-offered or displace a genuinely remaining source.
-    recovery_excluded_paths: tuple[str, ...] = ()
     #: The durable organizing Task this admitted Files selection created, or
     #: ``None``.  RO-2 requires the organizing Task to exist *before* business
     #: readiness, so a Files 整理 command commits a real Task (with its
     #: configuration pin, admitted scope and execute authority) together with this
     #: admission.  The Task is the durable subject the operator's progress,
     #: four-type recovery and exact confirmation belong to; a definition Run once
-    #: and a remaining-scope recovery preparation keep their own existing lineage
-    #: and record ``None``.
+    #: records ``None``.
     organize_task_id: str | None = None
     #: The exact confined *Storage*-relative path of every admitted scope entry,
     #: keyed by its ResourceLibrary-relative path.  Verified source ownership
@@ -1213,25 +1184,11 @@ class MediaDiscovery:
             self.definition_origin, DefinitionRunOnceOrigin
         ):
             raise ValueError("discovery definition origin is invalid")
-        if self.recovery_source_task_id is not None and (
-            not isinstance(self.recovery_source_task_id, str)
-            or not _SAFE_ID.fullmatch(self.recovery_source_task_id)
-        ):
-            raise ValueError("discovery recovery source Task identity is invalid")
-        if len(self.recovery_excluded_paths) > MAX_DISCOVERY_SCOPE_PATHS:
-            raise ValueError("discovery recovery exclusions exceed their bound")
         if self.organize_task_id is not None and (
             not isinstance(self.organize_task_id, str)
             or not _SAFE_ID.fullmatch(self.organize_task_id)
         ):
             raise ValueError("discovery organizing Task identity is invalid")
-        for value in self.recovery_excluded_paths:
-            if (
-                not isinstance(value, str)
-                or not value
-                or len(value.encode("utf-8")) > MAX_DISCOVERY_PATH_BYTES
-            ):
-                raise ValueError("discovery recovery exclusion path is invalid")
 
     @property
     def terminal(self) -> bool:
@@ -1270,9 +1227,7 @@ class MediaDiscovery:
             "definitionOrigin": (
                 self.definition_origin.document() if self.definition_origin is not None else None
             ),
-            "recoverySourceTaskId": self.recovery_source_task_id,
             "organizeTaskId": self.organize_task_id,
-            "recoveryExcludedPaths": list(self.recovery_excluded_paths),
             "storageScope": [list(item) for item in self.storage_scope],
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
@@ -1338,16 +1293,6 @@ class MediaDiscovery:
                 DefinitionRunOnceOrigin.from_document(value["definitionOrigin"])
                 if isinstance(value.get("definitionOrigin"), dict)
                 else None
-            ),
-            (
-                str(value["recoverySourceTaskId"])
-                if isinstance(value.get("recoverySourceTaskId"), str)
-                else None
-            ),
-            (
-                tuple(str(item) for item in value["recoveryExcludedPaths"] if isinstance(item, str))
-                if isinstance(value.get("recoveryExcludedPaths"), list)
-                else ()
             ),
             (
                 str(value["organizeTaskId"])

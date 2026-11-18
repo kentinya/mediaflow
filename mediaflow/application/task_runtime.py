@@ -175,7 +175,6 @@ class PersistentTaskCoordinator:
         source_observed_at: datetime | None = None,
         source_storage_path: str | None = None,
         source_version: object | None = None,
-        ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
         exclude_failed_history: bool = False,
     ) -> PersistentTaskItem:
@@ -209,9 +208,6 @@ class PersistentTaskCoordinator:
                     # are the source of this attempt, never a competing owner, so
                     # a resumed/continued attempt can never refuse itself.
                     exclude_task_id=task_id,
-                    exclude_lineage_task_id=(
-                        ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
-                    ),
                 )
                 if owner is not None:
                     raise TaskSourceOwnedError(owner)
@@ -335,9 +331,6 @@ class PersistentTaskCoordinator:
             owner = claimant(
                 started,
                 source_version=source_version,
-                exclude_lineage_task_id=(
-                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
-                ),
             )
             if owner is not None:
                 self.locks.release(storage_id, source_path, task_id, owner_token=lock_owner_token)
@@ -1122,7 +1115,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         source_observed_at: datetime | None = None,
         source_storage_path: str | None = None,
         source_version: object | None = None,
-        ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
         exclude_failed_history: bool = False,
     ) -> PersistentTaskItem:
@@ -1148,9 +1140,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
                     resource_library_id=resource_library_id,
                     source_version=source_version,
                     exclude_task_id=task_id,
-                    exclude_lineage_task_id=(
-                        ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
-                    ),
                 )
                 if owner is not None:
                     raise TaskSourceOwnedError(owner)
@@ -1166,7 +1155,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
             source_observed_at=source_observed_at,
             source_storage_path=source_storage_path,
             source_version=source_version,
-            ownership_lineage_task_ids=ownership_lineage_task_ids,
             enforce_source_ownership=enforce_source_ownership,
             exclude_failed_history=exclude_failed_history,
             now=self._clock(),

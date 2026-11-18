@@ -732,7 +732,6 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
         ),
         "scopeKind": _bounded_evidence_text(scope_kind, limit=64),
         "scopeId": _bounded_identifier(scope_id),
-        "recoverySourceTaskId": _bounded_identifier(document.get("recoverySourceTaskId")),
         "selection": {
             "selectedItemIds": _bounded_identifier_list(selection.get("selectedItemIds")),
             "unselectedItemIds": _bounded_identifier_list(selection.get("unselectedItemIds")),

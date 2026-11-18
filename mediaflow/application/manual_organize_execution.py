@@ -21,7 +21,6 @@ from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-from mediaflow.application.scope_continuation import recovery_preparation_eligibility
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
     MAX_MANUAL_EXECUTION_ITEMS,
@@ -333,17 +332,7 @@ class ManualOrganizeExecutionService:
         ):
             raise ManualExecutionError("execution note is invalid", code="invalid_note")
         preview = self._preview(preview_id)
-        # The exact selection is resolved first so the recovery qualification can
-        # judge each source individually: a mixed recovery scope stays eligible
-        # while one sibling is undecided, so the chain-level flag alone would let
-        # a decided sibling through on the strength of an unrelated legal one.
-        # The recovery reason is still preferred over the generic current-Preview
-        # projection because it is the specific, actionable one.
         selected = self._select_preview_items(preview, item_ids)
-        self._assert_recovery_preparation_live(
-            preview,
-            sources=((item.source.storage_id, item.source.path) for item in selected),
-        )
         self._assert_files_preparation_live(preview)
         self._validate_preview_parent(preview, snapshot_id, snapshot_digest)
         intent = self._intent(preview.intent_id)
@@ -841,80 +830,6 @@ class ManualOrganizeExecutionService:
         if authorization is None or authorization.execution_id != execution.execution_id:
             return None
         return authorization
-
-    def _recovery_eligibility_for(self, preview):
-        """The live per-source recovery qualification of one Preview, or ``None``.
-
-        An ordinary Files/definition Preview has no recovery origin, so it is
-        never governed by the recovery contract and this returns ``None``.
-        """
-
-        source_task_id = getattr(preview, "recovery_source_task_id", None)
-        if source_task_id is None:
-            return None
-        return recovery_preparation_eligibility(
-            self._repository,
-            recovery_source_task_id=source_task_id,
-            snapshot_id=getattr(preview, "configuration_snapshot_id", None),
-            snapshot_digest=getattr(preview, "configuration_snapshot_digest", None),
-        )
-
-    def _assert_recovery_preparation_live(self, preview, sources=None) -> None:
-        """Refuse a recovery Preview whose admitted sources were decided elsewhere.
-
-        A remaining-scope recovery preparation is admitted while its sources are
-        still undecided, but the operator can legitimately confirm and execute an
-        *earlier* preparation before this one is authorized.  Its own Preview and
-        intent stay perfectly valid records, so nothing about the reviewed
-        document, versions or pin can reveal the change: the deciding effect is
-        recorded on a different attempt of the same source.  Both the
-        authorization boundary and the Worker's pre-mutation boundary therefore
-        re-ask the shared remaining-scope contract before any execution is
-        admitted.
-
-        The whole-chain ``eligible`` flag is only a statement that *some* work
-        remains.  A mixed scope stays eligible while one sibling is still
-        undecided, so when ``sources`` names the exact selection this boundary is
-        about to authorize/admit/execute, each source is checked individually and
-        a decided sibling is refused by name instead of riding on an unrelated
-        legal one.  ``sources`` is an iterable of ``(storage_id, path)`` pairs;
-        passing ``None`` keeps the whole-chain decision only.
-
-        An ordinary Files/definition Preview has no recovery origin, so this is a
-        no-op for it and none of its existing behavior changes.
-        """
-
-        eligibility = self._recovery_eligibility_for(preview)
-        if eligibility is None or not eligibility.applies:
-            return
-        if not eligibility.eligible:
-            raise ManualExecutionError(
-                eligibility.message or "the recovery summary's remaining scope changed",
-                code=getattr(eligibility, "code", None) or "recovery_scope_stale",
-                next_action=(
-                    eligibility.next_action
-                    or "request a fresh plan summary for the still-undecided sources; a decided "
-                    "or uncertain effect is never repeated"
-                ),
-                status=409,
-            )
-        if sources is None:
-            return
-        refused = eligibility.refused_sources(sources)
-        if not refused:
-            return
-        storage_id, path = refused[0]
-        raise ManualExecutionError(
-            "a source this recovery summary still lists already has a decided outcome; it is "
-            "never executed again",
-            code="recovery_scope_decided",
-            next_action=(
-                "review the run's recorded per-item outcomes; the still-undecided sources keep "
-                "their own exact summary and a decided or uncertain effect is never repeated"
-            ),
-            status=409,
-            details={"storageId": storage_id, "path": path, "refusedCount": len(refused)},
-        )
 
     def _assert_files_preparation_live(self, preview) -> None:
         """Refuse a Files summary whose linked organizing flow has ended.
@@ -1584,14 +1499,6 @@ class ManualOrganizeExecutionService:
                 ),
             )
             return self._continue_confirmed_execution(existing, admit_only=admit_only)
-        # Asked before the generic current-Preview projection so a decided
-        # recovery source reports its own exact reason rather than a generic
-        # staleness code.  The exact authorized selection is passed so a mixed
-        # scope is judged per source instead of by the chain-level flag alone.
-        self._assert_recovery_preparation_live(
-            preview,
-            sources=((item.source.storage_id, item.source.path) for item in selected),
-        )
         self._assert_files_preparation_live(preview)
         self._validate_preview_parent(
             preview,
@@ -2467,14 +2374,6 @@ class ManualOrganizeExecutionService:
             preview, authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
         selected = self._selected_authorized_items(preview, authority)
-        # The Worker re-asks the shared remaining-scope contract immediately
-        # before it reconstructs the reviewed work.  A preparation whose *whole*
-        # scope was decided by another attempt while this execution waited in the
-        # queue is closed with one truthful pre-mutation failure instead of
-        # producing a new effect.  The chain-level decision is deliberately used
-        # here rather than the per-source one: a mixed scope is judged per item
-        # just below, so a decided sibling must not close a legal one with it.
-        self._assert_recovery_preparation_live(preview)
         runtime = self._load_runtime(
             authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
@@ -2550,18 +2449,6 @@ class ManualOrganizeExecutionService:
         heartbeat: Callable[[], bool] | None,
         task_context=None,
     ) -> ManualExecution:
-        # The chain-level staleness was already refused before reconstruction.  A
-        # mixed scope, however, stays eligible while one sibling is undecided, so
-        # each item's exact source is re-judged here immediately before its own
-        # mutation.  This distinguishes the legal pending item of this very
-        # attempt (never self-refused) from a sibling another attempt already
-        # decided, without closing the whole batch for one retired source.
-        recovery_eligibility = None
-        try:
-            preview = self._durable_preview(authority.preview_id)
-            recovery_eligibility = self._recovery_eligibility_for(preview)
-        except ManualExecutionError:
-            recovery_eligibility = None
         for preview_item in selected:
             execution = self.get(execution.execution_id)
             item = next(
@@ -2576,29 +2463,6 @@ class ManualOrganizeExecutionService:
                     code="claim_lost",
                     next_action="inspect the durable execution; automatic replay is refused",
                 )
-            if recovery_eligibility is not None and not recovery_eligibility.may_offer(
-                preview_item.source.storage_id, preview_item.source.path
-            ):
-                execution = self._publish_pre_mutation_failure(
-                    execution,
-                    item,
-                    ManualExecutionError(
-                        "this source already has a decided outcome in its recovery chain; a "
-                        "decided or uncertain effect is never repeated",
-                        code="recovery_scope_decided",
-                        next_action=(
-                            "inspect the source's recorded result; only the still-undecided "
-                            "sources of this run are recoverable"
-                        ),
-                        details={
-                            "storageId": preview_item.source.storage_id,
-                            "path": preview_item.source.path,
-                        },
-                    ),
-                    storages,
-                    task_context=task_context,
-                )
-                continue
             try:
                 self._validate_plan_authority(
                     preview_item.plan, authority.allow_overwrite, authority.allow_source_cleanup

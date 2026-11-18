@@ -232,7 +232,12 @@ from mediaflow.domain.task_scheduling import (
     require_preserved_item_source,
     require_result_matches_item_source,
 )
-from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_columns
+from mediaflow.infrastructure.sqlite_applicability import (
+    CONFIGURATION_TABLES,
+    assert_supported_database,
+    read_database_markers,
+)
+from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 
 # Manual intent, Preview, exact execution, and Automation Task Definition
 # Preview tables are additive migrations on the runtime schema.  The table
@@ -1166,6 +1171,11 @@ class SQLiteTaskRepository:
 
     def __init__(self, database_path: str | Path, *, read_only: bool = False) -> None:
         self._path = Path(database_path)
+        self._database_markers = assert_supported_database(
+            self._path,
+            current_runtime_version=SCHEMA_VERSION,
+            current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+        )
         if read_only:
             self._connection = sqlite3.connect(
                 self._path.resolve().as_uri() + "?mode=ro",
@@ -4833,17 +4843,12 @@ class SQLiteTaskRepository:
             clauses.append("derived_attention = 1")
         if view is not None:
             if view == OperationsRunView.RUNNING.value:
-                # Real unfinished work: queued, executing, continuable-paused
-                # or waiting on internal stability.  The complement of the
-                # ended view, so the two lifecycle views partition the
-                # population without a gap.
-                clauses.append(
-                    "derived_status NOT IN ('completed', 'partial_success', 'failed', 'cancelled')"
-                )
+                # Real unfinished work: queued, executing or waiting on
+                # internal stability.  The complement of the ended view, so the
+                # two lifecycle views partition the population without a gap.
+                clauses.append("derived_status NOT IN ('completed', 'failed', 'cancelled')")
             elif view == OperationsRunView.ENDED.value:
-                clauses.append(
-                    "derived_status IN ('completed', 'partial_success', 'failed', 'cancelled')"
-                )
+                clauses.append("derived_status IN ('completed', 'failed', 'cancelled')")
             elif view == OperationsRunView.ATTENTION.value:
                 clauses.append("derived_attention = 1")
             elif view in RECOVERY_PROBLEM_TYPES:
@@ -4906,9 +4911,8 @@ class SQLiteTaskRepository:
         relation, so this reads those relations only — never a name, a timestamp
         proximity or the current status of some other Task:
 
-        - a Task Center recovery / remaining-scope / metadata-correction
-          continuation records the exact child Task it produced
-          (``new_task_id``);
+        - a Task Center recovery / metadata-correction continuation records the
+          exact child Task it produced (``new_task_id``);
         - a same-page recovery execution is the confirmed execution of one
           ``manual_recovery_preparations`` summary, and that table persists the
           exact ``manual_executions.task_id`` it admitted.  That execution is a
@@ -5303,7 +5307,6 @@ class SQLiteTaskRepository:
                        -- did complete (the terminal clause below), so a
                        -- durably failed/partial flow can never display as
                        -- completed here or in any consumer of this document.
-                       WHEN task_status.status = 'paused' THEN 'paused'
                        WHEN task_status.status = 'pending' THEN 'pending'
                        WHEN task_status.status = 'running' THEN 'running'
                        -- A bounded discovery carries no Task yet; its own
@@ -5313,7 +5316,6 @@ class SQLiteTaskRepository:
                                WHEN 'queued' THEN 'pending'
                                WHEN 'running' THEN 'running'
                                WHEN 'waiting_stability' THEN 'waiting'
-                               WHEN 'paused' THEN 'paused'
                                WHEN 'completed' THEN 'completed'
                                WHEN 'partial_success' THEN 'partial_success'
                                WHEN 'failed' THEN 'failed'
@@ -5322,7 +5324,7 @@ class SQLiteTaskRepository:
                        WHEN runs.anchor_status = 'pending' THEN 'pending'
                        WHEN runs.anchor_status = 'running' THEN 'running'
                        WHEN task_status.status IN (
-                           'completed', 'partial_success', 'failed', 'cancelled'
+                           'completed', 'failed', 'cancelled'
                        ) THEN task_status.status
                        WHEN runs.anchor_status IN ('completed', 'failed', 'cancelled') THEN
                            runs.anchor_status
@@ -5564,23 +5566,20 @@ class SQLiteTaskRepository:
                     -- failed files reads completed here, with those file facts
                     -- staying in the independent item evidence.  A legacy row
                     -- without a linked Task keeps its anchor/Job evidence, and
-                    -- a legacy partial_success/paused aggregate keeps its
-                    -- honest historical label instead of being silently
-                    -- promoted into a current flow success.
+                    -- a legacy partial_success/paused aggregate is unavailable
+                    -- evidence instead of being silently promoted into a
+                    -- current flow status.
                     CASE WHEN linked_task_status = 'pending' THEN 'pending'
                          WHEN linked_task_status = 'running' THEN 'running'
                          WHEN linked_task_status = 'completed' THEN 'completed'
                          WHEN linked_task_status = 'failed' THEN 'failed'
                          WHEN linked_task_status = 'cancelled' THEN 'cancelled'
-                         WHEN linked_task_status = 'partial_success' THEN 'failed'
-                         WHEN linked_task_status = 'paused' THEN 'paused'
                          WHEN linked_task_status IS NULL AND anchor_status IS NOT NULL
                               AND run_kind = 'discovery' THEN
                               CASE anchor_status
                                   WHEN 'queued' THEN 'pending'
                                   WHEN 'running' THEN 'running'
                                   WHEN 'waiting_stability' THEN 'waiting'
-                                  WHEN 'paused' THEN 'paused'
                                   WHEN 'completed' THEN 'completed'
                                   WHEN 'partial_success' THEN 'partial_success'
                                   WHEN 'failed' THEN 'failed'
@@ -5593,11 +5592,10 @@ class SQLiteTaskRepository:
                 LEFT JOIN task_initial_executions frozen
                     ON frozen.task_id = COALESCE(linked_task_id, transfer_task_id, anchor_id)
             ) SELECT original.*,
-                CASE WHEN original_status IN ('pending', 'running', 'paused', 'waiting')
+                CASE WHEN original_status IN ('pending', 'running', 'waiting')
                          THEN original_status
                      WHEN original_status IN ('completed', 'failed', 'cancelled')
                          THEN original_status
-                     WHEN original_status = 'partial_success' THEN 'failed'
                      ELSE 'unknown' END AS record_outcome
             FROM original
         """
@@ -5654,7 +5652,6 @@ class SQLiteTaskRepository:
             "failed",
             "pending",
             "running",
-            "paused",
             "waiting",
             "cancelled",
             "unknown",
@@ -6000,7 +5997,6 @@ class SQLiteTaskRepository:
             WHEN linked_task_status IN (
                 'pending', 'running', 'completed', 'failed', 'cancelled'
             ) THEN linked_task_status
-            WHEN linked_task_status = 'partial_success' THEN 'failed'
             ELSE 'unavailable'
         END"""
         metric_population = f"""SELECT *,
@@ -6049,7 +6045,6 @@ class SQLiteTaskRepository:
                             AND automation_flow_status = 'unavailable'
                             THEN 1 ELSE 0 END), 0) AS current_unavailable,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND automation_flow_status = 'failed'
                             AND linked_task_status = 'partial_success'
                             THEN 1 ELSE 0 END), 0) AS current_partial,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
@@ -6292,7 +6287,7 @@ class SQLiteTaskRepository:
                             AND items.status IN ('failed', 'partial')) AS failed_items,
                            (SELECT COUNT(*) FROM task_items items
                             WHERE items.task_id = follow_ups.new_task_id
-                            AND items.status IN ('pending', 'processing', 'paused',
+                            AND items.status IN ('pending', 'processing',
                                 'waiting_confirm', 'waiting_recognition', 'waiting_metadata',
                                 'waiting_metadata_correction', 'waiting_classification'))
                                 AS active_items,
@@ -9361,23 +9356,6 @@ class SQLiteTaskRepository:
         ).fetchone()
         if intent_row is None:
             raise LookupError(f"manual intent {preview.intent_id!r} was not found")
-        if preview.recovery_source_task_id is not None:
-            source_task = self._connection.execute(
-                "SELECT status, configuration_snapshot_id, "
-                "configuration_snapshot_digest FROM tasks WHERE task_id=?",
-                (preview.recovery_source_task_id,),
-            ).fetchone()
-            if (
-                source_task is None
-                or source_task["status"] in {value.value for value in SETTLED_TASK_FLOW_STATUSES}
-                or source_task["configuration_snapshot_id"] != preview.configuration_snapshot_id
-                or source_task["configuration_snapshot_digest"]
-                != preview.configuration_snapshot_digest
-            ):
-                raise ManualPreviewConflict(
-                    "the source Task changed or its pinned configuration no longer "
-                    "matches; no recovery Preview was published"
-                )
             active_continuation = None
             if active_continuation is not None:
                 raise ManualPreviewConflict(
@@ -9451,8 +9429,8 @@ class SQLiteTaskRepository:
             "configuration_snapshot_digest, status, intent_version, created_at, "
             "updated_at, next_action, error, zero_mutation, current, truncated, "
             "previous_preview_id, unselected_item_ids_json, source_scope, "
-            "source_scope_id, recovery_source_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "source_scope_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 preview.preview_id,
                 preview.intent_id,
@@ -9476,7 +9454,6 @@ class SQLiteTaskRepository:
                 ),
                 preview.source_scope,
                 preview.source_scope_id,
-                preview.recovery_source_task_id,
             ),
         )
         for item in values:
@@ -10097,74 +10074,6 @@ class SQLiteTaskRepository:
                 raise
         return True
 
-    def _assert_recovery_preparation_live_locked(
-        self, recovery_source_task_id: object, sources: object = None
-    ) -> None:
-        """Refuse an atomic admission whose recovery sources were decided.
-
-        The application boundary has already asked the shared remaining-scope
-        contract, but a source can be decided between that read and this write.
-        The atomic admission is therefore the final fence: it re-reads the exact
-        chain and every recorded outcome inside the same ``BEGIN IMMEDIATE``
-        transaction that consumes the one-shot authority, so an already-decided
-        source can never acquire a second execution, no matter how the two
-        attempts interleave.
-
-        ``sources`` is the exact ``(storage_id, path)`` selection this
-        transaction is about to admit.  A mixed recovery scope stays eligible
-        while one sibling is undecided, so the chain-level verdict alone would
-        let a decided sibling through on the strength of an unrelated legal one;
-        passing the selection lets the shared contract refuse each decided
-        source by name.  ``None`` keeps the whole-chain decision only.
-
-        A source already recorded as undecided (a zero-effect failure) stays
-        legitimately recoverable, and this execution's own items do not exist yet
-        at this point, so a legal attempt never refuses itself.
-        """
-
-        if recovery_source_task_id is None:
-            return
-        if not isinstance(recovery_source_task_id, str) or not recovery_source_task_id:
-            raise ManualExecutionError(
-                "the recovery summary's source run is invalid",
-                code="recovery_scope_stale",
-                next_action="reload the run and request a fresh plan summary",
-            )
-        from mediaflow.application.scope_continuation import (
-            recovery_preparation_eligibility,
-        )
-
-        eligibility = recovery_preparation_eligibility(
-            self, recovery_source_task_id=recovery_source_task_id
-        )
-        if not eligibility.applies:
-            return
-        if not eligibility.eligible:
-            raise ManualExecutionError(
-                eligibility.message or "the recovery summary's remaining scope changed",
-                code=getattr(eligibility, "code", None) or "recovery_scope_stale",
-                next_action=(
-                    eligibility.next_action
-                    or "request a fresh plan summary for the still-undecided sources"
-                ),
-            )
-        if sources is None:
-            return
-        refused = eligibility.refused_sources(sources)
-        if not refused:
-            return
-        storage_id, path = refused[0]
-        raise ManualExecutionError(
-            "a source this recovery summary still lists already has a decided outcome; it is "
-            "never executed again",
-            code="recovery_scope_decided",
-            next_action=(
-                "review the run's recorded per-item outcomes; the still-undecided sources keep "
-                "their own exact summary and a decided or uncertain effect is never repeated"
-            ),
-            details={"storageId": storage_id, "path": path, "refusedCount": len(refused)},
-        )
-
     def _assert_files_preparation_live_locked(
         self, intent_id: str, adopt_task_id: str | None
     ) -> None:
@@ -10347,12 +10256,6 @@ class SQLiteTaskRepository:
                         code="preview_stale",
                         next_action="reload the manual intent and request a fresh Preview",
                     )
-                self._assert_recovery_preparation_live_locked(
-                    preview["recovery_source_task_id"]
-                    if "recovery_source_task_id" in preview.keys()
-                    else None,
-                    sources=((item.source.storage_id, item.source.path) for item in items),
-                )
                 if preparation_id is not None:
                     # The summary's own version fence is checked BEFORE any
                     # TaskItem is written: an adopted confirmation reuses the
@@ -10987,8 +10890,8 @@ class SQLiteTaskRepository:
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
-        "auto_prepare, preview_id, definition_origin_json, recovery_source_task_id, "
-        "recovery_excluded_paths_json, organize_task_id, storage_scope_json"
+        "auto_prepare, preview_id, definition_origin_json, organize_task_id, "
+        "storage_scope_json"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -11071,8 +10974,7 @@ class SQLiteTaskRepository:
                     )
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (" + ", ".join("?" for _ in range(29)) + ")",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -11110,9 +11012,9 @@ class SQLiteTaskRepository:
         list window.  Terminal and frozen records are excluded, so deliberate
         successor work is always a new discovery, and the lookup is bound to the
         actor, the exact library/Storage binding, the immutable pin and the
-        origin (ordinary Files, definition Run once or remaining-scope recovery)
-        so two libraries with the same relative path, two definitions over the
-        same scope and an ordinary selection never answer for each other.
+        definition origin, so two libraries with the same relative path, two
+        definitions over the same scope and an ordinary selection never answer
+        for each other.
         """
 
         if not isinstance(actor, str) or not actor.strip():
@@ -11133,7 +11035,6 @@ class SQLiteTaskRepository:
         with self._lock:
             row = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries WHERE admission_signature=? "
-                "AND recovery_source_task_id IS NULL "
                 "AND intent_id IS NULL AND frozen_at IS NULL "
                 "AND status NOT IN (?, ?, ?, ?) "
                 # PATCH-20261109-3: a record whose linked organizing flow has
@@ -11153,71 +11054,6 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.FAILED.value,
                     DiscoveryStatus.CANCELLED.value,
                     *sorted(value.value for value in SETTLED_TASK_FLOW_STATUSES),
-                ),
-            ).fetchone()
-            if row is None:
-                return None
-            return self._load_media_discovery_locked(row["discovery_id"])
-
-    def find_open_recovery_discovery(
-        self,
-        *,
-        actor: str,
-        recovery_source_task_id: str,
-        resource_library_id: str,
-        storage_id: str,
-        snapshot_id: str,
-        snapshot_digest: str,
-        scope_signature: str,
-        recovery_excluded_paths: tuple[str, ...] = (),
-        max_primary_sources: int | None = None,
-    ) -> MediaDiscovery | None:
-        """One already durable *open* remaining-scope recovery preparation.
-
-        A repeated or lost-response recovery request converges on the exact
-        durable preparation it created instead of starting a second walk, and
-        the lookup is bound to the actor, the exact source Task, the library/
-        Storage binding, the immutable pin and the exact exclusion/budget
-        context that decided what this preparation may observe.  Two paused runs
-        of the same library therefore never alias each other, and a *different*
-        recovery context (for example a sibling that became undecided after a
-        correction) is its own admission.  Terminal and frozen records are
-        excluded so a deliberate new preparation is always a new admission.
-        """
-
-        if not isinstance(actor, str) or not actor.strip():
-            raise ValueError("media discovery actor is required")
-        if not isinstance(recovery_source_task_id, str) or not recovery_source_task_id.strip():
-            raise ValueError("media discovery recovery source Task identity is required")
-        if not isinstance(scope_signature, str):
-            raise ValueError("media discovery recovery scope signature is required")
-        signature = discovery_admission_identity(
-            actor=actor,
-            resource_library_id=resource_library_id,
-            storage_id=storage_id,
-            snapshot_id=snapshot_id,
-            snapshot_digest=snapshot_digest,
-            scope_signature=scope_signature,
-            # A remaining-scope preparation is always a full preparation.
-            auto_prepare=True,
-            recovery_source_task_id=recovery_source_task_id,
-            recovery_excluded_paths=recovery_excluded_paths,
-            max_primary_sources=max_primary_sources,
-        )
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT discovery_id FROM media_discoveries WHERE admission_signature=? "
-                "AND recovery_source_task_id=? "
-                "AND intent_id IS NULL AND frozen_at IS NULL "
-                "AND status NOT IN (?, ?, ?, ?) "
-                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
-                (
-                    signature,
-                    recovery_source_task_id,
-                    DiscoveryStatus.COMPLETED.value,
-                    DiscoveryStatus.PARTIAL_SUCCESS.value,
-                    DiscoveryStatus.FAILED.value,
-                    DiscoveryStatus.CANCELLED.value,
                 ),
             ).fetchone()
             if row is None:
@@ -11714,8 +11550,7 @@ class SQLiteTaskRepository:
                     )
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (" + ", ".join("?" for _ in range(29)) + ")",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -12214,7 +12049,6 @@ class SQLiteTaskRepository:
                         storage_path=storage_path,
                         resource_library_id=discovery.resource_library_id,
                         exclude_discovery_id=discovery.discovery_id,
-                        exclude_lineage_task_id=discovery.recovery_source_task_id,
                     )
                     if owned is None:
                         accepted.append(entry)
@@ -12372,7 +12206,6 @@ class SQLiteTaskRepository:
         *,
         source_version: SourceVersionEvidence | None = None,
         exclude_discovery_id: str | None = None,
-        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """Persist one admitted TaskItem only while its source is still free.
 
@@ -12403,7 +12236,6 @@ class SQLiteTaskRepository:
                     source_version=source_version,
                     exclude_task_id=item.task_id,
                     exclude_discovery_id=exclude_discovery_id,
-                    exclude_lineage_task_id=exclude_lineage_task_id,
                 )
                 if owner is not None:
                     self._connection.rollback()
@@ -12427,7 +12259,6 @@ class SQLiteTaskRepository:
         source_version: SourceVersionEvidence | None = None,
         exclude_task_id: str | None = None,
         exclude_discovery_id: str | None = None,
-        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """The unfinished work that already owns one verified concrete source.
 
@@ -12447,14 +12278,9 @@ class SQLiteTaskRepository:
         so a live claim is never released on incomparable evidence.
 
         A Task item owns its source from admission until it reaches a *settled*
-        state, so queued, running, paused, waiting-for-decision and saved-decision
-        work all keep their claim; a terminal item does not.  A discovery admission
+        state, so queued, running, waiting-for-decision and saved-decision work
+        all keep their claim; a terminal item does not.  A discovery admission
         owns the sources of its admitted selection for the same reason.
-
-        ``exclude_lineage_task_id`` names the Task whose own remaining scope this
-        work legally continues.  Its still-unsettled items are the *source* of that
-        continuation, not a competing owner, so they can never make a legal
-        remaining-scope preparation refuse itself.
         """
 
         if not isinstance(storage_id, str) or not storage_id.strip():
@@ -12475,7 +12301,6 @@ class SQLiteTaskRepository:
                 source_version=source_version,
                 exclude_task_id=exclude_task_id,
                 exclude_discovery_id=exclude_discovery_id,
-                exclude_lineage_task_id=exclude_lineage_task_id,
             )
 
     def _find_owned_source_work_locked(
@@ -12489,7 +12314,6 @@ class SQLiteTaskRepository:
         source_version: SourceVersionEvidence | None = None,
         exclude_task_id: str | None = None,
         exclude_discovery_id: str | None = None,
-        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """The ownership answer itself, without taking the read lock again.
 
@@ -12535,8 +12359,6 @@ class SQLiteTaskRepository:
         excluded_tasks: set[str] = set()
         if exclude_task_id is not None:
             excluded_tasks.add(exclude_task_id)
-        if exclude_lineage_task_id is not None:
-            excluded_tasks.add(exclude_lineage_task_id)
         if excluded_tasks:
             clauses.append("items.task_id NOT IN (" + ", ".join("?" for _ in excluded_tasks) + ")")
             parameters.extend(sorted(excluded_tasks))
@@ -12587,7 +12409,6 @@ class SQLiteTaskRepository:
             source_fingerprint=source_fingerprint,
             source_version=source_version,
             exclude_discovery_id=exclude_discovery_id,
-            exclude_lineage_task_id=exclude_lineage_task_id,
         )
 
     def _task_item_observed_a_replaced_source_locked(
@@ -13108,7 +12929,6 @@ class SQLiteTaskRepository:
         source_fingerprint: str | None = None,
         source_version: SourceVersionEvidence | None = None,
         exclude_discovery_id: str | None,
-        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """A durable organizing admission that still owns one concrete source.
 
@@ -13127,42 +12947,6 @@ class SQLiteTaskRepository:
             DiscoveryStatus.CANCELLED.value,
             DiscoveryStatus.FAILED.value,
         ]
-        if resource_library_id is not None and exclude_lineage_task_id is not None:
-            # A *legal continuation* reviews its own unfinished Task's remaining
-            # scope.  Another analysis-only preparation of the same library (a
-            # frozen summary awaiting its own confirmation) cannot mutate media and
-            # must not veto that remaining scope: two preparations may coexist, and
-            # the real double-execution gate is the admitted TaskItem plus the
-            # one-shot execution authority.  A different library binding, and a
-            # record whose own intent already reached an execution, stay owners.
-            clauses.append(
-                "(d.resource_library_id<>? OR (d.intent_id IS NOT NULL AND EXISTS ("
-                "SELECT 1 FROM manual_executions execution WHERE execution.intent_id="
-                "d.intent_id)))"
-            )
-            parameters.append(resource_library_id)
-        elif resource_library_id is not None and exclude_lineage_task_id is not None:
-            # A *legal continuation* reviews its own unfinished Task's remaining
-            # scope.  Another analysis-only preparation of the same library cannot
-            # mutate media, so its reviewed-but-unconfirmed manifest must not veto
-            # that remaining scope; the real duplicate-execution gate is the
-            # admitted TaskItem plus the one-shot execution authority.  A different
-            # binding of the same Storage, and a same-library admission whose
-            # intent already reached an execution, remain owners.
-            clauses.append(
-                "(d.resource_library_id<>? OR (d.intent_id IS NOT NULL AND EXISTS ("
-                "SELECT 1 FROM manual_executions execution "
-                "WHERE execution.intent_id=d.intent_id)))"
-            )
-            parameters.append(resource_library_id)
-        # B46.3-04: a *same-library* admission owns the sources it holds exactly
-        # like any other library binding does.  The previous same-library exemption
-        # (owner only once frozen/intent-linked/completed) is the proven hole: two
-        # concurrent Files submissions of one library each read the other's *queued*
-        # work as free and both committed a Task for one concrete source.  Ownership
-        # is therefore decided only by the verified Storage identity below; the
-        # service layer converges on an open work before it reaches the admission
-        # boundary, so no exemption is needed for the normal merge case.
         if exclude_discovery_id is not None:
             clauses.append("d.discovery_id<>?")
             parameters.append(exclude_discovery_id)
@@ -13903,9 +13687,8 @@ class SQLiteTaskRepository:
 
         Only a *deliberate Files selection* reserves, exactly as only it creates the
         outer organizing work whose sources these are.  A definition-bound Run once
-        and a remaining-scope recovery preparation keep their own admission and
-        lineage rules unchanged, and a record written before this amendment still
-        round-trips as the automatic admission it was.
+        keeps its own admission and lineage rules unchanged, and a record written
+        before this amendment still round-trips as the automatic admission it was.
         """
 
         if not discovery.progress.manual_selection or not discovery.sources:
@@ -13954,7 +13737,6 @@ class SQLiteTaskRepository:
                 # already admitted.
                 exclude_task_id=discovery.organize_task_id,
                 exclude_discovery_id=discovery.discovery_id,
-                exclude_lineage_task_id=discovery.recovery_source_task_id,
             )
             if owned is not None:
                 entry: dict[str, object] = {"path": relative}
@@ -14340,12 +14122,6 @@ class SQLiteTaskRepository:
                 if discovery.definition_origin is not None
                 else None
             ),
-            discovery.recovery_source_task_id,
-            json.dumps(
-                list(discovery.recovery_excluded_paths),
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
             discovery.organize_task_id,
             json.dumps(
                 [list(item) for item in discovery.storage_scope],
@@ -14364,9 +14140,8 @@ class SQLiteTaskRepository:
         unrelated discoveries were admitted since.  It contains no secret and no
         physical Storage path: the actor, the enabled library/Storage binding,
         the immutable configuration pin, the exact canonical scope, whether the
-        admission is a full preparation, the definition/任务 origin a definition-
-        bound or remaining-scope admission carries, its exclusions and its primary
-        bound.
+        admission is a full preparation and the definition origin a
+        definition-bound admission carries.
         """
 
         origin = discovery.definition_origin
@@ -14380,16 +14155,6 @@ class SQLiteTaskRepository:
             auto_prepare=discovery.auto_prepare,
             definition_id=origin.definition_id if origin is not None else None,
             definition_fingerprint=(origin.definition_fingerprint if origin is not None else None),
-            recovery_source_task_id=discovery.recovery_source_task_id,
-            recovery_excluded_paths=discovery.recovery_excluded_paths,
-            # The primary bound only decides *which* sources a recovery
-            # preparation may still offer, so it is part of that admission's
-            # identity and of no other kind's.
-            max_primary_sources=(
-                discovery.budgets.max_primary_sources
-                if discovery.recovery_source_task_id is not None
-                else None
-            ),
         )
 
     def _load_media_discovery_locked(self, discovery_id: str) -> MediaDiscovery | None:
@@ -14433,10 +14198,6 @@ class SQLiteTaskRepository:
                         json.loads(row["definition_origin_json"])
                         if row["definition_origin_json"]
                         else None
-                    ),
-                    "recoverySourceTaskId": row["recovery_source_task_id"],
-                    "recoveryExcludedPaths": json.loads(
-                        row["recovery_excluded_paths_json"] or "[]"
                     ),
                     "organizeTaskId": row["organize_task_id"],
                     "storageScope": json.loads(row["storage_scope_json"] or "[]"),
@@ -16324,11 +16085,6 @@ class SQLiteTaskRepository:
                 source_scope_id=(
                     row["source_scope_id"] if "source_scope_id" in row.keys() else None
                 ),
-                recovery_source_task_id=(
-                    row["recovery_source_task_id"]
-                    if "recovery_source_task_id" in row.keys()
-                    else None
-                ),
             )
         except Exception as error:
             raise ManualPreviewUnavailable(
@@ -18163,7 +17919,6 @@ class SQLiteTaskRepository:
         item: PersistentTaskItem,
         *,
         source_version: SourceVersionEvidence | None = None,
-        exclude_lineage_task_id: str | None = None,
         stage: TaskItemPublication = TaskItemPublication.START,
         exclude_failed_history: bool = False,
     ) -> tuple[bool, dict[str, object] | None]:
@@ -18217,7 +17972,6 @@ class SQLiteTaskRepository:
                     source_fingerprint=item.source_fingerprint,
                     source_version=source_version,
                     exclude_task_id=item.task_id,
-                    exclude_lineage_task_id=exclude_lineage_task_id,
                 )
                 if owner is not None:
                     self._connection.rollback()
@@ -19033,20 +18787,28 @@ class SQLiteTaskRepository:
 
     def _initialize(self) -> None:
         with self._lock, self._connection:
+            markers = read_database_markers(self._path)
+            if markers.runtime_version is not None:
+                self._initialize_existing_runtime_locked()
+                return
+            unexpected = (
+                markers.tables
+                - CONFIGURATION_TABLES
+                - {
+                    "schema_version",
+                    "sqlite_sequence",
+                }
+            )
+            if unexpected:
+                raise ValueError(
+                    "runtime database contains tables without a current runtime marker: "
+                    + ", ".join(sorted(unexpected))
+                    + "; the file was not modified"
+                )
             self._connection.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version "
                 "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
             )
-            row = self._connection.execute(
-                "SELECT version FROM schema_version WHERE component = 'runtime'"
-            ).fetchone()
-            if row and int(row["version"]) > SCHEMA_VERSION:
-                raise ValueError("runtime database schema is newer than this MediaFlow version")
-            if row and int(row["version"]) < 58:
-                raise ValueError(
-                    "runtime database uses the retired Job schema; this version requires a "
-                    "fresh runtime database"
-                )
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -19068,6 +18830,8 @@ class SQLiteTaskRepository:
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
                     execution_status TEXT, error TEXT, progress TEXT,
                     source_observed_at TEXT, source_storage_path TEXT,
+                    source_occurrence_id TEXT, source_fingerprint TEXT,
+                    source_fingerprint_state TEXT NOT NULL DEFAULT 'unverified',
                     superseded_by_task_id TEXT,
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
@@ -19161,10 +18925,20 @@ class SQLiteTaskRepository:
                     uncertain_effects TEXT NOT NULL DEFAULT '[]',
                     primary_completed INTEGER NOT NULL DEFAULT 0,
                     attachment_results TEXT NOT NULL DEFAULT '[]',
-                    source_observed_at TEXT,
+                    source_observed_at TEXT, source_occurrence_id TEXT,
+                    source_fingerprint TEXT,
+                    source_fingerprint_state TEXT NOT NULL DEFAULT 'unverified',
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
+                CREATE INDEX IF NOT EXISTS task_items_source_occurrence
+                    ON task_items(storage_id, source_path, source_occurrence_id);
+                CREATE INDEX IF NOT EXISTS task_items_source_storage_path
+                    ON task_items(storage_id, source_storage_path);
+                CREATE INDEX IF NOT EXISTS task_items_source_status
+                    ON task_items(storage_id, source_path, status);
+                CREATE INDEX IF NOT EXISTS task_results_source_occurrence
+                    ON task_results(source_storage_id, source_path, source_occurrence_id);
                 CREATE TABLE IF NOT EXISTS pipeline_evidence (
                     evidence_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL, attempts INTEGER NOT NULL,
@@ -19235,8 +19009,7 @@ class SQLiteTaskRepository:
                     next_observation_at TEXT,
                     admission_signature TEXT, admission_request_id TEXT,
                     auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT,
-                    definition_origin_json TEXT, recovery_source_task_id TEXT,
-                    recovery_excluded_paths_json TEXT NOT NULL DEFAULT '[]',
+                    definition_origin_json TEXT,
                     organize_task_id TEXT,
                     storage_scope_json TEXT NOT NULL DEFAULT '[]'
                 );
@@ -19285,7 +19058,6 @@ class SQLiteTaskRepository:
                     truncated INTEGER NOT NULL DEFAULT 0, previous_preview_id TEXT,
                     unselected_item_ids_json TEXT NOT NULL,
                     source_scope TEXT, source_scope_id TEXT,
-                    recovery_source_task_id TEXT,
                     FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
                 );
                 CREATE INDEX IF NOT EXISTS manual_previews_intent_created
@@ -19666,383 +19438,184 @@ class SQLiteTaskRepository:
                     ON operational_logs(occurred_at, log_id);
                 """
             )
-            if row is None:
-                # A fresh database was just created with the complete current
-                # structure, so it has no historical column to add, no row to
-                # backfill and no previous layout to rebuild: the version mark is
-                # its only remaining initialization step.  Tables are created by
-                # idempotent CREATE ... IF NOT EXISTS statements, so a concurrent
-                # open of the same empty path completes the same structure and
-                # both sides write the same marker.
-                self._connection.execute("BEGIN IMMEDIATE")
-                try:
-                    ensure_task_occurrence_columns(self._connection)
-                    self._connection.execute(_TASK_SCHEDULING_CREATE)
-                    self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
-                    self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
-                    self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
-                    self._advance_runtime_schema_marker()
-                    self._connection.commit()
-                except BaseException:
-                    self._connection.rollback()
-                    raise
-                return
-            # sqlite does not start a transaction for ALTER/CREATE statements.
-            # Every required structural adjustment and the version marker must
-            # fail atomically on an existing database.
+            # A fresh database was just created with the complete current
+            # structure, including the Task scheduling/initial-execution evidence
+            # and the source-occurrence columns/indexes.  The version mark is the
+            # last durable step.
             self._connection.execute("BEGIN IMMEDIATE")
-            ensure_task_occurrence_columns(self._connection)
-            if self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' "
-                "AND name='media_discovery_observations'"
-            ).fetchone():
-                observation_columns = {
-                    row["name"]
-                    for row in self._connection.execute(
-                        "PRAGMA table_info(media_discovery_observations)"
-                    ).fetchall()
-                }
-                if "stable_since" not in observation_columns:
-                    self._connection.execute(
-                        "ALTER TABLE media_discovery_observations ADD COLUMN stable_since TEXT"
-                    )
-            discovery_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(media_discoveries)"
-                ).fetchall()
-            }
-            if "next_observation_at" not in discovery_columns:
-                # Additive: a prior-schema discovery keeps every existing column
-                # and simply becomes immediately claimable, exactly as before.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN next_observation_at TEXT"
-                )
-            if "admission_signature" not in discovery_columns:
-                # Additive: a prior-schema row keeps its identity and is simply
-                # not reconcilable by signature.  Existing open work stays
-                # readable and finishable; the operator can still stop it and
-                # start a deliberate new discovery, which is the documented
-                # safe-stop behavior for unsupported legacy discovery.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN admission_signature TEXT"
-                )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS media_discoveries_admission "
-                "ON media_discoveries(admission_signature, status)"
-            )
-            if "admission_request_id" not in discovery_columns:
-                # Additive: a prior-schema row keeps its identity and is simply
-                # not reconcilable by client request identity.  It stays fully
-                # readable and finishable; a lost response for such a legacy
-                # admission keeps the honest unresolved state instead of a
-                # guessed navigation.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN admission_request_id TEXT"
-                )
-            if "definition_origin_json" not in discovery_columns:
-                # Additive: a prior-schema (Files-originated) discovery simply has
-                # no definition origin, so it stays exactly the manual
-                # folder/mixed selection it was.  Nothing is backfilled and no
-                # definition identity is guessed; a definition-bound Run once is
-                # always a new admission.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN definition_origin_json TEXT"
-                )
-            if "auto_prepare" not in discovery_columns:
-                # Additive: a prior-schema discovery keeps the original explicit
-                # Finalize contract and is never retroactively turned into a
-                # preparation.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN auto_prepare INTEGER NOT NULL "
-                    "DEFAULT 0"
-                )
-            if "preview_id" not in discovery_columns:
-                # Additive: a prior-schema discovery simply has no linked
-                # Preview and stays fully readable.
-                self._connection.execute("ALTER TABLE media_discoveries ADD COLUMN preview_id TEXT")
-            if "recovery_source_task_id" not in discovery_columns:
-                # Additive: a prior-schema discovery is never retroactively
-                # turned into a remaining-scope recovery preparation.  It stays
-                # exactly the Files/Run-once admission it was; a recovery
-                # preparation is always a new admission.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN recovery_source_task_id TEXT"
-                )
-            if "recovery_excluded_paths_json" not in discovery_columns:
-                # Additive: a prior-schema discovery has no recorded exclusions
-                # and is never retroactively narrowed.  It stays exactly the
-                # Files/Run-once admission it was.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN recovery_excluded_paths_json "
-                    "TEXT NOT NULL DEFAULT '[]'"
-                )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS media_discoveries_recovery_source "
-                "ON media_discoveries(recovery_source_task_id, created_at, discovery_id)"
-            )
-            if "organize_task_id" not in discovery_columns:
-                # Additive: a prior-schema discovery keeps its own existing
-                # lineage (a preparation the operator explicitly finalizes, a
-                # definition Run once or a recovery preparation).  It is never
-                # retroactively given an organizing Task, and a new explicit Files
-                # 整理 admission is always a new durable admission.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN organize_task_id TEXT"
-                )
-            # The Task Center reads one Task's own linked preparation (the exact
-            # Files discovery that carries its ready Preview) on every per-item
-            # four-type decision, so the lookup is an indexed one.
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS media_discoveries_organize_task "
-                "ON media_discoveries(organize_task_id, created_at, discovery_id)"
-            )
-            if "storage_scope_json" not in discovery_columns:
-                # Additive schema 52: the exact confined Storage-relative path of
-                # each admitted scope entry.  A prior-schema discovery keeps an
-                # empty list and therefore its conservative legacy identity (its
-                # library-relative paths plus its exact library binding); nothing
-                # is backfilled and no row is silently re-bound.
-                self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN storage_scope_json "
-                    "TEXT NOT NULL DEFAULT '[]'"
-                )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS media_discoveries_request "
-                "ON media_discoveries(actor, admission_request_id)"
-            )
-            # Files needs to reopen its own durable organizing work by library,
-            # long after it left any bounded recent-N window.
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS media_discoveries_actor_library_created "
-                "ON media_discoveries(actor, resource_library_id, created_at, discovery_id)"
-            )
-            # Durable verified source ownership: the exact Storage plus the
-            # ResourceLibrary-root-relative Item path is the identity every
-            # overlapping request is checked against.
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS task_items_source_status "
-                "ON task_items(storage_id, source_path, status)"
-            )
-            manual_item_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(manual_intent_items)"
-                ).fetchall()
-            }
-            if "source_identity_json" not in manual_item_columns:
-                self._connection.execute(
-                    "ALTER TABLE manual_intent_items ADD COLUMN source_identity_json TEXT"
-                )
-            manual_preview_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(manual_previews)").fetchall()
-            }
-            for column in ("source_scope", "source_scope_id"):
-                if column not in manual_preview_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE manual_previews ADD COLUMN {column} TEXT"
-                    )
-            if "recovery_source_task_id" not in manual_preview_columns:
-                self._connection.execute(
-                    "ALTER TABLE manual_previews ADD COLUMN recovery_source_task_id TEXT"
-                )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS manual_previews_recovery_source "
-                "ON manual_previews(recovery_source_task_id, created_at, preview_id)"
-            )
-            # Schema 46: a recovery plan summary records the exact ready subset
-            # and destructive permissions the operator confirmed, so a repeat
-            # confirmation of a *different* selection can never be folded into
-            # the already-admitted submission.  Additive: a legacy row keeps its
-            # existing columns and simply carries no confirmed selection until a
-            # new confirmation fills it.
-            if self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' "
-                "AND name='manual_recovery_preparations'"
-            ).fetchone():
-                preparation_columns = {
-                    row["name"]
-                    for row in self._connection.execute(
-                        "PRAGMA table_info(manual_recovery_preparations)"
-                    ).fetchall()
-                }
-                if "selected_item_ids_json" not in preparation_columns:
-                    self._connection.execute(
-                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
-                        "selected_item_ids_json TEXT NOT NULL DEFAULT '[]'"
-                    )
-                if "allow_overwrite" not in preparation_columns:
-                    self._connection.execute(
-                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
-                        "allow_overwrite INTEGER NOT NULL DEFAULT 0"
-                    )
-                if "allow_source_cleanup" not in preparation_columns:
-                    self._connection.execute(
-                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
-                        "allow_source_cleanup INTEGER NOT NULL DEFAULT 0"
-                    )
-            delivery_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(notification_deliveries)"
-                ).fetchall()
-            }
-            if "target_digest" not in delivery_columns:
-                # Legacy deliveries have no proven recipient authority. Preserve
-                # them without guessing a target from today's Active configuration.
-                self._connection.execute(
-                    "ALTER TABLE notification_deliveries ADD COLUMN target_digest TEXT"
-                )
-            run_display_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(operations_run_display)"
-                ).fetchall()
-            }
-            for column in ("origin_definition_id", "origin_definition_name", "origin_kind"):
-                if column not in run_display_columns:
-                    # Additive: a prior-schema run simply has no recorded
-                    # definition origin.  Reads never backfill it from today's
-                    # Active configuration and never invent a definition link.
-                    self._connection.execute(
-                        f"ALTER TABLE operations_run_display ADD COLUMN {column} TEXT"
-                    )
-            task_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
-            }
-            if "scope_path" not in task_columns:
-                self._connection.execute("ALTER TABLE tasks ADD COLUMN scope_path TEXT")
-            # Schema 40: the unified Operations run inventory reads task rows
-            # ordered and filtered by their durable admission scope.  The index
-            # is created after the additive column migration so a legacy table
-            # receives the column first; everything stays additive.
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS tasks_scope_path ON tasks(scope_path)"
-            )
-            if "item_limit" not in task_columns:
-                self._connection.execute("ALTER TABLE tasks ADD COLUMN item_limit INTEGER")
-            if "configuration_snapshot_id" not in task_columns:
-                self._connection.execute(
-                    "ALTER TABLE tasks ADD COLUMN configuration_snapshot_id TEXT"
-                )
-            if "configuration_snapshot_digest" not in task_columns:
-                self._connection.execute(
-                    "ALTER TABLE tasks ADD COLUMN configuration_snapshot_digest TEXT"
-                )
-            item_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(task_items)").fetchall()
-            }
-            if "progress" not in item_columns:
-                self._connection.execute("ALTER TABLE task_items ADD COLUMN progress TEXT")
-            if "superseded_by_task_id" not in item_columns:
-                # Slice 47 RO-6/AC-23: the durable per-file hand-off marker.  A
-                # failed/partial TaskItem whose source was re-organized by a
-                # newer explicitly confirmed manual Task keeps the marker, so
-                # the previous owner can neither start a further step nor
-                # publish another outcome for it while every recorded Result,
-                # pin and uncertain effect stays exactly as it was.
-                self._connection.execute(
-                    "ALTER TABLE task_items ADD COLUMN superseded_by_task_id TEXT"
-                )
-            # Schema 42: the selected-run detail reads page/filter items by
-            # (task, created_at, item_id), page task results and exactly-linked
-            # operation records by task/plan/time, and counts dispositions per
-            # task — each as one bounded indexed query instead of a table scan.
-            # Indexes only: the read journey adds no column, no backfill and no
-            # second authority, so a Task-Base database upgrades in place with
-            # its pins, results, checkpoints and ownership unchanged.
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS task_items_task_created "
-                "ON task_items(task_id, created_at, item_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS task_results_task_created "
-                "ON task_results(task_id, created_at, result_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS operational_logs_task_time "
-                "ON operational_logs(task_id, occurred_at, log_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS operational_logs_plan_time "
-                "ON operational_logs(plan_id, occurred_at, log_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS recognition_reviews_task_created "
-                "ON recognition_reviews(task_id, created_at, review_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS metadata_reviews_task_created "
-                "ON metadata_reviews(task_id, created_at, review_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS metadata_corrections_task_created "
-                "ON metadata_corrections(task_id, created_at, review_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS classification_reviews_task_created "
-                "ON classification_reviews(task_id, created_at, review_id)"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS conflict_confirmations_task_created "
-                "ON conflict_confirmations(task_id, created_at, confirmation_id)"
-            )
-            execution_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(manual_executions)"
-                ).fetchall()
-            }
-            for column, definition in (
-                ("worker_id", "TEXT"),
-                ("claim_token", "TEXT"),
-                ("claimed_at", "TEXT"),
-                ("claim_expires_at", "TEXT"),
-                ("attempts", "INTEGER NOT NULL DEFAULT 0"),
-            ):
-                if column not in execution_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE manual_executions ADD COLUMN {column} {definition}"
-                    )
-            transfer_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(files_transfers)").fetchall()
-            }
-            for column, definition in (
-                ("mutation_state", "TEXT"),
-                ("in_flight_item_id", "TEXT"),
-                ("in_flight_entry_path", "TEXT"),
-                ("in_flight_action", "TEXT"),
-            ):
-                if column not in transfer_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE files_transfers ADD COLUMN {column} {definition}"
-                    )
-            review_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(metadata_reviews)"
-                ).fetchall()
-            }
-            for name, declaration in (
-                ("selected_rank", "INTEGER"),
-                ("selected_provider", "TEXT"),
-                ("selected_provider_id", "TEXT"),
-                ("selected_media_type", "TEXT"),
-                ("decided_at", "TEXT"),
-                ("actor", "TEXT"),
-            ):
-                if name not in review_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE metadata_reviews ADD COLUMN {name} {declaration}"
-                    )
-            self._migrate_manual_execution_task_scope_locked()
+            try:
+                self._connection.execute(_TASK_SCHEDULING_CREATE)
+                self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
+                self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
+                self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
+                self._advance_runtime_schema_marker()
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def _initialize_existing_runtime_locked(self) -> None:
+        """Validate and minimally adjust one supported current runtime database.
+
+        Every current structure is checked before any change.  The only
+        in-place adjustment is the same-Task summary rebuild needed because
+        Slice Base wrote two retired NOT NULL columns that the current insert
+        does not supply.  It preserves every row, identity, pin, confirmation
+        and effect, and commits together with the version mark.
+        """
+
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._assert_current_runtime_structure_locked()
             self._migrate_manual_recovery_preparation_legacy_columns_locked()
-            self._migrate_task_initial_executions_locked()
-            self._migrate_task_scheduling_locked()
+            marker = self._connection.execute(
+                "SELECT version FROM schema_version WHERE component='runtime'"
+            ).fetchone()
+            if marker is None or int(marker["version"]) != SCHEMA_VERSION:
+                self._advance_runtime_schema_marker()
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+
+    def _assert_current_runtime_structure_locked(self) -> None:
+        """Refuse a malformed/partial runtime database before any business write."""
+
+        required_columns = {
+            "tasks": (
+                "scope_path",
+                "item_limit",
+                "configuration_snapshot_id",
+                "configuration_snapshot_digest",
+            ),
+            "task_items": (
+                "progress",
+                "source_observed_at",
+                "source_storage_path",
+                "source_occurrence_id",
+                "source_fingerprint",
+                "source_fingerprint_state",
+                "superseded_by_task_id",
+            ),
+            "task_results": (
+                "source_observed_at",
+                "source_occurrence_id",
+                "source_fingerprint",
+                "source_fingerprint_state",
+            ),
+            "media_discoveries": (
+                "next_observation_at",
+                "admission_signature",
+                "admission_request_id",
+                "auto_prepare",
+                "preview_id",
+                "definition_origin_json",
+                "organize_task_id",
+                "storage_scope_json",
+            ),
+            "media_discovery_observations": ("stable_since",),
+            "manual_intent_items": ("source_identity_json",),
+            "manual_previews": ("source_scope", "source_scope_id"),
+            "manual_recovery_preparations": (
+                "selected_item_ids_json",
+                "allow_overwrite",
+                "allow_source_cleanup",
+            ),
+            "notification_deliveries": ("target_digest",),
+            "operations_run_display": (
+                "origin_definition_id",
+                "origin_definition_name",
+                "origin_kind",
+            ),
+            "manual_executions": (
+                "worker_id",
+                "claim_token",
+                "claimed_at",
+                "claim_expires_at",
+                "attempts",
+            ),
+            "files_transfers": (
+                "mutation_state",
+                "in_flight_item_id",
+                "in_flight_entry_path",
+                "in_flight_action",
+            ),
+            "metadata_reviews": (
+                "selected_rank",
+                "selected_provider",
+                "selected_provider_id",
+                "selected_media_type",
+                "decided_at",
+                "actor",
+            ),
+            "task_scheduling": tuple(_TASK_SCHEDULING_COLUMNS),
+        }
+        for table, columns in required_columns.items():
+            present = {
+                row["name"]
+                for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not present:
+                raise ValueError(
+                    f"runtime database is missing the current {table} table; "
+                    "the file was not modified"
+                )
+            missing = [column for column in columns if column not in present]
+            if missing:
+                raise ValueError(
+                    f"runtime database is missing current {table} columns: "
+                    + ", ".join(missing)
+                    + "; the file was not modified"
+                )
+        required_tables = {
+            "task_scheduling",
+            "task_initial_executions",
+            "media_discoveries",
+            "media_discovery_observations",
+            "manual_intents",
+            "manual_intent_items",
+            "manual_previews",
+            "manual_preview_items",
+            "manual_executions",
+            "manual_execution_items",
+            "manual_recovery_preparations",
+            "files_transfers",
+            "notification_deliveries",
+            "operational_logs",
+        }
+        present_tables = {
+            row["name"]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        missing_tables = sorted(required_tables - present_tables)
+        if missing_tables:
+            raise ValueError(
+                "runtime database is missing current V2 tables: "
+                + ", ".join(missing_tables)
+                + "; the file was not modified"
+            )
+        required_indexes = {
+            "task_scheduling_admission_request",
+            "task_items_source_occurrence",
+            "task_items_source_storage_path",
+            "task_items_source_status",
+            "task_results_source_occurrence",
+        }
+        present_indexes = {
+            row["name"]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        missing_indexes = sorted(required_indexes - present_indexes)
+        if missing_indexes:
+            raise ValueError(
+                "runtime database is missing current V2 indexes: "
+                + ", ".join(missing_indexes)
+                + "; the file was not modified"
+            )
 
     def _migrate_manual_recovery_preparation_legacy_columns_locked(self) -> None:
         """Schema 58: the shared summary table keeps no retired old-chain column.
@@ -20136,148 +19709,6 @@ class SQLiteTaskRepository:
             "ON manual_recovery_preparations(source_task_id, source_item_id, "
             "current, created_at, preparation_id)"
         )
-
-    def _migrate_manual_execution_task_scope_locked(self) -> None:
-        """Schema 55: one organizing Task may host more than one confirmed subset.
-
-        The legacy ``manual_executions.task_id`` UNIQUE assumed one execution per
-        organizing Task.  Slice 47's Task owns the whole manual work, and the
-        operator confirms independent ready subsets of that one Task over time,
-        so the durable scope of an execution is its own one-shot authorization,
-        never the Task.  Removing that single column constraint needs a table
-        rebuild (SQLite cannot drop an inline UNIQUE); the rebuild preserves
-        every column, row and child row byte-for-byte and rewrites no identity,
-        status, plan or authorization.  It is idempotent, so a database created
-        fresh without the constraint (or already migrated) is left untouched;
-        a failure before the fresh table is renamed leaves the previous schema
-        and every row usable by the previous code.
-        """
-
-        unique_on_task = False
-        for index in self._connection.execute("PRAGMA index_list(manual_executions)").fetchall():
-            if not index["unique"]:
-                continue
-            columns = [
-                row["name"]
-                for row in self._connection.execute(
-                    f"PRAGMA index_info({index['name']})"
-                ).fetchall()
-            ]
-            if columns == ["task_id"]:
-                unique_on_task = True
-                break
-        if not unique_on_task:
-            return
-        self._connection.execute(
-            """
-            CREATE TABLE manual_executions_migrate55 (
-                execution_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
-                intent_id TEXT NOT NULL, authorization_id TEXT NOT NULL UNIQUE,
-                task_id TEXT NOT NULL, actor TEXT NOT NULL,
-                intent_version INTEGER NOT NULL, configuration_snapshot_id TEXT NOT NULL,
-                configuration_snapshot_digest TEXT NOT NULL,
-                selected_item_ids_json TEXT NOT NULL, unselected_item_ids_json TEXT NOT NULL,
-                status TEXT NOT NULL, next_action TEXT NOT NULL, error TEXT,
-                allow_overwrite INTEGER NOT NULL DEFAULT 0,
-                allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
-                worker_id TEXT, claim_token TEXT, claimed_at TEXT,
-                claim_expires_at TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
-                FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
-                FOREIGN KEY(authorization_id)
-                    REFERENCES manual_execution_authorizations(authorization_id),
-                FOREIGN KEY(task_id) REFERENCES tasks(task_id)
-            )
-            """
-        )
-        self._connection.execute(
-            """
-            INSERT INTO manual_executions_migrate55 (
-                execution_id, preview_id, intent_id, authorization_id, task_id, actor,
-                intent_version, configuration_snapshot_id, configuration_snapshot_digest,
-                selected_item_ids_json, unselected_item_ids_json, status, next_action,
-                error, allow_overwrite, allow_source_cleanup, created_at, updated_at,
-                completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
-            )
-            SELECT
-                execution_id, preview_id, intent_id, authorization_id, task_id, actor,
-                intent_version, configuration_snapshot_id, configuration_snapshot_digest,
-                selected_item_ids_json, unselected_item_ids_json, status, next_action,
-                error, allow_overwrite, allow_source_cleanup, created_at, updated_at,
-                completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
-            FROM manual_executions
-            """
-        )
-        self._connection.execute("DROP TABLE manual_executions")
-        self._connection.execute(
-            "ALTER TABLE manual_executions_migrate55 RENAME TO manual_executions"
-        )
-        self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS manual_executions_preview_created "
-            "ON manual_executions(preview_id, created_at, execution_id)"
-        )
-
-    def _migrate_task_initial_executions_locked(self) -> None:
-        """Schema 57: the write-once first-stage evidence of automatic Tasks.
-
-        The table is additive and idempotent: a fresh database and an in-place
-        upgrade build the identical layout, no existing row is rewritten and
-        nothing is backfilled.  A Task whose first automatic stage ended before
-        this schema existed simply has no row, so its Automation record keeps
-        reading the durable evidence it always had — the migration never
-        reconstructs a historical stage from the current state, never fabricates
-        an old end time and never grants or restores execution authority.  A
-        failure before the table exists leaves the previous schema version and
-        every row intact, and a later open safely completes the upgrade.
-        """
-
-        self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
-
-    def _migrate_task_scheduling_locked(self) -> None:
-        """Schema 54/56: the Task-owned scheduling facts, and only those.
-
-        The queue/claim/control/mutation boundary of one organizing work belongs
-        to that Task, so it is one 1:1 row keyed by the same ``task_id``: no
-        independent identifier, no independent lifecycle, no second queue
-        authority.  Fresh initialization and an in-place upgrade build the
-        identical physical layout, and every existing ``tasks``/``task_items``
-        writer keeps its exact shape because not one legacy column changes.  A
-        Task that was never admitted through the kernel simply has no row here,
-        which is why an upgraded database can never gain execution eligibility
-        or a fabricated continuation from the migration.
-
-        The migration is additive and idempotent: each statement is either
-        "already there" or applied, and the schema marker is advanced only after
-        the table and both indexes are verifiably in place.  A failure before
-        that point leaves the previous schema version and every existing row
-        intact, so the database stays usable by the previous code and a later
-        open safely completes the upgrade.  Nothing here rewrites, backfills or
-        re-labels an existing Task, TaskItem, Result, pin or Job row.
-        """
-
-        self._connection.execute(_TASK_SCHEDULING_CREATE)
-        self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
-        self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
-        present = {
-            row["name"]
-            for row in self._connection.execute("PRAGMA table_info(task_scheduling)").fetchall()
-        }
-        if "continuation_actor" not in present:
-            # Schema 56: additive only.  A row admitted before this fact existed
-            # keeps its original admission principal and reads as "no recorded
-            # continuation actor"; nothing is backfilled or re-labelled.
-            self._connection.execute(
-                "ALTER TABLE task_scheduling ADD COLUMN continuation_actor TEXT"
-            )
-            present.add("continuation_actor")
-        missing = set(_TASK_SCHEDULING_COLUMNS) - present
-        if missing:
-            raise ValueError(
-                "runtime database has an incomplete task_scheduling layout: "
-                + ", ".join(sorted(missing))
-            )
-        self._advance_runtime_schema_marker()
 
     def _advance_runtime_schema_marker(self) -> None:
         """The single place that declares this database to be at ``SCHEMA_VERSION``.

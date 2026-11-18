@@ -399,7 +399,7 @@ with (
             PersistentTask(
                 "fault-uncertain-task",
                 "organize",
-                PersistentTaskStatus.PARTIAL_SUCCESS,
+                PersistentTaskStatus.COMPLETED,
                 True,
                 NOW,
                 NOW,

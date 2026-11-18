@@ -268,7 +268,6 @@ class MediaOrganizerService:
         mutation_authority: Callable[[OrganizePlan, str], object] | None = None,
         analysis_only: bool = False,
         enforce_source_ownership: bool = False,
-        ownership_lineage_task_ids: tuple[str, ...] = (),
         exclude_failed_history: bool = False,
     ) -> None:
         self._strategy = strategy
@@ -306,10 +305,6 @@ class MediaOrganizerService:
         # mutate or consume a source ask the shared durable boundary before their
         # own item is admitted; the read-only CLI strategy path leaves this off.
         self._enforce_source_ownership = bool(enforce_source_ownership)
-        # The Tasks whose still-unsettled items this attempt legally continues.
-        # Those are the source of this work, never a competing owner, so a resumed
-        # or continued attempt can never refuse itself.
-        self._ownership_lineage_task_ids = tuple(ownership_lineage_task_ids)
         # Slice 47 RO-6: an automatic entrance (definition due / Run once)
         # excludes a file whose same-version latest formal organizing outcome is
         # failed/partial.  A deliberate manual request never sets this flag: it
@@ -425,7 +420,6 @@ class MediaOrganizerService:
                         # forever.
                         source_storage_path=storage_path,
                         source_version=source_version,
-                        ownership_lineage_task_ids=self._ownership_lineage_task_ids,
                         enforce_source_ownership=self._enforce_source_ownership,
                         # Slice 47 RO-6: an automatic pass asks this exact
                         # source version's history question inside the same

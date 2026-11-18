@@ -48,10 +48,6 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
-from mediaflow.application.scope_continuation import (
-    RecoveryPreparationEligibility,
-    recovery_preparation_eligibility,
-)
 from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -1558,9 +1554,8 @@ class MediaDiscoveryService:
         caller can report which items of *this* request already have work and which
         are newly admitted to it.  The match is bound to the principal, the exact
         library/Storage binding, the immutable pin and the admission kind, so a
-        different library, a different pin, a definition Run once or a
-        remaining-scope recovery preparation is never reused for an ordinary Files
-        selection.
+        different library, a different pin or a definition Run once is never
+        reused for an ordinary Files selection.
 
         A *complete* overlap is not reported here: that is an exact admission
         reconciliation, which the exact-scope path answers with the shared work's own
@@ -1596,7 +1591,6 @@ class MediaDiscoveryService:
                 and not value.frozen
                 and value.auto_prepare == auto_prepare
                 and value.definition_origin is None
-                and value.recovery_source_task_id is None
                 and value.resource_library_id == resource_library_id
                 and value.storage_id == storage_id
                 and value.snapshot_id == snapshot_id
@@ -2262,10 +2256,7 @@ class MediaDiscoveryService:
         relative path can never answer for each other: the relative path alone
         is not the source identity.
 
-        An ordinary admission also never reconciles onto a remaining-scope
-        recovery preparation (and vice versa): those are different operator
-        intents with different origins and exclusion sets, so the durable
-        identity the writer stores is the identity read here.
+        The durable identity the writer stores is the identity read here.
         """
 
         lister = getattr(self._repository, "list_media_discoveries", None)
@@ -2294,10 +2285,6 @@ class MediaDiscoveryService:
             if candidate.terminal or candidate.frozen:
                 continue
             if candidate.auto_prepare != auto_prepare:
-                continue
-            # A recovery preparation is its own admission kind: an ordinary
-            # selection never inherits its origin, exclusions or budget.
-            if candidate.recovery_source_task_id is not None:
                 continue
             if (
                 candidate.definition_origin.definition_id
@@ -3200,16 +3187,6 @@ class MediaDiscoveryService:
     # Worker execution
     # ------------------------------------------------------------------
 
-    def _recovery_eligibility(self, discovery: MediaDiscovery) -> RecoveryPreparationEligibility:
-        """The live qualification of one admitted recovery preparation."""
-
-        return recovery_preparation_eligibility(
-            self._repository,
-            recovery_source_task_id=discovery.recovery_source_task_id,
-            snapshot_id=discovery.snapshot_id,
-            snapshot_digest=discovery.snapshot_digest,
-        )
-
     def run_claimed(
         self,
         discovery_id: str,
@@ -3320,18 +3297,6 @@ class MediaDiscoveryService:
             )
         if discovery.cancel_requested:
             return self._cancel(discovery, claim_token)
-        if discovery.recovery_source_task_id is not None:
-            # An already-admitted recovery preparation is not a standing licence
-            # to publish a summary later.  The operator can legitimately confirm
-            # and execute an *earlier* preparation while this one waits in the
-            # queue, and the deciding effect is recorded on a descendant Task
-            # that never changes this preparation's own admission.  Re-ask the
-            # shared remaining-scope boundary before this Worker observes,
-            # freezes or analyses anything, so a decision made in the meantime
-            # cannot resurrect the same source.
-            stale = self._stale_recovery_preparation(discovery, claim_token)
-            if stale is not None:
-                return stale
         if discovery.status is DiscoveryStatus.ANALYZING and discovery.intent_id is not None:
             # A frozen manifest (a full preparation or a definition-bound Run
             # once) already linked its durable intent.  The Worker now runs the
@@ -3566,9 +3531,9 @@ class MediaDiscoveryService:
         # RO-2: a deliberate Files selection keeps the configured primary-media
         # extension set (video by default) inside its folder expansion while
         # dropping the automatic include/exclude/match vetoes.  Every other
-        # admission (definition-bound Run once, remaining-scope recovery, and
-        # every record written before this amendment) keeps `automatic=True`
-        # and therefore the completely unchanged filtering.
+        # admission (definition-bound Run once and every record written before
+        # this amendment) keeps `automatic=True` and therefore the completely
+        # unchanged filtering.
         folder_policy = ManualFolderPolicy(library, automatic=not progress.manual_selection)
         # Material refusals are durable and monotonic: an ordinary read failure
         # in another subtree must never erase an earlier budget/safety/cursor
@@ -3579,39 +3544,6 @@ class MediaDiscoveryService:
         observations: list[DiscoveryObservation] = []
         previous = self._load_observations(discovery.discovery_id)
         stable_since: dict[str, datetime] = {}
-        # The exact ResourceLibrary-relative paths an earlier attempt of this
-        # recovery chain already recorded.  They are never observed, listed into
-        # the manifest or counted against the primary bound: the admitted scope
-        # is exactly the *remaining* scope, so a recorded sibling can neither be
-        # re-offered nor displace a genuinely remaining source.
-        recovery_excluded = frozenset(discovery.recovery_excluded_paths)
-        # The live qualification of an already-admitted recovery preparation.
-        # Its admission happened while its sources were still undecided; another
-        # attempt of the same chain may have decided one of them since.  The
-        # durable exclusion set above is fixed at admission, so this per-source
-        # rule is the only boundary that can notice that change while the walk
-        # runs.  An ordinary (non-recovery) admission keeps ``None`` and is
-        # therefore completely unaffected.
-        recovery_eligibility = (
-            self._recovery_eligibility(discovery)
-            if discovery.recovery_source_task_id is not None
-            else None
-        )
-
-        def recovery_excludes(relative: str) -> bool:
-            """Whether one observed source may no longer be offered at all.
-
-            The walk names sources ResourceLibrary-relatively while the durable
-            chain records Storage paths, so the exact source identity is the
-            Storage path this walk would produce for that entry.
-            """
-
-            if recovery_eligibility is None:
-                return False
-            return not recovery_eligibility.may_offer(
-                library.storage_id, self._join(library.root_path, relative)
-            )
-
         # The candidate paths this pass actually observed, so a fully completed
         # pass can drop a previously eligible source that disappeared.
         observed_candidates: set[str] = set()
@@ -3713,10 +3645,6 @@ class MediaDiscoveryService:
                 source_version=observed_version,
                 exclude_task_id=discovery.organize_task_id,
                 exclude_discovery_id=discovery.discovery_id,
-                # This walk's own still-unsettled ancestor sources are its legal
-                # origin, not a competing owner: a remaining-scope recovery
-                # preparation must never refuse the work it exists to review.
-                exclude_lineage_task_id=discovery.recovery_source_task_id,
             )
             if owned is None:
                 return None
@@ -3740,12 +3668,6 @@ class MediaDiscoveryService:
             """
 
             nonlocal counters, observation_degraded
-            if relative in recovery_excluded or recovery_excludes(relative):
-                # A recorded or since-decided source of this recovery chain is
-                # never observed, listed or counted again.  The walk skips it
-                # entirely, exactly as if it did not exist in the remaining
-                # scope.
-                return None
             observed_candidates.add(relative)
             if entry is None:
                 try:
@@ -4139,15 +4061,6 @@ class MediaDiscoveryService:
                     continue
                 directory_entries.append((relative, depth, raw))
                 observed_file_entries.setdefault(relative, (relative, depth, raw))
-                # A recorded sibling of this recovery chain is never observed
-                # again.  It is dropped before attachment association and before
-                # the primary bound so it can never be re-offered or inflate the
-                # remaining manifest.  A source the chain decided *after* this
-                # preparation was admitted is dropped by the same rule.
-                if relative in recovery_excluded or recovery_excludes(relative):
-                    directory_entries.pop()
-                    observed_file_entries.pop(relative, None)
-                    continue
                 # Every ordinary file is observed first.  A sidecar is only
                 # *demoted* afterwards, and only when the production attachment
                 # matcher proves it belongs to an admitted main file: a suffix
@@ -4525,34 +4438,8 @@ class MediaDiscoveryService:
         ``analyzing`` stage.  A repository that cannot offer the atomic linkage
         fails the preparation closed instead of leaving an orphan intent.
 
-        A recovery preparation re-validates its live remaining scope here, at the
-        last point before its frozen source list becomes a durable intent.  A
-        source another attempt decided while this preparation waited is refused
-        as a stale preparation instead of being frozen and analysed again; a
-        *mixed* scope keeps its legal siblings and only the decided ones are
-        dropped from the frozen manifest.
         """
 
-        if discovery.recovery_source_task_id is not None:
-            # The claim was released with this pass's publication, so the
-            # settlement is fenced by the version CAS alone.
-            stale = self._stale_recovery_preparation(discovery, None)
-            if stale is not None:
-                return stale
-            discovery, all_decided = self._filter_frozen_recovery_sources(discovery)
-            if all_decided:
-                return self._settle_stale_recovery(
-                    discovery,
-                    None,
-                    message=(
-                        "every source this preparation froze now has a decided outcome, so "
-                        "nothing remains to review or confirm"
-                    ),
-                    next_action=(
-                        "open the run and review its recorded per-item outcomes; a decided or "
-                        "uncertain effect is never repeated"
-                    ),
-                )
         try:
             frozen = self._finalize(discovery, None)
         except DiscoveryError as error:
@@ -4608,40 +4495,13 @@ class MediaDiscoveryService:
             return self._fail(discovery, claim_token, "preview_unavailable")
         if discovery.intent_id is None:
             return self._fail(discovery, claim_token, "intent_unavailable")
-        if discovery.recovery_source_task_id is not None:
-            # The very last zero-mutation boundary: the source list is already
-            # frozen, so the plan analysis is the only remaining chance to
-            # notice that this preparation's admitted sources were decided by
-            # another attempt.  Publishing a summary here would hand the
-            # operator a confirmable plan for an already-completed source.  A
-            # mixed scope keeps only the still-undecided sources, so a decided
-            # sibling is never re-offered while a legal one still proceeds.
-            stale = self._stale_recovery_preparation(discovery, claim_token)
-            if stale is not None:
-                return stale
-            discovery, all_decided = self._filter_frozen_recovery_sources(discovery)
-            if all_decided:
-                return self._settle_stale_recovery(
-                    discovery,
-                    claim_token,
-                    message=(
-                        "every source this preparation froze now has a decided outcome, so "
-                        "nothing remains to review or confirm"
-                    ),
-                    next_action=(
-                        "open the run and review its recorded per-item outcomes; a decided or "
-                        "uncertain effect is never repeated"
-                    ),
-                )
         try:
             intent = self._intent_service.get(discovery.intent_id)
         except Exception:  # noqa: BLE001 - a missing intent is a truthful failure
             return self._fail(discovery, claim_token, "intent_unavailable")
-        remaining = self._remaining_intent_item_ids(intent)
-        if discovery.recovery_source_task_id is not None:
-            remaining = self._undecided_intent_item_ids(intent, discovery)
-        else:
-            remaining = self._exclude_settled_intent_items(discovery, intent, remaining)
+        remaining = self._exclude_settled_intent_items(
+            discovery, intent, self._remaining_intent_item_ids(intent)
+        )
         # RO-2/AC-15: a native decision the operator saved on this Task's own item is
         # the decision for that exact source.  It is applied to the linked intent
         # item through the ordinary optimistic choice save, which records the pinned
@@ -4687,11 +4547,6 @@ class MediaDiscoveryService:
                 expected_version=intent.version,
                 actor=discovery.actor,
                 tolerate_unready_sources=True,
-                # A remaining-scope recovery preparation links the paused Task it
-                # was admitted for, so the run overview's durable recovery link
-                # resolves exactly as the inline path's did.  It still grants no
-                # execution authority.
-                recovery_source_task_id=discovery.recovery_source_task_id,
                 # RO-2/AC-16: give the admitted organizing Task its real per-item
                 # four-type problems.  The ordinary Preview path passes nothing, so
                 # only a Files-admitted run publishes native reviews here.
@@ -4700,10 +4555,6 @@ class MediaDiscoveryService:
                 # item is consumed by its next analysis, so the four-type problem
                 # is planned instead of re-published on the same Task.
                 review_decisions=self._native_review_decisions(discovery),
-                source_scope="resource_library" if discovery.recovery_source_task_id else None,
-                source_scope_id=(
-                    discovery.resource_library_id if discovery.recovery_source_task_id else None
-                ),
                 persist=False,
                 # RO-1/M5: the shared Preview calls this at every discovery,
                 # item and Provider phase boundary, so the containing Task's
@@ -5117,31 +4968,6 @@ class MediaDiscoveryService:
             for item in intent.items
             if item.item_id in eligible
             and (item.source.storage_id, item.source.path) not in settled
-        )
-
-    def _undecided_intent_item_ids(self, intent, discovery: MediaDiscovery) -> tuple[str, ...]:
-        """The intent items a recovery preparation may still publish for review.
-
-        Two independent exclusions compose here.  The ordinary
-        ``_remaining_intent_item_ids`` drops every item any durable execution of
-        this intent already admitted.  The recovery contract adds the exact
-        per-source verdict: a *mixed* frozen scope stays eligible while one
-        sibling is undecided, so a source an earlier attempt of the same chain
-        decided is dropped by its own ``(storage_id, path)`` identity instead of
-        riding on the legal sibling's eligibility.  The same verdict is what the
-        application, Worker and atomic admission boundaries re-ask, so the
-        published summary and the executable selection can never disagree.
-        """
-
-        remaining = self._remaining_intent_item_ids(intent)
-        eligibility = self._recovery_eligibility(discovery)
-        if not eligibility.applies:
-            return remaining
-        return tuple(
-            item.item_id
-            for item in intent.items
-            if item.item_id in remaining
-            and eligibility.may_offer(item.source.storage_id, item.source.path)
         )
 
     def preparation_preview_id(self, discovery_id: str) -> str | None:
@@ -5718,10 +5544,10 @@ class MediaDiscoveryService:
         """Resolve one submitted selection to its real kind *or* its own refusal.
 
         ``automatic`` keeps the pre-amendment semantics for a walk the operator
-        did not select by hand: a definition-bound Run once and a remaining-scope
-        recovery preparation keep the unchanged automatic include/exclude/
-        extension gates, so this Task never weakens Scanner or definition-bound
-        filtering.  A deliberate Files selection (``automatic=False``) instead
+        did not select by hand: a definition-bound Run once keeps the unchanged
+        automatic include/exclude/extension gates, so this Task never weakens
+        Scanner or definition-bound filtering.  A deliberate Files selection
+        (``automatic=False``) instead
         receives a :class:`DiscoveryRefusedEntry` for an item the pinned policy
         explicitly excludes, so ``admit`` can keep the eligible siblings of the
         same request.
@@ -6062,9 +5888,9 @@ class MediaDiscoveryService:
                 # RO-2/AC-16: only an *explicit Files 整理 selection* resolves each
                 # source through its pinned RecognitionRule, so a rule miss becomes
                 # this task's own native Recognition problem instead of a forced
-                # default type.  A definition-bound Run once and a remaining-scope
-                # recovery preparation keep their existing intent admission; their
-                # changed execution intent is RO-5's own scope.
+                # default type.  A definition-bound Run once keeps its existing
+                # intent admission; its changed execution intent is RO-5's own
+                # scope.
                 files_admission=discovery.progress.manual_selection,
             )
         except ManualIntentError as error:

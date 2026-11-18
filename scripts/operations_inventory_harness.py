@@ -1316,8 +1316,6 @@ class AppState:
         self.managed = managed
         self.manual_run: dict[str, str] | None = None
         self.pipeline_run: dict[str, str] | None = None
-        #: The paused organize Task of the AC-T7 continuation journey.
-        self.continuation_task_id: str | None = None
         self.recovery_run: dict[str, str] | None = None
         self.recovery_runs: dict[str, dict[str, str]] = {}
         self.recovery_batch_run: dict[str, object] | None = None
@@ -1398,8 +1396,6 @@ def harness_definition_id(state: AppState, requested: str | None = None) -> str 
 #: published history.
 AUTOMATION_LIFECYCLE_DRAFT_NAME = "NEVER PUBLISHED browser draft"
 
-#: The exact recorded source of the historical paused continuation fixture.
-CONTINUATION_RECORDED_SOURCE = "C/Continuation/Six.2006.mkv"
 
 #: The managed definition of the inventory's scheduled-trigger fixture and the
 #: exact ResourceLibrary-relative scope it reviews.  The Scheduler emits its
@@ -3511,7 +3507,7 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         require_configuration_snapshot=True,
-        status=PersistentTaskStatus.PARTIAL_SUCCESS,
+        status=PersistentTaskStatus.RUNNING,
     )
     now = datetime.now(UTC)
     identifiers = {
@@ -3937,11 +3933,6 @@ PIPELINE_TASK_COMMAND = "organize:harness-standalone"
 PIPELINE_SOURCE_FILE = "电影/Two.2002.mkv"
 
 
-#: The synthetic sources reserved for the paused-scope continuation journey.
-#: The recorded one is already owned by the paused Task (so the continuation
-#: must never repeat it) and the remaining one is the only work left.  Both are
-#: dedicated names, so the remaining-scope proof can never be confused with
-#: another journey's media.
 # The authority-refusal fixture's own ResourceLibrary-relative scope and its
 # two eligible remaining sources.
 AUTHORITY_SCOPE = "Authority"
@@ -3954,23 +3945,7 @@ AUTHORITY_TARGETS = (
     "Movies/Movies/Anime/Eight (2008) [tmdbid-108]/Eight (2008).mkv",
 )
 
-#: The full-budget recovery fixture: a paused run whose whole admitted budget is
-#: recorded while one item is still undecided, plus a later newcomer that must
-#: never borrow that unit.
-FULL_BUDGET_SCOPE = "FullBudget"
-FULL_BUDGET_KEPT_FILE = "FullBudgetKept.2006.mkv"
-FULL_BUDGET_LEFT_FILE = "FullBudgetLeft.2005.mkv"
-FULL_BUDGET_NEW_FILE = "FullBudgetNew.2020.mkv"
-#: The display scope of the earlier zero-effect attempt whose durable Result is
-#: what the operator's default recognition/organize choice is derived from.
-FULL_BUDGET_EARLIER_SCOPE = "EarlierBoundedAttempt"
-#: The stable destination-name stem of `FULL_BUDGET_LEFT_FILE`, used to report
-#: only this fixture's own destination copies.
-FULL_BUDGET_LEFT_STEM = "FullBudgetLeft"
-
-CONTINUATION_RECORDED_FILE = "C/Continuation/Six.2006.mkv"
-CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
-
+#: The exact definition-bound scope used as a second current Automation
 #: The managed definition whose exact reviewed scope holds the continuation
 #: fixture.  A mutation-authorized remaining-scope continuation is admitted only
 #: with a live published Enabled definition and current permission, so the
@@ -4043,60 +4018,13 @@ def authority_execution_state(
     task = state.repository.get_task(source_task_id) if source_task_id else None
     active = state.managed.configuration_service.active()
     scope = task.scope_path if task is not None and task.scope_path else AUTHORITY_SCOPE
-    if scope == FULL_BUDGET_SCOPE:
-        filenames = (FULL_BUDGET_KEPT_FILE, FULL_BUDGET_LEFT_FILE, FULL_BUDGET_NEW_FILE)
-    elif scope == AUTHORITY_MISSING_PIN_SCOPE:
+    if scope == AUTHORITY_MISSING_PIN_SCOPE:
         filenames = AUTHORITY_MISSING_PIN_FILES
-    elif scope == MIXED_SCOPE:
-        filenames = (MIXED_LEFT_FILE, MIXED_RIGHT_FILE)
     else:
         filenames = (AUTHORITY_FIRST_FILE, AUTHORITY_SECOND_FILE)
     source_root = state.managed.root / "source" / scope
     destination_root = state.managed.root / "destination"
     destination_paths = AUTHORITY_TARGETS if scope == AUTHORITY_SCOPE else ()
-    # A COPY policy keeps the source file in place after a verified success, so
-    # the real destination file set is the only proof of whether the same source
-    # was executed once or replayed.  It is reported for every fixture scope.
-    if scope == FULL_BUDGET_SCOPE:
-        # Only this fixture's own copies: the harness destination also holds
-        # unrelated journeys' outputs, and this evidence is about whether *this*
-        # source was executed once.
-        copies = sorted(
-            path.relative_to(destination_root).as_posix()
-            for path in destination_root.rglob(f"*{FULL_BUDGET_LEFT_STEM}*.mkv")
-        )
-        return {
-            "available": task is not None,
-            "sourceTaskId": task.task_id if task else None,
-            "scope": scope,
-            "sourceTaskStatus": task.status.value if task else None,
-            "taskSnapshotId": task.configuration_snapshot_id if task else None,
-            "taskSnapshotDigest": task.configuration_snapshot_digest if task else None,
-            "activeSnapshotId": active.revision_id if active else None,
-            "activeSnapshotDigest": active.digest if active else None,
-            "sourceFiles": {filename: (source_root / filename).is_file() for filename in filenames},
-            "destinationFiles": copies,
-        }
-    if scope == MIXED_SCOPE:
-        # Both mixed sources are COPY fixtures, so a replay is visible as a
-        # second destination file for the same source stem.
-        copies = sorted(
-            path.relative_to(destination_root).as_posix()
-            for path in destination_root.rglob("*.mkv")
-            if MIXED_LEFT_STEM in path.name or MIXED_RIGHT_STEM in path.name
-        )
-        return {
-            "available": task is not None,
-            "sourceTaskId": task.task_id if task else None,
-            "scope": scope,
-            "sourceTaskStatus": task.status.value if task else None,
-            "taskSnapshotId": task.configuration_snapshot_id if task else None,
-            "taskSnapshotDigest": task.configuration_snapshot_digest if task else None,
-            "activeSnapshotId": active.revision_id if active else None,
-            "activeSnapshotDigest": active.digest if active else None,
-            "sourceFiles": {filename: (source_root / filename).is_file() for filename in filenames},
-            "destinationFiles": copies,
-        }
     return {
         "available": task is not None,
         "sourceTaskId": task.task_id if task else None,
@@ -4116,21 +4044,15 @@ def authority_execution_state(
 
 
 def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -> dict[str, object]:
-    """Create one real paused Task that was admitted as a mutation.
+    """Create one real unfinished Task whose recorded pin is no longer current.
 
-    Its ``execute_authorized`` boolean records the original admission, but no
-    live reusable execution intent exists for it: it has no definition-linked
-    occurrence Job and its paused chain does not name a live Enabled
-    publication.  The backend must refuse a native Continue and name the
-    exact-Preview/explicit-intent journey instead of continuing under the
-    stored boolean.
+    The retired remaining-scope Preview entrance must stay an ordinary unknown
+    route and inspect no historical pin.  The Task itself is a normal current
+    running admission with two still-undecided sources.
     """
 
     active = state.managed.active
     current_active = state.managed.configuration_service.active() or active
-    # A dedicated, ResourceLibrary-relative scope holding exactly two eligible
-    # sources, so the native exact Preview really has a remaining scope to
-    # review under the run's own pin.
     source_root = state.managed.root / "source"
     fixture_scope = AUTHORITY_MISSING_PIN_SCOPE if missing_snapshot else AUTHORITY_SCOPE
     fixture_files = (
@@ -4155,348 +4077,14 @@ def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -
         configuration_snapshot_digest=current_active.digest if missing_snapshot else active.digest,
         require_configuration_snapshot=True,
     )
-    state.repository.request_task_pause(task.task_id, datetime.now(UTC))
-    paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.RUNNING:
-        raise RuntimeError("authority-refusal fixture Task did not pause")
     successor = None if missing_snapshot else publish_configuration_successor(state)
     return {
         "taskId": task.task_id,
-        "status": paused.status.value,
+        "status": task.status.value,
         "scope": fixture_scope,
         "taskSnapshotId": task_snapshot_id,
         "activeSnapshotId": (successor.revision_id if successor else current_active.revision_id),
         "remainingSources": list(fixture_files),
-    }
-
-
-def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
-    """Create one real paused run whose whole admitted budget is recorded.
-
-    `Kept` is successful and decided; `Left` is recorded with trustworthy source
-    evidence but is still `pending`, so every unit of the original
-    ``item_limit`` is occupied while one item of real work remains undecided.
-    This is the exact boundary at which "no new discovery budget" must not be
-    read as "nothing to recover".
-
-    A third eligible source is deliberately written into the same directory
-    afterwards: it has no admitted unit, so the recovery preparation must
-    observe exactly `Left` and never let the newcomer borrow that unit.
-    """
-
-    from mediaflow.infrastructure.local_storage import LocalStorage
-
-    active = state.managed.active
-    source_root = state.managed.root / "source"
-    scope_root = source_root / FULL_BUDGET_SCOPE
-    scope_root.mkdir(parents=True, exist_ok=True)
-    kept = scope_root / FULL_BUDGET_KEPT_FILE
-    left = scope_root / FULL_BUDGET_LEFT_FILE
-    kept.write_bytes(b"full budget kept synthetic media")
-    left.write_bytes(b"full budget left synthetic media")
-    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-    task = coordinator.create(
-        "organize",
-        execute_authorized=True,
-        scope_path=FULL_BUDGET_SCOPE,
-        item_limit=2,
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        require_configuration_snapshot=True,
-    )
-    kept_item = coordinator.record_discovered(
-        task.task_id,
-        "source-storage",
-        "source",
-        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
-        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
-    )
-    now = datetime.now(UTC)
-    state.repository.upsert_item(
-        dataclasses.replace(kept_item, status=TaskItemStatus.SUCCESS, updated_at=now)
-    )
-    state.repository.append_result(
-        PersistentResultRecord(
-            result_id=f"{kept_item.item_id}-full-budget-result",
-            task_id=task.task_id,
-            item_id=kept_item.item_id,
-            source_storage_id=kept_item.storage_id,
-            source_path=kept_item.source_path,
-            destination_storage_id="media-target",
-            destination_path="Movies/FullBudget/Kept.2006.mkv",
-            recognition_type="C",
-            provider="tmdb",
-            provider_id="230",
-            metadata_policy_id="C",
-            naming_policy_id="A",
-            classification_policy_id="A",
-            organize_policy_id="A",
-            operation="MOVE",
-            status="success",
-            created_at=now,
-            title="Kept",
-            effect_certainty="verified_complete",
-        )
-    )
-    left_item = coordinator.record_discovered(
-        task.task_id,
-        "source-storage",
-        "source",
-        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-    )
-    library = LocalStorage("source-storage", source_root)
-    entry = library.stat(left_item.source_path)
-    fingerprint = source_fingerprint("source-storage", "source", entry)
-    state.repository.upsert_item(
-        dataclasses.replace(
-            left_item,
-            status=TaskItemStatus.PENDING,
-            stage="pending",
-            source_fingerprint=fingerprint.value,
-            source_fingerprint_state="verified",
-            source_occurrence_id=occurrence_id_for(
-                "source-storage", "source", left_item.source_path, fingerprint.value
-            ),
-            source_observed_at=now,
-            updated_at=now,
-        )
-    )
-    # An earlier bounded attempt on this exact source failed *before* the
-    # mutation boundary under the COPY fixture policy.  It changed nothing (so
-    # the source stays genuinely undecided work) but it is the durable record the
-    # operator's default choice is derived from, exactly as an earlier failed
-    # attempt does in production.  The recovery therefore plans COPY+Rename, and
-    # a repeated execution of the same source would be visible as a second
-    # destination file rather than hiding behind a removed source.
-    earlier = coordinator.create(
-        "organize",
-        execute_authorized=True,
-        # A distinct display scope keeps this earlier history its own inventory
-        # row; the Result below still names the real source path, which is what
-        # the operator's default choice is derived from.
-        scope_path=FULL_BUDGET_EARLIER_SCOPE,
-        item_limit=1,
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        require_configuration_snapshot=True,
-    )
-    earlier_item = coordinator.record_discovered(
-        earlier.task_id,
-        "source-storage",
-        "source",
-        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-    )
-    state.repository.append_result(
-        PersistentResultRecord(
-            result_id=f"{earlier_item.item_id}-full-budget-earlier-attempt",
-            task_id=earlier.task_id,
-            item_id=earlier_item.item_id,
-            source_storage_id=earlier_item.storage_id,
-            source_path=earlier_item.source_path,
-            destination_storage_id=None,
-            destination_path=None,
-            recognition_type="copy-fixture",
-            provider="tmdb",
-            provider_id="230",
-            metadata_policy_id="C",
-            naming_policy_id="A",
-            classification_policy_id="A",
-            organize_policy_id="copy-fixture",
-            operation="COPY",
-            status="failed",
-            created_at=now,
-            title="Full budget left",
-            error="the earlier bounded attempt stopped before Storage mutation",
-            effect_certainty="none",
-            source_occurrence_id=left_item.source_occurrence_id,
-            source_fingerprint=fingerprint.value,
-        )
-    )
-    completed_earlier = dataclasses.replace(
-        earlier,
-        status=PersistentTaskStatus.COMPLETED,
-        failed_items=1,
-        total_items=1,
-        completed_at=now,
-        updated_at=now,
-        error="the earlier bounded attempt stopped before Storage mutation",
-    )
-    state.repository.update_task(completed_earlier)
-    state.repository.request_task_pause(task.task_id, now)
-    paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.RUNNING:
-        raise RuntimeError("full-budget fixture Task did not pause")
-    # A genuinely new source appears after the admission: it has no admitted
-    # unit and must never borrow the still-undecided one.
-    (scope_root / FULL_BUDGET_NEW_FILE).write_bytes(b"full budget new synthetic media")
-    return {
-        "taskId": task.task_id,
-        "status": paused.status.value,
-        "scope": FULL_BUDGET_SCOPE,
-        "itemLimit": paused.item_limit,
-        "recordedSources": [
-            f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
-            f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-        ],
-        "undecidedSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
-        "newSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_NEW_FILE}",
-    }
-
-
-#: The mixed-scope recovery fixture: one paused run whose whole budget records
-#: two still-undecided sources.  An earlier attempt can decide one of them while
-#: the other stays real remaining work, which keeps the chain eligible.
-MIXED_SCOPE = "MixedScope"
-MIXED_LEFT_FILE = "MixedLeft.2005.mkv"
-MIXED_RIGHT_FILE = "MixedRight.2006.mkv"
-MIXED_LEFT_STEM = "MixedLeft"
-MIXED_RIGHT_STEM = "MixedRight"
-#: The display scope of the earlier zero-effect attempt whose durable Result is
-#: what the operator's default COPY choice is derived from.
-MIXED_EARLIER_SCOPE = "MixedEarlierBoundedAttempt"
-
-
-def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
-    """Create one real paused run with two still-undecided recorded sources.
-
-    Both `Left` and `Right` carry trustworthy source evidence and are still
-    `pending`, so a recovery preparation may legally freeze both.  The earlier
-    attempt that decides one of them is driven by the browser journey itself,
-    which is the exact mixed shape: the chain stays eligible while one sibling
-    is decided.
-    """
-
-    from mediaflow.infrastructure.local_storage import LocalStorage
-
-    active = state.managed.active
-    source_root = state.managed.root / "source"
-    scope_root = source_root / MIXED_SCOPE
-    scope_root.mkdir(parents=True, exist_ok=True)
-    left = scope_root / MIXED_LEFT_FILE
-    right = scope_root / MIXED_RIGHT_FILE
-    left.write_bytes(b"mixed scope left synthetic media")
-    right.write_bytes(b"mixed scope right synthetic media")
-    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-    task = coordinator.create(
-        "organize",
-        execute_authorized=True,
-        scope_path=MIXED_SCOPE,
-        item_limit=2,
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        require_configuration_snapshot=True,
-    )
-    library = LocalStorage("source-storage", source_root)
-    now = datetime.now(UTC)
-    for filename in (MIXED_LEFT_FILE, MIXED_RIGHT_FILE):
-        item = coordinator.record_discovered(
-            task.task_id,
-            "source-storage",
-            "source",
-            f"{MIXED_SCOPE}/{filename}",
-            f"source-storage:{MIXED_SCOPE}/{filename}",
-        )
-        entry = library.stat(item.source_path)
-        fingerprint = source_fingerprint("source-storage", "source", entry)
-        state.repository.upsert_item(
-            dataclasses.replace(
-                item,
-                status=TaskItemStatus.PENDING,
-                stage="pending",
-                source_fingerprint=fingerprint.value,
-                source_fingerprint_state="verified",
-                source_occurrence_id=occurrence_id_for(
-                    "source-storage", "source", item.source_path, fingerprint.value
-                ),
-                source_observed_at=now,
-                updated_at=now,
-            )
-        )
-    state.repository.request_task_pause(task.task_id, now)
-    paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.RUNNING:
-        raise RuntimeError("mixed-scope fixture Task did not pause")
-    # An earlier bounded attempt on each source failed *before* the mutation
-    # boundary under the COPY fixture policy.  It changed nothing (so both
-    # sources stay genuinely undecided work) but it is the durable record the
-    # operator's default choice is derived from, exactly as an earlier failed
-    # attempt does in production.  Both mixed sources are COPY fixtures, so a
-    # repeated execution of one is visible as a second destination file.
-    items_by_path = {
-        value.source_path: value for value in state.repository.list_items(task.task_id)
-    }
-    for filename, provider_id in (
-        (MIXED_LEFT_FILE, "231"),
-        (MIXED_RIGHT_FILE, "232"),
-    ):
-        source_path = f"{MIXED_SCOPE}/{filename}"
-        source_item = items_by_path[source_path]
-        earlier = coordinator.create(
-            "organize",
-            execute_authorized=True,
-            scope_path=MIXED_EARLIER_SCOPE,
-            item_limit=1,
-            configuration_snapshot_id=active.revision_id,
-            configuration_snapshot_digest=active.digest,
-            require_configuration_snapshot=True,
-        )
-        earlier_item = coordinator.record_discovered(
-            earlier.task_id,
-            "source-storage",
-            "source",
-            source_path,
-            f"source-storage:{source_path}",
-        )
-        state.repository.append_result(
-            PersistentResultRecord(
-                result_id=f"{earlier_item.item_id}-mixed-earlier-attempt",
-                task_id=earlier.task_id,
-                item_id=earlier_item.item_id,
-                source_storage_id=earlier_item.storage_id,
-                source_path=earlier_item.source_path,
-                destination_storage_id=None,
-                destination_path=None,
-                recognition_type="copy-fixture",
-                provider="tmdb",
-                provider_id=provider_id,
-                metadata_policy_id="C",
-                naming_policy_id="A",
-                classification_policy_id="A",
-                organize_policy_id="copy-fixture",
-                operation="COPY",
-                status="failed",
-                created_at=now,
-                title=filename,
-                error="the earlier bounded attempt stopped before Storage mutation",
-                effect_certainty="none",
-                source_occurrence_id=source_item.source_occurrence_id,
-                source_fingerprint=source_item.source_fingerprint,
-            )
-        )
-        state.repository.update_task(
-            dataclasses.replace(
-                earlier,
-                status=PersistentTaskStatus.COMPLETED,
-                failed_items=1,
-                total_items=1,
-                completed_at=now,
-                updated_at=now,
-                error="the earlier bounded attempt stopped before Storage mutation",
-            )
-        )
-    return {
-        "taskId": task.task_id,
-        "status": paused.status.value,
-        "scope": MIXED_SCOPE,
-        "itemLimit": paused.item_limit,
-        "recordedSources": [
-            f"{MIXED_SCOPE}/{MIXED_LEFT_FILE}",
-            f"{MIXED_SCOPE}/{MIXED_RIGHT_FILE}",
-        ],
-        "leftSource": f"{MIXED_SCOPE}/{MIXED_LEFT_FILE}",
-        "rightSource": f"{MIXED_SCOPE}/{MIXED_RIGHT_FILE}",
     }
 
 
@@ -5350,94 +4938,6 @@ def corrupt_automation_published_history(
     }
 
 
-def seed_continuation_journey(state: AppState) -> dict[str, object]:
-    """Create one historical paused organizing Task for the retirement proof.
-
-    Pause and resume-from-pause are retired, so no product entry produces this
-    row any more.  The browser journey only needs a real durable paused Task
-    with its recorded source to prove that the historical state stays readable
-    and that the retired control is an effect-free refusal.
-    """
-
-    with state._manual_lock:
-        if state.continuation_task_id is not None:
-            source = state.repository.get_task(state.continuation_task_id)
-            return {
-                "taskId": state.continuation_task_id,
-                "status": source.status.value if source is not None else None,
-                "recordedSource": CONTINUATION_RECORDED_SOURCE,
-            }
-        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-        now = datetime.now(UTC)
-        task = coordinator.create(
-            "organize",
-            execute_authorized=True,
-            scope_path="C/Continuation",
-        )
-        paused = dataclasses.replace(
-            task,
-            status=PersistentTaskStatus.PAUSED,
-            pause_requested=True,
-            updated_at=now,
-        )
-        state.repository.update_task(paused)
-        state.repository.upsert_item(
-            PersistentTaskItem(
-                "continuation-paused-item",
-                task.task_id,
-                "source-storage",
-                "source",
-                CONTINUATION_RECORDED_SOURCE,
-                CONTINUATION_RECORDED_SOURCE.split("/")[-1],
-                TaskItemStatus.PAUSED,
-                "paused",
-                1,
-                now,
-                now,
-            )
-        )
-        state.continuation_task_id = task.task_id
-        return {
-            "taskId": task.task_id,
-            "status": "paused",
-            "recordedSource": CONTINUATION_RECORDED_SOURCE,
-        }
-
-
-def continuation_journey_state(state: AppState) -> dict[str, object]:
-    """Report the durable state of the continuation journey (bounded reads only)."""
-
-    source_task_id = state.continuation_task_id
-    if source_task_id is None:
-        return {"seeded": False}
-    source = state.repository.get_task(source_task_id)
-    # The independent scope-continuation product is retired: a historical paused
-    # Task has no continuation relation to report and no Job/linked child work.
-    continuations: list[object] = []
-    linked = [
-        task for task in state.repository.list_tasks(limit=100) if task.task_id != source_task_id
-    ]
-    return {
-        "seeded": True,
-        "sourceTaskId": source_task_id,
-        "sourceStatus": source.status.value if source else None,
-        "sourceItemPaths": sorted(
-            item.source_path for item in state.repository.list_items(source_task_id)
-        ),
-        "continuations": [item.document() for item in continuations],
-        "linkedTasks": [
-            {
-                "taskId": task.task_id,
-                "status": task.status.value,
-                "itemPaths": sorted(
-                    item.source_path for item in state.repository.list_items(task.task_id)
-                ),
-            }
-            for task in linked
-        ],
-    }
-
-
 def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     """Create the mixed cross-Task problem population for the nine views.
 
@@ -5678,9 +5178,9 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     state.repository.update_task(
         dataclasses.replace(
             mixed,
-            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            status=PersistentTaskStatus.RUNNING,
             updated_at=now,
-            completed_at=now,
+            completed_at=None,
             total_items=6,
             completed_items=1,
             failed_items=2,
@@ -5801,7 +5301,7 @@ def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
         configuration_snapshot_id=snapshot.revision_id,
         configuration_snapshot_digest=snapshot.digest,
         require_configuration_snapshot=True,
-        status=PersistentTaskStatus.PARTIAL_SUCCESS,
+        status=PersistentTaskStatus.RUNNING,
     )
     item_ids: list[str] = []
     for index in range(21):
@@ -6243,8 +5743,6 @@ def application(environ, start_response):
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":
             document = seed_task_center_problem_page(STATE)
-        elif path == "/__harness__/seed-continuation" and method == "POST":
-            document = seed_continuation_journey(STATE)
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             kind = (query.get("kind") or ["recognition"])[0]
@@ -6304,10 +5802,6 @@ def application(environ, start_response):
             document = seed_inventory_poll_population(STATE)
         elif path == "/__harness__/append-inventory-poll-failure" and method == "POST":
             document = append_inventory_poll_failure(STATE)
-        elif path == "/__harness__/seed-full-budget-recovery" and method == "POST":
-            document = seed_full_budget_recovery(STATE)
-        elif path == "/__harness__/seed-mixed-scope-recovery" and method == "POST":
-            document = seed_mixed_scope_recovery(STATE)
         elif path == "/__harness__/seed-authority-refusal" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             missing_snapshot = (query.get("missingPin") or ["0"])[0] == "1"
@@ -6316,8 +5810,6 @@ def application(environ, start_response):
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             task_id = (query.get("taskId") or [None])[0]
             document = authority_execution_state(STATE, source_task_id=task_id)
-        elif path == "/__harness__/continuation-state" and method == "GET":
-            document = continuation_journey_state(STATE)
         elif path == "/__harness__/automation-lifecycle-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             document = automation_lifecycle_state(
@@ -6480,8 +5972,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     # The AC-T7 continuation fixture is deliberately NOT seeded here: the
     # existing inventory assertions depend on the exact four-run population.
-    # The browser seeds it explicitly through ``POST /__harness__/seed-continuation``
-    # when the continuation journey starts, and that seed still goes through the
+    # The retired Pause fixture has no product entry, so no harness route seeds
+    # it and no browser journey asserts a historical paused Task.
     # real production coordinator.
 
     with make_server(

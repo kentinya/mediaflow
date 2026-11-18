@@ -1186,7 +1186,6 @@
       "taskId": "<uuid>"
     },
     "previewId": "<uuid>",
-    "recoverySourceTaskId": null,
     "scope": null,
     "scopeId": null,
     "scopeKind": null,
@@ -1446,7 +1445,6 @@
       "taskId": "<uuid>"
     },
     "previewId": "<uuid>",
-    "recoverySourceTaskId": null,
     "scope": null,
     "scopeId": null,
     "scopeKind": null,

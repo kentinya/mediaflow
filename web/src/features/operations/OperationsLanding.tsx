@@ -22,23 +22,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch, Link } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  executeOrganizePreview,
-  fetchOrganizeAdmissionOutcome,
-  fetchOrganizeDiscovery,
-  fetchOrganizePreviewDetail,
   mutateLifecycle,
   type LifecycleMutationResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
-import {
-  ApiReadError,
-  type ApiReadErrorCategory,
-} from "../../shared/api/api-errors";
-import {
-  AuthorizedReadBoundary,
-  useAuthorizedReadAuthorityRecovery,
-} from "../../shared/auth/AuthorizedReadBoundary";
-import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
+import { ApiReadError } from "../../shared/api/api-errors";
+import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -69,8 +58,6 @@ import {
   runOverviewQueryOptions,
 } from "./run-query";
 import { RunDetailTabs } from "./RunDetailTabs";
-import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
-import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
@@ -144,40 +131,6 @@ const EMPTY_RUN_CONTROL_SESSION: RunControlSession = {
   pendingAction: null,
   result: null,
   locked: false,
-};
-
-/**
- * The per-run remaining-scope confirmation session preserved across card
- * close/reopen: the operator's reviewed subset, its destructive choices, the
- * exact unknown admission awaiting reconciliation and the admitted execution
- * identity. A lost confirmation response is reconciled from *this* request;
- * it is never replayed and never guessed from the most recent run.
- */
-export interface RunRemainingSession {
-  readonly selection: readonly string[] | null;
-  readonly overwrite: boolean;
-  readonly cleanup: boolean;
-  readonly submitted: {
-    readonly previewId: string;
-    readonly itemIds: readonly string[];
-    readonly intentVersion: number;
-    readonly allowOverwrite: boolean;
-    readonly allowSourceCleanup: boolean;
-  } | null;
-  readonly admitted: {
-    readonly previewId: string;
-    readonly executionId: string;
-  } | null;
-  readonly message: string | null;
-}
-
-const EMPTY_RUN_REMAINING_SESSION: RunRemainingSession = {
-  selection: null,
-  overwrite: false,
-  cleanup: false,
-  submitted: null,
-  admitted: null,
-  message: null,
 };
 
 const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
@@ -505,14 +458,11 @@ export function OperationsLanding() {
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
-  // Per-run control and remaining-scope sessions outlive the card: closing or
-  // switching away and reopening the same run still reconciles the exact
-  // original request instead of offering an unknown-effect resubmission.
+  // Per-run control sessions outlive the card: closing or switching away and
+  // reopening the same run still reconciles the exact original control request
+  // instead of offering an unknown-effect resubmission.
   const [controlSessions, setControlSessions] = useState<
     Readonly<Record<string, RunControlSession>>
-  >({});
-  const [remainingSessions, setRemainingSessions] = useState<
-    Readonly<Record<string, RunRemainingSession>>
   >({});
   // The exact association an already-open continuation came from. It is only
   // a mount-retention latch: the dialog's own durable reads and the Task's
@@ -529,18 +479,6 @@ export function OperationsLanding() {
         ...previous,
         [runId]: {
           ...(previous[runId] ?? EMPTY_RUN_CONTROL_SESSION),
-          ...patch,
-        },
-      }));
-    },
-    [],
-  );
-  const updateRemainingSession = useCallback(
-    (runId: string, patch: Partial<RunRemainingSession>) => {
-      setRemainingSessions((previous) => ({
-        ...previous,
-        [runId]: {
-          ...(previous[runId] ?? EMPTY_RUN_REMAINING_SESSION),
           ...patch,
         },
       }));
@@ -1168,9 +1106,9 @@ export function OperationsLanding() {
                 </div>
               </div>
               {/* The selected run's centered detail card overlays the full-width
-                list; the per-run control/remaining-scope sessions live in the
-                landing so close/reopen keeps every unresolved request's
-                reconciliation context. */}
+                list; the per-run control sessions live in the landing so
+                close/reopen keeps every unresolved request's reconciliation
+                context. */}
               {selectedId !== "" && (
                 <RunDetailPanel
                   // A different selected run is a different control object:
@@ -1188,12 +1126,6 @@ export function OperationsLanding() {
                   }
                   onControlSession={(patch) =>
                     updateControlSession(selectedId, patch)
-                  }
-                  remainingSession={
-                    remainingSessions[selectedId] ?? EMPTY_RUN_REMAINING_SESSION
-                  }
-                  onRemainingSession={(patch) =>
-                    updateRemainingSession(selectedId, patch)
                   }
                   preparationLinkSearch={preparationLinkSearch}
                   // The hosted organizer is the topmost card: the run detail
@@ -1639,8 +1571,6 @@ function RunDetailPanel({
   onDetailStateChange,
   controlSession,
   onControlSession,
-  remainingSession,
-  onRemainingSession,
   preparationLinkSearch,
   suspended,
 }: {
@@ -1653,10 +1583,6 @@ function RunDetailPanel({
   /** Persist one control-session change (submission outcome, lock) in the
    * landing so it survives this card closing and reopening. */
   readonly onControlSession: (patch: Partial<RunControlSession>) => void;
-  /** This exact run's preserved remaining-scope confirmation session. */
-  readonly remainingSession: RunRemainingSession;
-  /** Persist one remaining-scope session change in the landing. */
-  readonly onRemainingSession: (patch: Partial<RunRemainingSession>) => void;
   /** The same-route continue search: exact Task plus the hosted marker. */
   readonly preparationLinkSearch: Record<string, RunSearchValue>;
   /**
@@ -1672,18 +1598,6 @@ function RunDetailPanel({
   // landing's per-run session store, so closing the card mid-request never
   // loses an unknown outcome or its reconciliation context.
   const [reconciling, setReconciling] = useState(false);
-  const [remainingBusy, setRemainingBusy] = useState(false);
-  // The paused-run remaining-scope continuation is reviewed and confirmed in
-  // this same panel (RO-3/AC-6): a withheld Continue first admits the exact
-  // zero-mutation remaining-scope Preview, and the operator then selects the
-  // ready subset and explicitly confirms it.  No standalone Preview is needed.
-  //
-  // The durable remaining-scope preparation the operator admitted.  The
-  // bounded observation and the complete analysis run in the resident Worker,
-  // so this page follows the exact discovery until its Preview is linked.  It
-  // is never re-posted: the same discovery identity is polled, so a refresh,
-  // reconnect or restart resumes the same work instead of starting another.
-  const [remainingDiscoveryId] = useState<string | null>(null);
   const overview = query.data?.ok === true ? query.data.model : null;
   // The shared centered-card presentation: backdrop, scroll lock, inert
   // background, focus trap, Escape/exit coordination and focus return. The
@@ -1775,281 +1689,6 @@ function RunDetailPanel({
     }
   };
 
-  // The bounded read of the exact admitted preparation.  It polls only while
-  // the preparation is still active and settles once it links its Preview or
-  // reaches a terminal state; it never repeats the admission POST.  A failed
-  // read (transport, 5xx, 401/403 or a malformed body) throws a bounded typed
-  // error instead of resolving: React Query then keeps the last successful
-  // durable read in `data` and exposes the failure in `error`, so a read
-  // failure can never masquerade as an empty state, a finished preparation or
-  // a lost admission.  Polling stops on the failure; recovery is exactly one
-  // explicit GET of the same discovery id (the re-read action below), never
-  // another preparation POST and never an automatic mutation retry.
-  const remainingPreparationQuery = useQuery({
-    queryKey: ["operations.remaining-scope-preparation", remainingDiscoveryId],
-    queryFn: async () => {
-      const read = await fetchOrganizeDiscovery(
-        token,
-        remainingDiscoveryId ?? "",
-      );
-      if (!read.ok) {
-        throw remainingPreparationReadError(read);
-      }
-      return read;
-    },
-    enabled: token !== null && remainingDiscoveryId !== null,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 2_000,
-    refetchInterval: (query) => {
-      // A failed read never keeps polling on its own: the explicit re-read
-      // action restarts this bounded interval once a GET succeeds again.
-      if (query.state.status === "error") return false;
-      const read = query.state.data;
-      if (read === undefined || !read.ok) return false;
-      const model = read.model;
-      if (model.previewId !== null) return false;
-      return ["completed", "partial_success", "failed", "cancelled"].includes(
-        model.status,
-      )
-        ? false
-        : 2_000;
-    },
-    refetchIntervalInBackground: false,
-  });
-
-  // A rejected 401 on this sub-read follows the shared auth recovery exactly
-  // as the panel's overview read does (clear the rejected principal, then the
-  // authenticated cache, with no automatic replay of any request).
-  useAuthorizedReadAuthorityRecovery(remainingPreparationQuery);
-
-  const remainingPreparation =
-    remainingPreparationQuery.data?.ok === true
-      ? remainingPreparationQuery.data.model
-      : undefined;
-
-  // The admitted preparation read has three explicit operator-visible states
-  // derived straight from the query itself: the first read is still in
-  // flight, a read failed, or a durable state is known.  The first two render
-  // their own notices below, so neither can appear as an empty panel that
-  // hides the admitted preparation.
-  const remainingPreparationLoading =
-    remainingDiscoveryId !== null &&
-    !remainingPreparationQuery.isError &&
-    remainingPreparation === undefined;
-  const remainingReadFailure = remainingPreparationQuery.isError
-    ? remainingPreparationQuery.error
-    : null;
-
-  // Derive every ordinary remaining-scope state from the durable reads plus
-  // the local admission state.  No effect copies server state into component
-  // state: the linked Preview, the terminal-preparation notice and the
-  // suppress-while-admitted rule are all computed here on each render.
-  const remainingPreparationTerminal =
-    remainingPreparation !== undefined &&
-    remainingPreparation.previewId === null &&
-    (["failed", "cancelled"].includes(remainingPreparation.status) ||
-      remainingPreparation.status === "partial_success");
-  const linkedRemainingPreviewId = remainingPreparation?.previewId ?? null;
-  const {
-    selection: remainingSelection,
-    overwrite: remainingOverwrite,
-    cleanup: remainingCleanup,
-    submitted: remainingSubmitted,
-    admitted: remainingAdmitted,
-  } = remainingSession;
-  const admittedRemainingPreviewId = remainingAdmitted?.previewId ?? null;
-  // A summary is confirmable only while its exact Preview has not yet been
-  // admitted by this page.  A cached discovery read of the same Preview never
-  // reopens execution after confirmation.
-  const effectiveRemainingScope =
-    linkedRemainingPreviewId !== null &&
-    linkedRemainingPreviewId !== admittedRemainingPreviewId
-      ? { previewId: linkedRemainingPreviewId, intentVersion: 0 }
-      : null;
-  const admittedRemainingExecutionId = remainingAdmitted?.executionId ?? null;
-  // Bounded, secret-free content for one failed preparation read: which stage
-  // failed, that the preparation (not an execution) was admitted, the last
-  // known durable state or that the new state is unknown, and the one
-  // explicit next step.  It never claims the preparation failed, and never
-  // claims that any Storage effect did or did not occur for an execution.
-  const readFailureCategory: ApiReadErrorCategory =
-    remainingReadFailure instanceof ApiReadError
-      ? remainingReadFailure.category
-      : "unavailable";
-  const readFailureIsAuth =
-    readFailureCategory === "unauthorized" ||
-    readFailureCategory === "forbidden";
-  const readFailureBackendNextAction =
-    remainingReadFailure instanceof RemainingPreparationReadError
-      ? remainingReadFailure.backendNextAction
-      : null;
-  const lastKnownStatus =
-    remainingPreparation === undefined
-      ? null
-      : (DISCOVERY_STATUS_LABELS[remainingPreparation.status] ??
-        remainingPreparation.status);
-  const lastKnownNextAction = remainingPreparation?.nextAction ?? "";
-  const remainingLastKnownLine =
-    lastKnownStatus === null
-      ? "尚未成功读到该准备的持久状态；当前状态是否变化未知。"
-      : `最后已知状态：${lastKnownStatus}` +
-        (lastKnownNextAction === "" ? "" : `（${lastKnownNextAction}）`) +
-        "；读取失败期间是否出现新状态未知。";
-  // The operator-action outcome always wins; otherwise the current durable
-  // preparation read supplies the visible lifecycle notice.  A failed read
-  // supplies no lifecycle notice of its own: the read-failure notice below is
-  // the honest state, so a transport/503 failure is never shown as ordinary
-  // progress or as an empty state.
-  const remainingMessage =
-    remainingSession.message ??
-    (remainingPreparation === undefined ||
-    remainingReadFailure !== null ||
-    effectiveRemainingScope !== null
-      ? null
-      : remainingPreparationTerminal
-        ? remainingPreparation.nextAction ||
-          "剩余范围准备未能完成；请按提示修复后重新发起。"
-        : "已受理剩余范围的零变更观察。常驻 Worker 将在配置的稳定区间满足后生成计划摘要。");
-
-  const confirmRemainingScope = async () => {
-    if (
-      effectiveRemainingScope === null ||
-      remainingSelection === null ||
-      remainingSelection.length === 0
-    ) {
-      return;
-    }
-    setRemainingBusy(true);
-    onRemainingSession({ message: null });
-    try {
-      let intentVersion = effectiveRemainingScope.intentVersion;
-      if (intentVersion <= 0) {
-        // A restored durable summary carries no local intent version; read it
-        // from the exact Preview rather than guessing.  This is a bounded GET.
-        const detail = await fetchOrganizePreviewDetail(
-          token,
-          effectiveRemainingScope.previewId,
-        );
-        if (!detail.ok || detail.model.intentVersion === null) {
-          onRemainingSession({
-            message:
-              "无法读取该剩余范围摘要的当前版本；未提交确认。请刷新后重试。 ",
-          });
-          return;
-        }
-        intentVersion = detail.model.intentVersion;
-      }
-      const result = await executeOrganizePreview(token, {
-        previewId: effectiveRemainingScope.previewId,
-        itemIds: remainingSelection,
-        expectedIntentVersion: intentVersion,
-        allowOverwrite: remainingOverwrite,
-        allowSourceCleanup: remainingCleanup,
-      });
-      if (result.ok) {
-        onRemainingSession({
-          selection: null,
-          submitted: null,
-          admitted: {
-            previewId: effectiveRemainingScope.previewId,
-            executionId: result.model.executionId,
-          },
-          message: `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
-        });
-        void query.refetch();
-        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-        // The operator stays in this exact run detail: the refetches above
-        // refresh its flow, items, results and evidence so the real queue/
-        // execution state is read here instead of a separate execution page.
-        // A card closed while the request was in flight keeps the operator's
-        // restored list context; the durable session keeps the admitted fact
-        // for the next reopen.
-      } else {
-        if (isUnknownLifecycleOutcome(result)) {
-          // A lost response must not be described as a proven zero effect.  Keep
-          // the exact submitted admission so the operator can explicitly re-read
-          // whether this request was admitted; never guess from the latest run.
-          onRemainingSession({
-            submitted: {
-              previewId: effectiveRemainingScope.previewId,
-              itemIds: remainingSelection,
-              intentVersion,
-              allowOverwrite: remainingOverwrite,
-              allowSourceCleanup: remainingCleanup,
-            },
-            message:
-              "确认响应未送达，暂时无法判断是否已受理。请先核对本次确认的持久状态，再决定是否继续。 ",
-          });
-        } else {
-          onRemainingSession({
-            message: `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
-          });
-        }
-      }
-    } finally {
-      setRemainingBusy(false);
-    }
-  };
-
-  /**
-   * Bounded reconciliation of one lost remaining-scope confirmation.  It reads
-   * only the exact admission this page submitted (the same preview, selection,
-   * version and destructive choices) and never replays a mutation.  A known
-   * admission surfaces the linked execution; an unadmitted answer keeps the
-   * summary available for a deliberate retry.
-   */
-  const reconcileRemainingScope = async () => {
-    const { submitted: remainingSubmitted } = remainingSession;
-    if (remainingSubmitted === null) {
-      return;
-    }
-    setRemainingBusy(true);
-    try {
-      const result = await fetchOrganizeAdmissionOutcome(token, {
-        previewId: remainingSubmitted.previewId,
-        itemIds: remainingSubmitted.itemIds,
-        expectedIntentVersion: remainingSubmitted.intentVersion,
-        allowOverwrite: remainingSubmitted.allowOverwrite,
-        allowSourceCleanup: remainingSubmitted.allowSourceCleanup,
-      });
-      if (result.ok && result.model.outcome === "known") {
-        onRemainingSession({
-          submitted: null,
-          selection: null,
-          ...(result.model.executionId !== null
-            ? {
-                admitted: {
-                  previewId: remainingSubmitted.previewId,
-                  executionId: result.model.executionId,
-                },
-              }
-            : {}),
-          message:
-            "已读回本次确认的持久状态：该精确子集已经受理；本任务详情正在刷新，其排队与逐项结果将在下方任务详情呈现。 ",
-        });
-        void query.refetch();
-        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-      } else if (result.ok && result.model.outcome === "not_admitted") {
-        // The submission did not commit; the same durable summary is safe to
-        // confirm again deliberately.
-        onRemainingSession({
-          submitted: null,
-          message:
-            "本次确认未获受理；已读回同一剩余范围摘要，可重新检查后再次确认。 ",
-        });
-      } else {
-        onRemainingSession({
-          message:
-            "尚未读回本次确认的持久状态；保持提交锁定，恢复读取后再检查。 ",
-        });
-      }
-    } finally {
-      setRemainingBusy(false);
-    }
-  };
-
   return (
     <ModalCardShell
       layerRef={modal.layerRef}
@@ -2105,139 +1744,6 @@ function RunDetailPanel({
                   that the new state is unknown) and one explicit re-read
                   action — a GET of this same discovery id, never another
                   preparation POST. */}
-              {remainingPreparationLoading && (
-                <StatusBanner variant="info" title="正在读取剩余范围准备">
-                  <p>
-                    该剩余范围准备已受理；正在读取其持久状态（只读
-                    GET，不会重复生成准备或执行）。
-                  </p>
-                </StatusBanner>
-              )}
-              {remainingReadFailure !== null && (
-                <>
-                  {/* An auth read failure reuses the shared auth boundary
-                      copy, so 401/403 recovery stays identical to the
-                      overview read's shared recovery. */}
-                  {readFailureIsAuth && (
-                    <AuthStateBanner
-                      variant={
-                        readFailureCategory === "unauthorized"
-                          ? "unauthorized"
-                          : "forbidden"
-                      }
-                      title={
-                        readFailureCategory === "unauthorized"
-                          ? "Not authorized"
-                          : "Forbidden"
-                      }
-                      message={
-                        readFailureCategory === "unauthorized"
-                          ? "The API token was rejected. Enter a valid API principal token to continue."
-                          : "The connected API principal does not have permission to view this area."
-                      }
-                    />
-                  )}
-                  <StatusBanner
-                    variant="error"
-                    title="剩余范围准备状态读取失败"
-                  >
-                    <p>
-                      阶段：读取本页已受理的剩余范围准备状态；这是只读
-                      GET，本轮未重发准备或执行请求。
-                    </p>
-                    <p>
-                      该剩余范围准备已受理；这是准备受理，不是执行受理。
-                      {admittedRemainingExecutionId !== null
-                        ? "该准备此前已确认过一次执行；其排队与逐项结果在本任务详情中呈现，本次读取失败不改变其持久状态。"
-                        : " 尚未确认执行；读取失败不代表准备失败，也不代表任何整理效果已发生或未发生。"}
-                    </p>
-                    <p>{remainingLastKnownLine}</p>
-                    {!readFailureIsAuth && (
-                      <p>
-                        失败原因：{READ_FAILURE_REASONS[readFailureCategory]}
-                        {readFailureBackendNextAction !== null
-                          ? ` 服务指引：${readFailureBackendNextAction}`
-                          : ""}
-                      </p>
-                    )}
-                    <p>
-                      下一步：重新读取本次准备的持久状态（同一 discovery 的只读
-                      GET；不会重复生成准备，也不会执行任何整理）。
-                    </p>
-                    <div className="mf-actions">
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        disabled={remainingPreparationQuery.isFetching}
-                        aria-busy={remainingPreparationQuery.isFetching}
-                        onClick={() => void remainingPreparationQuery.refetch()}
-                      >
-                        {remainingPreparationQuery.isFetching
-                          ? "正在重新读取…"
-                          : "重新读取本次准备"}
-                      </button>
-                    </div>
-                  </StatusBanner>
-                </>
-              )}
-              {effectiveRemainingScope !== null && (
-                <div className="mf-count-section">
-                  <h4>暂停运行的剩余范围</h4>
-                  {remainingMessage && <p>{remainingMessage}</p>}
-                  {remainingSubmitted !== null && (
-                    <div className="mf-actions">
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        disabled={remainingBusy}
-                        onClick={() => void reconcileRemainingScope()}
-                      >
-                        {remainingBusy ? "正在核对…" : "核对本次确认的持久状态"}
-                      </button>
-                    </div>
-                  )}
-                  <SamePagePlanSummary
-                    token={token}
-                    previewId={effectiveRemainingScope.previewId}
-                    selected={remainingSelection}
-                    onSelected={(selection) =>
-                      onRemainingSession({ selection })
-                    }
-                    allowOverwrite={remainingOverwrite}
-                    onAllowOverwrite={(overwrite) =>
-                      onRemainingSession({ overwrite })
-                    }
-                    allowCleanup={remainingCleanup}
-                    onAllowCleanup={(cleanup) =>
-                      onRemainingSession({ cleanup })
-                    }
-                    busy={remainingBusy || remainingSubmitted !== null}
-                    onConfirm={() => void confirmRemainingScope()}
-                    heading="剩余范围计划摘要（零变更）"
-                    confirmLabel={(count) => `确认继续整理剩余 ${count} 项`}
-                  />
-                </div>
-              )}
-              {remainingMessage !== null &&
-                effectiveRemainingScope === null && (
-                  <StatusBanner variant="info" title="剩余范围继续状态">
-                    <p>{remainingMessage}</p>
-                    {remainingSubmitted !== null && (
-                      <div className="mf-actions">
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          disabled={remainingBusy}
-                          onClick={() => void reconcileRemainingScope()}
-                        >
-                          {remainingBusy
-                            ? "正在核对…"
-                            : "核对本次确认的持久状态"}
-                        </button>
-                      </div>
-                    )}
-                  </StatusBanner>
-                )}
               <RunDetailTabs
                 runId={run.runId}
                 progress={run.progress}
@@ -2287,58 +1793,6 @@ function RunDetailPanel({
  * are deliberately absent: they reuse the shared auth boundary copy so a
  * rejected or forbidden read follows the shared recovery everywhere.
  */
-const READ_FAILURE_REASONS: Readonly<Record<ApiReadErrorCategory, string>> = {
-  unauthorized: "API 主体令牌被拒绝。",
-  forbidden: "当前主体没有读取该准备状态的权限。",
-  unavailable: "服务当前不可读取该准备状态。",
-  rejected: "读取请求被服务拒绝。",
-  malformed: "读取响应无法解析为该准备的持久状态。",
-};
-
-/**
- * Typed read error for one failed preparation read.  It extends the shared
- * `ApiReadError`, so the shared 401 authority recovery recognizes it exactly
- * as it does any other authenticated read, while keeping the feature's own
- * bounded backend guidance for the operator-facing notice.
- */
-class RemainingPreparationReadError extends ApiReadError {
-  readonly backendNextAction: string | null;
-
-  constructor(
-    category: ApiReadErrorCategory,
-    backendNextAction: string | null,
-  ) {
-    super(category);
-    this.name = "RemainingPreparationReadError";
-    this.backendNextAction = backendNextAction;
-  }
-}
-
-/**
- * Map one bounded failed discovery read to its shared category: transport and
- * 5xx outages are unavailable, 401/403 keep the shared auth categories, an
- * unparsable body is malformed and any other rejection stays rejected.  The
- * HTTP status and bounded code decide; nothing else is inferred.
- */
-function remainingPreparationReadError(read: {
-  readonly ok: false;
-  readonly status: number;
-  readonly code: string;
-  readonly nextAction: string | null;
-}): RemainingPreparationReadError {
-  const category: ApiReadErrorCategory =
-    read.status === 401
-      ? "unauthorized"
-      : read.status === 403
-        ? "forbidden"
-        : read.status === 0 || read.status >= 500
-          ? "unavailable"
-          : read.code === "malformed_response"
-            ? "malformed"
-            : "rejected";
-  return new RemainingPreparationReadError(category, read.nextAction);
-}
-
 /**
  * The selected run's readable fact hierarchy (Slice50 RO-1 / V2-UX-006).
  *

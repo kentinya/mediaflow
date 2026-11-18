@@ -20,11 +20,6 @@ class AutomationCommand(StrEnum):
     ORGANIZE = "organize"
     FILE_METADATA_CORRECTION = "file-metadata-correction"
     RECOVERY_CONTINUATION = "recovery-continuation"
-    #: The durable continuation of one Task's exact remaining admitted scope.
-    #: It is admitted only by the Operations lifecycle boundary for an existing
-    #: Task and never by the generic Job submission service, so it cannot be
-    #: used to start new work.
-    SCOPE_CONTINUATION = "scope-continuation"
 
 
 class AutomationTaskRunMode(StrEnum):

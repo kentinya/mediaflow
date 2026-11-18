@@ -43,8 +43,11 @@ from mediaflow.domain.configuration_management import (
     validate_configuration_object_id,
     validate_storage_configuration,
 )
-
-CONFIGURATION_SCHEMA_VERSION = 11
+from mediaflow.infrastructure.sqlite_applicability import assert_supported_database
+from mediaflow.infrastructure.sqlite_configuration_schema import (
+    CONFIGURATION_SCHEMA_VERSION,
+)
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
 
 class SQLiteConfigurationRepository:
@@ -57,6 +60,11 @@ class SQLiteConfigurationRepository:
 
     def __init__(self, database_path: str | Path) -> None:
         self._path = Path(database_path)
+        self._database_markers = assert_supported_database(
+            self._path,
+            current_runtime_version=SCHEMA_VERSION,
+            current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+        )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(str(self._path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
@@ -1773,17 +1781,13 @@ class SQLiteConfigurationRepository:
 
     def _initialize(self) -> None:
         with self._lock, self._connection:
+            if self._database_markers.configuration_version is not None:
+                self._initialize_existing_configuration_locked()
+                return
             self._connection.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version "
                 "(component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
             )
-            row = self._connection.execute(
-                "SELECT version FROM schema_version WHERE component='configuration_management'"
-            ).fetchone()
-            if row and int(row["version"]) > CONFIGURATION_SCHEMA_VERSION:
-                raise ValueError(
-                    "configuration database schema is newer than this MediaFlow version"
-                )
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS configuration_objects (
@@ -1980,6 +1984,15 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_destination_prechecks_status
                     ON managed_destination_prechecks(status, prechecked_at);
+                CREATE INDEX IF NOT EXISTS managed_configuration_revision_sequence
+                    ON managed_configuration_revisions(revision_sequence);
+                CREATE TABLE IF NOT EXISTS managed_configuration_authority (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    last_active_revision_id TEXT NOT NULL,
+                    last_active_version INTEGER NOT NULL,
+                    last_active_digest TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS managed_internal_keys (
                     key_name TEXT PRIMARY KEY,
                     key_material BLOB NOT NULL,
@@ -1987,130 +2000,112 @@ class SQLiteConfigurationRepository:
                 );
                 """
             )
+            self._assert_current_configuration_structure_locked()
             self._connection.execute(
-                """
-                INSERT INTO schema_version VALUES ('configuration_management', ?)
-                ON CONFLICT(component) DO UPDATE SET version=excluded.version
-                """,
+                "INSERT INTO schema_version VALUES ('configuration_management', ?)",
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
-            revision_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(managed_configuration_revisions)"
-                ).fetchall()
-            }
-            if "base_active_revision_id" not in revision_columns:
-                self._connection.execute(
-                    "ALTER TABLE managed_configuration_revisions "
-                    "ADD COLUMN base_active_revision_id TEXT"
-                )
-            setup_check_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(managed_local_setup_checks)"
-                ).fetchall()
-            }
-            for column in ("source_path", "destination_path"):
-                if column not in setup_check_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE managed_local_setup_checks ADD COLUMN {column} TEXT"
-                    )
-            if "revision_sequence" not in revision_columns:
-                self._connection.execute(
-                    "ALTER TABLE managed_configuration_revisions "
-                    "ADD COLUMN revision_sequence INTEGER"
-                )
-            storage_check_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(managed_storage_setup_checks)"
-                ).fetchall()
-            }
-            if "attempted_operations_json" not in storage_check_columns:
-                self._connection.execute(
-                    "ALTER TABLE managed_storage_setup_checks "
-                    "ADD COLUMN attempted_operations_json TEXT NOT NULL DEFAULT '[]'"
-                )
-            self._connection.execute(
-                "UPDATE managed_configuration_revisions SET revision_sequence=rowid "
-                "WHERE revision_sequence IS NULL"
-            )
-            self._connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS managed_configuration_revision_sequence "
-                "ON managed_configuration_revisions(revision_sequence)"
-            )
-            self._connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS managed_configuration_authority (
-                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-                    last_active_revision_id TEXT NOT NULL,
-                    last_active_version INTEGER NOT NULL,
-                    last_active_digest TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
+            self._insert_internal_key_locked()
+
+    def _initialize_existing_configuration_locked(self) -> None:
+        """Validate one supported current store without rewriting its schema."""
+
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._assert_current_configuration_structure_locked()
             marker = self._connection.execute(
-                "SELECT 1 FROM managed_configuration_authority WHERE singleton=1"
+                "SELECT version FROM schema_version WHERE component='configuration_management'"
             ).fetchone()
-            if marker is None:
-                active = self._connection.execute(
-                    "SELECT revision_id, revision_sequence, digest, activated_at "
-                    "FROM managed_configuration_revisions WHERE status=? "
-                    "ORDER BY revision_sequence DESC LIMIT 1",
-                    (ManagedConfigurationStatus.ACTIVE.value,),
-                ).fetchone()
-                if active is not None:
-                    self._connection.execute(
-                        "INSERT INTO managed_configuration_authority "
-                        "(singleton, last_active_revision_id, last_active_version, "
-                        "last_active_digest, updated_at) VALUES (1, ?, ?, ?, ?)",
-                        (
-                            active["revision_id"],
-                            int(active["revision_sequence"]),
-                            active["digest"],
-                            active["activated_at"] or datetime.utcnow().isoformat(),
-                        ),
-                    )
-                else:
-                    audit = self._connection.execute(
-                        "SELECT after_json, occurred_at FROM configuration_change_audits "
-                        "WHERE object_kind=? AND action='activate' "
-                        "ORDER BY sequence DESC LIMIT 1",
-                        (ConfigurationObjectKind.SYSTEM_SETTINGS.value,),
-                    ).fetchone()
-                    if audit is not None:
-                        after = json.loads(audit["after_json"])
-                        revision_id = after.get("revisionId")
-                        revision = self._connection.execute(
-                            "SELECT revision_sequence, digest FROM managed_configuration_revisions "
-                            "WHERE revision_id=?",
-                            (revision_id,),
-                        ).fetchone()
-                        if revision_id and revision is not None:
-                            self._connection.execute(
-                                "INSERT INTO managed_configuration_authority "
-                                "(singleton, last_active_revision_id, last_active_version, "
-                                "last_active_digest, updated_at) VALUES (1, ?, ?, ?, ?)",
-                                (
-                                    revision_id,
-                                    int(revision["revision_sequence"]),
-                                    revision["digest"],
-                                    audit["occurred_at"],
-                                ),
-                            )
-            # The cursor-authentication key is deployment-internal metadata.
-            # It is generated exactly once per store (create-if-absent) so a
-            # continuation cursor stays verifiable across CLI/API processes and
-            # restarts.  It is never business configuration, never part of an
-            # Active revision and never exported.
-            self._connection.execute(
-                "INSERT OR IGNORE INTO managed_internal_keys "
-                "(key_name, key_material, created_at) VALUES (?, ?, ?)",
-                (
-                    STORAGE_BROWSER_CURSOR_KEY_NAME,
-                    secrets.token_bytes(32),
-                    datetime.now(UTC).isoformat(),
-                ),
+            if marker is None or int(marker["version"]) != CONFIGURATION_SCHEMA_VERSION:
+                self._connection.execute(
+                    "INSERT INTO schema_version VALUES ('configuration_management', ?)",
+                    (CONFIGURATION_SCHEMA_VERSION,),
+                )
+            self._insert_internal_key_locked()
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+
+    def _insert_internal_key_locked(self) -> None:
+        # The cursor-authentication key is deployment-internal metadata.  It is
+        # generated exactly once per store (create-if-absent) so a continuation
+        # cursor stays verifiable across CLI/API processes and restarts.  It is
+        # never business configuration, never part of an Active revision and
+        # never exported.
+        self._connection.execute(
+            "INSERT OR IGNORE INTO managed_internal_keys "
+            "(key_name, key_material, created_at) VALUES (?, ?, ?)",
+            (
+                STORAGE_BROWSER_CURSOR_KEY_NAME,
+                secrets.token_bytes(32),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def _assert_current_configuration_structure_locked(self) -> None:
+        """Refuse a partial/foreign configuration store before any business write.
+
+        Every named table and column is part of the current V2 configuration
+        structure this repository creates directly.  A supported Slice Base
+        database already has all of them; this build never infers a publishing
+        authority from old revisions or audits and never backfills a revision
+        sequence.
+        """
+
+        required_columns = {
+            "managed_configuration_revisions": (
+                "revision_sequence",
+                "base_active_revision_id",
+            ),
+            "managed_local_setup_checks": ("source_path", "destination_path"),
+            "managed_storage_setup_checks": ("attempted_operations_json",),
+        }
+        for table, columns in required_columns.items():
+            present = {
+                row["name"]
+                for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not present:
+                raise ValueError(
+                    f"configuration database is missing the current {table} table; "
+                    "the file was not modified"
+                )
+            missing = [column for column in columns if column not in present]
+            if missing:
+                raise ValueError(
+                    f"configuration database is missing current {table} columns: "
+                    + ", ".join(missing)
+                    + "; the file was not modified"
+                )
+        required_tables = {
+            "managed_configuration_revisions",
+            "managed_configuration_authority",
+            "managed_internal_keys",
+            "configuration_objects",
+            "configuration_change_audits",
+        }
+        present_tables = {
+            row["name"]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        missing_tables = sorted(required_tables - present_tables)
+        if missing_tables:
+            raise ValueError(
+                "configuration database is missing current V2 tables: "
+                + ", ".join(missing_tables)
+                + "; the file was not modified"
+            )
+        present_indexes = {
+            row["name"]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        if "managed_configuration_revision_sequence" not in present_indexes:
+            raise ValueError(
+                "configuration database is missing the current published-revision "
+                "index; the file was not modified"
             )

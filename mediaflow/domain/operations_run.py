@@ -171,7 +171,6 @@ ORGANIZING_TASK_COMMAND_FAMILIES: tuple[str, ...] = (
     "retry-failed",
     "recovery-continuation",
     "metadata-correction-continuation",
-    "scope-continuation",
 )
 
 #: Command families that a Task admission itself proves: a Files admission

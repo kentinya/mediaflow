@@ -436,8 +436,9 @@ Each harness builds local images only, uses temporary media and a throwaway name
 volume, injects only harmless canary/private material, and records `SKIP` when no
 Docker engine is available.
 
-The old-image/new-image `scripts/docker_upgrade_recovery_smoke_test.py` belongs to historical V1
-upgrade evidence. It is not a required or accepted current V2 gate under the boundary above.
+The old-image/new-image upgrade smoke, generic schema rehearsal and the Task45.3 migration proof
+were retired with the V1/legacy-upgrade tooling and are not part of this repository. Current
+backup/verify/restore remains the supported recovery path.
 
 ## Maintainer review
 

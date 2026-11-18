@@ -1226,7 +1226,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         PersistentTask(
             "release-security-task",
             "release-security-preview",
-            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.COMPLETED,
             True,
             NOW,
             NOW,
