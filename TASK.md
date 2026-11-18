@@ -15,13 +15,13 @@ V2-RETIRE-002、009、010。测试和交接按开发流程执行。
 Task ID: 55.8
 Task Type: SLICE
 Parent Slice: 55
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.8 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER STARTS TASK55.8 IMPLEMENTATION
+Next Action: B INDEPENDENT REVIEW
 ```
 
 规划从 `/Users/songzhidong/mediaflow` 的 `main` 开始。上述 HEAD 的工作区和暂存区干净，
@@ -143,8 +143,88 @@ C 复用 A 仍为 C，真实 Slice Base 数据与原请求继续使用，以及�
 **范围边界** 以 Slice55 当前合同为准。产品入口、现行审核行为与历史数据以本 Task 的保留
 验收为准。发布和用户部署由原授权边界管理。
 
+### Developer 交接 — Task55.8（2026-11-19，北京时间）
+
+```text
+Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
+Implementation Candidate: ba9e026a9dbe85243749c9176a2b85f7a3ec715a
+Branch: main
+```
+
+候选是实现检查点；随后仅本文件记录交接。B 审查完整
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..ba9e026a9dbe85243749c9176a2b85f7a3ec715a`。
+
+**已实现**
+
+- 删除 `RecognitionReviewService.resolve_pending`、`MetadataReviewService.resolve_pending` 和
+  `MetadataCorrectionService.resolve_pending`，同时删除各自专用的 pending 查询、批量请求 DTO、
+  SQLite 批量写入和 `ManualIgnoreBatchRequest`。保留单项 create/resolve、TaskItem 状态转换、
+  既有审计/历史及 C 复用 A 仍为 C 的现行断言。旧 `recognition-reviews`、`metadata-reviews`、
+  `metadata-corrections` 命令仍走普通 argparse 参数错误并零写入。
+- `tasks ignore-pending` 保留有界筛选、顺序、可选 `--task-id`、actor/note 和原输出，但逐项
+  复用现行 checkpoint 与 `RecoveryAdmissionService`；删除 `_legacy_ignore`、缺准入服务时的
+  批量直写及 `ignore_waiting_item(s)`。测试覆盖三种等待类型、limit/task 过滤、逐项原子性
+  （前项已提交、后项失败不回收、后续项未执行）、无准入服务时无直写，以及 CLI 不构造 Storage。
+- 空实例 smoke 改为真实 Settings 页面旅程：`配置状态摘要` 显式 `创建首个草稿`，reload/重连后
+  `恢复草稿（编辑版本 N）` 读取同一修订，`验证草稿` 后确认空基线 `该草稿没有适用检查`，
+  `激活配置` 使用 `checked: true` 和精确版本。浏览器观察核对创建/验证/激活响应的 revision、
+  version、digest，激活后页面显示 `空配置已生效`，`诊断` 显示实际 Active 身份和
+  `配置已激活，媒体业务尚未配置`；token 不落 URL、storage、cookie 或页面。无挂载后续发布改用
+  各服务容器内可访问的隔离根，使用正式 entrypoint 执行 `api credentials check` 证明取得部署环境；
+  Task 等待只接受五态 `completed`。独立媒体栈继续完成真实 Organize 和两种库 Copy，并保留
+  进程身份、签名投递及换目标后仅原目标恢复断言。
+- README、配置、部署和发布指南改用最小管理 bootstrap、现行 Settings 控件和可运行命令；说明
+  `config/strategy.example.json` 是规范化 Draft 导入来源而非启动文件、激活输入省略部署身份、
+  同版本备份恢复边界，以及 Slice Base 有效 V2 数据原 ID/pins 继续使用。`make_deployment_config.py`
+  增加 `--database-path` 供本地非容器运行，`config/mediaflow.activation.json` 纳入忽略。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`）**
+
+```text
+PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_recognition_review test_metadata_review test_metadata_correction \
+  test_manual_ignore test_manual_ignore_batch test_processing_recovery_admission \
+  test_manual_task_engine test_container_deployment
+→ 98 项通过（5.221 秒）
+
+(cd web && npm run test:e2e -- tests/e2e/configuration-settings.spec.ts)
+→ 12 项通过（8.1 秒）
+
+MEDIAFLOW_SMOKE_TEMP_DIR="$PWD/.dsh-docker-tmp" \
+  .venv/bin/python scripts/docker_empty_baseline_smoke_test.py --image mediaflow:task55-8-dev
+→ media-free 与 media-mount 两栈均 PASS（74.71 秒）；空实例页面首草稿/重载/验证/
+  精确 checked 激活、零 Task/投递、签名投递与原目标恢复、entrypoint 部署环境、
+  Organize 及两种库 Copy 全部通过
+
+.venv/bin/python -m pip wheel . --no-deps -w <临时目录>
+→ wheel SHA-256 8871350e14404fe7bd2e9ec802975ed16db8a7bdab8eaeeb3bf68306133c28e7；
+  包内三个 resolve_pending、ManualIgnoreBatchRequest、ignore_waiting_item(s) 计数均为 0
+```
+
+首次 smoke 两次失败均为测试脚本严格定位器命中多个同名文本（`配置已激活`、同一 revision 的
+两个 `<code>`），修正定位器后最终通过；原失败保留在本地日志。另运行
+`python3 scripts/check_governance.py`（PASS）、`ruff format --check`／`ruff check`（14 个改动
+Python 文件通过）、`compileall`、`git diff --check`，并实际执行 README 的
+`make_deployment_config.py ... --database-path ... --configuration-output ...` 与
+`config draft-import`（exit 0）。测试、构建及两次失败重跑累计约 2.5 分钟，小于本轮总用时
+（约 17–20 分钟）的 30%。
+
+**未由 Developer 执行（不记为通过；B 的 T4 门禁）**
+
+- 完整 Python/Web/E2E、真实 Slice Base 数据与原请求连续性、typed Storage/两种库/七类规则/
+  自动化/通知的完整 B 旅程，以及 Docker 发布安全/重启、候选 wheel 源码外安装。
+- Task55.8 AC-2/AC-3 中需 B 从同一空实例验证的完整 typed 配置、桌面/390px/矮窗口可读、
+  键盘与返回行为；本报告不构成 PASS。
+
+**剩余风险／需 B 核对**
+
+- `docs/requirements.md` 仍保留历史上对三项全局 batch resolve-pending 和 `tasks retry-failed`
+  的叙述；TASK 已将正式需求/旅程/架构的 CURRENT 协调列入交 A 的 Closure Packet，本轮未改。
+- 空实例后续发布使用容器内 `/tmp` 隔离根，只证明无挂载发布/调度路径；真实文件效果由独立
+  媒体挂载栈证明。
+- 本轮未改 Web 源码或 API 响应结构；浏览器配置规格复用现有 fake API，真实页面由 smoke 覆盖。
+
 ### 交接状态
 
-Task 已获实施授权，状态为 PLANNED。Developer 按本 Task 实施，运行直接受影响的测试，提交
-固定候选和实际测试结果后标记 READY FOR B REVIEW。B 独立审查完整 Task Base..Head，给出
-PASS 或 FIX REQUIRED。
+Developer 已完成本 Task 的实现检查点和实际受影响验证，状态为 READY FOR B REVIEW。
+B 独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED；本报告不构成独立验收。
