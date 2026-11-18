@@ -510,3 +510,81 @@ RO-5 的当前确认跨刷新恢复仍在本 Task 内，其他已列 session 清
 均为200；首次探测因引用错误的 harness 常量名在导入时中止，未发请求，核对实际常量后
 完成上述探测。测试及探测耗时少于本轮阅读代码和规划总耗时的50%。这些是规划检查，
 不是 Task55.5 产品 T4 验收；没有修改实现、Slice／Roadmap／Progress 或开发过程工具。
+
+### Developer 修复报告 — 2026-11-18 / READY FOR B REVIEW（AC-4 跨刷新恢复）
+
+```text
+Task: 55.5
+Task Base: 8a9d2460d0fb4df1afee0e157af3736f136a64c8
+Fix Candidate: 4fa010b4a5e619949ca92f3d7dd8b66f7595f084
+Status: READY FOR B REVIEW
+Prior Candidate: 2f574e5d70a8a82c7a02de70b0fb3d88a255dc64
+```
+
+**AC-4（响应未知先刷新／重新认证）已修复。** 按开发指导第 1、2 条完成：
+
+- 新增 `web/src/features/operations/task-item-recovery-confirmation-session.ts`：按
+  当前主体（后端认证的 principalId，复用 `principalIdStorageSegment`）× run × Task ×
+  item 在 sessionStorage 保留本次提交的精确确认身份（preparation、原 Preview、选中项、
+  intent version、效果许可），沿用既有 Run-once 保留模式：POST 前同步检查写入、同条目
+  已有未核对请求时拒绝提交（`already-pending`）并把原身份读回会话、每主体上限 20 条、
+  读取校验失败只视为"无可读原请求"、主体变更经 `registerPrincipalSessionDataCleaner`
+  清除。不存 token、checkpoint 摘要或任何可复用授权。
+- `TaskItemRecoveryPanel`：确认前要求主体身份已建立（未建立则不提交并给出明确说明，
+  无法保存可核对身份的确认不发请求）；POST 前保留身份；成功响应、known、明确
+  not_admitted 时按精确匹配清除保留，读取失败与"同预览其他受理"保持未知与保留；
+  面板重建（刷新／重新认证后 provider 重建、内存会话清空）且同主体同条目存在保留
+  请求时恢复 `repeatLocked＋submittedConfirmation`，展示"重新读取条目后再继续"原请求
+  读取入口并禁用当前确认按钮；核对仍走既有 Execute／`organize/previews/{id}/admission`
+  与同 Task 模型，known 后展示原 execution／Task 并刷新当前文件合法状态，未选兄弟
+  保持自身状态。恢复不覆盖进行中请求或其他未决状态。
+- 真实 E2E `operations-inventory.python.spec.ts` 的兄弟子集旅程按指导调整：丢真实 202
+  响应之后、首次点击核对之前执行 `page.reload()`＋重新认证；页面恢复原请求身份（核对
+  入口可见、当前确认禁用、Execute 仍为 1），随后核对读取携带精确原 itemIds／intent
+  version／效果许可的 admission 并显示原 execution／Task；后续 Worker 只完成被选兄弟、
+  关闭重开、再次 reload、Files 同卡修正／重新分析、原 admission 仍指向原 execution 等
+  既有断言全部保留并实际执行。
+
+**受影响测试**
+
+- `TaskItemRecoveryPanel.test.tsx` 新增 provider 重建用例：确认→响应丢失→整个树卸载
+  重挂（同 token；token 迁移本身由真实 reload 旅程覆盖）→恢复锁定＋原请求读取入口→
+  确认按钮禁用→核对读取精确原兄弟 admission（断言 itemIds=item-2、version=1）→known
+  显示原 execution／Task→确认动作恢复可用，Execute 全程 1 次。原直接核对、迟到响应、
+  关闭重开、兄弟隔离断言继续执行；四处确认测试接入真实必需的
+  `GET /api/v1/auth/principal`（确认保留依赖该主体身份），`afterEach` 清理
+  sessionStorage。
+- 新增 `task-item-recovery-confirmation-session.test.ts`：写入／读取、主体×run×Task×
+  item 隔离、拒绝覆盖未核对条目、身份／字段校验拒绝、每主体容量上限、损坏存储文本
+  不解释为命令、精确匹配清除、主体变更清理。
+
+**实际结果（cwd `web/`，除治理外）**
+
+- `npm run test -- run TaskItemRecoveryPanel.test.tsx RunDetailTabs.test.tsx
+  task-item-recovery-confirmation-session.test.ts task-item-recovery.test.ts
+  api-client.test.ts` → **5 files / 65 tests passed**。
+- `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 均 PASS
+  （构建先于 E2E，harness 服务最新 `web/dist`）。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep 'the opened item reconciles the
+  exact sibling subset admission it did not select'` → **1 passed（3.2s）**：完整覆盖
+  "丢响应→先刷新重新认证→恢复原请求→核对 known→原 execution／Task→Execute=1→Worker
+  只完成被选兄弟→兄弟修正／重新分析后原 admission 不变"。
+- 根目录：`python3 scripts/check_governance.py` PASS；`git diff --check` PASS。
+
+**时间：** 本轮自上一交接 Head `0adb5342`（2026-11-18 08:20:41 +0800）提交后开始读取，
+至候选 `4fa010b4` 提交（约 09:00 +0800）约 40 分钟；实际测试／构建命令（含失败运行）
+约 10 分钟（单元 6 次、typecheck 2 次、lint、format、build、聚焦 E2E 3 次），低于
+本轮 30%。
+
+**剩余风险／待 B 核对**
+
+- 刷新后到主体身份读取完成之间存在短暂窗口：durable 摘要先渲染、恢复 effect 在身份
+  解析后才锁定；单元与 E2E 均断言收敛后的锁定状态，真实操作者在窗口内手速点击确认
+  的概率极低，但未从产品上消除该窗口。
+- 刷新恢复后（未再取消勾选）摘要默认勾选全部就绪项，确认按钮文案为
+  "确认继续整理 N 项"（N 可为 2）；这是 durable 预览的既有默认选择行为，本次仅保证
+  已受理兄弟不会被自动执行，再次显式确认由既有 admission 精确证据约束。
+- 完整 Python 回归、其余 Web Vitest／E2E、Base 真实数据继续使用、wheel／镜像／Docker
+  及整份 `operations-inventory.python.spec.ts` 门禁仍由 B 执行；上轮已报告的既有 13 个
+  Base 失败的环境归因仍待 B 复核。
