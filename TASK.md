@@ -13,13 +13,13 @@ Task55.6 **PASS**。B 已审查 `2e460b71735ac0284e58928c884baac9d3f46009..8e9ac
 Task ID: 55.7
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.7 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES TASK55.7 AND RESUBMITS FOR B REVIEW
+Next Action: B REVIEWS 27789283..96e7c2b8 AND RUNS THE ASSIGNED B55.7-04 ACCEPTANCE
 ```
 
 规划起点为 `/Users/songzhidong/mediaflow` 的 `main`，HEAD 为上述提交，原工作区及暂存干净，
@@ -474,3 +474,75 @@ npm run test:e2e -- tests/e2e/notifications.spec.ts
 | RO-4 | 五态及正常库重开证据仍适用。本轮跨版本通知复验读到同一 Active 与摘要。 |
 | RO-5 | 当前原请求恢复和规范响应在本轮对应浏览器中通过，已有 Webhook 的完整管理旅程及跨版本浏览器原请求验收待完成。 |
 | RO-6 | 当前构建和 wheel 已验证。剩余全局批量审核实现、空实例部署脚本及发布说明，以及最终候选镜像与 Slice 验收仍待交付。 |
+
+### Developer 修正交接 — B55.7-04（2026-11-19，北京时间）
+
+```text
+Task Base: 27789283a0e1b04bc1e9204002ecdb8cfc44e946
+Developer Candidate: 96e7c2b8f35f15969292e5b8c98312fa01781e6a
+Branch: main
+```
+
+候选是单个实现检查点；本文件随后单独交接。B 审查完整
+`27789283a0e1b04bc1e9204002ecdb8cfc44e946..96e7c2b8f35f15969292e5b8c98312fa01781e6a`。
+
+**对应 B55.7-04 — 已接受 Webhook 的复制与启用／停用**
+
+- 根因与服务端两条装配路径一致：`copy_object` 和 `set_object_enabled` 把数据库中已接受的
+  定义原样送入 `mutate` → `_normalize` → `WebhookDefinition.from_document`，当前输入校验
+  因而拒绝仍是 `job.*` 的事件。浏览器由读投影得到 `task.*`，点击动作后得到
+  `400 invalid_request`，草稿版本不变。
+- 新增 `_accepted_webhook_for_draft_write`：仅在这两条 Webhook 分支读取已保存源定义时复用
+  `accepted_webhook_definition`，把当前事件名写入本次新副本或明确启用／停用的定义，再走
+  原有 `mutate`、权限、版本校验和审计。未选定义、源项和原 Active 文档字节不经该写入。
+- 用户新建或手工 PUT 的 `job.*` 仍由 `_normalize` 拒绝；测试在真实编辑入口断言 400 且草稿
+  版本不变。
+
+**测试改动**
+
+- 将历史 Webhook 的建立提取为 `_accept_historical_webhook`，原
+  `test_accepted_historical_webhook_is_projected_with_current_events` 断言保持，并明确该
+  已接受定义处于启用状态。
+- 新增 `test_accepted_historical_webhook_copy_and_enable_write_current_events`，从真实
+  「通知」定义详情所给 `draftCreate`、`copy`、`enable`、`disable` 路径执行：复制返回唯一
+  停用副本、源定义仍为 `job.*` 字节；启用／停用只写所选定义并返回 `task.*`，未选副本逐字节
+  不变；真实 stale `expectedVersion` → 409，只读身份 → 403，手工旧事件 PUT → 400；
+  Active ID／摘要／文档在显式发布前不变；独立草稿 validate 后显式 activate，原已接受版本
+  仍为 `SUPERSEDED` 且文档字节、摘要不变；按原订阅读取仍产生 `task.completed` 投递，
+  `/api/v1/notifications` 同时看到发布前后的两条投递记录。
+- 新用例在未修复源码上复现 `400 invalid_request`（copy 返回
+  `Webhook Webhook contains an unsupported event`），修复后通过。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`）**
+
+```text
+.venv/bin/python -m unittest tests.test_webhook_management tests.test_v2_notification_operations
+→ 34 项通过（0.796 秒）
+.venv/bin/python -m unittest tests.test_webhook_url_security
+→ 12 项通过（0.101 秒）
+.venv/bin/python -m ruff check mediaflow/application/configuration_objects.py tests/test_webhook_management.py
+→ All checks passed
+.venv/bin/python -m ruff format --check 同一对文件
+→ 2 files already formatted
+python3 scripts/check_governance.py → governance check: PASS
+git diff --check → 通过
+```
+
+本轮未改 Web 代码、通知界面、夹具或 Python 响应字段，因此未运行 Web 构建／浏览器门禁；
+通知详情入口的同一动作链由上述真实 API 用例覆盖。测试与静态检查累计执行约 2 秒，小于本轮
+总用时的 30%。
+
+**未由 Developer 执行（不记为通过；B 的 T4 门禁）**
+
+- 真实 Python 浏览器中的通知详情复制／启用／停用旅程、同库 Slice Base → 候选重开、
+  完整 Python／Web／E2E 回归、Docker 空实例与镜像、wheel／源码外安装、双管理员并发。
+- 全量通知投递恢复与权限门禁的重复验收；本轮只复跑现有定向模块。
+- 本报告不构成 PASS。
+
+**剩余风险／需 B 核对**
+
+- 结构性无效的已保存 Webhook（读投影 `structuralValid=false`）在复制／启用时仍按原行为
+  400 失败；B55.7-04 只要求已接受的合法定义可用，若需对无效定义另设修复入口，属于新范围。
+- 启用／停用会把所选定义的审计 `before/after` 事件拼写差异记入现有审计，这是实际持久化
+  变化；未新增审计字段或旁路。
+
