@@ -159,7 +159,7 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 
 ### 交接状态 — READY FOR B REVIEW
 
-候选 `cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc`（Task Base `27789283a`..该提交），分支 `main`，提交后工作区／暂存仅余本文件
+候选 `cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc`（Task Base `27789283a0e1b04bc1e9204002ecdb8cfc44e946`..该提交），分支 `main`，提交后工作区／暂存仅余本文件
 状态更新。B 审查完整 `27789283a0e1b04bc1e9204002ecdb8cfc44e946..cdfcdd6d887d9c03df0167b7f5e80c9dfda53ebc`。
 
 **本候选的改动**
