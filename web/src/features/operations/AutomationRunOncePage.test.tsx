@@ -249,55 +249,6 @@ function analyzingRunOnceDocument(): Json {
   });
 }
 
-/** The durable pause request, before the Worker acknowledged it. */
-function pausingRunOnceDocument(): Json {
-  return runOnceDocument({
-    phase: "pausing",
-    status: "analyzing",
-    intentId: INTENT_ID,
-    previewId: null,
-    frozen: true,
-    frozenAt: "2026-10-21T23:47:21+00:00",
-    version: 6,
-    nextAction:
-      "the cooperative pause is waiting for the resident Processing Worker to " +
-      "acknowledge it at its safe boundary; continue the same Run once after the " +
-      "acknowledgement",
-    actions: {
-      pause: action(),
-      cancel: action({ available: true }),
-      resume: action(),
-      finalize: action(),
-      narrowScope: action(),
-      preview: action({ available: false }),
-    },
-  });
-}
-
-/** The acknowledged pause: the same run is continuable, without a plan. */
-function pausedRunOnceDocument(): Json {
-  return runOnceDocument({
-    phase: "paused",
-    status: "paused",
-    intentId: INTENT_ID,
-    previewId: null,
-    frozen: true,
-    frozenAt: "2026-10-21T23:47:21+00:00",
-    version: 7,
-    nextAction:
-      "continue this Run once to resume the same frozen scope and configuration; " +
-      "no plan was published for the interrupted analysis",
-    actions: {
-      pause: action(),
-      cancel: action({ available: true }),
-      resume: action({ available: true }),
-      finalize: action(),
-      narrowScope: action(),
-      preview: action({ available: false }),
-    },
-  });
-}
-
 /** The terminal cancellation: no plan, no recovery, no confirmation. */
 function cancelledRunOnceDocument(): Json {
   return runOnceDocument({
@@ -483,8 +434,6 @@ describe("V2 Automation Run once journey", () => {
     expect(screen.getByText(new RegExp(`计划 ${PREVIEW_ID}`))).toBeVisible();
     expect(screen.queryByText(/计划 preview-stale/)).toBeNull();
   });
-
-
 
   it("keeps a cancelled run terminal with no plan, recovery or confirmation", async () => {
     recordingFetch((call) => {

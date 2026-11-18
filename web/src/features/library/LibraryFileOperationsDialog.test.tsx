@@ -502,9 +502,7 @@ describe("current page operation status", () => {
     expect(
       within(selected).getByRole("button", { name: "取消" }),
     ).toBeEnabled();
-    expect(
-      within(selected).queryByRole("button", { name: "继续" }),
-    ).toBeNull();
+    expect(within(selected).queryByRole("button", { name: "继续" })).toBeNull();
     expect(
       within(selected).queryByRole("button", { name: "请求暂停" }),
     ).toBeNull();

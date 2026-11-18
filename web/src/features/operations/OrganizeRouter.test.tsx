@@ -465,7 +465,6 @@ describe("V2 manual Organize journey", () => {
     );
   });
 
-
   it("preserves RecognitionType C while displaying and submitting its pinned A downstream policies", async () => {
     const user = userEvent.setup();
     const intent = intentDocument();
