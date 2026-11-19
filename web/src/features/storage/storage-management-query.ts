@@ -11,13 +11,12 @@ export const STORAGE_INVENTORY_QUERY_KEY =
 /**
  * The operator-visible inventory selection.
  *
- * Search and the provider family filter are applied by the backend over the
- * complete Active object set rather than over one already-truncated page, so a
- * legal over-limit configuration can never hide a configured Storage from the
- * shared top-bar search or the provider cards.
+ * The provider family filter is applied by the backend over the complete
+ * Active object set rather than over one already-truncated page, so a legal
+ * over-limit configuration can never hide a configured Storage from the
+ * provider cards or explicit continuation.
  */
 export interface StorageInventorySelection {
-  readonly query: string;
   readonly family: StorageFamily | null;
   /** Stable ID cursor for explicit continuation to the next bounded page. */
   readonly after: string | null;
@@ -28,7 +27,6 @@ export function storageInventoryQueryOptions(
   selection: StorageInventorySelection,
 ) {
   const request: StorageInventoryQuery = {
-    query: selection.query,
     family: selection.family,
     after: selection.after,
   };
@@ -37,8 +35,8 @@ export function storageInventoryQueryOptions(
     queryFn: () => fetchStorageInventory(token, request),
     enabled: token !== null,
     retry: false,
-    // The previous page stays visible while the next bounded search/filter
-    // resolves, so typing never flashes an empty table.
+    // The previous page stays visible while the next bounded filter/page
+    // resolves, so changing type never flashes an empty table.
     placeholderData: keepPreviousData,
   });
 }

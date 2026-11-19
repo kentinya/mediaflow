@@ -450,13 +450,15 @@ describe("AppShell", () => {
       "page",
     );
 
-    // Another main page keeps its shell search field and location line.
+    // Every shared main page keeps the topbar account-only. Files shows its
+    // complete bounded directory body without a shell keyword field.
     await act(async () => {
       await router.navigate({ to: "/resourcelib/files" });
     });
     await screen.findByRole("heading", { name: "文件" });
-    expect(document.querySelector(".mf-shell-search")).not.toBeNull();
-    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    expect(document.querySelector(".mf-shell-search")).toBeNull();
+    expect(document.querySelector(".mf-shell-topbar input")).toBeNull();
+    expect(screen.queryByRole("searchbox")).toBeNull();
   });
 
   /**

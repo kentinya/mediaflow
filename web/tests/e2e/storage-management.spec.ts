@@ -210,10 +210,9 @@ test.describe("Storage management", () => {
     ).toBeVisible();
     await expect(page.getByText(/Active 配置中共有 105/)).toBeVisible();
 
-    // A Storage beyond the first bounded page is still findable through the
-    // shared top-bar search.
-    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
-    await search.fill("nas-beyond-page");
+    // Provider type cards reach Storage objects beyond the first page without
+    // a keyword field.
+    await page.getByRole("button", { name: /SMB/ }).click();
     await expect(
       page.getByRole("row").filter({ hasText: "NAS 后续页" }),
     ).toBeVisible();
@@ -221,9 +220,7 @@ test.describe("Storage management", () => {
       page.getByRole("row").filter({ hasText: "本地存储 000" }),
     ).toHaveCount(0);
 
-    // The provider filter reaches beyond the page too, and states how many
-    // matching rows exist overall.
-    await search.fill("");
+    // The S3/R2 card also reaches its own object beyond the page.
     await page.getByRole("button", { name: /S3 \/ R2/ }).click();
     await expect(
       page.getByRole("row").filter({ hasText: "R2 后续页" }),
@@ -232,8 +229,7 @@ test.describe("Storage management", () => {
       page.getByRole("row").filter({ hasText: "NAS 后续页" }),
     ).toHaveCount(0);
 
-    // Explicit bounded continuation reaches the last configured Storage,
-    // which no page search term will surface by name.
+    // Explicit bounded continuation reaches the last configured Storage.
     await page.getByRole("button", { name: "全部类型" }).click();
     await page.getByRole("button", { name: "继续显示更多" }).click();
     await expect(
@@ -246,39 +242,60 @@ test.describe("Storage management", () => {
       page.getByText(/当前显示 100 \/ 105 个匹配的存储/),
     ).toHaveCount(0);
 
-    // A new search after continuation resets the page window: an earlier
-    // configured Storage (local-000, before the continuation cursor) stays
-    // findable instead of falsely reporting no match. This is the exact
-    // `?q=local-000&after=local-099` regression: the next request must drop
-    // the stale cursor.
-    await search.fill("local-000");
+    // Switching provider type from the later page starts at that type's first
+    // page: the stale continuation cursor and keyword are not carried over.
+    const smbSwitchRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname.endsWith("/api/operations/storage-management/inventory") &&
+        url.searchParams.get("family") === "smb"
+      );
+    });
+    await page.getByRole("button", { name: /SMB/ }).click();
+    const switchedUrl = new URL((await smbSwitchRequest).url());
+    expect(switchedUrl.searchParams.has("after")).toBe(false);
+    expect(switchedUrl.searchParams.has("q")).toBe(false);
+    await expect(
+      page.getByRole("row").filter({ hasText: "NAS 后续页" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("row").filter({ hasText: "本地存储 000" }),
-    ).toBeVisible();
-    await expect(page.getByText("没有匹配的存储")).toHaveCount(0);
+    ).toHaveCount(0);
 
-    // A Storage found only through search is inspectable in full.
-    await search.fill("openlist-beyond-page");
-    await viewRow(page, "OpenList 后续页").click();
+    // A Storage reached from that bounded type page is inspectable in full.
+    await viewRow(page, "NAS 后续页").click();
     const drawer = page.getByRole("dialog", {
-      name: "存储详情 OpenList 后续页",
+      name: "存储详情 NAS 后续页",
     });
     await expect(drawer).toBeVisible();
-    await expect(drawer.getByText("openlist-beyond-page")).toBeVisible();
+    await expect(drawer.getByText("nas-beyond-page")).toBeVisible();
   });
 
-  test("search matches name/ID/type/location from the shared top bar", async ({
+  test("shared topbar is account-only and inventory requests omit the keyword", async ({
     page,
   }) => {
+    const inventoryRequests: URL[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.endsWith("/api/operations/storage-management/inventory")
+      ) {
+        inventoryRequests.push(url);
+      }
+    });
+
     await resetStorage(page);
     await connect(page);
     await openStorageManagement(page);
 
-    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
-    await expect(search).toHaveAttribute("placeholder", "搜索存储、路径...");
+    const topbar = page.locator(".mf-shell-topbar");
+    await expect(topbar.getByRole("searchbox")).toHaveCount(0);
+    await expect(
+      topbar.getByRole("button", { name: "Disconnect" }),
+    ).toBeVisible();
 
-    // Location match (provider coordinate) narrows to the NAS row.
-    await search.fill("nas.example");
+    // The provider card remains the inventory-narrowing control.
+    await page.getByRole("button", { name: /SMB/ }).click();
     await expect(
       page.getByRole("row").filter({ hasText: "NAS 媒体" }),
     ).toBeVisible();
@@ -286,35 +303,20 @@ test.describe("Storage management", () => {
       page.getByRole("row").filter({ hasText: "本地媒体" }),
     ).toHaveCount(0);
 
-    // Name/ID match.
-    await search.fill("r2-archive");
-    await expect(
-      page.getByRole("row").filter({ hasText: "R2 归档" }),
-    ).toBeVisible();
+    await expect.poll(() => inventoryRequests.length).toBeGreaterThan(0);
+    expect(
+      inventoryRequests.every(
+        (requestUrl) => !requestUrl.searchParams.has("q"),
+      ),
+    ).toBe(true);
 
-    // Type match.
-    await search.fill("openlist");
-    await expect(
-      page.getByRole("row").filter({ hasText: "OpenList 媒体" }),
-    ).toBeVisible();
-
-    // A no-match term is a truthful empty state.
-    await search.fill("no-such-storage");
-    await expect(page.getByText("没有匹配的存储")).toBeVisible();
-
-    // The Storage search context never leaks into Files/MediaLibrary search:
-    // opening the Files page shows its own placeholder and an empty value.
-    await search.fill("存储残留");
+    // The shared topbar stays account-only when another main page opens.
     await page.getByRole("link", { name: "Files", exact: true }).click();
     await expect(page).toHaveURL(/\/resourcelib\/files/);
-    const filesSearch = page.getByRole("searchbox", {
-      name: "搜索文件、文件夹或媒体库",
-    });
-    await expect(filesSearch).toHaveValue("");
-    await expect(filesSearch).toHaveAttribute(
-      "placeholder",
-      "搜索文件、文件夹或媒体库...",
-    );
+    await expect(
+      page.locator(".mf-shell-topbar").getByRole("searchbox"),
+    ).toHaveCount(0);
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
   });
 
   test("provider cards filter the inventory and return to all types", async ({
@@ -593,8 +595,9 @@ test.describe("Storage management", () => {
     await resetStorage(page, "?overLimit=1");
     await connect(page);
     await openStorageManagement(page);
-    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
-    await search.fill("NAS 后续页");
+    // The provider card reaches the beyond-page SMB source; no keyword request
+    // is involved in the bounded-page Copy journey.
+    await page.getByRole("button", { name: /SMB/ }).click();
     const row = page.getByRole("row").filter({ hasText: "NAS 后续页" });
     await expect(row).toBeVisible();
     await row.getByLabel(/更多操作/).click();
@@ -649,7 +652,7 @@ test.describe("Storage management", () => {
     await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
   });
 
-  test("narrow layout keeps search, filters, table and check reachable by keyboard", async ({
+  test("narrow layout keeps type filters, table and check reachable by keyboard", async ({
     page,
   }) => {
     await resetStorage(page);
@@ -657,14 +660,13 @@ test.describe("Storage management", () => {
     await connect(page);
     await openStorageManagement(page);
 
-    // The table scrolls horizontally inside its own region at narrow width.
+    // The table scrolls horizontally inside its own region at narrow width,
+    // and the shared topbar carries no keyword field.
     await expect(page.getByRole("table")).toBeVisible();
-    await expect(
-      page.getByRole("searchbox", { name: "搜索存储、路径" }),
-    ).toBeVisible();
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
 
-    // Keyboard: focus reaches the search box, a filter card and the 查看
-    // action without a positive tabindex.
+    // Keyboard: focus reaches a provider filter card and the 查看 action
+    // without a positive tabindex.
     await page.keyboard.press("Tab");
     for (let index = 0; index < 30; index += 1) {
       const focused = await page.evaluate(() => {
@@ -676,11 +678,11 @@ test.describe("Storage management", () => {
           ""
         );
       });
-      if (focused.includes("搜索存储") || focused === "本地存储") break;
+      if (focused.includes("本地存储")) break;
       await page.keyboard.press("Tab");
     }
-    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
-    await expect(search).toBeFocused();
+    const filterCard = page.getByRole("button", { name: /本地存储/ });
+    await expect(filterCard).toBeFocused();
 
     // Detail + check remain reachable from the keyboard at narrow width.
     await viewRow(page, "本地媒体").focus();

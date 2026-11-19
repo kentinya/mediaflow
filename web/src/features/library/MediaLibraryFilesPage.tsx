@@ -13,7 +13,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
-import { useFilesSearch } from "../../shared/ui/AppShell";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -309,26 +308,20 @@ function entryTypeLabel(entry: MediaLibraryFilesEntry): string {
 function buildRows(
   model: MediaLibraryFilesModel,
   selected: ReadonlySet<string>,
-  query: string,
 ): readonly MediaRowVm[] {
-  const needle = query.trim().toLowerCase();
-  return model.entries
-    .filter(
-      (entry) => needle === "" || entry.name.toLowerCase().includes(needle),
-    )
-    .map((entry) => ({
-      name: entry.name,
-      path: entry.path,
-      size: entry.size,
-      modifiedAt: entry.modifiedAt,
-      isDirectory: entry.isDirectory,
-      isSymlink: entry.isSymlink || entry.type === "symlink",
-      traversable: entry.traversable,
-      typeLabel: entryTypeLabel(entry),
-      sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
-      modifiedLabel: formatModified(entry.modifiedAt),
-      checked: selected.has(entry.path),
-    }));
+  return model.entries.map((entry) => ({
+    name: entry.name,
+    path: entry.path,
+    size: entry.size,
+    modifiedAt: entry.modifiedAt,
+    isDirectory: entry.isDirectory,
+    isSymlink: entry.isSymlink || entry.type === "symlink",
+    traversable: entry.traversable,
+    typeLabel: entryTypeLabel(entry),
+    sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
+    modifiedLabel: formatModified(entry.modifiedAt),
+    checked: selected.has(entry.path),
+  }));
 }
 
 function formatSelectedSize(
@@ -685,7 +678,6 @@ function MediaBrowseView({
   onSortChange,
   columnWidths,
   onColumnWidthsChange,
-  query,
   page,
   canPrev,
   busy,
@@ -713,7 +705,6 @@ function MediaBrowseView({
   readonly onSortChange: (sort: FilesSortState | null) => void;
   readonly columnWidths: FilesColumnWidths | null;
   readonly onColumnWidthsChange: (widths: FilesColumnWidths | null) => void;
-  readonly query: string;
   readonly page: number;
   readonly canPrev: boolean;
   /** True while one command is admitted or executing: no control submits twice. */
@@ -756,8 +747,8 @@ function MediaBrowseView({
     onResizedChange: onColumnWidthsChange,
   });
   const rows = useMemo(
-    () => sortFilesRows(buildRows(model, selected, query), sort),
-    [model, selected, query, sort],
+    () => sortFilesRows(buildRows(model, selected), sort),
+    [model, selected, sort],
   );
   const selectedRows = rows.filter((row) => selected.has(row.path));
   const selectedCount = selectedRows.length;
@@ -942,9 +933,7 @@ function MediaBrowseView({
           <FilesRefreshState refreshing={refreshing} />
           {rows.length === 0 ? (
             <p className="mf-files-state">
-              {query !== ""
-                ? "没有匹配搜索条件的文件或文件夹。可以调整搜索或刷新。"
-                : "此目录为空。可以刷新或返回上一级目录。"}
+              此目录为空。可以刷新或返回上一级目录。
             </p>
           ) : view === "grid" ? (
             <MediaGridView
@@ -2112,7 +2101,6 @@ export function MediaLibraryFilesPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
   const [selectedLibraryId, setSelectedLibraryId] = useState(
     initialBrowse.requestedLibraryId,
@@ -2312,7 +2300,6 @@ export function MediaLibraryFilesPage() {
     setSelectedFiles(new Set());
     setCursor(null);
     setCursorHistory([]);
-    setQuery("");
   };
 
   // Refresh boundary: a refresh drops the selection and repeats only the
@@ -3370,10 +3357,6 @@ export function MediaLibraryFilesPage() {
     );
   }, [activeLibraryId, invalidPath, path, requestedLibraryUnavailable]);
 
-  useEffect(() => {
-    return subscribeToQueryChange(() => setSelectedFiles(new Set()));
-  }, [subscribeToQueryChange]);
-
   // Only the Save that belongs to this card's exact target is presented; an
   // unconfirmed Save for another library stays retained without blocking this
   // entry.
@@ -3591,7 +3574,6 @@ export function MediaLibraryFilesPage() {
                       onSortChange={setFilesSort}
                       columnWidths={filesColumnWidths}
                       onColumnWidthsChange={setFilesColumnWidths}
-                      query={query}
                       page={cursorHistory.length + 1}
                       canPrev={cursorHistory.length > 0}
                       onViewChange={setView}

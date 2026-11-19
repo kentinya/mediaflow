@@ -26,8 +26,8 @@ Original revision/delivery notes are retained at
 不要求保留与现行约定冲突的树/抽屉布局。
 
 - 文件与媒体库页都删除**页内**左侧目录树及占位，浏览区利用释放宽度；共享 Shell 的
-  全局侧栏保留。文件夹、面包屑、上一级/根目录、搜索、视图、选择、刷新与分页继续可用，
-  错误指引使用仍存在的入口，不新增替代树。
+  全局侧栏保留。文件夹、面包屑、上一级/根目录、视图、选择、刷新与分页继续可用，
+  共享顶栏仅保留账户入口；错误指引使用仍存在的入口，不新增替代树或顶栏关键词入口。
 - 添加/编辑资源库和媒体库均为居中弹卡，遮罩、卡片层级、留白、操作和进出效果以现有
   自动化新建/编辑为基准。按库业务安排字段/步骤，保留准确回填、全部现有字段/隐藏配置、
   checked Active Save、输入/错误/未知核对；原三步侧抽屉的几何不再约束目标布局。
@@ -109,7 +109,7 @@ The reference content is:
 
 - brand: `MediaFlow`;
 - brand subtitle: `影视媒体资源管理系统`;
-- search placeholder: `搜索文件、文件夹或媒体库...`;
+- search: none in the current shared shell; the historical image's field is not a current control;
 - signed-in operator: `admin`;
 - active navigation item: `文件`;
 - selected ResourceLibrary: `source`;
@@ -156,10 +156,10 @@ The Files screenshot must show the replacement shared V2 shell in the following 
    `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `任务中心`, `通知`, `系统设置`.
 3. `文件` is the only active navigation item.
 4. No fabricated system-capacity or usage block is rendered at the bottom of the left rail.
-5. The top bar contains the search field and `admin` account control.
+5. The top bar contains only the `admin` account control.
 
 The shell must not acquire a second Files-only navigation model. The same shell and ordered
-navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.
+navigation frame every V2 route; Files adds no keyword field to the shared top bar.
 Icons, spacing, selected-state backgrounds and alignment follow the current shared shell.
 Exact glyph artwork, rasterization and CSS measurements may differ. The current
 product boundary intentionally removes the reference-only `系统存储` usage block because no

@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { AboutAttributionCard } from "../../features/about/AboutAttribution";
@@ -23,12 +15,6 @@ export interface AppShellProps {
   readonly children: ReactNode;
 }
 
-interface FilesSearchContextValue {
-  readonly query: string;
-  readonly setQuery: (query: string) => void;
-  readonly subscribeToQueryChange: (listener: () => void) => () => void;
-}
-
 /**
  * The Automation inventory and the routes that render it as their background.
  *
@@ -43,30 +29,6 @@ function isAutomationListSurface(pathname: string): boolean {
     pathname === "/operations/automation/lifecycle" ||
     pathname.startsWith("/operations/automation/lifecycle/")
   );
-}
-
-const FilesSearchContext = createContext<FilesSearchContextValue>({
-  query: "",
-  setQuery: () => undefined,
-  subscribeToQueryChange: () => () => undefined,
-});
-
-export function useFilesSearch(): FilesSearchContextValue {
-  return useContext(FilesSearchContext);
-}
-
-interface StorageSearchContextValue {
-  readonly query: string;
-  readonly setQuery: (query: string) => void;
-}
-
-const StorageSearchContext = createContext<StorageSearchContextValue>({
-  query: "",
-  setQuery: () => undefined,
-});
-
-export function useStorageSearch(): StorageSearchContextValue {
-  return useContext(StorageSearchContext);
 }
 
 /**
@@ -170,84 +132,29 @@ export function AppShell({ children }: AppShellProps) {
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [filesSearch, setFilesSearch] = useState("");
-  const [storageSearch, setStorageSearch] = useState("");
-  const filesSearchListeners = useRef(new Set<() => void>());
-  const setFilesSearchValue = useCallback((value: string) => {
-    setFilesSearch(value);
-    for (const listener of filesSearchListeners.current) listener();
-  }, []);
-  const subscribeToQueryChange = useCallback((listener: () => void) => {
-    filesSearchListeners.current.add(listener);
-    return () => filesSearchListeners.current.delete(listener);
-  }, []);
   const pageTitle =
     destination?.title ??
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
-  const searchIsFiles =
-    pathname === "/resourcelib/files" || pathname === "/medialib/files";
   const isNotificationSurface =
     pathname === "/operations/notifications" ||
     pathname.startsWith("/operations/notifications/");
-  const searchIsStorage = pathname === "/storage";
-  // The task center's eight views have no shared keyword search: its All view
-  // owns only the creation-time range, and the other views own their own
-  // explicit filters. The account control stays in the top bar.
-  const searchIsOperations = pathname === "/operations";
   // The Rules inventory and its pre-existing Edit address render the same
   // list background (the Edit route mounts that inventory and only adds its
-  // card). Both keep the shell's placeholder search and location line out of
-  // the surface, so opening or closing the card never moves the list.
+  // card). Both keep the shell's location line out of the surface, so opening
+  // or closing the card never moves the list.
   const isRulesSurface = pageIdentity === "rules";
   // Explore owns its one labelled workspace region and its own works search.
-  // It has no separate visible page title; the shell's read-only file-search
-  // field and duplicate location line would only add an unusable placeholder.
-  const searchIsExplore = pathname === "/explore";
+  // It has no separate visible page title; the duplicate location line would
+  // only add an unusable placeholder.
+  const isExploreSurface = pathname === "/explore";
   // Settings owns its one content title, page refresh and configuration
-  // summary. The shell's read-only file search and duplicate location line add
-  // no capability here and only push the editable settings down.
+  // summary. The duplicate location line adds no capability here and only
+  // pushes the editable settings down.
   const isSettingsSurface = pageIdentity === "settings";
-  const filesSearchContext = useMemo(
-    () => ({
-      query: filesSearch,
-      setQuery: setFilesSearchValue,
-      subscribeToQueryChange,
-    }),
-    [filesSearch, setFilesSearchValue, subscribeToQueryChange],
-  );
-  const storageSearchContext = useMemo(
-    () => ({
-      query: storageSearch,
-      setQuery: setStorageSearch,
-    }),
-    [storageSearch],
-  );
   useEffect(() => {
     document.title = pageTitle;
   }, [pageTitle]);
 
-  const searchField = (
-    <div className="mf-shell-search">
-      <Icon name="search" />
-      <input
-        type="search"
-        aria-label={
-          searchIsStorage ? "搜索存储、路径" : "搜索文件、文件夹或媒体库"
-        }
-        placeholder={
-          searchIsStorage ? "搜索存储、路径..." : "搜索文件、文件夹或媒体库..."
-        }
-        value={
-          searchIsFiles ? filesSearch : searchIsStorage ? storageSearch : ""
-        }
-        onChange={(event) => {
-          if (searchIsStorage) setStorageSearch(event.target.value);
-          else setFilesSearch(event.target.value);
-        }}
-        readOnly={!searchIsFiles && !searchIsStorage}
-      />
-    </div>
-  );
   const shellActions = (
     <div className="mf-shell-actions">
       <AuthControls />
@@ -322,14 +229,7 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       </aside>
       <div className="mf-shell-content">
-        <header className="mf-shell-topbar">
-          {!searchIsOperations &&
-            !isRulesSurface &&
-            !searchIsExplore &&
-            !isSettingsSurface &&
-            searchField}
-          {shellActions}
-        </header>
+        <header className="mf-shell-topbar">{shellActions}</header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
           <ShellPageSurface
             identity={pageIdentity}
@@ -340,15 +240,11 @@ export function AppShell({ children }: AppShellProps) {
             !isAutomationListSurface(pathname) &&
             !isNotificationSurface &&
             !isRulesSurface &&
-            !searchIsExplore &&
+            !isExploreSurface &&
             !isSettingsSurface ? (
               <p className="mf-page-context">{destination.label}</p>
             ) : null}
-            <FilesSearchContext.Provider value={filesSearchContext}>
-              <StorageSearchContext.Provider value={storageSearchContext}>
-                {children}
-              </StorageSearchContext.Provider>
-            </FilesSearchContext.Provider>
+            {children}
           </ShellPageSurface>
         </main>
       </div>

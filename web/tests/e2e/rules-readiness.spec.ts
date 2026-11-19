@@ -548,8 +548,8 @@ test.describe("Rules reference-aligned workspace presentation", () => {
       page.locator('.mf-shell-topbar button[aria-label="通知"]'),
     ).toHaveCount(0);
 
-    // Files keeps its editable topbar search and right-aligned account at both
-    // reference widths without horizontal overflow.
+    // Files keeps the shared topbar account-only at both reference widths,
+    // with the account reachable and no horizontal overflow.
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.getByRole("link", { name: "Files" }).click();
     await expect(page.getByRole("heading", { name: "文件" })).toBeVisible();
@@ -559,14 +559,11 @@ test.describe("Rules reference-aligned workspace presentation", () => {
         height: width === 390 ? 844 : 1024,
       });
       await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
-      const search = topbar.getByRole("searchbox", {
-        name: "搜索文件、文件夹或媒体库",
-      });
-      await expect(search).toBeEnabled();
-      await search.fill("sample");
-      await expect(search).toHaveValue("sample");
+      await expect(topbar.getByRole("searchbox")).toHaveCount(0);
       const account = topbar.getByRole("button", { name: "Disconnect" });
       await expect(account).toBeVisible();
+      await account.focus();
+      await expect(account).toBeFocused();
       const accountBox = await account.boundingBox();
       const topbarBox = await topbar.boundingBox();
       expect(accountBox).not.toBeNull();

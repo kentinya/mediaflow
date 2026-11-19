@@ -25,7 +25,6 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { LoadingPanel } from "../../shared/ui/LoadingPanel";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -225,9 +224,8 @@ interface StorageDetailSafeLocation {
   readonly region?: string;
 }
 
-/** How the shared top-bar search and provider cards are applied server-side. */
+/** How the provider cards and bounded paging are applied server-side. */
 interface InventorySelection {
-  readonly query: string;
   readonly family: StorageFamily | null;
   readonly after: string | null;
 }
@@ -374,12 +372,12 @@ function ProviderCards({
  */
 function InventoryScopeNote({
   data,
-  hasQuery,
+  hasFilter,
   onContinue,
   onReset,
 }: {
   readonly data: StorageInventoryModel;
-  readonly hasQuery: boolean;
+  readonly hasFilter: boolean;
   readonly onContinue: () => void;
   readonly onReset: () => void;
 }) {
@@ -390,8 +388,8 @@ function InventoryScopeNote({
     <div className="mf-storage-scope-note" role="status">
       <p>
         当前显示 {data.returned} / {data.matched} 个匹配的存储
-        {hasQuery ? "(已应用搜索或筛选)" : ""};Active 配置中共有 {data.total}{" "}
-        个存储。未显示的存储仍可通过上方搜索、类型筛选或继续翻页查看。
+        {hasFilter ? "（已应用类型筛选）" : ""};Active 配置中共有 {data.total}{" "}
+        个存储。未显示的存储仍可通过上方类型筛选或继续翻页查看。
       </p>
       <div className="mf-actions">
         {data.hasMore && data.nextAfter !== null && (
@@ -1380,23 +1378,17 @@ function StorageSetupHandoff({
 export function StorageManagementPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
-  const { query: searchQuery } = useStorageSearch();
-  const trimmedQuery = searchQuery.trim();
   const [familyFilter, setFamilyFilter] = useState<StorageFamily | null>(null);
   // Explicit continuation through the stable ID cursor the server returns;
-  // cleared whenever search or the provider filter changes. The shared
-  // top-bar search lives outside this component, so a new search must reset
-  // the page window synchronously during render: otherwise the next request
-  // would combine the new query with the stale cursor (for example
-  // `?q=local-000&after=local-099`) and falsely report that a configured
-  // Storage does not exist.
+  // cleared whenever the provider filter changes. The render-phase sync below
+  // persists the reset, and this derived window guarantees the very next
+  // request already drops the stale cursor instead of combining a new type
+  // with the previous page (for example `?family=smb&after=local-099`) and
+  // falsely reporting that a configured Storage does not exist.
   const [afterCursor, setAfterCursor] = useState<string | null>(null);
-  const [pageBasis, setPageBasis] = useState<{
-    readonly query: string;
-    readonly family: StorageFamily | null;
-  }>({ query: trimmedQuery, family: null });
-  if (pageBasis.query !== trimmedQuery || pageBasis.family !== familyFilter) {
-    setPageBasis({ query: trimmedQuery, family: familyFilter });
+  const [pageBasis, setPageBasis] = useState<StorageFamily | null>(null);
+  if (pageBasis !== familyFilter) {
+    setPageBasis(familyFilter);
     setAfterCursor(null);
   }
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -1467,26 +1459,20 @@ export function StorageManagementPage() {
   } | null>(null);
   const lifecycleInvokerRef = useRef<HTMLElement | null>(null);
 
-  // Search and the provider filter are applied by the backend over the
-  // complete Active object set, not over one already-truncated page.
-  // `effectiveAfter` is the page window for the *current* search/filter
-  // basis: when the shared top-bar search (which lives outside this
-  // component) changes, the stale continuation cursor must not leak into the
-  // next request. The render-phase `pageBasis` sync below persists the reset
-  // for subsequent renders; this derived value guarantees the very next
-  // query already drops the stale cursor instead of requesting e.g.
-  // `?q=local-000&after=local-099` and falsely reporting no match.
-  const effectiveAfter =
-    pageBasis.query !== trimmedQuery || pageBasis.family !== familyFilter
-      ? null
-      : afterCursor;
+  // The provider filter is applied by the backend over the complete Active
+  // object set, not over one already-truncated page. `effectiveAfter` is the
+  // page window for the *current* filter basis: when the provider card
+  // changes, the stale continuation cursor must not leak into the next
+  // request. The render-phase `pageBasis` sync persists the reset for
+  // subsequent renders; this derived value guarantees the next query is
+  // already anchored at the first page.
+  const effectiveAfter = pageBasis !== familyFilter ? null : afterCursor;
   const selection = useMemo<InventorySelection>(
     () => ({
-      query: trimmedQuery,
       family: familyFilter,
       after: effectiveAfter,
     }),
-    [trimmedQuery, familyFilter, effectiveAfter],
+    [familyFilter, effectiveAfter],
   );
   const inventoryQuery = useQuery(
     storageInventoryQueryOptions(token, selection),
@@ -2265,18 +2251,16 @@ export function StorageManagementPage() {
               />
               <InventoryScopeNote
                 data={data}
-                hasQuery={selection.query !== ""}
+                hasFilter={familyFilter !== null}
                 onContinue={() => setAfterCursor(data.nextAfter)}
                 onReset={() => setAfterCursor(null)}
               />
               {rows.length === 0 ? (
                 <StatusBanner variant="info" title="没有匹配的存储">
                   <p>
-                    {data.matched === 0 &&
-                    selection.query === "" &&
-                    familyFilter === null
+                    {data.matched === 0 && familyFilter === null
                       ? "当前 Active 配置中没有存储对象。"
-                      : "没有匹配搜索或筛选条件的存储。可以调整搜索或筛选。"}
+                      : "没有符合当前类型筛选的存储。可以切换类型或返回全部类型。"}
                   </p>
                 </StatusBanner>
               ) : (

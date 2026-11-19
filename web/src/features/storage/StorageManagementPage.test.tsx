@@ -140,8 +140,8 @@ const STORAGE_R2 = {
 
 /**
  * A valid Active Storage that only exists beyond the first bounded page of an
- * over-limit configuration. The shared search and the provider filter must
- * still reach it through the server-applied query.
+ * over-limit configuration. The provider filter and explicit continuation
+ * must still reach it through the server-applied query.
  */
 const STORAGE_BEYOND_PAGE = {
   id: "local-beyond-page",
@@ -441,99 +441,25 @@ describe("Storage management journey", () => {
     expect(within(firstRow).getByRole("button", { name: "查看 Local source" }));
   });
 
-  it("applies the shared top-bar search on the server side", async () => {
-    const fetchMock = vi.fn(async (input: string) => {
-      const url = String(input);
-      if (url.startsWith(INVENTORY_PATH)) {
-        // The backend answers the search over the complete Active object set;
-        // this fake mirrors that contract, including a match that only exists
-        // beyond the first bounded page.
-        const query = new URL(url, "http://test").searchParams.get("q") ?? "";
-        const all: readonly (typeof STORAGE_LOCAL | typeof STORAGE_R2)[] = [
-          STORAGE_LOCAL,
-          STORAGE_R2,
-          STORAGE_BEYOND_PAGE,
-        ];
-        const haystack = (item: {
-          name: string;
-          id: string;
-          type: string;
-          location: {
-            rootPath?: string;
-            endpoint?: string;
-            host?: string;
-            bucket?: string;
-          };
-        }) =>
-          [
-            item.name,
-            item.id,
-            item.type,
-            item.location.rootPath ?? "",
-            item.location.endpoint ?? "",
-            item.location.host ?? "",
-            item.location.bucket ?? "",
-          ]
-            .join(" ")
-            .toLowerCase();
-        const items = all.filter((item) =>
-          haystack(item).includes(query.toLowerCase()),
-        );
-        return jsonResponse({
-          ...(inventoryPayload(items) as Record<string, unknown>),
-          total: 105,
-          matched: items.length,
-          returned: items.length,
-          families: { local: 102, smb: 1, openlist: 1, s3: 1 },
-        });
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("renders every bounded entry without a shared keyword request", async () => {
+    const fetchMock = stubInventory([STORAGE_LOCAL, STORAGE_R2]);
     authStore.setToken(TOKEN);
     renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
-    await screen.findByRole("table");
-    const search = screen.getByRole("searchbox", {
-      name: "搜索存储、路径",
-    }) as HTMLInputElement;
-    expect(search).toHaveProperty("placeholder", "搜索存储、路径...");
-
-    // Location match narrows through the server-applied query, not a
-    // client-side filter of one already-truncated page.
-    await userEvent.setup().type(search, "r2.example");
-    await waitFor(() => {
-      expect(lastInventoryUrl(fetchMock)).toContain("q=r2.example");
-      expect(screen.getAllByRole("row")).toHaveLength(2);
-      expect(
-        within(screen.getAllByRole("row")[1]).getByText("R2 media"),
-      ).toBeVisible();
-    });
-    // Search context stays separate from Files/MediaLibrary.
-    expect(search.value).toBe("r2.example");
-
-    // A Storage that lives beyond the first bounded page is still findable.
-    await userEvent.clear(search);
-    await userEvent.type(search, STORAGE_BEYOND_PAGE.id);
-    await waitFor(() => {
-      expect(
-        within(screen.getAllByRole("row")[1]).getByText(
-          STORAGE_BEYOND_PAGE.name,
-        ),
-      ).toBeVisible();
-    });
-
-    // A term with no match is a truthful empty state, not an error.
-    await userEvent.clear(search);
-    await userEvent.type(search, "no-such-storage");
-    const noMatch = await screen.findByText(
-      "没有匹配搜索或筛选条件的存储。可以调整搜索或筛选。",
-    );
-    expect(noMatch).toBeVisible();
+    const table = await screen.findByRole("table");
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getByText("Local source")).toBeVisible();
+    expect(within(table).getByText("R2 media")).toBeVisible();
+    expect(lastInventoryUrl(fetchMock)).toBe(INVENTORY_PATH);
   });
 
-  it("discloses truncation and reaches every Storage through bounded paging", async () => {
+  it("discloses truncation, pages further and resets from a later page on type switch", async () => {
+    // The Active can be republished while a provider card is already visible.
+    // This flag makes the next SMB read observe that real empty result, while
+    // the type card itself was rendered from the earlier authoritative read.
+    let smbRemoved = false;
     const fetchMock = vi.fn(async (input: string) => {
       const url = String(input);
       if (!url.startsWith(INVENTORY_PATH)) {
@@ -541,47 +467,40 @@ describe("Storage management journey", () => {
       }
       const params = new URL(url, "http://test").searchParams;
       const after = params.get("after");
-      const query = params.get("q") ?? "";
-      if (query !== "") {
-        // The search runs on the backend over the complete Active set. The
-        // regression under test is that a new search after continuation must
-        // not carry the stale cursor: `?q=local-0&after=local-3` would slice
-        // the one match away and falsely return an empty page.
-        const searchable = [
-          ...Array.from({ length: 4 }, (_value, index) => ({
-            ...STORAGE_LOCAL,
-            id: `local-${index}`,
-            name: `Local ${index}`,
-          })),
-          STORAGE_BEYOND_PAGE,
-        ];
-        const needle = query.toLowerCase();
-        const matched = searchable.filter((item) =>
-          [item.name, item.id, item.type]
-            .join(" ")
-            .toLowerCase()
-            .includes(needle),
-        );
-        const remaining =
-          after === null ? matched : matched.filter((item) => item.id > after);
-        const page = remaining.slice(0, 100);
-        const hasMore = remaining.length > page.length;
+      const family = params.get("family");
+      const families = smbRemoved
+        ? { local: 102, openlist: 1, s3: 1 }
+        : { local: 102, smb: 1, openlist: 1, s3: 1 };
+      if (family === "s3") {
         return jsonResponse({
-          ...(inventoryPayload(page) as Record<string, unknown>),
+          ...(inventoryPayload([STORAGE_R2]) as Record<string, unknown>),
           total: 105,
-          matched: matched.length,
-          returned: page.length,
-          truncated: hasMore,
-          hasMore,
-          nextAfter:
-            hasMore && page.length > 0
-              ? (page[page.length - 1] as { id: string }).id
-              : null,
-          families: { local: 102, smb: 1, openlist: 1, s3: 1 },
+          matched: 1,
+          returned: 1,
+          families,
+        });
+      }
+      if (family === "smb") {
+        return jsonResponse({
+          ...(inventoryPayload([]) as Record<string, unknown>),
+          total: 104,
+          matched: 0,
+          returned: 0,
+          families,
         });
       }
       if (after === null) {
-        return jsonResponse(overLimitInventoryPayload());
+        const payload = overLimitInventoryPayload() as Record<string, unknown>;
+        return jsonResponse(
+          smbRemoved
+            ? {
+                ...payload,
+                total: 104,
+                matched: 104,
+                families,
+              }
+            : payload,
+        );
       }
       // The explicit continuation returns the last configured Storage.
       const last = inventoryPayload([STORAGE_BEYOND_PAGE]) as Record<
@@ -594,6 +513,7 @@ describe("Storage management journey", () => {
         matched: 1,
         returned: 1,
         nextAfter: null,
+        families,
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -613,6 +533,7 @@ describe("Storage management journey", () => {
     const scopeNote = await screen.findByText(/当前显示 4 \/ 105 个匹配的存储/);
     expect(scopeNote).toBeVisible();
     expect(screen.getByText(/Active 配置中共有 105/)).toBeVisible();
+    expect(lastInventoryUrl(fetchMock)).toBe(INVENTORY_PATH);
 
     // Explicit bounded continuation reaches the object beyond the page.
     await userEvent.click(screen.getByRole("button", { name: "继续显示更多" }));
@@ -631,25 +552,45 @@ describe("Storage management journey", () => {
       expect(screen.queryByText(/当前显示 4 \/ 105 个匹配的存储/)).toBeNull();
     });
 
-    // A new search after continuation resets the page window: the next
-    // request must drop the stale cursor instead of combining it with the new
-    // query (the `?q=...&after=...` false-empty regression). Searching for an
-    // earlier configured Storage that sits before the continuation cursor
-    // must still find it.
-    const search = screen.getByRole("searchbox", {
-      name: "搜索存储、路径",
-    }) as HTMLInputElement;
-    await userEvent.clear(search);
-    await userEvent.type(search, "local-0");
+    // Switching provider type from a later page starts a new first page: the
+    // request keeps the type but drops the stale continuation cursor.
+    await userEvent.click(screen.getByRole("button", { name: /S3 \/ R2/ }));
     await waitFor(() => {
       const lastUrl = lastInventoryUrl(fetchMock);
-      expect(lastUrl).toContain("q=local-0");
+      expect(lastUrl).toContain("family=s3");
       expect(lastUrl).not.toContain("after=");
       expect(
-        within(screen.getAllByRole("row")[1]).getByText("Local 0"),
+        within(screen.getAllByRole("row")[1]).getByText("R2 media"),
       ).toBeVisible();
     });
-    expect(screen.queryByText("没有匹配搜索或筛选条件的存储")).toBeNull();
+
+    // A provider type with no matching entry keeps the cards usable and
+    // states the applicable next action instead of an error or false success.
+    // The Active loses that type before the click, so the card is real while
+    // the next authoritative read is empty.
+    smbRemoved = true;
+    await userEvent.click(screen.getByRole("button", { name: /SMB/ }));
+    expect(
+      await screen.findByText(
+        "没有符合当前类型筛选的存储。可以切换类型或返回全部类型。",
+      ),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "全部类型" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("row")).toHaveLength(5);
+      expect(lastInventoryUrl(fetchMock)).not.toContain("family=");
+    });
+
+    // The dashboard never reintroduced the independent API keyword contract.
+    const inventoryRequests = (fetchMock.mock.calls as unknown as [string][])
+      .map(([requestUrl]) => String(requestUrl))
+      .filter((requestUrl) => requestUrl.startsWith(INVENTORY_PATH));
+    expect(
+      inventoryRequests.every(
+        (requestUrl) =>
+          !new URL(requestUrl, "http://test").searchParams.has("q"),
+      ),
+    ).toBe(true);
   });
 
   it("applies the provider family filter on the server side", async () => {
@@ -1054,14 +995,16 @@ describe("Storage management journey", () => {
     renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
-    // The search input, filter cards, table and 查看 action are all keyboard
-    // reachable (native button/input elements carry no positive tabindex).
-    const search = screen.getByRole("searchbox", { name: "搜索存储、路径" });
-    expect(search).not.toHaveAttribute("tabindex", "-1");
+    // The provider filter card, table and 查看 action are all keyboard
+    // reachable (native buttons carry no positive tabindex), while the topbar
+    // keeps no keyword input.
+    const filterCard = screen.getByRole("button", { name: /本地存储/ });
+    expect(filterCard).not.toHaveAttribute("tabindex", "-1");
     const viewButton = screen.getByRole("button", {
       name: "查看 Local source",
     });
     expect(viewButton.tagName).toBe("BUTTON");
+    expect(screen.queryByRole("searchbox")).toBeNull();
     expect(screen.queryByText("备注")).toBeNull();
   });
 });

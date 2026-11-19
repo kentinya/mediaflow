@@ -18,7 +18,8 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 
 [Slice50](https://github.com/kentinya/mediaflow/blob/214b69b1e64b24fc22068c2e1760cd1b0c6ac787/SLICE.md) / `V2-UX-009–012` 已于 2026-11-07 通过独立 A 终审。
 已删除本页与资源库文件页的页内左侧目录树及占位，浏览区利用释放宽度；保留全局侧栏、
-面包屑、上一级/根目录、文件夹、搜索、视图、选择、刷新与分页，不新增替代树。
+面包屑、上一级/根目录、文件夹、视图、选择、刷新与分页，共享顶栏仅保留账户入口，
+不新增替代树或顶栏关键词入口。
 
 添加/编辑媒体库与资源库四个入口都改为与自动化新建/编辑协调的居中弹卡，保留字段/值、
 编辑 ID 不变、隐藏配置、精确 Active/checked Save 和失败/冲突/未知核对。改善两页库配置
@@ -47,7 +48,7 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 | Card strip | Enabled libraries with name only; blue selected state and independent action menu; accessible responsive overflow shared with ResourceLibrary Files. |
 | Selected-library context | Immediately below the cards, show only `已启用` and exact configured `路径: /...`; do not repeat the name or show Storage. |
 | Directory navigation | No page-local tree/placeholder; folders, exact breadcrumbs and parent/root navigation retain browsing. |
-| File toolbar | Relative breadcrumbs, `刷新`, list/grid controls and existing bounded search through the top bar. |
+| File toolbar | Relative breadcrumbs, `刷新` and list/grid controls; the shared top bar keeps no keyword field. |
 | Selection bar | Above rows: selected count/known size and bounded batch Copy/Move/Delete; ResourceLibrary batch Organize remains available. Single-entry commands are not duplicated here. |
 | Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间`; type icons, directory navigation and selection. Name/size sort only the loaded current page; the toolbar keeps a compact `当前页排序：…` status and a `显示设置` menu whose `恢复默认顺序` resets only the order. Four data columns have discoverable drag/keyboard width handles, and the same menu exposes a session-only `恢复默认列宽` entry in list view only; order and width recovery are disabled at their own default and reset independently. User-set widths are realized by a table exactly as wide as its columns, so the visible boundary follows the announced width; leftover pane space stays outside the table and the default layout still fills it. No persistent operation column. |
 | Entry context menu | Right-click, Context Menu key or `Shift+F10` opens the applicable single-entry commands. Folder left click opens directly; no inline Open button. |

@@ -256,8 +256,8 @@ Dashboard API／CLI 也按用户明确要求完全退出：正常配置／合法
 
 - 目标/入口：从文件或媒体库页浏览目录，通过库菜单编辑/移除配置，或添加库。两页删除
   页内左侧目录树及其空白占位；应用全局侧栏保留。
-- 可见状态/动作：文件区利用释放宽度，原有文件夹、面包屑、上一级/根目录、搜索、视图、
-  选择、刷新/分页完成浏览。编辑/移除菜单和确认呈现清楚美观，包含用户点名的媒体库操作，
+- 可见状态/动作：文件区利用释放宽度，原有文件夹、面包屑、上一级/根目录、视图、选择、
+  刷新/分页完成浏览；共享顶栏仅保留账户入口。编辑/移除菜单和确认呈现清楚美观，包含用户点名的媒体库操作，
   危险动作可辨；移除配置明确保留物理文件。添加/编辑两种库四个入口全部使用协调弹卡，
   保留既有字段、精确回填、编辑 ID 不变及隐藏配置。
 - 成功/退出：一次界面 Save 仍发布真实 Active；名称编辑保留合法目录，Storage/根变更回到
@@ -677,6 +677,8 @@ V1's complete-configuration setup remains a compatibility path, not the native e
 - **Goal/entry:** inspect or maintain configured locations through `存储管理` (`/storage`).
 - **State/action:** real provider/identity/root, enabled/read-only/readiness and library references;
   typed add/edit/copy/enable/disable/reference-safe removal, or explicit Connection/Read check.
+  清单按提供商类型卡片和有界分页查找；真实空清单、类型筛选无结果和读取失败分别给出
+  适用的添加、切换类型或重试下一步。
   No secrets/private host paths or mutation-based capability probes.
 - **Success:** checked successor publication or bounded read evidence; supported transfers keep their
   own library-kind/pin. No media work from configuration management.
@@ -1421,8 +1423,8 @@ Old-task/Job conversion and cross-version upgrade/rollback remain outside curren
 ## V2 Operator Web
 
 The shared responsive light shell provides persistent navigation, identity/connection controls,
-safe deep links and bounded return context. The top bar provides the account control and search
-where the page uses it. Open 通知 from the sidebar to manage Webhooks and view delivery records.
+safe deep links and bounded return context. The top bar provides only the account control. Open 通知
+from the sidebar to manage Webhooks and view delivery records.
 After connection, root opens Explore. Memory-only token auth continues supported routes; reconnect
 never replays work. A 401 clears rejected authority and query state. A 403 retains identity and offers
 legal navigation. Disconnect clears token/cache/intended route.
@@ -1440,7 +1442,7 @@ exact organizing context or the proven ordinary-operation library page; missing/
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
 The center has one page title, with content boundaries and spacing coordinated with MediaLibrary.
-The shared shell keyword input is not shown there. The selected tab supplies current-view context;
+The shared topbar carries only the account control. The selected tab supplies current-view context;
 no duplicate view heading or generic description appears between the tabs and filters. All eight
 views share a compact 创建日期 group with independently named native 开始日期/结束日期 controls,
 apply either or both sides without a search submission, and clear back to the current view’s

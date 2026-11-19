@@ -233,7 +233,7 @@ test("an unavailable requested library is replaced by the browsed one in the rou
   await expect(page.getByText(/不可用或已停用/)).toHaveCount(0);
 });
 
-test("library selection, lazy navigation, breadcrumbs, search and refresh", async ({
+test("library selection, lazy navigation, breadcrumbs and refresh", async ({
   page,
 }) => {
   const requests = apiRequestsOf(page);
@@ -257,10 +257,12 @@ test("library selection, lazy navigation, breadcrumbs, search and refresh", asyn
   const breadcrumbs = page.getByLabel("媒体库面包屑");
   await expect(breadcrumbs.getByRole("button", { name: /电影/ })).toBeVisible();
 
-  // Bounded shell search filters the visible rows only.
-  await page.getByLabel("搜索文件、文件夹或媒体库").fill("SSH");
+  // The topbar stays account-only and the full bounded directory remains
+  // visible; the current folder row is reached by ordinary browsing.
+  await expect(
+    page.locator(".mf-shell-topbar").getByRole("searchbox"),
+  ).toHaveCount(0);
   await expect(page.getByRole("row", { name: /SSH/ })).toBeVisible();
-  await page.getByLabel("搜索文件、文件夹或媒体库").fill("");
 
   // Refresh repeats the live read for the same still-valid location.
   const before = requests.filter((request) =>

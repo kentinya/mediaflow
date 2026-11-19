@@ -13,7 +13,6 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
-import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
@@ -796,41 +795,35 @@ function entryTypeLabel(entry: StorageFilesEntry): string {
 function buildRows(
   model: StorageFilesModel,
   selected: ReadonlySet<string>,
-  query: string,
 ): readonly FilesRowVm[] {
-  const needle = query.trim().toLowerCase();
-  return model.entries
-    .filter(
-      (entry) => needle === "" || entry.name.toLowerCase().includes(needle),
-    )
-    .map((entry) => {
-      const organizeEligible = entry.organizeEligible === true;
-      return {
-        name: entry.name,
-        path: entry.path,
-        size: entry.size,
-        modifiedAt: entry.modifiedAt,
-        isDirectory: entry.isDirectory,
-        traversable: entry.traversable,
-        // General selection is intentionally independent from the backend
-        // organize admission flag. Future direct-file commands can attach
-        // their own capability checks to this bounded local selection set.
-        selectable: true,
-        organizeEligible,
-        organizeKind: entry.organizeKind,
-        typeLabel: entryTypeLabel(entry),
-        sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
-        modifiedLabel: formatModified(entry.modifiedAt),
-        organizeAction: entry.isDirectory
-          ? organizeEligible
-            ? "整理"
-            : "打开"
-          : organizeEligible
-            ? "整理"
-            : "查看",
-        checked: selected.has(entry.path),
-      };
-    });
+  return model.entries.map((entry) => {
+    const organizeEligible = entry.organizeEligible === true;
+    return {
+      name: entry.name,
+      path: entry.path,
+      size: entry.size,
+      modifiedAt: entry.modifiedAt,
+      isDirectory: entry.isDirectory,
+      traversable: entry.traversable,
+      // General selection is intentionally independent from the backend
+      // organize admission flag. Future direct-file commands can attach
+      // their own capability checks to this bounded local selection set.
+      selectable: true,
+      organizeEligible,
+      organizeKind: entry.organizeKind,
+      typeLabel: entryTypeLabel(entry),
+      sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
+      modifiedLabel: formatModified(entry.modifiedAt),
+      organizeAction: entry.isDirectory
+        ? organizeEligible
+          ? "整理"
+          : "打开"
+        : organizeEligible
+          ? "整理"
+          : "查看",
+      checked: selected.has(entry.path),
+    };
+  });
 }
 
 function formatSelectedSize(
@@ -1048,7 +1041,6 @@ function FileBrowseView({
   onSortChange,
   columnWidths,
   onColumnWidthsChange,
-  query,
   previewing,
   refreshing,
   previewError,
@@ -1085,7 +1077,6 @@ function FileBrowseView({
   readonly onSortChange: (sort: FilesSortState | null) => void;
   readonly columnWidths: FilesColumnWidths | null;
   readonly onColumnWidthsChange: (widths: FilesColumnWidths | null) => void;
-  readonly query: string;
   readonly previewing: boolean;
   /** A same-context re-read keeps the rendered rows and states it explicitly. */
   readonly refreshing: boolean;
@@ -1134,8 +1125,8 @@ function FileBrowseView({
     onResizedChange: onColumnWidthsChange,
   });
   const rows = useMemo(
-    () => sortFilesRows(buildRows(model, selected, query), sort),
-    [model, selected, query, sort],
+    () => sortFilesRows(buildRows(model, selected), sort),
+    [model, selected, sort],
   );
   const selectedRows = rows.filter((row) => selected.has(row.path));
   const selectedCount = selectedRows.length;
@@ -1351,9 +1342,7 @@ function FileBrowseView({
           )}
           {rows.length === 0 ? (
             <p className="mf-files-state">
-              {query !== ""
-                ? "没有匹配搜索条件的文件或文件夹。可以调整搜索或刷新。"
-                : "此目录为空。可以刷新或返回上一级目录。"}
+              此目录为空。可以刷新或返回上一级目录。
             </p>
           ) : view === "grid" ? (
             <GridView
@@ -2374,7 +2363,6 @@ export function StorageFilesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
-  const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
   // The task-center-originated organizing journey keeps one bounded return
   // context.  Read it from the router's committed search, not a one-time
@@ -2703,7 +2691,6 @@ export function StorageFilesPage() {
     setPreviewError(null);
     setCursor(null);
     setCursorHistory([]);
-    setQuery("");
   };
 
   // The refresh boundary.  A refresh drops the selection and repeats only the
@@ -3675,10 +3662,6 @@ export function StorageFilesPage() {
     },
   });
 
-  useEffect(() => {
-    return subscribeToQueryChange(() => setSelectedFiles(new Set()));
-  }, [subscribeToQueryChange]);
-
   // Only the Save that belongs to this card's exact target is presented; an
   // unconfirmed Save for another library stays retained without blocking this
   // entry.
@@ -3985,7 +3968,6 @@ export function StorageFilesPage() {
                         onSortChange={setFilesSort}
                         columnWidths={filesColumnWidths}
                         onColumnWidthsChange={setFilesColumnWidths}
-                        query={query}
                         previewing={
                           organizeMutation.isPending ||
                           isFetching ||

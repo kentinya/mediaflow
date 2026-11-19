@@ -325,8 +325,8 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   ).toBeVisible();
 
   // The shared shell keeps the Operations workspace reachable from any page.
-  // The media library's own search must never be carried into the arrived
-  // Operations URL by a remounted previous page.
+  // The media library's selected-library address must never be carried into
+  // the arrived Operations URL by a remounted previous page.
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/operations$/);
   expect(page.url()).not.toContain("mediaLibraryId");

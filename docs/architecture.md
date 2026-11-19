@@ -297,7 +297,7 @@ presentation step creates/migrates/deletes a directory, grants authority or repl
 
 **Files navigation and loading:** remove both page-local directory-tree render/state dependencies
 that are no longer consumed, while preserving exact library-kind/path identity, breadcrumbs,
-folder/parent/root navigation, selection, search, list/grid, refresh and bounded paging. Do not
+folder/parent/root navigation, selection, list/grid, refresh and bounded paging. Do not
 remove state still required by ordinary commands or organizing return paths. Shared Shell global
 navigation remains. Apply the shared page transition only between the main pages reached through
 existing V2 sidebar entries, based on destination-page identity rather than link origin or every URL

@@ -2503,44 +2503,9 @@ button.mf-grid-button {
   height: 58px;
   align-items: center;
   justify-content: flex-end;
-  gap: 27px;
   padding: 0 18px;
   border-bottom: 1px solid #e3e9f1;
   background: #fbfcfd;
-}
-
-.mf-shell-search {
-  display: flex;
-  width: 474px;
-  height: 40px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border: 1px solid #dfe6ef;
-  border-radius: 6px;
-  background: #fbfcfd;
-  color: #334d7f;
-}
-
-.mf-shell-search svg {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
-}
-
-.mf-shell-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #18243b;
-  font: inherit;
-  font-size: 15px;
-}
-
-.mf-shell-search input::placeholder {
-  color: #7183a2;
 }
 
 .mf-shell-actions,
@@ -3785,11 +3750,6 @@ button.mf-grid-button {
     position: sticky;
     height: 58px;
     padding: 0 14px 0 72px;
-  }
-
-  .mf-shell-search {
-    flex: 1;
-    width: auto;
   }
 
   .mf-auth-state {
