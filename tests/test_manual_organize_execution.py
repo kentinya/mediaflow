@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Barrier, Event, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -81,13 +82,21 @@ class Fixture:
         self.target_directory.cleanup()
 
 
-def request(api, path: str, *, method: str = "GET", body=None, token: str = "operator-token"):
+def request(
+    api,
+    path: str,
+    *,
+    method: str = "GET",
+    body=None,
+    token: str = "operator-token",
+    query: str = "",
+):
     payload = json.dumps(body).encode("utf-8") if body is not None else b""
     statuses: list[str] = []
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "QUERY_STRING": "",
+        "QUERY_STRING": query,
         "CONTENT_LENGTH": str(len(payload)),
         "wsgi.input": io.BytesIO(payload),
         "REMOTE_ADDR": "127.0.0.1",
@@ -962,6 +971,102 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 self.assertEqual(
                     [intent.items[1].item_id],
                     item_document["manualExecutionDiscovery"]["executions"][0]["unselectedItemIds"],
+                )
+        finally:
+            fixture.cleanup()
+
+    def test_task_center_reconciles_the_original_submission_for_its_submitter_only(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
+                run = service.execute(
+                    self._authorize(service, preview).authorization_id,
+                    actor="operator",
+                    confirmation=True,
+                )
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ}),
+                )
+                viewer = ResolvedApiPrincipal(
+                    "viewer",
+                    "viewer-token",
+                    frozenset({ApiPermission.READ}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    principals=(operator, viewer),
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                task_count = len(repository.list_tasks())
+                execution_count = len(repository.list_manual_executions_for_task(run.task_id))
+
+                status, document = request(api, f"/api/operations/runs/{run.task_id}")
+                self.assertEqual(200, status, document)
+                submission = document["manualOrganizeSubmission"]
+                self.assertEqual(run.execution_id, submission["executionId"])
+                self.assertEqual(preview.preview_id, submission["previewId"])
+                self.assertEqual(preview.intent_version, submission["intentVersion"])
+                self.assertEqual(list(run.selected_item_ids), submission["selectedItemIds"])
+                self.assertEqual(
+                    {
+                        "allowOverwrite": run.allow_overwrite,
+                        "allowSourceCleanup": run.allow_source_cleanup,
+                    },
+                    submission["destructiveAuthority"],
+                )
+                self.assertEqual(
+                    ["One.2001.mkv"],
+                    [Path(item["sourcePath"]).name for item in submission["items"]],
+                )
+                self.assertEqual("none", submission["sideEffects"])
+
+                # Another READ principal never receives the original
+                # submitter's request identity, even for the same Task.
+                status, viewer_document = request(
+                    api,
+                    f"/api/operations/runs/{run.task_id}",
+                    token="viewer-token",
+                )
+                self.assertEqual(200, status, viewer_document)
+                self.assertIsNone(viewer_document["manualOrganizeSubmission"])
+
+                # The existing formal reconciliation read proves the exact
+                # original submission from the same durable record.
+                query = urlencode(
+                    {
+                        "itemIds": ",".join(submission["selectedItemIds"]),
+                        "expectedIntentVersion": submission["intentVersion"],
+                        "allowOverwrite": str(
+                            submission["destructiveAuthority"]["allowOverwrite"]
+                        ).lower(),
+                        "allowSourceCleanup": str(
+                            submission["destructiveAuthority"]["allowSourceCleanup"]
+                        ).lower(),
+                    }
+                )
+                status, reconciled = request(
+                    api,
+                    f"/api/operations/organize/previews/{preview.preview_id}/admission",
+                    query=query,
+                )
+                self.assertEqual(200, status, reconciled)
+                self.assertEqual("known", reconciled["outcome"])
+                self.assertEqual(run.task_id, reconciled["taskId"])
+                self.assertEqual(run.execution_id, reconciled["executionId"])
+                self.assertEqual("none", reconciled["sideEffects"])
+
+                # These reads are side-effect free: no Task, execution or
+                # second submission was created by opening or reconciling.
+                self.assertEqual(task_count, len(repository.list_tasks()))
+                self.assertEqual(
+                    execution_count,
+                    len(repository.list_manual_executions_for_task(run.task_id)),
                 )
         finally:
             fixture.cleanup()

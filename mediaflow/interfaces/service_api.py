@@ -11470,7 +11470,69 @@ class MediaFlowApi:
         # one.  The bounded identity lets Task Center reopen the same existing
         # summary/preparation instead of keeping a second record list.
         document["filesPreparation"] = self._operations_run_files_preparation(overview)
+        # The selected run's own original manual Organize submission, when the
+        # reading principal is the operator who admitted it.  This is the
+        # durable acceptance record behind a lost Execute response: it carries
+        # the exact Preview/version/selection/effect authority the original
+        # request used, so Task Center can reconcile that request without
+        # guessing from today's summary or replaying the mutation.
+        document["manualOrganizeSubmission"] = self._operations_run_manual_organize_submission(
+            overview, principal
+        )
         return self._response(start_response, 200, document)
+
+    def _operations_run_manual_organize_submission(
+        self, overview, principal: ResolvedApiPrincipal
+    ) -> dict[str, object] | None:
+        """The original manual Organize acceptance of this exact Task, read-only.
+
+        The Task may later receive recovery confirmations that adopt the same
+        durable identity, so the original submission is the earliest admitted
+        execution on this Task, not the newest row.  Only that execution's own
+        submitting principal may reconcile it; another authorized reader gets
+        no acceptance projection instead of someone else's request identity.
+        The projection contains no authority material and performs no write.
+        """
+
+        repository = self._repository
+        task_id = getattr(overview, "task_id", None)
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        reader = getattr(repository, "list_manual_executions_for_task", None)
+        if not callable(reader):
+            return None
+        executions = tuple(reader(task_id, limit=500))
+        if not executions:
+            return None
+        original = min(executions, key=lambda value: (value.created_at, value.execution_id))
+        if original.actor != principal.principal_id:
+            return None
+        return redact_manual_value(
+            {
+                "executionId": original.execution_id,
+                "previewId": original.preview_id,
+                "intentVersion": original.intent_version,
+                "selectedItemIds": list(original.selected_item_ids),
+                "destructiveAuthority": {
+                    "allowOverwrite": original.allow_overwrite,
+                    "allowSourceCleanup": original.allow_source_cleanup,
+                },
+                "status": original.status.value,
+                "createdAt": original.created_at.isoformat(),
+                "items": [
+                    {
+                        "itemId": item.item_id,
+                        "taskItemId": item.task_item_id,
+                        "status": item.status.value,
+                        "resultId": item.result_id,
+                        "sourcePath": item.source.path,
+                        "checkpointPath": (f"/api/tasks/{item.task_id}/items/{item.task_item_id}"),
+                    }
+                    for item in original.items
+                ],
+                "sideEffects": "none",
+            }
+        )
 
     def _operations_run_files_preparation(self, overview) -> dict[str, object] | None:
         """The selected run's own Files preparation identity, or ``None``.

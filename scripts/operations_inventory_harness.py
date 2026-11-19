@@ -528,6 +528,12 @@ def build_managed_fixture(
     (dialog_root / "DialogUnselected.2028.mkv").write_bytes(
         b"slice53 untouched sibling synthetic media"
     )
+    # Slice56.1 B56-01 reopened-submission regression: its own unambiguous
+    # source, accepted by a lost Execute response and then reopened in the
+    # Task Center after the real Worker completed it.
+    (dialog_root / "DialogReopen.2029.mkv").write_bytes(
+        b"slice56 reopened original submission synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -537,6 +543,7 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogBack.2025.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogReconcile.2027.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogUnselected.2028.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogReopen.2029.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -747,7 +754,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029)\.mkv$"
                         ),
                     },
                 ],
@@ -1262,6 +1269,17 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogUnselected",
                         year=2028,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # Slice56.1 B56-01: one identity, ready without an extra
+                    # operator decision, for the reopened Task Center proof.
+                    MediaCandidate(
+                        "tmdb",
+                        "711",
+                        MediaType.MOVIE,
+                        "DialogReopen",
+                        year=2029,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3898,6 +3916,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogRename.2024.mkv",
         "Dialog/DialogReconcile.2027.mkv",
         "Dialog/DialogUnselected.2028.mkv",
+        "Dialog/DialogReopen.2029.mkv",
         "YearProbe/DialogYear.2025.mkv",
     )
     if filename not in allowed:

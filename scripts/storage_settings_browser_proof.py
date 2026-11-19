@@ -172,7 +172,7 @@ try {
   await page.getByRole('button', {name:'验证草稿'}).click();
   await expect(page.getByText('草稿验证通过')).toBeVisible();
   if (!writes.some(path =>
-      /^POST \/api\/v1\/configuration\/revisions\/[^/]+\/validate$/.test(path)))
+      /^POST \/api\/configuration\/revisions\/[^/]+\/validate$/.test(path)))
     throw new Error('the explicit validation action was not observed');
   await page.getByRole('button', {name:'激活配置'}).click();
   await expect(page).toHaveURL(/\/storage$/);

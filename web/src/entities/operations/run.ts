@@ -258,6 +258,15 @@ export interface RunSummary {
    * read publishes it; inventory rows carry `null`. */
   readonly filesPreparation: RunFilesPreparation | null;
   /**
+   * The original manual Organize acceptance this run's Task durably records,
+   * when the reading principal submitted it. It carries exactly the Preview,
+   * summary version, selected items and effect authority the original request
+   * used, so Task Center can reconcile a lost Execute response without reading
+   * today's possibly-updated summary. Only the single-run overview read
+   * publishes it; inventory rows carry `null`.
+   */
+  readonly manualOrganizeSubmission: RunManualOrganizeSubmission | null;
+  /**
    * Whether this run's *current* overall state is Completed because an exact
    * persisted recovery really finished every necessary item, and the flow
    * itself really completed.
@@ -288,6 +297,36 @@ export interface RunFilesPreparation {
    * keeps the read-only summary link plus the failure evidence instead.
    */
   readonly continuable: boolean;
+}
+
+/**
+ * The original accepted manual Organize submission of one Task.
+ *
+ * This is a read-only identity: it carries no execution authority and no
+ * ability to replay the original command. It exists so the Task Center can
+ * ask the existing admission-reconciliation read whether this exact reviewed
+ * submission was admitted, even after the current summary changed.
+ */
+export interface RunManualOrganizeSubmission {
+  readonly executionId: string;
+  readonly previewId: string;
+  readonly intentVersion: number;
+  readonly selectedItemIds: readonly string[];
+  readonly status: string;
+  readonly createdAt: string;
+  readonly allowOverwrite: boolean;
+  readonly allowSourceCleanup: boolean;
+  readonly items: readonly RunManualOrganizeSubmissionItem[];
+}
+
+/** One accepted item's durable source identity and current execution state. */
+export interface RunManualOrganizeSubmissionItem {
+  readonly itemId: string;
+  readonly taskItemId: string;
+  readonly status: string;
+  readonly resultId: string | null;
+  readonly sourcePath: string;
+  readonly checkpointPath: string;
 }
 
 export interface RunInventoryPage {
@@ -627,6 +666,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     source["filesPreparation"],
     taskId,
   );
+  const manualOrganizeSubmission = normalizeRunManualOrganizeSubmission(
+    source["manualOrganizeSubmission"],
+    taskId,
+  );
   return {
     runId: text(source, "run_id"),
     runKind: text(source, "run_kind"),
@@ -665,6 +708,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         : normalizeRunProgress(source["progress"]),
     lifecycle,
     filesPreparation,
+    manualOrganizeSubmission,
     recoveredCompletion:
       // A48-01: the durable flow status is authoritative in the browser too.
       // A recovery facet beside a failed/cancelled/running status is a
@@ -744,6 +788,134 @@ function normalizeRunFilesPreparation(
   } catch {
     return fail();
   }
+}
+
+/**
+ * Decode the original manual Organize acceptance projection.
+ *
+ * The projection is only meaningful on a run with its own linked Task. Its item
+ * identities must exactly match the accepted selection, so a truncated or
+ * substituted item list is malformed rather than presented as the original
+ * submission. A well-formed acceptance still carries no authority.
+ */
+function normalizeRunManualOrganizeSubmission(
+  value: unknown,
+  taskId: string | null,
+): RunManualOrganizeSubmission | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (taskId === null) fail();
+  try {
+    const source = readRecord(value, "run.manualOrganizeSubmission");
+    const destructive = readRecord(
+      source["destructiveAuthority"],
+      "run.manualOrganizeSubmission.destructiveAuthority",
+    );
+    const intentVersion = normalizeBoundedCount(
+      source["intentVersion"],
+      "run.manualOrganizeSubmission.intentVersion",
+    );
+    if (intentVersion < 1) fail();
+    const selectedItemIds = getStringList(
+      source["selectedItemIds"],
+      "run.manualOrganizeSubmission.selectedItemIds",
+    );
+    const rawItems = source["items"];
+    if (!Array.isArray(rawItems) || rawItems.length > 100) fail();
+    const items = rawItems.map(
+      (entry, index): RunManualOrganizeSubmissionItem => {
+        const item = readRecord(
+          entry,
+          `run.manualOrganizeSubmission.items[${index}]`,
+        );
+        return {
+          itemId: normalizeBoundedText(
+            item["itemId"],
+            `run.manualOrganizeSubmission.items[${index}].itemId`,
+            128,
+          ),
+          taskItemId: normalizeBoundedText(
+            item["taskItemId"],
+            `run.manualOrganizeSubmission.items[${index}].taskItemId`,
+            128,
+          ),
+          status: normalizeBoundedText(
+            item["status"],
+            `run.manualOrganizeSubmission.items[${index}].status`,
+            64,
+          ),
+          resultId: normalizeOptionalText(
+            item["resultId"],
+            `run.manualOrganizeSubmission.items[${index}].resultId`,
+          ),
+          sourcePath: normalizeBoundedText(
+            item["sourcePath"],
+            `run.manualOrganizeSubmission.items[${index}].sourcePath`,
+            4096,
+          ),
+          checkpointPath: normalizeBoundedText(
+            item["checkpointPath"],
+            `run.manualOrganizeSubmission.items[${index}].checkpointPath`,
+            4096,
+          ),
+        };
+      },
+    );
+    const itemIds = items.map((item) => item.itemId);
+    if (
+      itemIds.length !== selectedItemIds.length ||
+      new Set(itemIds).size !== itemIds.length ||
+      itemIds.some((itemId, index) => itemId !== selectedItemIds[index])
+    ) {
+      fail();
+    }
+    const sideEffects = normalizeBoundedText(
+      source["sideEffects"],
+      "run.manualOrganizeSubmission.sideEffects",
+      32,
+    );
+    if (sideEffects !== "none") fail();
+    return {
+      executionId: normalizeBoundedText(
+        source["executionId"],
+        "run.manualOrganizeSubmission.executionId",
+        128,
+      ),
+      previewId: normalizeBoundedText(
+        source["previewId"],
+        "run.manualOrganizeSubmission.previewId",
+        128,
+      ),
+      intentVersion,
+      selectedItemIds,
+      status: normalizeBoundedText(
+        source["status"],
+        "run.manualOrganizeSubmission.status",
+        64,
+      ),
+      createdAt: normalizeBoundedText(
+        source["createdAt"],
+        "run.manualOrganizeSubmission.createdAt",
+        64,
+      ),
+      allowOverwrite: flag(destructive, "allowOverwrite"),
+      allowSourceCleanup: flag(destructive, "allowSourceCleanup"),
+      items,
+    };
+  } catch {
+    return fail();
+  }
+}
+
+/** A bounded list of non-empty identity strings, preserving server order. */
+function getStringList(value: unknown, field: string): readonly string[] {
+  if (!Array.isArray(value) || value.length > 100) fail();
+  const result = value.map((entry, index) =>
+    normalizeBoundedText(entry, `${field}[${index}]`, 128),
+  );
+  if (new Set(result).size !== result.length) fail();
+  return result;
 }
 
 function normalizeRunFilterEcho(

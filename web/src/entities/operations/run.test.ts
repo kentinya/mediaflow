@@ -814,3 +814,108 @@ describe("run Files preparation link normalization", () => {
     ).toThrow(RunNormalizationError);
   });
 });
+
+describe("run original manual Organize acceptance normalization", () => {
+  function submissionDocument(overrides: Record<string, unknown> = {}) {
+    return {
+      executionId: "execution-1",
+      previewId: "preview-1",
+      intentVersion: 3,
+      selectedItemIds: ["item-1"],
+      destructiveAuthority: {
+        allowOverwrite: false,
+        allowSourceCleanup: true,
+      },
+      status: "completed",
+      createdAt: "2026-08-30T12:00:00+00:00",
+      items: [
+        {
+          itemId: "item-1",
+          taskItemId: "task-item-1",
+          status: "success",
+          resultId: "result-1",
+          sourcePath: "Dialog/DialogUnknown.2021.mkv",
+          checkpointPath: "/api/tasks/task-1/items/task-item-1",
+        },
+      ],
+      sideEffects: "none",
+      ...overrides,
+    };
+  }
+
+  it("normalizes the exact original submission identity and per-item state", () => {
+    const run = normalizeRunSummary(
+      runDocument({
+        task_id: "task-1",
+        manualOrganizeSubmission: submissionDocument(),
+      }),
+    );
+    expect(run.manualOrganizeSubmission).toEqual({
+      executionId: "execution-1",
+      previewId: "preview-1",
+      intentVersion: 3,
+      selectedItemIds: ["item-1"],
+      status: "completed",
+      createdAt: "2026-08-30T12:00:00+00:00",
+      allowOverwrite: false,
+      allowSourceCleanup: true,
+      items: [
+        {
+          itemId: "item-1",
+          taskItemId: "task-item-1",
+          status: "success",
+          resultId: "result-1",
+          sourcePath: "Dialog/DialogUnknown.2021.mkv",
+          checkpointPath: "/api/tasks/task-1/items/task-item-1",
+        },
+      ],
+    });
+  });
+
+  it("normalizes an absent or explicit null acceptance to null", () => {
+    expect(
+      normalizeRunSummary(runDocument()).manualOrganizeSubmission,
+    ).toBeNull();
+    expect(
+      normalizeRunSummary(runDocument({ manualOrganizeSubmission: null }))
+        .manualOrganizeSubmission,
+    ).toBeNull();
+    // Inventory rows carry only the run identity, never an acceptance record.
+    const page = normalizeRunInventoryPage(pageDocument());
+    expect(page.items[0]?.manualOrganizeSubmission).toBeNull();
+  });
+
+  it("rejects an acceptance without the exact Task identity", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: null,
+          manualOrganizeSubmission: submissionDocument(),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects an acceptance whose item list differs from the submitted selection", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: "task-1",
+          manualOrganizeSubmission: submissionDocument({
+            selectedItemIds: ["item-2"],
+          }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: "task-1",
+          manualOrganizeSubmission: submissionDocument({
+            sideEffects: "replayed",
+          }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+});

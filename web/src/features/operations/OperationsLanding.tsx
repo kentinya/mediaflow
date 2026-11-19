@@ -58,6 +58,7 @@ import {
   runOverviewQueryOptions,
 } from "./run-query";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { OrganizeSubmissionVerification } from "./OrganizeSubmissionVerification";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
@@ -1895,6 +1896,12 @@ function RunDetailFacts({
             </Link>
           </div>
         </section>
+      )}
+      {run.manualOrganizeSubmission !== null && run.taskId !== null && (
+        <OrganizeSubmissionVerification
+          taskId={run.taskId}
+          submission={run.manualOrganizeSubmission}
+        />
       )}
       {hasDiagnostics && (
         <details className="mf-run-fact-diagnostics">

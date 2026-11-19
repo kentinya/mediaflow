@@ -886,7 +886,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
             await expect(page.getByText('已创建首个草稿')).toBeVisible();
             await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
             if (writes.length !== 1 ||
-                !/^POST \/api\/v1\/configuration\/drafts\/first$/.test(writes[0]))
+                !/^POST \/api\/configuration\/drafts\/first$/.test(writes[0]))
                 throw new Error('the first Draft was not created by one explicit action');
             if (created === null || typeof created.revisionId !== 'string')
                 throw new Error('the first Draft response did not identify its revision');
@@ -929,7 +929,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 throw new Error('activation response did not identify the exact Active revision');
             if (writes.some(path =>
                 !path.startsWith('POST /api/configuration/drafts/first') &&
-                !/^POST \/api\/v1\/configuration\/revisions\/[^/]+\/(validate|activate)$/
+                !/^POST \/api\/configuration\/revisions\/[^/]+\/(validate|activate)$/
                     .test(path)))
                 throw new Error('the settings journey wrote outside its explicit actions');
 
