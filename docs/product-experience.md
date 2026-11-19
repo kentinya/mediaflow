@@ -1421,9 +1421,11 @@ Old-task/Job conversion and cross-version upgrade/rollback remain outside curren
 ## V2 Operator Web
 
 The shared responsive light shell provides persistent navigation, identity/connection controls,
-safe deep links and bounded return context. After connection, root opens Explore. Memory-only token auth
-continues supported routes; reconnect never replays work. A 401 clears rejected authority/query state;
-a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
+safe deep links and bounded return context. The top bar provides the account control and search
+where the page uses it. Open 通知 from the sidebar to manage Webhooks and view delivery records.
+After connection, root opens Explore. Memory-only token auth continues supported routes; reconnect
+never replays work. A 401 clears rejected authority and query state. A 403 retains identity and offers
+legal navigation. Disconnect clears token/cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
 Refresh/list/navigation create no work or media mutation. Explicit Explore reads may contact the
 Provider for bounded metadata/artwork. Other status/list/navigation reads remain Provider-free.
