@@ -15,13 +15,13 @@ V2-RETIRE-002、009、010。测试和交接按开发流程执行。
 Task ID: 55.8
 Task Type: SLICE
 Parent Slice: 55
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.8 IMPLEMENTATION AUTHORIZED
-Next Action: DEVELOPER FIXES B55.8-01
+Next Action: B INDEPENDENT REVIEW
 ```
 
 规划从 `/Users/songzhidong/mediaflow` 的 `main` 开始。上述 HEAD 的工作区和暂存区干净，
@@ -270,3 +270,76 @@ B 独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED；本报告�
 | RO-6 | B55.8-01 阻止验收。四服务空实例、同实例 typed 配置和最终制品门禁仍待 B 执行。 |
 
 修正仍在 Task55.8 内。Slice55 保持 ACTIVE。
+
+### Developer 交接 — Task55.8 修订（B55.8-01，2026-11-19，北京时间）
+
+```text
+Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
+Implementation Candidate: 18d848dee56d9675e62be7d0b201c9f0ce45133a
+Prior Candidate: ba9e026a9dbe85243749c9176a2b85f7a3ec715a
+Branch: main
+```
+
+候选是实现检查点；随后仅本文件记录交接。B 审查完整
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..18d848dee56d9675e62be7d0b201c9f0ce45133a`，
+其中 `ba9e026a..18d848de` 仅含本修订；中间的 `cd263b23` 是 B 自己的审查记录提交。
+
+**已实现（B55.8-01）**
+
+- README 首次设置：保留生成 bootstrap、编辑本地路径与 `config draft-import` 命令；发布步骤
+  改为系统设置 checked 旅程——`高级配置 → 查看配置` 选回同一草稿、`验证草稿`、完成该版本
+  列出的存储只读检查／离线识别策略测试／目标预检，再点击 `激活配置`；写明适用检查未全部
+  通过前无生效配置、被拒激活保留草稿与原 Active，以及可恢复情形（目标存储根不可达时目标
+  预检报 `暂不可用`；存储根可达但媒体库根缺失时报 `目标库根路径不存在`；创建草稿指定的
+  目录或修好挂载后回到同一草稿重跑），激活后页面显示发布版本且「诊断」显示对应生效
+  修订／版本／摘要。README 同时说明生命周期 CLI 仍用于已验证修订的高级发布，且
+  `config activate` 不执行设置页发布前检查。
+- `docs/configuration.md` 引导段同步改为「导入不发布」＋同一 Web checked 旅程＋可恢复
+  情形；「Managed lifecycle」的 CLI 清单后新增 CLI activate 边界说明（仅发布已验证修订、
+  不要求设置页发布前检查证据，首次设置与常规发布走 Web checked 旅程）。未改任何源码、
+  测试、脚本或 API/Web 行为。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`；日志与脚本存于
+`.git/validation-evidence/18d848dee56d9675e62be7d0b201c9f0ce45133a/task55-8-dev-fix/`）**
+
+1. 临时部署：`make_deployment_config.py` 生成最小 bootstrap 与规范样例输入，两个 Local
+   Storage 根改指 `/tmp/t55-8-verify/media/{incoming,organized}`（均不存在）；
+   `config draft-import` 建立草稿 `58303a40-1214-4654-ad9a-7409490e9da1` 版本 1；
+   `mediaflow api serve` 用同一构建产物提供真实 Python API＋页面。
+2. 浏览器阶段 A（Playwright 驱动真实页面）：`恢复草稿（编辑版本 1）` → `验证草稿` →
+   发布前检查显示 4 项适用检查；source-storage 存储检查 → `只读检查未通过：根路径不存在`；
+   目标预检 → `目标预检未通过：暂不可用`；`激活配置` 发送 `{"expectedVersion":1,
+   "checked":true}` 得 409，message 为 `the read-only Storage check for 'source-storage'
+   failed with category not_found`，`durableState: draft_preserved`、`sideEffects: none`；
+   页面确认草稿保留（`编辑版本 1（已验证）`）且无生效配置——即 B55.8-01 的复现路径。
+3. 仅创建两个存储根目录后阶段 B（同一草稿、同一页面流程）：两个存储检查重跑通过；识别
+   策略测试完成；目标预检 → `目标库根路径不存在`；按页面建议创建 `organized/Movies`、
+   `organized/TV Shows` 后重跑同一草稿的目标预检 → 通过；`激活配置` → 200，`status: active`、
+   `version: 1`、`revisionSequence: 1`、digest 与导入一致（`83485064…`）；页面显示
+   `配置已激活`／`配置已生效`／`序号 1`，「诊断 → 配置身份」显示 Authority MANAGED、
+   生效修订＝该草稿 revisionId、生效版本 1。
+4. CLI 边界核对（第二临时库 `/tmp/t55-8-cli`）：未验证草稿 `config activate` → exit 2
+   `configuration must be successfully Validated before activation`；`config draft-validate`
+   后 `config activate --expected-version 1` → exit 0 发布为 Active，全程未创建任何目标
+   目录，与文档新增边界表述一致（首次设置不使用该命令）。
+5. `git diff --check` 干净；`python3 scripts/check_governance.py` PASS；两文件代码围栏配对。
+   浏览器与 CLI 验证（含三次定位器修正重跑）合计约 8 分钟，低于本轮总用时（约 40 分钟）
+   的 30%。
+
+**未由 Developer 执行（不记为通过；B 的 T4 门禁）**
+
+- 本修订无源码变更，上一轮已交的 Python/E2E 结果不受影响，本轮未重跑；B 复验时可按原
+  Task 测试清单执行。
+- 完整 T4、候选四服务空实例、同实例 typed 配置旅程、桌面／390px／矮窗口与最终制品门禁
+  仍按 TASK 既有 B 计划执行。
+
+**剩余风险**
+
+- 无新增；上一轮交接中「docs/requirements.md 历史叙述」与「空实例容器内隔离根」两条
+  剩余风险保持不变。
+
+### 交接状态（修订后）
+
+Developer 已完成 B55.8-01 修复、实际旅程验证和检查点 `18d848dee56d9675e62be7d0b201c9f0ce45133a`，
+状态为 READY FOR B REVIEW。B 独立复验该旅程并重评原 T4 验收，给出 PASS 或 FIX REQUIRED；
+本报告不构成独立验收。
