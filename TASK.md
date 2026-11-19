@@ -1,6 +1,6 @@
 # Task 56.1 — 同一候选版本切换 Web 与 API 入口
 
-Next Action: B REVIEWS THE TASK56.1 CANDIDATE
+Next Action: DEVELOPER CORRECTS B56-01 AND B56-02 IN TASK56.1
 
 已提交的 [Slice 56 合同](SLICE.md) 定义范围。对应 RO-1／RO-2 全部公开入口、RO-3
 中链接与既有身份的交接，以及 RO-4 中随仓的路径消费者。[Development Workflow](docs/development-workflow.md)
@@ -9,7 +9,7 @@ Next Action: B REVIEWS THE TASK56.1 CANDIDATE
 Task ID: 56.1
 Task Type: SLICE
 Parent Slice: 56
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
 Difficulty: High
 Test Level: T4
@@ -228,4 +228,55 @@ web: npm run test:e2e -- --config=playwright.python.config.ts   tests/e2e/live-f
 
 ## B Review Result
 
-待独立审查。
+```text
+Reviewed: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3..b641d1230f9bae1e736b9a2c6e29e7f920e80990
+Report-only Head: b2850e22e9a6d02e9e847b88e18926eb56474ea3
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### B56-01 · P1 · 切换后从任务中心核对原整理提交（RO-3 / AC-3）
+
+在 Base 的资源库文件页选择 `DialogUnknown.2021.mkv`，完成分析、整批复核并点击「确认整理 1 项」。
+服务端返回 `202`，浏览器未收到响应，原卡片显示「执行结果未知」和「核对提交结果」。真实 Worker
+随后完成原任务。候选重开同一隔离库后，新任务中心可打开同一 Task 的只读摘要，显示原文件，
+但没有「核对提交结果」，也没有发起原提交核对读取。用原选择、摘要版本和效果选项调用现有
+正式核对接口，返回 `200 known` 和同一 Task ID。该任务只受理一次，新页面读取期间无写请求。
+补跑的候选同页丢响应测试通过，覆盖浏览器仍持有原提交时的已有动作。
+
+开发时从 `OperationsLanding.tsx`／`OrganizeContinuationCard.tsx` 的既有 Task 详情和关联整理
+入口进入。复用 `ManualOrganizeDialog.tsx` 的核对行为和 `manual_organize_execution.py` 的受理记录。
+从原 Task 关联的持久受理记录读取当时的摘要、选中条目和效果权限，在详情或关联整理卡里把
+原提交的受理结果、原范围和逐项执行结果交给用户核对。当前摘要可能已因另一项的分析而更新，
+因此核对的依据是原受理记录。使用原读取权限和主体判定，继续动作仍由原 Task 的逐项恢复流程负责。
+
+验收用同一份 Base 实际受理的隔离数据。模拟丢响应，切换并重连，用户在新任务中心核对原受理范围
+和逐项结果。已有结果和不确定效果的执行次数保持不变，读取期间无写请求。对同一 Task 内一项合法
+恢复，分别观察只读核对和明确确认所触发的请求及耐久状态。
+
+### B56-02 · P1 · 首次设置验收仍在匹配旧地址（RO-4 / AC-4）
+
+Docker 空实例验收中的既有浏览器步骤从 `/configuration` 创建草稿，页面提示已创建且 SQLite 中已有
+草稿，脚本却在创建步骤中止。Storage 验收从 `/storage` 点击「去完成设置」，创建草稿、返回 Storage、
+再进入设置恢复并验证时，页面显示验证通过，脚本仍报没有看到验证动作。两份脚本的三个正向匹配
+还在等 `/api/v1`，浏览器实际走的是 `/api/configuration/...`。
+
+开发时同步 `scripts/docker_empty_baseline_smoke_test.py` 的首草稿和 `validate|activate` 匹配，
+以及 `scripts/storage_settings_browser_proof.py` 的验证匹配。保留精确方法、请求次数、原 Draft 版本、
+checked 激活和零媒体写入检查。切换指引补上维护者可直接使用的旧书签、脚本地址替换和只读核对示例。
+
+### 本轮验证和返工验证
+
+- B 已运行生产 Web 构建、Python `test_v2_ui.py`／`test_api_security.py`／`test_processing_checkpoint.py`
+  共 38 项、真实 Python 浏览器 `live-files.python.spec.ts` 6 项和 `manual-organize-dialog.python.spec.ts`
+  的同页丢响应 1 项，均通过。两项首次设置验收误报已独立复现，其中 Docker 只运行了原浏览器阶段。
+  日志在 `.git/validation-evidence/b641d123/task56-1-b/`。首次核对误用了多一段路径的 URL，
+  已从正式 Task 深链重新核对，结果见 `base-cutover-reopen.log`。
+- Developer 返工验证从根目录运行 `npm --prefix web run build`、
+  `.venv/bin/python scripts/storage_settings_browser_proof.py`，从 `web/` 运行
+  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts -g 'unknown Execute response|unknown original submission'`。
+  复用现有整理挂载、Worker 和 SQLite fixture 增加针对 Base 受理后重开的浏览器回归，并运行相应新增用例及
+  `git diff --check`。交接时报告原请求核对、明确继续、首次设置和返回的实际结果。
+- RO-1 的两种库真实浏览及 RO-2 的关键分派、鉴权和审计测试已通过本轮抽验。RO-3、RO-4 有上述阻塞。
+  B 在修正候选完成四类恢复、T4 全量、wheel／源码外安装和候选镜像／Compose 验收，再重评全部 Slice 结果。
