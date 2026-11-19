@@ -1,12 +1,15 @@
 # Task PATCH-20261119-1 — 删除顶栏占位铃铛
 
-用户于 2026-11-19 授权激活独立 Task，待 Developer 开始实施。[开发工作流](docs/development-workflow.md#31-independent-minor-bugs)
+Next Action: B REVIEWS THE PATCH-20261119-1 CANDIDATE
+
+用户于 2026-11-19 授权激活独立 Task，Developer 已完成实施并交付 B 审查。
+[开发工作流](docs/development-workflow.md#31-independent-minor-bugs)
 
 ```text
 Task ID: PATCH-20261119-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: dfb2388551d18fc8e751953532def26188b89941
 Difficulty: Low
 Test Level: T2
@@ -64,3 +67,46 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-19
 ### 边界
 
 修改范围限于共享顶栏及直接相关的样式、测试和当前规范。以现有账户和通知旅程作为回归验收。
+
+## Developer Completion Report
+
+```text
+Task Base: dfb2388551d18fc8e751953532def26188b89941
+Implementation Candidate: 1914b8202c14f7b2cfe7e31f512244176b0f327f
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**实施结果**
+
+- 共享顶栏只保留账户控件；铃铛按钮节点、`bell` 图标类型／SVG 分支和
+  `.mf-notification-button` 规则已删除，操作区预留宽度、间距及窄屏覆盖已移除。账户控件
+  保持靠右，连接／断开入口和文件、存储搜索绑定未改。
+- `AppShell.test.tsx` 的三处、`rules-readiness.spec.ts` 的一处和
+  `rules_workspace_browser_proof.py` 的一处铃铛可见断言已改为顶栏零节点检查，并保留账户、
+  搜索或规则工作区断言。新增浏览器用例覆盖连接前后、刷新、1536px／390px、文件搜索、
+  账户靠右、无横向溢出及断开返回入口。
+- 同步修订 `V2-EXPLORE-013`、探索／规则体验、规则顶栏架构说明、文件页顶栏规范和脚本描述。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，最终工作树）**
+
+```text
+python3 scripts/check_governance.py                                  -> PASS
+web: npm run typecheck                                               -> OK
+web: npm run lint                                                    -> OK
+web: npx prettier --check <5 changed Web files>                      -> All matched
+web: npm run test -- run src/shared/ui/AppShell.test.tsx             -> 22 tests passed
+web: npm run build                                                   -> dist/index.html + hashed JS/CSS
+web: npm run test:e2e -- tests/e2e/rules-readiness.spec.ts
+     -g 'Rules reference-aligned workspace presentation'             -> 4 passed (6.5s)
+web: npm run test:e2e -- tests/e2e/notifications.spec.ts             -> 12 passed (10.4s)
+.venv/bin/ruff check scripts/rules_workspace_browser_proof.py        -> All checks passed
+git diff --check                                                     -> clean
+rg -n 'mf-notification-button|"bell"' web/src                       -> no match
+```
+
+**剩余与风险**
+
+- Developer 未运行 Python 浏览器证明脚本本体；其断言已同步，仍应由 B 在候选构建上复跑。
+- 未运行全量 Web／Python／默认浏览器及打包门禁；这些属于 B 的 T2 独立验收和全量回归职责。
+- 窄屏与桌面布局证据来自浏览器 DOM／几何断言，B 仍应按任务要求独立查看实际页面和键盘顺序。
