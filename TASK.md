@@ -390,3 +390,80 @@ MEDIAFLOW_CONFIG is required` 退出 2。按 Docker 指南运行 `mediaflow conf
 | RO-6 | B55.8-02 阻止首次部署指南验收。完整 T4、同一四服务实例的 typed 配置旅程及 Slice 最终制品门禁待 B 执行。 |
 
 修正留在 Task55.8 内。Slice55 状态为 ACTIVE。
+
+### Developer 交接 — Task55.8 修订（B55.8-02，2026-11-19，北京时间）
+
+```text
+Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
+Implementation Candidate: fb243ea688d31b8b2242b56bfe732771b9ea0965
+Branch: main
+```
+
+候选是实现检查点；随后仅本文件记录交接。B 审查完整
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..fb243ea688d31b8b2242b56bfe732771b9ea0965`。
+`28019b34` 为 B 的审查记录；本候选相对它只改 README、配置指南和 Docker 指南，未改源码、测试、
+脚本、API/Web 响应或持久化格式。
+
+**已实现（B55.8-02）**
+
+- `docs/configuration.md` 的生成／导入命令段同时指定 `--output config/mediaflow.json` 与
+  `--file config/mediaflow.activation.json`，导入显式使用 `mediaflow --config config/mediaflow.json`，
+  并说明缺少 `--config`／`MEDIAFLOW_CONFIG` 时命令拒绝运行。本地部署的生成器带
+  `--database-path "$PWD/.mediaflow/mediaflow.sqlite3"`，与随后启动的服务共用同一数据库；容器布局
+  保留 `/data/mediaflow.sqlite3` 默认值。生命周期 CLI 清单补上 `--file` 及 bootstrap 选择说明。
+- `docs/deployment.md` 删除“通过 `/ui-v2/configuration` 或 `mediaflow config import` 导入”的表述，
+  改为先 `docker compose up -d`（使用 Local Storage 时带 media overlay），再用同一 Compose 文件集、
+  正式 entrypoint 和 `/data` 卷执行
+  `docker compose ... run --rm --no-deps -T api config draft-import --file /dev/stdin < config/mediaflow.activation.json`。
+  写明 `-T`／stdin、entrypoint 从 `config` 开始接收参数、非默认项目的 `-p`／`COMPOSE_PROJECT_NAME`、
+  导入只产生 inactive Draft、不产生 Active／Task／投递／媒体变更、无需重启，以及省略 `--file` 会回退到
+  管理 bootstrap（0 项 Storage）。随后统一为「系统设置 → 高级配置 → 查看配置」选回草稿、
+  「验证草稿」、完成该版本「发布前检查」、「激活配置」，并与配置指南使用同一页面名称。
+- `README.md` 的规范样例导入命令也显式带 `--config config/mediaflow.json`，并说明可用已导出的
+  `MEDIAFLOW_CONFIG` 代替。
+
+**实际验证（cwd 与隔离路径）**
+
+1. 配置指南：在 `/tmp/t55-8-b02/local` 复制生成器与规范样例，建立本地媒体库根，未设置
+   `MEDIAFLOW_CONFIG` 的新 shell 中执行指南命令。修复前形态
+   `mediaflow config draft-import --file ...` 复现 exit 2
+   `mediaflow error: --config or MEDIAFLOW_CONFIG is required`；指南命令成功导入草稿
+   `4f8498d2-8a51-4b6f-b35c-f53841bec131` 版本 1，随后 `config status` 为
+   `MANAGEMENT_BOOTSTRAP`、`active: null`、`SETUP_REQUIRED`。真实 Python API＋页面中，
+   摘要显示「已有草稿待恢复」且生效配置为「无」，在「高级配置 → 查看配置」选回该草稿，
+   页面「配置 JSON」含 `source-storage`、`media-target` 两项 Storage 且不含 `persistence`；
+   「验证草稿」通过，两项存储只读检查、识别策略测试和目标预检均显示「已通过」，
+   「激活配置」返回 `active` 版本 1，摘要显示「配置已生效／序号 1」，Active JSON 仍含两项 Storage。
+   导入、验证、检查和激活前无其他配置写入。
+2. Docker 指南：在 `.dsh-docker-tmp/t55-8-b02-docker` 建立隔离 Compose 项目，使用
+   `compose.yaml`＋`compose.media-mounts.yaml`、临时媒体根、共享 `/data` 卷、正式镜像
+   `mediaflow:task55-8-dev`（ID `51720df53efc`，构建自 `ba9e026a`；此后仅文档差异）。四服务启动后，
+   按指南命令从 stdin 导入样例草稿 `8846abb9-df5e-4af3-9d97-d8f9022a2507` 版本 1；同一卷的
+   `config status` 为 `active: null`。真实页面同样读回两项 Storage，验证、两项存储检查、识别策略
+   测试、目标预检全部通过并显式激活为版本 1；随后 `down -v` 清理临时项目。
+3. `git diff --check` 干净；`python3 scripts/check_governance.py` PASS；三个文档代码围栏配对；
+   `git status` 仅三个文档改动。浏览器定位器首次未捕获激活响应、Docker 首次因 Docker daemon
+   不可见主机 `/tmp` 而失败，均按实际原因修正后重跑；原始日志保留于
+   `.git/validation-evidence/task55-8-fix-b02/`（`local-cli.log`、`local-web.log`、
+   `docker-import.log`、`docker-web.log` 及脚本）。
+4. 本轮约 30 分钟；测试（含生成、导入、Compose 启动、浏览器旅程、两次失败重跑与环境清理）约 7–8
+   分钟，低于本轮总用时的 30%。
+
+**未由 Developer 执行（不记为通过）**
+
+- 本候选无源码／测试／Web 变更，上一轮已交的定向 Python、Web E2E 和空实例 smoke 结果不受影响，
+  本轮未重跑。完整 T4、候选四服务 typed 配置旅程、桌面／390px／矮窗口与最终制品门禁仍按 TASK
+  既有 B 计划执行。
+
+**剩余风险**
+
+- Docker 旅程复用 `mediaflow:task55-8-dev` 镜像验证文档命令，未重建仅文档变化的候选镜像；
+  可执行代码与候选相同（候选相对 `ba9e026a` 仅文档）。B 的最终制品门禁仍以候选镜像身份为准。
+- 上一轮「`docs/requirements.md` 历史叙述」与「空实例容器内隔离根」两条剩余风险保持不变，
+  CURRENT 文档协调仍属交 A 的 Closure Packet。
+
+### 交接状态（B55.8-02 修订后）
+
+Developer 已完成指南导入通道修复、配置指南与 Docker 指南的实际旅程验证及检查点
+`fb243ea688d31b8b2242b56bfe732771b9ea0965`，状态为 READY FOR B REVIEW。B 独立复验该旅程并重评
+原 T4 验收，给出 PASS 或 FIX REQUIRED；本报告不构成独立验收。
