@@ -170,7 +170,7 @@ Status: READY FOR B REVIEW
    链接改为正式地址；`_checkpoint_hash_blocker_resolution_path` 的固定历史哈希输入
    （`/api/v1/recognition-reviews/` 等）与会话摘要键保持原字节，新增注释说明其只作
    版本计算。历史审计按记录值读取。
-4. **随仓消费者与指引。** 100 个 Python 测试/脚本、117 个 Web 文件、部署 smoke/证明
+4. **随仓消费者与指引。** 103 个 Python 测试/脚本、117 个 Web 文件、部署 smoke/证明
    脚本与当前文档同步；旧前缀只保留负向断言、历史哈希输入与历史行说明。
 
 **实际验证（cwd `/Users/songzhidong/mediaflow`，候选 `b641d123`）**
