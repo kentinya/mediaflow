@@ -1,13 +1,15 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-用户于 2026-11-20 授权激活独立 Task，待 Developer 开始实施。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
+Next Action: B REVIEWS THE PATCH-20261120-1 CANDIDATE
+
+用户于 2026-11-20 授权激活独立 Task，Developer 已完成实施并交付 B 审查。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
 Difficulty: High
 Test Level: T4
@@ -75,3 +77,61 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-20
 
 范围限于现有 TV 匹配、元数据决定与整理恢复路径。沿用现有 Provider 配置、API 路由、任务状态和 SQLite 结构。
 既有文件页和任务中心承接本次恢复，已验收的 Slice 作为参考。
+
+
+## Developer Completion Report
+
+```text
+Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Implementation Candidate: bf3f81c2d59f31c96fa7cc1d7ad490a0f28501c1
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**实施结果**
+
+- 自动识别显式季集的 S02+ 电视文件时，解析年份只保留为评分证据，Provider 搜索不发送
+  `first_air_date_year`，候选筛选与评分不按首播年排除。标题证据达到确认阈值后，用所需季和全部
+  集数逐项验证可比候选；仅一个通过时自动匹配，多个通过、请求预算未能完成验证或未验证候选
+  保留时进入现有候选确认。已证实季不存在或缺集的候选不进入候选选择，并在任务证据中保留原因。
+- 季集查询边界把季/集不存在归为作品与文件季集不匹配，不再误报为 Provider 技术故障；搜索无结果
+  和该不匹配都进入现有逐文件元数据修正。认证、限流、超时、网络和无效响应仍保持原技术失败与
+  重试语义。电影、首季及未明确季集的搜索规则未改。
+- 人工编辑标题/年份、清空年份、候选选择和直接 Provider ID 都使用 Task 固定 Provider、策略和
+  当前文件季集重新分析。直接 ID 与候选选择现在会验证季集；失败后原子地恢复同一修正记录的
+  待处理状态、同一 TaskItem 等待状态和新原因，保留既有决定审计。多个已解决元数据决定按
+  `updated_at` 只消费最新一项，避免旧候选覆盖后一次修正。
+- Files 对话框与任务中心共用恢复投影，新增显示上次修正未通过验证的原因；`outcome` 既有字段
+  承载状态与可读原因，无 SQLite 结构变更。搜索、保存和重新分析保持零 Storage 变更，确认前
+  不执行整理。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check mediaflow + changed tests               -> 164 files formatted
+.venv/bin/ruff check mediaflow + changed tests                        -> All checks passed
+.venv/bin/python -m compileall -q mediaflow tests                     -> OK
+.venv/bin/python -m unittest <12 affected/integration modules>        -> 297 tests OK (10.70s)
+web: npm run typecheck / lint / format:check                          -> OK
+web: npm run test -- run TaskItemRecoveryPanel, ManualOrganizeDialog,
+     RunDetailTabs                                                     -> 3 files, 71 tests OK (19.93s)
+```
+
+12 个 Python 模块为 `test_media_parser`、`test_metadata`、`test_metadata_resolution`、
+`test_metadata_correction`、`test_task_item_metadata_search`、`test_manual_task_engine`、
+`test_automation_entrance_recovery`、`test_v2_manual_organize`、`test_configuration_objects`、
+`test_operations_task_center`、`test_processing_recovery_admission`、`test_metadata_review`。
+新增用例覆盖同名剧八集、候选顺序互换、多个候选通过、季 404、缺集、预算耗尽、技术故障、
+首季/电影年份规则、显式与清空年份、错误直接 ID 恢复、候选选择失败后仅消费最新决定，以及
+混合批次零执行范围。真实 Worker 场景使用仓库既有 Files 受理、CLI 整理、恢复 API 和常驻
+Worker 路径；未构造不存在的入口。
+
+**剩余与风险**
+
+- B 仍需在冻结候选上运行 Task 指定的真实浏览器、全量回归、构建与封装门禁；Developer 未运行
+  Playwright、全量 Python/Web 套件或生产产物验证。
+- 自动匹配以确认阈值的标题证据加完整季集验证为条件；若真实 TMDB 返回多个同等节目且均有
+  所需集数，按设计进入人工候选确认，需 B 用真实 Files API 核对两个入口的一致投影。
+- 修正原因复用既有 `outcome` 文本载体，未迁移历史记录；历史 pending/resolved 行按原状态读取。
