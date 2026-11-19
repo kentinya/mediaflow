@@ -17,7 +17,7 @@ Detailed superseded delivery notes are retained at
 刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，查看
 进度和逐项结果。整理提交人可在详情的「原整理提交」分别核对每次已受理的确认，使用原摘要、
 原选择和原效果权限读取结果。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
-使用通用未知路由，用户可从根入口重新导航。见 [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed)。
+使用通用未知路由，用户可从根入口重新导航。见 [Slice 56 A 终审](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed)。
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 

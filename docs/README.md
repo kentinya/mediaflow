@@ -1,8 +1,7 @@
 # 文档导航与职责
 
-Slice55 已通过独立终审。当前 Web 入口为 `/`，有效的 V2 数据可继续使用。
-大版本状态和验收范围见 [Roadmap](roadmap.md) 与 [Progress](progress.md)。
-当前实施状态见 [TASK.md](../TASK.md)。
+Slice 56 已通过独立终审。Web 入口为 `/`，API 使用 `/api/*`。既有任务可在新地址继续查看。
+大版本状态、验收记录及当前实施状态见 [Roadmap](roadmap.md)、[Progress](progress.md) 和 [TASK.md](../TASK.md)。
 
 现行文档记录规则、用户旅程与架构。详细验收和独立修正记录以固定 Git 检查点为准。
 旧设计图和以往修正索引可分别查看 [原设计图](https://github.com/kentinya/mediaflow/tree/31f31031ac9e65a16f5d7e5b50ae85f1c21ad761/docs/pics)
@@ -21,6 +20,7 @@ Slice55 已通过独立终审。当前 Web 入口为 `/`，有效的 V2 数据�
 | 组件、数据流与运行边界 | [Architecture](architecture.md) |
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
 | 当前支持范围与发布验证 | [Release](release.md#current-v2-validation-boundary) / [Storage Acceptance](storage-acceptance.md) |
+| 正式 Web 与 API 入口（CURRENT） | [稳定要求](v2-requirements.md#current--canonical-web-and-api-routes-slice56-pass--closed) / [用户旅程](product-experience.md#current--canonical-entry-journey-slice56-pass--closed) / [架构](architecture.md#current--root-web-and-unversioned-api-slice56-pass--closed) / [换址指南](../README.md#v2-development-status) |
 | V1 与旧迁移路径退役（CURRENT） | [稳定要求](v2-requirements.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed) / [用户旅程](product-experience.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed) / [架构](architecture.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed) |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；现行文字约定及实际界面为依据，旧设计图仅在 Git 保留历史 |
 | 整理规则弹窗与可读性（CURRENT） | [Slice54 Contract/A 终审](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) / [现行要求](v2-requirements.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed) / [完整旅程](product-experience.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed) / [架构](architecture.md#current--organizing-rules-dialogs-and-readability-slice54-pass--closed)；七类添加／复制／编辑统一弹窗，设置与单项测试分区；完整流程只在概览检查已发布 Active，准确发布、草稿配对及未知核对不重发保持 |

@@ -11,7 +11,7 @@ product and authority boundaries.
 ## CURRENT — Canonical Web and API routes (Slice56 PASS / CLOSED)
 
 Slice56 amended the public V2 paths in `V2-RETIRE-001/006` and `V2-MIG-001/002`. A accepted
-the cutover on 2026-11-19. See [A Final Review](../SLICE.md#a-final-review--pass--closed).
+the cutover on 2026-11-19. See [A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|

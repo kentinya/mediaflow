@@ -18,7 +18,7 @@ Next Action: A SELECTS THE NEXT LARGE SLICE
 
 用户以文件页 `/resourcelib/files` 和 `/api/v1/tasks → /api/tasks` 为例，先授权调查，
 随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。用户授权激活
-Slice 56，并由 A 代 B 规划首个 Task。用户现要求激活已规划的 Task 56.1，授权 Developer
+Slice 56，并由 A 代 B 规划首个 Task。用户随后授权激活 Task 56.1，由 Developer
 按该 Task 的既定范围实施。A 代 B 的角色例外仅适用于规划，验收由 B 独立执行，A 负责终审。
 [Development Workflow](docs/development-workflow.md)
 
@@ -136,8 +136,7 @@ Slice 55 已退役的业务入口在新命名空间下同样拒绝。
 
 ## Closure Packet
 
-B 独立验收通过，四项结果齐备。完整交接保存在
-`38f9b407a63509580a205209139ddc424ae54666:TASK.md`。
+B 独立验收通过，四项结果齐备。见 [B Closure Packet](https://github.com/kentinya/mediaflow/blob/38f9b407a63509580a205209139ddc424ae54666/TASK.md#b-复核与-slice-56-交接)。
 
 ## A Final Review — PASS / CLOSED
 

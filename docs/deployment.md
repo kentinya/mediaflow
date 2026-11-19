@@ -8,9 +8,9 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 ## Boundary
 
 - This guide describes the current unreleased V2 `main` deployment, retaining the one-image/four-service
-  foundation accepted for V1.0.0. Historical release facts belong to [Release](release.md); current
-  support covers fresh initialization, the stable V2 data of the accepted Slice55 Base and same-version
-  recovery. Generic old-format takeover and cross-version upgrade/rollback remain deferred.
+  foundation accepted for V1.0.0. Current support covers fresh initialization, accepted stable V2
+  data and same-version recovery. Slice 56 verified the route cutover against data from its own
+  Base. See [Release](release.md#current-v2-validation-boundary).
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
@@ -250,14 +250,11 @@ The production artifact flow is one image, two stages, one Python runtime:
   exposing paths, credentials or raw exceptions. Static requests never access
   repositories, Providers, Tasks or Storage and never create work.
 - The retired `/ui`, `/ui/` and `/ui-v2/*` navigation addresses render the
-  same entry document and the browser shows its ordinary not-found view at the
-  same address or the ordinary connection screen. Their old asset addresses (`/ui/app.js`, `/ui/style.css`,
-  `/ui-v2/app.js`) are plain 404s, with no redirect, notice page or alternate
-  static product. `/api/v1` and `/api/v2` are ordinary JSON 404s that never
-  authenticate or reach a business service, and `/api/*` Bearer authentication
-  and RBAC behavior are unchanged beside V2 static serving.
-- Follow the Web bookmark and API script changeover steps before moving callers
-  to the new routes. See the [canonical-route cutover checklist](../README.md#v2-development-status).
+  same entry document. The browser shows its ordinary not-found view or connection screen.
+  Their old assets return 404. Retired API paths under `/api/v1` and `/api/v2` return JSON 404
+  before authentication. The current `/api/*` routes enforce Bearer authentication and RBAC.
+- Follow the [canonical-route cutover checklist](../README.md#v2-development-status) to update Web
+  bookmarks and API scripts. Reopen the original Task from the Task Center to check its status and results.
 - `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
   deployment environment file overrides the image default, but the documented
   layout needs no override and no host mount of `web/dist`. If the configured
@@ -416,11 +413,11 @@ paths, credentials, Storage or Providers.
 
 ## Backup and same-version recovery
 
-Current support is fresh initialization → new work → same-version reopen/restart. Old-task/Job
-migration or takeover, cross-version upgrade/rollback and mixed-version writers are excluded by the
-accepted Slice47 boundary. An incompatible schema fails closed; do not clear or rewrite the database
-to bypass it. Earlier image-to-image migration procedures/evidence remain historical in Git and do
-not establish current upgrade support.
+Current support covers fresh initialization, same-version reopen/restart and the verified data
+continuity through the Slice 56 route cutover. This cutover preserves supported Task IDs, pins and
+results from its Base. General cross-version upgrade and rollback, mixed-version writers and old
+Task/Job migrations are deferred. An incompatible schema fails closed. Keep the original database
+for diagnosis and recovery. See [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
 Stop the stack and retain a verified backup under `/data` before maintenance. Backup is read-only
 with respect to live media and never overwrites an existing destination:

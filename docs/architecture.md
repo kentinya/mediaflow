@@ -27,7 +27,7 @@ request pinned at Base stays confirmable; historical audit keeps its recorded ro
 Tasks, requests and snapshots keep their identities. Task Center obtains each exact prior manual
 Organize confirmation from durable acceptance records scoped to the submitting principal. It
 uses the existing admission-outcome read. Same-Task recovery continues through the existing
-explicit item actions. See [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
+explicit item actions. See [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 

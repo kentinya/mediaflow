@@ -50,7 +50,7 @@ only in [the development workflow](development-workflow.md).
 
 ## Accepted boundary references
 
-Latest acceptance is recorded in [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
+Latest acceptance is recorded in [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

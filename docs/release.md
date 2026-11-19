@@ -18,10 +18,11 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-Slice56 passed independent A Final Review on 2026-11-19 for Web at `/` and API at `/api/*`.
-The reviewed implementation is `472759665a42a73d24910464e903382adeb37e56`. The isolated
-verification covered Base Task continuity, checked recovery, production Web assets, the installed
-wheel and the four-service Compose gates. See the [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
+Slice 56 passed independent A Final Review on 2026-11-19 for Web at `/` and API at `/api/*`.
+The review covers Base `33c70735e0a8f45426dde614587ea3d43af94e9b` through implementation
+`472759665a42a73d24910464e903382adeb37e56`. Isolated validation covered Base Task continuity,
+checked recovery, production Web assets, the installed wheel and the four-service Compose gates.
+See the [A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed) and [B Closure Packet](https://github.com/kentinya/mediaflow/blob/38f9b407a63509580a205209139ddc424ae54666/TASK.md#b-复核与-slice-56-交接).
 
 ### Earlier V2 validation
 

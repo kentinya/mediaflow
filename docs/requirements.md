@@ -422,7 +422,7 @@ the release contract, not a new media-processing engine.
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
 | REQ-WEB-006 | REQUIRED | System/configuration status is bounded, permission-aware and secret-free, and distinguishes unavailable data from false success. | §Dashboard; §系统设置; §可操作错误与恢复 | Status views do not contact media services or expose paths/options beyond the user's authority. |
 | REQ-WEB-007 | REQUIRED | **Files** browses bounded real directories/files from configured Storage and may show a bounded FileIndex business-status projection, while **FileIndex** presents MediaFlow discovery, processing disposition, history and available actions. | §存储管理; §数据索引; §文件列表; §媒体详情 | Users do not mistake the scan index for a file manager: Storage remains the physical listing/source authority, FileIndex feedback is display-only on Files, and both surfaces use Storage-relative identities without arbitrary host access. |
-| REQ-API-001 | REQUIRED | Core Storage, libraries, metadata, recognition, policies, files/media, Tasks, logs and settings capabilities have versioned API surfaces. | §API 设计要求 | Web, CLI and automation can invoke shared application use cases. |
+| REQ-API-001 | REQUIRED | Core Storage, libraries, metadata, recognition, policies, files/media, Tasks, logs and settings capabilities have versioned API surfaces in the V1 baseline. | §API 设计要求 | Web, CLI and automation can invoke shared application use cases. The current V2 API uses `/api/*` under [V2-ROUTE-002/003](v2-requirements.md#current--canonical-web-and-api-routes-slice56-pass--closed). |
 | REQ-API-002 | REQUIRED | API validation, concurrency, permissions, state transitions, errors, audit and safety are identical to Web behavior. | §最终管理界面; §API 设计要求 | No alternate endpoint bypasses configuration, conflict or execution gates. |
 | REQ-API-003 | REQUIRED | Collections and evidence are bounded and deterministically ordered; errors have stable safe categories. | Engineering derivation from §搜索与筛选, §错误记录 and §安全要求 | Large histories cannot create unbounded responses or secret-bearing raw exceptions. |
 | REQ-SAFE-001 | REQUIRED | Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner are zero-mutation stages. | §最终核心原则 | Any mutation call from these stages is a safety defect. |
@@ -700,7 +700,8 @@ Draft、Validate 和 Activate 三个内部步骤；最终点击 `保存` 后，�
   媒体任务、发送通知或写入媒体。仅 OrganizerExecutor 可变更 Storage。
 
 V2 设置必须可独立完成上述旅程，失败可保留输入并核实未知结果，返回业务页后刷新实际权威。
-管理员和 Viewer 的权限由后端决定。Slice55 的 V2-RETIRE-001 定义已验收的现行 Web 入口。
+管理员和 Viewer 的权限由后端决定。现行 Web 根入口为 `/`，系统设置位于 `/configuration`。
+见 [V2-ROUTE-001](v2-requirements.md#current--canonical-web-and-api-routes-slice56-pass--closed)。
 
 #### **V2 整理规则工作区（CURRENT；Slice 41 PASS / CLOSED）**
 

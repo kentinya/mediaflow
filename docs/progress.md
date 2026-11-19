@@ -15,7 +15,7 @@ workflow authority. Closure rules live only in
 
 The Web root and `/api/*` are the canonical V2 entrances. The previous prefixes are retired.
 Supported Base Tasks, exact submissions, pins, results and audit remain available. The full range,
-test results and limits are in the [A Final Review](../SLICE.md#a-final-review--pass--closed).
+test results and limits are in the [A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
 ## Prior accepted closure — Slice55
 
@@ -51,7 +51,7 @@ rewrite older acceptance. Detailed prior closure/validation pointers remain at
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
-| 56 | [A PASS / CLOSED](../SLICE.md#a-final-review--pass--closed) | `38f9b407a63509580a205209139ddc424ae54666:TASK.md` |
+| 56 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed) | [B Closure Packet](https://github.com/kentinya/mediaflow/blob/38f9b407a63509580a205209139ddc424ae54666/TASK.md#b-复核与-slice-56-交接) |
 | 55 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) | [B Closure Packet](https://github.com/kentinya/mediaflow/blob/db079872dd348569d6f5f2e86682aaebf7e28325/TASK.md#b-修订复核与-slice55-closure-packet) |
 | 54 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review) |
 | 53 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#a-final-review--pass--closed); [prior A53-01 / FIX REQUIRED](https://github.com/kentinya/mediaflow/blob/fded2cff4e3f9c131dce3416c916117bd72babd1/SLICE.md#a-final-review--fix-required) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#b-closure-packet--task531-pass) |
