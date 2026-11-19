@@ -251,11 +251,13 @@ The production artifact flow is one image, two stages, one Python runtime:
   repositories, Providers, Tasks or Storage and never create work.
 - The retired `/ui`, `/ui/` and `/ui-v2/*` navigation addresses render the
   same entry document and the browser shows its ordinary not-found view at the
-  same address; their old asset addresses (`/ui/app.js`, `/ui/style.css`,
+  same address or the ordinary connection screen. Their old asset addresses (`/ui/app.js`, `/ui/style.css`,
   `/ui-v2/app.js`) are plain 404s, with no redirect, notice page or alternate
   static product. `/api/v1` and `/api/v2` are ordinary JSON 404s that never
   authenticate or reach a business service, and `/api/*` Bearer authentication
   and RBAC behavior are unchanged beside V2 static serving.
+- Follow the Web bookmark and API script changeover steps before moving callers
+  to the new routes. See the [canonical-route cutover checklist](../README.md#v2-development-status).
 - `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
   deployment environment file overrides the image default, but the documented
   layout needs no override and no host mount of `web/dist`. If the configured

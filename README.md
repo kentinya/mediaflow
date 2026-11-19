@@ -73,18 +73,17 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 
 ## V2 development status
 
-`main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/*` remains the
-business authority. Slice56 activates the current Web root `/` and the unversioned API namespace;
-Slice55 remains the accepted retirement of V1 and obsolete migration entrances on main. Valid V2
-data and work at the base of either Slice retain their original identities.
+`main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Slice56 passed final review
+for Web at `/` and the Python API at `/api/*`. Valid Base work retains its original Task identity
+and can be reopened from the Task Center. Slice55 recorded the retirement of V1 and obsolete
+migration entrances on main.
 Historical V1 is retained on `release/v1`.
 
-**Canonical-route cutover checklist.** Replace an old Web bookmark's `/ui-v2` prefix with `/`
-(for example `/ui-v2/operations?run=<Task>` becomes `/operations?run=<Task>`), and an old API
-caller's `/api/v1` or `/api/v2` prefix with `/api`. Repository scripts and harnesses use the same
-substitution for their base address; old prefixes remain only in negative assertions, historical
-hash inputs and previously recorded audit rows. A read-only smoke check against a running service
-looks like this (never use a write call to test the switch):
+**Canonical-route cutover checklist.** Remove the `/ui-v2` segment from Web bookmarks and keep
+the page path and query. For example, use `/operations?run=<Task>` in place of
+`/ui-v2/operations?run=<Task>`. For API scripts, update supported endpoints from `/api/v1/*` to
+`/api/*`. Both retired API prefixes return JSON 404. Run these read-only checks against a running
+service to verify the switch.
 
 ```bash
 BASE=http://127.0.0.1:8787

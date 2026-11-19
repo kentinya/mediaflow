@@ -41,16 +41,16 @@ only in [the development workflow](development-workflow.md).
 | 53 — Manual Organize Dialog and Task Center Handoff | ResourceLibrary Files single/batch/folder organizing in a readable one-file-per-page modal, explicit per-file save/reanalysis and one exact subset confirmation, then exact Task Center handoff; existing task-detail UI frozen | PASS / CLOSED | Accepted52 and accepted standalone corrections at `95c24cd0a3cc51acd6143e37e72371445cb15a72`; user authorized clarified Task activation on 2026-11-09 |
 | 54 — Organizing Rules Dialogs and Readability | Seven Rules families use coordinated Add/Copy/Edit dialogs, readable settings and object-local tests; only Overview retains the complete-flow check, preserving exact checked publication and edit-link recovery | PASS / CLOSED | Accepted53 baseline `e43a40674eb14aa12615a440a348fe675cd50c4e`; independent A Final Review on 2026-11-11 through `aef044e51dc91655372bf5fe39c6116da976c3b4`; first-Task planning role exception retained |
 | 55 — Complete V1 and Migration Residue Retirement | Retire V1 and obsolete migration paths while preserving current V2 journeys, valid data and safety | PASS / CLOSED | Independent A Final Review on 2026-11-19, Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` through implementation `80334ccaa30d54019934b50855f7dee00525abcc` |
-| 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | ACTIVE | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
+| 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
 
 ## Current boundary
 
-[Slice56](../SLICE.md) is **ACTIVE**. The user delegated first-Task planning to A.
-[TASK.md](../TASK.md) records the current Task state and next action.
+[Slice56](../SLICE.md) is **PASS / CLOSED**. No implementation Task is active.
+[TASK.md](../TASK.md) records the review and next action.
 
 ## Accepted boundary references
 
-Latest acceptance is recorded in [Slice55 A Final Review](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed).
+Latest acceptance is recorded in [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

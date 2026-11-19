@@ -4,14 +4,14 @@
 Slice ID: 56
 Name: Canonical Web and API Routes
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 33c70735e0a8f45426dde614587ea3d43af94e9b
 Implementation Head: 472759665a42a73d24910464e903382adeb37e56
 Working Branch: main
 Development Authorization: TASK56.1 IMPLEMENTATION AUTHORIZED
 Risk: High
 Target Test Level: T4
-Next Action: A FINAL REVIEW OF ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## 授权与基线
@@ -42,10 +42,10 @@ Slice 55 仍为 PASS / CLOSED，原 Base、实施 Head、最终审查及验证�
 候选产物须依下方标准验收。
 
 Slice 55 的 `V2-RETIRE-001/006/008/009/010` 和 `V2-MIG-001/002` 定义当前基线。
-本 Slice 通过 [V2-ROUTE-001–004](docs/v2-requirements.md#target--canonical-web-and-api-routes-slice56-active)
+本 Slice 通过 [V2-ROUTE-001–004](docs/v2-requirements.md#current--canonical-web-and-api-routes-slice56-pass--closed)
 调整 V2 的公开路径，涵盖 `REQ-WEB-001/003/004/005`、`REQ-API-001–003` 的传输入口。
-旅程与服务分界见 [Product Experience](docs/product-experience.md#target--canonical-entry-journey-slice56-active)
-和 [Architecture](docs/architecture.md#target--root-web-and-unversioned-api-slice56-active)。
+旅程与服务分界见 [Product Experience](docs/product-experience.md#current--canonical-entry-journey-slice56-pass--closed)
+和 [Architecture](docs/architecture.md#current--root-web-and-unversioned-api-slice56-pass--closed)。
 
 ## 正式入口切换决策
 
@@ -113,28 +113,50 @@ Slice 55 已退役的业务入口在新命名空间下同样拒绝。
 
 ## Acceptance Criteria
 
-- [ ] AC-01 / RO-1 验证真实构建与浏览器中的根入口、九个主页面及关键深链，包含两种库、
+- [x] AC-01 / RO-1 验证真实构建与浏览器中的根入口、九个主页面及关键深链，包含两种库、
   设置、Task card、Rules Edit、自动化与通知。两种库验证带参数直达、刷新／重连及原来源返回。
   带点合法规则 ID 和直接加载的生产静态资源可用。未知资源、非法资源路径、API 及健康检查
   得到对应分派，按现行规则保留安全头和静态读取隔离。
-- [ ] AC-02 / RO-2 用认证客户端覆盖新路径下的公共 API 路由族，重点核对任务三种投影、
+- [x] AC-02 / RO-2 用认证客户端覆盖新路径下的公共 API 路由族，重点核对任务三种投影、
   认证 401、权限 403、查询校验、分页及只读审计。验证实际返回的操作链接能在原权限下
   到达对应动作，新的审计模板分类正确且保持脱敏。旧 API 用有效身份仍返回 JSON 404，
   包含有写语义的方法且无业务效果。旧 Web 实际呈现未知路由或其通用认证边界。
   核对旧入口没有重定向目标、旧页面和旧资源均不可达，已退役业务能力仍拒绝。
-- [ ] AC-03 / RO-3 由 Base 真实代码在隔离库创建合法配置、任务、请求、结果及审计。
+- [x] AC-03 / RO-3 由 Base 真实代码在隔离库创建合法配置、任务、请求、结果及审计。
   验证候选重开该库并重启后，读回原数据、生成对应操作链接，在权限范围内取消任务和执行
   逐项恢复。四类恢复均验证新入口及原权限。用 Base 受理一项整理请求并模拟响应丢失。
   切换后，从新任务中心只读核对原请求、原 Task ID 和逐项结果。显式继续仅处理当前确认可
   安全恢复的条目。原请求的 Task 受理次数保持一次，切换前已完成或结果不确定的条目保持原执行次数。
   历史审计显示请求当时的路由，当前操作链接指向新路由。同时用空实例验证首次设置及合法业务操作。
-- [ ] AC-04 / RO-4 确认随仓开发、假服务、发布验证和当前指引均使用正式地址，
+- [x] AC-04 / RO-4 确认随仓开发、假服务、发布验证和当前指引均使用正式地址，
   扫描普通字符串和路径匹配表达式。全量 Python/Web 回归、真实浏览器、源码外安装、
   候选 Docker 的空实例／发布安全／重启证明达到 T4。以真实产物验证 API、页面、静态资源
   和 `/health` 的一致性，冷启动与重开使用隔离配置和数据。所需结果由 B 写入 Closure Packet，
   由 A 按工作流核对。
 
-## Closure Packet and A Final Review
+## Closure Packet
 
-B 独立验收通过，四项结果齐备。复核范围、实际结果和证据定位见 [TASK.md](TASK.md)。
-A 独立终审待执行。
+B 独立验收通过，四项结果齐备。完整交接保存在
+`38f9b407a63509580a205209139ddc424ae54666:TASK.md`。
+
+## A Final Review — PASS / CLOSED
+
+独立终审于 2026-11-19 完成。审查原始 Base `33c70735e0a8f45426dde614587ea3d43af94e9b`
+到实施 Head `472759665a42a73d24910464e903382adeb37e56` 的完整范围。
+实施之后至 B 交接仅更新 Slice 和 Task 记录。
+
+| 验收 | A 终审结果 |
+|---|---|
+| AC-01 正式 Web 入口 | 通过。复跑生产构建及真实浏览器的两库入口、自动化生命周期和通知证明。核对 B 的九页导航、带参深链、带点 Rules ID 的重连及静态资源分派。 |
+| AC-02 正式 API 与退役 | 通过。审查路由分派、校验、权限、审计模板及动作链接，复跑 API 安全和静态分派测试。旧 API 的已有读写入口返回 JSON 404，旧 Web 地址按普通未知导航或资源处理。 |
+| AC-03 切换前的有效工作 | 通过。核对 B 的 Base 隔离库重开、四类原 Task 恢复、取消权限及原 pin／checkpoint／历史审计证据。独立复跑真实浏览器两种丢响应核对场景和同 Task 第二次确认。各次核对读取原摘要与范围，Task 与效果计数按原工作记录保留。 |
+| AC-04 随仓消费者与制品 | 通过。核对当前源码调用方、测试匹配和运维指引。构建 HTML、JS、CSS 及 wheel 的 SHA-256 和四个本地镜像 ID 均与 B 记录一致。B 的全量、源码外安装和隔离 Docker 门禁覆盖实施候选。 |
+
+A 复跑的 Python 静态入口、API 安全和手工整理受理共 62 项通过。使用真实 Python 服务的
+Playwright 用例共 7 项通过，随仓 Notification 浏览器证明及生产 Web 构建通过。
+B 记录 Python 2313 项中 2306 项通过，Web 单测 1641 项、默认 E2E 286 项通过。
+本地证据在 `.git/validation-evidence/47275966/slice56-a/` 和
+`.git/validation-evidence/47275966/task56-1-b/`。
+
+保留 7 项可选外部服务／耐久跳过。Rules 旧证明在 Base 与候选均停于同一过时文案断言，
+B 另以实际控件通过带点 ID、重连及静态分派证明。外部接入方核对与生产切换属于后续部署授权。

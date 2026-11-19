@@ -11,12 +11,13 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Canonical entry journey (Slice56 ACTIVE)
+## CURRENT — Canonical entry journey (Slice56 PASS / CLOSED)
 
-用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 的带参链接直达目录。
-刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，
-核对进度、逐项结果和原请求，再按实际状态显式继续。失效或旧地址使用通用未知路由，
-用户可从根入口重新导航。验收包括新深链返回及 Base 有效工作继续使用。[Slice56](../SLICE.md)
+用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 或 `/medialib/files` 的带参链接直达目录。
+刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，查看
+进度和逐项结果。整理提交人可在详情的「原整理提交」分别核对每次已受理的确认，使用原摘要、
+原选择和原效果权限读取结果。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
+使用通用未知路由，用户可从根入口重新导航。见 [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed)。
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 

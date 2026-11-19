@@ -11,7 +11,7 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Root Web and unversioned API (Slice56 ACTIVE)
+## CURRENT — Root Web and unversioned API (Slice56 PASS / CLOSED)
 
 The Python WSGI service owns the distinct `/health`, `/api/*` and root Web/static boundaries.
 API dispatch, permission checks, error handling and audit classification interpret the same
@@ -24,8 +24,10 @@ allowlisted rules-edit route fails closed as an unknown asset. Retired Web prefi
 ordinary client not-found view at the same address. Action and recovery projections use the
 current paths, while the checkpoint version keeps its historical hash input so a summary or
 request pinned at Base stays confirmable; historical audit keeps its recorded route, and existing
-Tasks, requests and snapshots keep their identities. Acceptance and retirement rules are defined
-in [Slice56](../SLICE.md).
+Tasks, requests and snapshots keep their identities. Task Center obtains each exact prior manual
+Organize confirmation from durable acceptance records scoped to the submitting principal. It
+uses the existing admission-outcome read. Same-Task recovery continues through the existing
+explicit item actions. See [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
@@ -42,8 +44,8 @@ minimal deployment bootstrap + api.principals
 
 - **Web/transport：** 删除 V1静态模块／分派与旧 V2 migration／resolver／redirect，旧输入
   使用通用未知路由／参数错误；不保留专用退休409/410。当前 SPA／安全头及正式深链保持，
-  根为 `/`，API 为 `/api/*`（Slice56 TARGET 已把当时的 `/ui-v2` 与 `/api/v1` 拼写
-  切到正式命名空间）。逐端点删除 V1-only／alias／旧投影，当前消费者接唯一当前契约；
+  当时的 `/ui-v2` 与 `/api/v1` 经 Slice56 切到正式的 `/` 和 `/api/*`。
+  逐端点删除 V1-only／alias／旧投影，当前消费者接唯一当前契约。
   不建设 API v2、新服务器或兼容后端。仅旧传输退出，共享审核／规划／执行／配置服务继续使用。
 - **Authority/engine：** 删除 legacy schedules、远程执行票据与独立 grant 的表面、模型、
   专用持久化和注入；Enabled 发布者权限／审计证据与 Run once 意图仍是当前权威。

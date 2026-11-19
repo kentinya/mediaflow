@@ -18,6 +18,13 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
+Slice56 passed independent A Final Review on 2026-11-19 for Web at `/` and API at `/api/*`.
+The reviewed implementation is `472759665a42a73d24910464e903382adeb37e56`. The isolated
+verification covered Base Task continuity, checked recovery, production Web assets, the installed
+wheel and the four-service Compose gates. See the [Slice56 A Final Review](../SLICE.md#a-final-review--pass--closed).
+
+### Earlier V2 validation
+
 [Slice55](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-19.
 Reviewed implementation `80334ccaa30d54019934b50855f7dee00525abcc` retired V1 and its migration paths
 on main. V2 first setup uses the managed Draft and checked activation. Accepted stable V2 data at
@@ -28,8 +35,6 @@ The B Closure Packet at `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md` recor
 release-security and four-service restart checks. A independently reran the corrected OpenList import,
 checked publication and storage readback using an isolated instance. Artifacts and raw records are
 local validation evidence. Release publication remains a separate maintainer action.
-
-### Earlier V2 validation
 
 [Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) was accepted on 2026-11-11. Original Base
 `e43a40674eb14aa12615a440a348fe675cd50c4e` through accepted implementation

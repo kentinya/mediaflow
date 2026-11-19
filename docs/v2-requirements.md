@@ -8,10 +8,10 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Canonical Web and API routes (Slice56 ACTIVE)
+## CURRENT — Canonical Web and API routes (Slice56 PASS / CLOSED)
 
-[Slice56](../SLICE.md) plans a V2 path amendment to `V2-RETIRE-001/006` and `V2-MIG-001/002`.
-The CURRENT contract below governs before acceptance.
+Slice56 amended the public V2 paths in `V2-RETIRE-001/006` and `V2-MIG-001/002`. A accepted
+the cutover on 2026-11-19. See [A Final Review](../SLICE.md#a-final-review--pass--closed).
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -373,8 +373,8 @@ a second execution engine, broad file authority, destructive defaults or histori
 | V2-AUTH-001 | During the current V2 program, the existing API-principal Bearer-token model and RBAC remain the identity/authentication and role/permission authorization boundary. | A scoped execution grant, execution unlock, step-up authorization or equivalent mutation-admission authority may be layered on top when required by an approved V2 journey, but it does not replace principal identity, authentication or RBAC. V2 does not silently introduce a new username/password identity system, OIDC integration, session or cookie authority. |
 | V2-AUTH-002 | The API principal token remains memory-only in the browser during the current identity architecture. | The token is not persisted in `localStorage`, `sessionStorage`, IndexedDB, URLs/query strings or frontend-managed authentication cookies. |
 | V2-AUTH-003 | Python remains the authoritative backend for domain behavior, execution authority and storage mutation. | Frontend code does not duplicate or move domain decisions, execution permission or Storage mutation out of the Python application; `OrganizerExecutor` remains the sole Storage mutator. |
-| V2-MIG-001 | The existing `/api/v1/*` contract and shared Python behavior remain authoritative for V2. | V2-RETIRE-001/002/006 define the current Web and API boundaries. Shared validation, permissions, state transitions and safety gates remain. `V2-ROUTE-003` restates only the public path spelling as `/api/*`. |
-| V2-MIG-002 | Historical coexistence requirement, superseded by V2-RETIRE-001. | Slice55 accepts `/ui-v2/` as the sole current Web root. Former routes use ordinary unknown-route or authentication behavior. `V2-ROUTE-001/003` restate only the public root spelling. |
+| V2-MIG-001 | Shared Python behavior remains authoritative for V2. | `V2-ROUTE-002/003` set the public namespace to `/api/*` and retire `/api/v1/*`. `V2-RETIRE-001/002/006` retain shared validation, permissions, state transitions and safety gates. |
+| V2-MIG-002 | Historical coexistence requirement, superseded by V2-RETIRE-001. | Slice55 accepted `/ui-v2/` as the sole Web root at that checkpoint. `V2-ROUTE-001/003` supersede that public spelling with `/`. Former routes use ordinary unknown-route or authentication behavior. |
 | V2-SAFE-001 | Read-only V2 UI actions remain zero-side-effect. | A read, refresh or status view does not create Tasks, invoke a Provider or mutate Storage unless a later explicitly approved journey says otherwise. |
 | V2-SHELL-001 | V2 uses one shared light operator shell across all V2 routes. | The shared light left rail/top bar follows the current written Files/Shell composition; Files does not create a parallel navigation model, existing route/auth/deep-link semantics remain shared, and non-Files business journeys remain functional inside the same chrome. |
 | V2-FILES-001 | Files is a live-Storage ResourceLibrary browser and a complete common file-management surface. | An authorized operator can Create Folder/Text File, Rename, Copy, Move, Delete, Edit an allowlisted bounded text file, Upload and Download eligible files/directories, with bounded multi-selection where meaningful, without entering the media-organize policy pipeline. |
