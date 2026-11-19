@@ -1,8 +1,8 @@
-# Task55.8 — A 终审退回，待 B 接续修正
+# Task55.8 — 修正 OpenList 示例的首次导入
 
 Slice55 **FIX REQUIRED**。随仓 OpenList 示例按自身说明导入时失败。
 复现、影响和退回条件见 [A Final Review](SLICE.md#a-final-review--fix-required)。
-B 接续原 Task55.8，更新修正计划后交 Developer。原计划及历轮交接见
+B 接续原 Task55.8。原计划及历轮交接见
 `5c1921b9b8ce2eb1472bfb5584579556bdf6f3b8:TASK.md`。
 
 ```text
@@ -17,11 +17,77 @@ B Closure Packet Checkpoint: 573726541063115eeed6ce6d879004a40bf2624a
 Difficulty: High
 Test Level: T4
 Reviewer: B
-Next Action: B CONTINUES TASK55.8 FOR A55-01
+Next Action: DEVELOPER CORRECTS A55-01 IN TASK55.8
 ```
 
 **Developer — 新增／修改与直接受影响测试**。
 **B — 独立验收与完整回归**。执行范围见[测试分工](docs/development-workflow.md#6-test-levels)。
+
+## A55-01 修正计划
+
+### 目标与复核结论
+
+B 在干净的 `main`（`4e8fdcc4`）核对 Task Base `3e3e3ccd` 至交付 `fb243ea6` 的变更。
+交付至当前 HEAD 的后续提交仅包含治理文档。
+
+管理员生成标准业务配置，把公开 OpenList 示例中的 `storage` 对象加到 `storages`，再按配置
+指南用 `config draft-import --file` 导入同一个部署。B 复跑 A 的隔离复现。原 Slice Base 接受
+旧示例，退回候选退出 2，提示 `storages[openlist-example].baseUrl is retired`。`config status`
+显示 `SETUP_REQUIRED`、零草稿、无 Active。同一候选导入未追加 OpenList 的标准示例成功。
+**当前候选 FIX REQUIRED**，涉及 Task AC-3 及 Slice RO-3／RO-6、AC-03／08／12。
+
+现行 CLI 调用 `ManagedConfigurationService.import_draft`。该服务在保存之前校验新提交的字段。
+随仓示例的连接参数仍在 `storage` 顶层，当前规范已将这些参数归入 `storage.options`。
+管理员修正输入后可再次导入，到系统设置选中导入的草稿，依次验证、完成适用的发布前检查并激活。
+
+### 开发指导
+
+1. 修改 `config/alist.example.json`。将 `baseUrl`、`tokenEnv`、`connectTimeout`、
+   `requestTimeout`、`maxConcurrency`、`maxRetries` 和 `pageSize` 原值移入 `storage.options`。
+   保留外层 `storage` 对象，以及其 `id`、`name`、`type`、`rootPath` 和 `readOnly`。
+2. 更新示例注释，并在 `docs/configuration.md` 的 OpenList 小节链接该文件。说明将 `storage`
+   追加到生成的 `mediaflow.activation.json` 的 `storages`，替换 `options.baseUrl`，在实际
+   执行检查或使用该存储的部署环境提供 `OPENLIST_TOKEN`。沿用指南已有的 `draft-import --file`
+   命令与系统设置发布步骤。库引用该 Storage 时，在发布前检查运行对应的只读检查。
+3. 在 `tests/test_container_deployment.py` 的 `ContainerArtifactTests` 加入示例导入回归。
+   读取仓库中的公开文件，将 `storage` 原样追加到部署生成器的标准业务配置，用 `final_main`
+   从实际 `draft-import --file` 命令导入隔离库。另用退回版本的示例形状验证原错误，并在
+   同一隔离实例用已修正的输入继续。沿用现有部署测试的生成器、临时目录和 CLI。
+
+### 验收
+
+- [ ] 旧示例通过现行命令退出 2，错误指出顶层连接字段及 `Storage.options`。新实例仍为
+  `SETUP_REQUIRED`、零草稿、无 Active。修正后同一命令返回一个可恢复的 Draft，配置中
+  保留两个标准 Storage 和 OpenList 对象的原根路径、只读设置及环境变量引用。导入阶段不依赖
+  OpenList 连通性。
+- [ ] 在同一实例的「系统设置」读到导入的准确版本。完成验证与适用的发布前检查后，显式激活
+  该版本，OpenList 可在「存储管理」查看。库引用 OpenList 时的只读发布检查沿用现行行为。
+- [ ] 修正范围为公开样例、其配置指南和部署导入回归。以现行严格输入规则、已接受的 V2 数据
+  连续性及原 Task55.8 AC-1–3 作为验收边界。
+
+### 本轮测试
+
+Developer 从仓库根执行部署导入回归及改动文件检查。
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test_container_deployment.py'
+.venv/bin/ruff check tests/test_container_deployment.py
+.venv/bin/ruff format --check tests/test_container_deployment.py
+git diff --check
+```
+
+B 收到固定候选后复核完整 Task Base..Head。先按公开指南复验旧样例拒绝、修正样例导入和
+实际 Web 发布旅程，沿用上轮的隔离配置和系统设置操作。T4 按工作流执行完整 Python 回归及
+适用的原生、安全和制品门禁。对比最终候选与退回候选的执行输入和制品，按流程复用匹配证据，
+重新运行受影响门禁。记录测试实际用时，测试和构建并行时按实际占用区间计时，低于本轮总用时
+的一半。[完整回归命令及证据复用规则](docs/development-workflow.md#shared-full-regression-commands)
+
+### Slice 结果重评
+
+这轮以退回候选及原始验证记录为依据。RO-1 的当前与旧入口、RO-2 的受理与执行、RO-4 的
+新库和现有 V2 数据、RO-5 的原请求核对，仍由下方历史 Closure Packet 对应证据覆盖。RO-3
+的现行严格输入规则已实测，RO-6 的 OpenList 样例与该规则冲突，首次用样例设置的旅程停在创建
+草稿之前。Task55.8 待修订候选交接。B 复验后重评六项结果并重新提交 Closure Packet。
 
 ## Task55.8 独立复核（退回前的 B 记录）
 
