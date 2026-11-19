@@ -95,8 +95,8 @@ creates/moves/migrates/deletes media. Ordinary file commands remain separate.
 The accepted baseline covers the replacement shared light shell, Files body/Add/Edit cards, bounded
 live browse/selection/common maintenance and ResourceLibrary organization. No browser Upload/Download.
 Other pages' business behavior was frozen only for that historical Slice, not every later Contract.
-V1/API authority, exact source/pin, RBAC, capability/confinement and OrganizerExecutor-only mutation
-remain protected. Slice45 has accepted complete FileIndex retirement and same-page organizing
+Shared Python API authority, exact source/pin, RBAC, capability/confinement and OrganizerExecutor-only
+mutation govern current work. Slice45 accepted complete FileIndex retirement and same-page organizing
 analysis/confirmation; former index compatibility/sync obligations are superseded by V2-FILES-005/006.
 
 ## Historical Reference State
@@ -387,8 +387,7 @@ Upload/Download delivery facts remain in the original Git closures; neither is a
    complete through direct, low-friction backend-authoritative commands with explicit destructive/
    overwrite intent, bounded selection/recursion, partial-outcome recovery and
    `OrganizerExecutor`-only mutation. No browser Upload/Download is offered.
-8. Non-Files V2 business journeys and route behavior remain functional inside the intentionally
-      replaced shared shell, and V1 `/ui` remains unchanged.
+8. Non-Files V2 journeys work inside the shared shell. See [current Web routing](product-experience.md#v2-operator-web).
 9. The implementation contains no unrelated provider, Storage-adapter or identity-system change;
       focused direct-file, ResourceLibrary activation and post-mutation reconciliation behavior
       stays within the revised Files journey.

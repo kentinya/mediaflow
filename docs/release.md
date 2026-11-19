@@ -418,7 +418,7 @@ Use a clean checkout with a supported Python version (3.11, 3.12, or 3.13) and i
 runtime/development dependencies. [Development Workflow §6](development-workflow.md#6-test-levels)
 owns the shared regression commands, applicable Web/native/package/safety gates, execution ownership
 and evidence-reuse rules. A release requires the gates appropriate to its exact target source and
-artifacts; older Slice acceptance is not a new release run.
+artifacts.
 
 Compatibility markers belong to the target artifact and release line. Released V1 `v1.0.0` /
 `release/v1` retains runtime schema `33`. For unreleased `main`, the source authorities are
@@ -426,8 +426,8 @@ Compatibility markers belong to the target artifact and release line. Released V
 [`CONFIGURATION_SCHEMA_VERSION`](../mediaflow/infrastructure/sqlite_configuration_management.py)
 and the [managed document validator](../mediaflow/application/configuration_snapshot.py).
 Read compatibility markers from the installed target rather than copying a mutable development
-schema number into a release claim. Current `main` acceptance covers fresh and same-version work;
-read-only compatibility tooling does not establish support for older task/schema conversion.
+schema number into a release claim. See the [current validation boundary](#current-v2-validation-boundary)
+for fresh initialization, the accepted Slice55 V2 data baseline and same-version recovery.
 
 Build and validate the exact installable artifact in a new isolated environment:
 

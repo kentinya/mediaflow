@@ -123,14 +123,11 @@ or another Provider lookup at summary generation. The per-file organizer support
 saving its existing candidates. Metadata correction searches use the current title, movie/TV type
 and year; clearing the year searches without a year restriction. An invalid year shows the range
 and lets the operator correct it and search again. [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity)
-explains the current behavior; [accepted corrections](docs/README.md) link to their fixed reviews.
+explains the current behavior; the [documentation guide](docs/README.md) links to earlier reviews.
 
-[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) is the latest accepted development Slice,
-PASS / CLOSED on 2026-11-11.
-[TASK.md](TASK.md) has no active implementation; the next large Slice is selected separately.
-[Progress](docs/progress.md) keeps immutable Slice acceptance references, original Base/Head, role
-exceptions, deferrals and validation limits. Independent corrections are indexed in the
-[documentation guide](docs/README.md), with their validation boundaries in [Release](docs/release.md#current-v2-validation-boundary).
+The development baseline is recorded in the [Slice closure ledger](docs/progress.md#closure-ledger).
+See [Release validation](docs/release.md#current-v2-validation-boundary) for the accepted artifact
+and evidence scope.
 
 [Explore](docs/product-experience.md#current--v2-explore-homepage-slice51-pass--closed) is the
 homepage: browse → filter/search → detail → return, with truthful empty states and local read
@@ -328,10 +325,11 @@ cross-version upgrade/rollback and mixed-version writers are outside current sup
 
 SQLite persists managed configuration, Task/item/results, work evidence, locks, authority,
 notifications and audit. A Task is the only organizing-work identity: there is no independent Job
-table, Job queue or Job worker. JSONL operation history remains supported. Managed Active overrides JSON
-bootstrap after activation and work pins immutable snapshots. Config validation creates no runtime
-database. FileIndex is removed; live listing reads the existing managed Active and internal cursor
-key without database initialization/migration. Missing initialization provides setup guidance.
+table, Job queue or Job worker. JSONL operation history remains supported. The minimal bootstrap
+locates SQLite and defines API principals. Managed Active is the only business runtime authority.
+Admitted work keeps its original snapshot. Config validation creates no runtime database. Live
+listing uses managed Active and the internal cursor key without initializing or migrating the database.
+If initialization is missing, the command provides setup guidance.
 
 **Concurrent Local directory Delete:** pause other writers before confirming deletion. Some
 filesystems can reuse an inode between final metadata revalidation and deletion, making a same-name
