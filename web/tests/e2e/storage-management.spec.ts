@@ -211,14 +211,46 @@ test.describe("Storage management", () => {
     await expect(page.getByText(/Active 配置中共有 105/)).toBeVisible();
 
     // Provider type cards reach Storage objects beyond the first page without
-    // a keyword field.
+    // a keyword field. The authoritative read is held so the previous page is
+    // visibly labelled as the previous read until the SMB result arrives.
+    let releaseSmbRead: () => void = () => {};
+    const smbReadGate = new Promise<void>((resolve) => {
+      releaseSmbRead = resolve;
+    });
+    const isSmbInventory = (url: URL) =>
+      url.pathname.endsWith("/api/operations/storage-management/inventory") &&
+      url.searchParams.get("family") === "smb";
+    await page.route(isSmbInventory, async (route) => {
+      await smbReadGate;
+      await route.continue();
+    });
     await page.getByRole("button", { name: /SMB/ }).click();
+    // The click is the entry point to this type; the table still belongs to
+    // the previous read and the page says so instead of claiming the filter's
+    // result is already shown.
+    await expect(
+      page.getByRole("heading", { name: "正在读取所选的存储清单" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/已选择「SMB」；新的清单读取尚未返回/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("row").filter({ hasText: "本地存储 000" }),
+    ).toBeVisible();
+    await expect(page.getByText(/已应用类型筛选/)).toHaveCount(0);
+    await expect(page.getByText(/继续显示更多/)).toHaveCount(0);
+
+    releaseSmbRead();
     await expect(
       page.getByRole("row").filter({ hasText: "NAS 后续页" }),
     ).toBeVisible();
     await expect(
+      page.getByRole("heading", { name: "正在读取所选的存储清单" }),
+    ).toHaveCount(0);
+    await expect(
       page.getByRole("row").filter({ hasText: "本地存储 000" }),
     ).toHaveCount(0);
+    await page.unroute(isSmbInventory);
 
     // The S3/R2 card also reaches its own object beyond the page.
     await page.getByRole("button", { name: /S3 \/ R2/ }).click();
@@ -243,7 +275,8 @@ test.describe("Storage management", () => {
     ).toHaveCount(0);
 
     // Switching provider type from the later page starts at that type's first
-    // page: the stale continuation cursor and keyword are not carried over.
+    // page: the request carries only the new type — no stale continuation
+    // cursor and no keyword.
     const smbSwitchRequest = page.waitForRequest((request) => {
       const url = new URL(request.url());
       return (
@@ -253,8 +286,8 @@ test.describe("Storage management", () => {
     });
     await page.getByRole("button", { name: /SMB/ }).click();
     const switchedUrl = new URL((await smbSwitchRequest).url());
-    expect(switchedUrl.searchParams.has("after")).toBe(false);
-    expect(switchedUrl.searchParams.has("q")).toBe(false);
+    expect([...switchedUrl.searchParams.keys()]).toEqual(["family"]);
+    expect(switchedUrl.searchParams.get("family")).toBe("smb");
     await expect(
       page.getByRole("row").filter({ hasText: "NAS 后续页" }),
     ).toBeVisible();

@@ -1379,18 +1379,12 @@ export function StorageManagementPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const [familyFilter, setFamilyFilter] = useState<StorageFamily | null>(null);
-  // Explicit continuation through the stable ID cursor the server returns;
-  // cleared whenever the provider filter changes. The render-phase sync below
-  // persists the reset, and this derived window guarantees the very next
-  // request already drops the stale cursor instead of combining a new type
-  // with the previous page (for example `?family=smb&after=local-099`) and
-  // falsely reporting that a configured Storage does not exist.
+  // Explicit continuation through the stable ID cursor the server returns.
+  // The provider card updates the type and clears this cursor together, so a
+  // new type never combines with the previous page (for example
+  // `?family=smb&after=local-099`) and never falsely reports that a configured
+  // Storage does not exist.
   const [afterCursor, setAfterCursor] = useState<string | null>(null);
-  const [pageBasis, setPageBasis] = useState<StorageFamily | null>(null);
-  if (pageBasis !== familyFilter) {
-    setPageBasis(familyFilter);
-    setAfterCursor(null);
-  }
   const [detailId, setDetailId] = useState<string | null>(null);
   // A rejected or undelivered read-check attempt blocks another attempt until
   // the operator explicitly verifies current state (AC: unknown result is
@@ -1460,19 +1454,14 @@ export function StorageManagementPage() {
   const lifecycleInvokerRef = useRef<HTMLElement | null>(null);
 
   // The provider filter is applied by the backend over the complete Active
-  // object set, not over one already-truncated page. `effectiveAfter` is the
-  // page window for the *current* filter basis: when the provider card
-  // changes, the stale continuation cursor must not leak into the next
-  // request. The render-phase `pageBasis` sync persists the reset for
-  // subsequent renders; this derived value guarantees the next query is
-  // already anchored at the first page.
-  const effectiveAfter = pageBasis !== familyFilter ? null : afterCursor;
+  // object set, not over one already-truncated page. The request uses exactly
+  // the operator's current type and page window.
   const selection = useMemo<InventorySelection>(
     () => ({
       family: familyFilter,
-      after: effectiveAfter,
+      after: afterCursor,
     }),
-    [familyFilter, effectiveAfter],
+    [familyFilter, afterCursor],
   );
   const inventoryQuery = useQuery(
     storageInventoryQueryOptions(token, selection),
@@ -1529,6 +1518,15 @@ export function StorageManagementPage() {
     () => (inventory === null ? [] : toRowItem(inventory)),
     [inventory],
   );
+  // The table keeps the previous bounded read visible while a new type/page
+  // read is in flight. `isPlaceholderData` is the only truthful signal that
+  // those rows belong to the previous selection, so filter, continuation and
+  // empty-state claims wait for the current selection's own result.
+  const awaitingInventory = inventoryQuery.isPlaceholderData;
+  const requestedSelectionLabel =
+    familyFilter === null
+      ? "全部类型"
+      : (FAMILY_LABELS[familyFilter] ?? familyFilter);
 
   const runCheck = useCallback(
     (storageId: string) => {
@@ -2249,21 +2247,21 @@ export function StorageManagementPage() {
                   setFamilyFilter(family);
                 }}
               />
-              <InventoryScopeNote
-                data={data}
-                hasFilter={familyFilter !== null}
-                onContinue={() => setAfterCursor(data.nextAfter)}
-                onReset={() => setAfterCursor(null)}
-              />
-              {rows.length === 0 ? (
-                <StatusBanner variant="info" title="没有匹配的存储">
+              {awaitingInventory ? (
+                <StatusBanner variant="info" title="正在读取所选的存储清单">
                   <p>
-                    {data.matched === 0 && familyFilter === null
-                      ? "当前 Active 配置中没有存储对象。"
-                      : "没有符合当前类型筛选的存储。可以切换类型或返回全部类型。"}
+                    {`已选择「${requestedSelectionLabel}」；新的清单读取尚未返回，页面保留上一次读取的结果。新结果到达后会按当前选择显示条目、分页提示或空态。`}
                   </p>
                 </StatusBanner>
               ) : (
+                <InventoryScopeNote
+                  data={data}
+                  hasFilter={familyFilter !== null}
+                  onContinue={() => setAfterCursor(data.nextAfter)}
+                  onReset={() => setAfterCursor(null)}
+                />
+              )}
+              {rows.length > 0 ? (
                 <InventoryTable
                   items={rows}
                   canManage={data.canManage && !saveMutation.isPending}
@@ -2288,6 +2286,14 @@ export function StorageManagementPage() {
                     runCheck(item.id);
                   }}
                 />
+              ) : awaitingInventory ? null : (
+                <StatusBanner variant="info" title="没有匹配的存储">
+                  <p>
+                    {data.matched === 0 && familyFilter === null
+                      ? "当前 Active 配置中没有存储对象。"
+                      : "没有符合当前类型筛选的存储。可以切换类型或返回全部类型。"}
+                  </p>
+                </StatusBanner>
               )}
               {detailId !== null && (
                 <StorageDetailCard

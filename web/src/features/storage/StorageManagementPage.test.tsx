@@ -633,6 +633,71 @@ describe("Storage management journey", () => {
     });
   });
 
+  it("labels the previous page while the selected type read is pending", async () => {
+    const smbNext = {
+      ...STORAGE_LOCAL,
+      id: "nas-next",
+      name: "NAS next",
+      type: "smb",
+      family: "smb",
+    };
+    let releaseSmb: () => void = () => {};
+    const smbGate = new Promise<void>((resolve) => {
+      releaseSmb = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input);
+      if (!url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
+      const family = new URL(url, "http://test").searchParams.get("family");
+      if (family === "smb") {
+        await smbGate;
+        return jsonResponse({
+          ...(inventoryPayload([smbNext]) as Record<string, unknown>),
+          families: { local: 1, smb: 1 },
+        });
+      }
+      return jsonResponse({
+        ...(inventoryPayload([STORAGE_LOCAL, STORAGE_R2]) as Record<
+          string,
+          unknown
+        >),
+        families: { local: 1, smb: 1, s3: 1 },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken(TOKEN);
+    renderApp("/storage");
+
+    await screen.findByRole("heading", { name: "存储管理" });
+    await screen.findByRole("table");
+
+    await userEvent.click(screen.getByRole("button", { name: /SMB/ }));
+
+    // The type card answered immediately. Until the selected read returns, the
+    // table is named as the previous read rather than presented as that type's
+    // result.
+    expect(
+      await screen.findByText(/已选择「SMB」；新的清单读取尚未返回/),
+    ).toBeVisible();
+    expect(screen.getByText("Local source")).toBeVisible();
+    expect(screen.queryByText("NAS next")).toBeNull();
+    expect(
+      screen.queryByText(
+        "没有符合当前类型筛选的存储。可以切换类型或返回全部类型。",
+      ),
+    ).toBeNull();
+
+    releaseSmb();
+    expect(await screen.findByText("NAS next")).toBeVisible();
+    expect(
+      screen.queryByText(/已选择「SMB」；新的清单读取尚未返回/),
+    ).toBeNull();
+    expect(screen.queryByText("Local source")).toBeNull();
+    expect(lastInventoryUrl(fetchMock)).toContain("family=smb");
+  });
+
   it("keeps an already-saved empty provider root readable beside other entries", async () => {
     // The operator-facing regression: this exact Active configuration used to
     // make the whole workspace unreadable, showing "存储管理不可用" even though
