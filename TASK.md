@@ -1,8 +1,8 @@
 # Task PATCH-20261119-2 — 删除各页顶栏搜索框
 
-Next Action: B REVIEWS THE PATCH-20261119-2 CANDIDATE
+Next Action: DEVELOPER FIXES PATCH-20261119-2
 
-用户于 2026-11-19 授权激活独立 Task，Developer 已完成实施并交付 B 审查。
+用户于 2026-11-19 授权激活独立 Task。B 已审查首个候选，修正要求见本页末尾。
 [独立修复工作流](docs/development-workflow.md#31-independent-minor-bugs) ·
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
 
@@ -10,7 +10,7 @@ Next Action: B REVIEWS THE PATCH-20261119-2 CANDIDATE
 Task ID: PATCH-20261119-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
 Difficulty: Medium
 Test Level: T2
@@ -124,3 +124,38 @@ web: npm run test:e2e -- tests/e2e/page-transition.spec.ts
   Task 分工由 B 在候选构建上复跑。
 - 未运行全量 Web／Python／打包门禁；桌面／390px 实际视觉截图与键盘顺序仍需 B 独立查看。
 - 构建保留既有 Vite “chunk 超过 500 kB”警告，无新增失败；全量回归与最终风险判定由 B 负责。
+
+## B Review Result — FIX REQUIRED
+
+```text
+Reviewed Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
+Reviewed Head: 08929c1238009a41b37e90e3564402ec573ec5da
+Implementation Candidate: 9012bfa104c57e518e024e0c773453dc1431ff2d
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+连接后从侧栏进入「存储管理」。当配置有 105 项时，全部类型第一页显示 100 项。点击「SMB」后，
+如果清单响应尚未返回，页面会显示「已应用类型筛选」，表里却还是本地存储。SMB 响应到达后
+才只显示 NAS。`9012bfa1` 让清单提示根据刚选中的卡片声明筛选完成，而表格在这段时间继续
+展示上一次读取结果。类型卡片是移除关键词搜索后查找存储的入口，用户需要知道所选类型的结果何时可用。
+[清单渲染](web/src/features/storage/StorageManagementPage.tsx)
+
+### Developer 修正指导
+
+1. 使用清单查询已有的 `isPlaceholderData` 区分等待中的旧结果和已返回的结果。显示旧表时用
+   清楚的读取提示标明它属于上次读取。新结果到达后按当前类型显示条目、分页提示或空态。
+2. 在 `ProviderCards` 的 `onSelect` 一次完成类型更新和游标清空。查询直接使用这两个值，
+   删除顶栏搜索退出后多余的 `pageBasis` 和 `effectiveAfter`。
+3. 扩充现有 `storage-management.spec.ts` 大清单用例。通过「SMB」卡片实际发起读取，在响应
+   等待期间核对旧行和读取提示，响应到达后核对 NAS 行。继续验证从后续页改类型时，请求只有
+   新的 `family`，`after` 和 `q` 均缺席。执行 `npm run typecheck`、`npm run build`，以及
+   `npm run test:e2e -- tests/e2e/storage-management.spec.ts -g 'legal over-limit inventory|shared topbar is account-only'`。
+
+### B 本轮验证
+
+治理检查、Base..Head 空白检查和 Web 构建通过。现有 3 个浏览器用例通过，覆盖桌面及窄屏账户
+入口、存储请求无 `q` 和从后续页切换类型。通过已有侧栏入口对 SMB 请求施加延迟，复现上述
+反馈错误。证据位于 `.git/validation-evidence/9012bfa1/patch-20261119-2-b/` 的
+`storage-filter.log`、`storage-smb-response-pending.png`、`build.log` 和 `focused.log`。
+修正候选交回后，B 继续执行本 Task 的 T2 验收。
